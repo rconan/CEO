@@ -1,0 +1,582 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+
+\def\bk{\bar \kappa_i}
+\def\dk{\Delta \kappa_i}
+\def\dphi{\Delta \varphi}
+\def\nk{N_\kappa}
+\def\na{N_\varphi}
+
+The atmosphere structure is written:
+<<atmosphere.h>>=
+#ifndef __ATMOSPHERE_H__
+#define __ATMOSPHERE_H__
+
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+
+#ifndef __SOURCE_H__
+#include "source.h"
+#endif
+
+#define RAND_SEED 2013
+
+struct profile {
+
+  <<profile parameters>>
+
+  void setup(void);
+
+};
+
+struct atmosphere {
+
+  <<atmosphere parameters>>
+
+  void setup(void);
+
+  <<cleanup>>
+
+  void info(void);
+
+  void reset(void);
+
+  void get_phase_screen(float *phase_screen,
+			float const *x, float const *y, int N_xy, 
+			source *src, float time);
+
+  <<atmosphere phase screen array size>>
+};
+
+#endif // __ATMOSPHERE_H__
+@ with the source file:
+<<atmosphere.cu>>=
+#include "atmosphere.h"
+
+<<init random variates>>
+
+<<variates>>
+
+<<new variates>>
+
+<<phase screen kernel>>
+
+void profile::setup(void) {
+  <<profile setup>>
+}
+
+<<atmosphere setup>>
+
+<<info>>
+
+<<phase screen>>
+
+@
+The atmosphere parameters are
+\begin{itemize}
+\item the Fried parameter $r_0$ are a given photometric band
+<<atmosphere parameters>>=
+char *photometric_band;
+float r0,
+@ \item the outer scale
+<<profile parameters>>=
+float  L0;      
+@ \item the turbulence layers altitude
+<<profile parameters>>=
+float altitude[_N_LAYER_],
+@ \item the fractional $r_0$ vector: $$\xi_0(h)= \left( r_0(h)\over r_0 \right)^{-5/3}$$
+<<profile parameters>>=
+      xi0[_N_LAYER_],
+@ \item the wind vector
+<<profile parameters>>=
+  wind_speed[_N_LAYER_], wind_direction[_N_LAYER_];
+@ and the phase screen in the layer
+<<atmosphere parameters>>=
+  *phase_screen,
+@ The phase screens are rectangular strips with the horizontal axis along the wind direction.
+The width and length of the phase screens are given by
+<<atmosphere parameters>>=
+      width[_N_LAYER_], length[_N_LAYER_],
+@ and sampled, respectively, with the following number of pixel
+<<atmosphere parameters>>=
+      n_width[_N_LAYER_], n_length[_N_LAYER_];
+@ \end{itemize}
+The phase screen array size is given by:
+<<atmosphere phase screen array size>>=
+int phase_screen_array_size(void) {
+  int k, size = 0;
+  for (k=0; k<_N_LAYER_; k++) {
+    size += n_width[k]*n_length[k];
+  }
+  return size;
+}
+@ 
+The main parameters of the atmosphere are displayed with the [[info]] routine:
+<<info>>=
+void atmosphere::info(void)
+{
+printf("\n@(CEO)>atmosphere: Von Karman atmospheric turbulence model\n");
+printf(" . r0 = %5.2fcm\n . L0 = %5.2fm\n",r0*1e2,turbulence.L0);
+printf("----------------------------------------------------\n");
+printf("  Layer   Altitude[m]   fr0    wind([m/s] [deg])\n");
+for (int kLayer=0;kLayer<_N_LAYER_;kLayer++) {
+  printf("  %2d      %8.2f      %4.2f    (%5.2f %6.2f)\n",
+  kLayer,
+  turbulence.altitude[kLayer],
+  turbulence.xi0[kLayer],
+  turbulence.wind_speed[kLayer],
+  turbulence.wind_direction[kLayer]*180/PI);
+}
+printf("----------------------------------------------------\n");
+}
+@ 
+Specifics turbulence profile are pre--defined as:
+<<GMT median turbulence profile>>=
+float  L, l0, L, f, delta, N_k, N_a, kmin0;      
+float altitude[_N_LAYER_] = {25, 275, 425, 1250, 4000, 8000, 13000},
+  xi0[_N_LAYER_] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
+  wind_speed[_N_LAYER_] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
+  wind_direction[_N_LAYER_] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+float vx[_N_LAYER_], vy[_N_LAYER_];
+@
+The phase screen equation is 
+\begin{eqnarray}
+  \label{eq:1}
+  \phi(x,y) &=& 1.4 r_0^{-{5\over6}}\sum_{i=1}^{N_\kappa}\sum_{j=1}^{N_\varphi} \Gamma\left( \bk\right) \\
+&& \times \left\{ \zeta_1(i,j) cos\left[ \eta_1(i,j) + \bk \left( x\cos \phi_j + y\sin \phi_j \right) \right] \right. \nonumber\\
+&& \quad + \left. \zeta_2(i,j) cos\left[ \eta_2(i,j) - \bk \left( x\sin \phi_j - y\cos \phi_j \right) \right] \right\} \nonumber
+\end{eqnarray}
+where 
+\begin{equation}
+  \label{eq:2}
+  \Gamma\left( \bk\right) = \left[ \Lambda(\bk) \bk \dk \dphi \right]^{1\over2}
+\end{equation}
+$\Lambda\left( \bk\right)$ is the spectrum kernel at the spatial frequency $\bk$, given by
+\begin{equation}
+  \label{eq:3}
+  \Lambda\left( \bk\right) = \left( \bk^2 + \kappa_0^2 \right)^{-{11\over6}}
+\end{equation}
+with $\kappa_0=2\pi/\mathcal L_0$, where $\mathcal L_0$ is the outer scale.
+
+Eq.~(\ref{eq:1}) is defined over a frequency range f, $$f={\kappa_{max}\over \kappa_{min}}$$ and for a frequency resolution $\delta$, $$\delta={\dk\over\bk}.$$
+$\bk$ and $\varphi_j$ are the magnitude and angle of the spatial frequency vector.
+$\bk$ is the average spatial frequency over a given interval $i$ and is written
+\begin{equation}
+  \label{eq:4}
+  \bk = {\kappa_{min}\over 2}f^{i\over\nk}\left( 1 + f^{-{1\over\nk}} \right).
+\end{equation}
+The interval width is given by
+\begin{equation}
+  \label{eq:5}
+  \dk = \kappa_{min}f^{i\over\nk}\left( 1 - f^{-{1\over\nk}} \right).
+\end{equation}
+$\varphi_j$ is derived from
+\begin{equation}
+  \label{eq:6}
+  \varphi_j = \left( j -{1\over2} \right) \Delta\varphi
+\end{equation}
+with $\Delta\varphi=\delta$.
+
+The number of frequency and angle samples are given by
+\begin{equation}
+  \label{eq:7}
+  \nk = { \ln f \over \ln \left( 2+\delta \over 2-\delta \right) }
+\end{equation}
+and
+\begin{equation}
+  \label{eq:8}
+  \na = {\pi\over4} \left( f^{1\over\nk}+1 \over f^{1\over\nk}-1 \right).
+\end{equation}
+
+The frequency range and resolution can also be derived from the $\nk$ and $\na$:
+\begin{equation}
+  \label{eq:9}
+  f = \left( 4\na + \pi \over 4\na - \pi \right)^{\nk}
+\end{equation}
+and
+\begin{equation}
+  \label{eq:10}
+  \delta = {\pi\over2\na}.
+\end{equation}
+
+$\zeta$ and $\eta$ are variates defined by
+\begin{equation}
+  \label{eq:11}
+  \zeta = \left( -\ln\beta_1 \right)^{1\over2}
+\end{equation}
+and
+\begin{equation}
+  \label{eq:12}
+  \eta = 2\pi\beta_2,
+\end{equation}
+where $\beta_1$ and $\beta_2$ are uniformly distributed variates.
+
+Eq.~(\ref{eq:1}) gives the expression of a single phase screen sampled with the rays of a light source at infinity.
+For an atmosphere made of several phase screens with a source at a finite distance, Eq.~(\ref{eq:1}) becomes:
+\begin{eqnarray}
+  \label{eq:13}
+    \phi(x,y) &=& 1.4 r_0^{-{5\over6}} \sum_{i=1}^{N_\kappa}\sum_{j=1}^{N_\varphi} \Gamma\left( \bk\right) \sum_{l=1}^{[[_N_LAYER_]]} \xi_{0l}^{1\over2} \\
+&& \times \left\{ \zeta_{1l}(i,j) cos\left[ \eta_{1l}(i,j) + \bk \left( x_l\cos \phi_j + y_l\sin \phi_j \right) \right] \right. \nonumber\\
+&& \quad + \left. \zeta_{2l}(i,j) cos\left[ \eta_{2l}(i,j) - \bk \left( x_l\sin \phi_j - y_l\cos \phi_j \right) \right] \right\} \nonumber\\
+x_l &=& \left( 1 - {h_l\over z_\ast} \right)(x-v_xt) + h_l\theta_{\ast x} \\
+y_l &=& \left( 1 - {h_l\over z_\ast} \right)(y-v_yt) + h_l\theta_{\ast y} 
+\end{eqnarray}
+
+The above definitions call for the declarations of new variables:
+<<profile parameters>>=
+float l0, L, f, delta, N_k, N_a, kmin;
+float vx[_N_LAYER_], vy[_N_LAYER_];
+@ 
+<<atmosphere parameters>>=
+float *zeta1, *eta1, *zeta2, *eta2;
+curandState *devStates;
+profile turbulence, *d__turbulence;
+@ This variables are defined in the setup routines:
+<<atmosphere setup>>=
+  void atmosphere::setup(void) {
+  info();
+  turbulence.setup();
+  HANDLE_ERROR( cudaMalloc( (void**)&d__turbulence, sizeof(profile) ) );
+  HANDLE_ERROR( cudaMemcpy( d__turbulence, &turbulence,
+			    sizeof(profile), cudaMemcpyHostToDevice ) );
+  int nel = _N_LAYER_*turbulence.N_k*turbulence.N_a;
+  printf("\n@(CEO)>atmosphere: initializing %d variates ...",nel);
+  HANDLE_ERROR( cudaMalloc( (void**)&devStates, 4*nel*sizeof(curandState)) );  
+  HANDLE_ERROR( cudaMalloc( (void**)&zeta1, nel*sizeof(float)) );
+  HANDLE_ERROR( cudaMalloc( (void**)&eta1,  nel*sizeof(float)) );
+  HANDLE_ERROR( cudaMalloc( (void**)&zeta2, nel*sizeof(float)) );
+  HANDLE_ERROR( cudaMalloc( (void**)&eta2,  nel*sizeof(float)) );
+  dim3 blockDim(64,1);
+  dim3 gridDim( 1+4*nel/64 , 1 );
+  setupRandomSequence LLL gridDim,blockDim RRR (devStates, 4*nel);
+  HANDLE_ERROR( cudaDeviceSynchronize() );
+  generateVariates LLL gridDim,blockDim RRR (zeta1, eta1, zeta2, eta2, devStates, nel);
+  HANDLE_ERROR( cudaDeviceSynchronize() );
+printf("done!\n");
+}
+@ 
+<<profile setup>>=
+  for (int k=0;k<_N_LAYER_;k++)
+    {
+      vx[k] = wind_speed[k]*cosf(wind_direction[k]);
+      vy[k] = wind_speed[k]*sinf(wind_direction[k]);
+    }
+  l0    = 1e-3;
+  L     = 1e2;
+  f     = MAX(L,3*L0);
+  kmin  = 2*PI/f;
+  f     = f/l0;
+  delta = 0.1;
+  N_k = logf(f)/log( (2+delta)/(2-delta) );
+  N_a = powf( f , 1/N_k ) ;
+N_a = 0.25*PI*( (N_a + 1)/(N_a - 1) );
+N_k = ceilf( N_k );
+N_a = ceilf( N_a );
+f = powf( (4*N_a + PI)/(4*N_a - PI) , N_k );
+delta = 0.5*PI/N_a;
+printf("\n@(CEO)>profile:\n");
+printf(" . N_k = %f\n",N_k);
+	       printf(" . N_a = %f\n",N_a);
+  printf(" . frequency range      = %8.2f\n",f);
+  printf(" . frequency resolution = %6.4f\n",delta);
+  printf(" . minimum frequency    = %6.4f\n",kmin);
+@ 
+The random generator is initialized within the following kernel:
+<<init random variates>>=
+__global__ void setupRandomSequence(curandState *state, int n_state) 
+{
+  int id;
+  id = blockIdx.x * blockDim.x + threadIdx.x;
+  if (id<n_state)
+    curand_init(RAND_SEED, id, 0, &state[id]);  
+}
+@  and the variates are generated with:
+<<variates>>=
+__global__ void generateVariates(float *zeta1, float *eta1, float *zeta2, float *eta2, 
+			    curandState *state, int n_state)
+{
+  int id;
+  curandState localState;
+  id = blockIdx.x * blockDim.x + threadIdx.x;
+  if (id<n_state)
+    {
+      localState = state[id*4];
+      zeta1[id] = curand_uniform(&localState);
+      zeta1[id] = sqrtf( -logf( zeta1[id] ) );
+      state[id*4] = localState;
+
+      localState = state[id*4+1];
+      eta1[id] = curand_uniform(&localState);
+      eta1[id] = 2*PI*eta1[id];
+      state[id*4+1] = localState;
+
+      localState = state[id*4+2];
+      zeta2[id] = curand_uniform(&localState);
+      zeta2[id] = sqrtf( -logf( zeta2[id] ) );
+      state[id*4+2] = localState;
+
+      localState = state[id*4+3];
+      eta2[id] = curand_uniform(&localState);
+      eta2[id] = 2*PI*eta2[id];
+      state[id*4+3] = localState;
+
+    }
+}
+@ New variates can be computed with the call to the routine:
+<<new variates>>=
+void atmosphere::reset(void)
+{
+  int nel = _N_LAYER_*turbulence.N_k*turbulence.N_a;
+  dim3 blockDim(64,1);
+  dim3 gridDim( 1+nel/64 , 1 );
+  generateVariates LLL gridDim,blockDim RRR (zeta1, eta1, zeta2, eta2, devStates, nel);
+}
+@ The dynamically allocated variables are freed in the cleanup routine:
+<<cleanup>>=
+void cleanup(void) {
+  printf("\n@(CEO)>atmosphere: freeing memory!\n");
+  HANDLE_ERROR( cudaFree( devStates ) );
+  HANDLE_ERROR( cudaFree( zeta1  ));
+  HANDLE_ERROR( cudaFree( eta1 ) );
+  HANDLE_ERROR( cudaFree( zeta2 ) );
+  HANDLE_ERROR( cudaFree( eta2 ) );
+  HANDLE_ERROR( cudaFree( d__turbulence ) );
+}
+@
+The phase screen are defined in the telescope pupil at the ground 
+<<phase screen>>=
+void atmosphere::get_phase_screen(float *phase_screen,
+		       float const *x, float const *y, int N_xy, 
+		       source *src, float time)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim( ceilf(sqrt(N_xy)/16) , ceilf(sqrt(N_xy)/16));
+  plps LLL gridDim , blockDim RRR (phase_screen,
+				   x, y, N_xy, 
+				   d__turbulence, r0,
+				   zeta1, eta1, zeta2, eta2,
+				   src, time);
+}
+@ and computed with the kernel
+<<phase screen kernel>>=
+  __global__ void plps(float *phase_screen,
+		       float const *x, float const *y, int N_xy, 
+		       profile *turb, float r0,
+		       float *zeta1, float *eta1, float *zeta2, float *eta2,
+		       source *src, float time)
+{
+  <<declarations>>
+
+  <<thread to coordinate index>>
+  
+  sum = 0;
+  
+  if (kl<N_xy)
+    {
+
+      <<variables>>
+
+      for (i=0;i<turb->N_k;i++)
+	{
+	  <<frequency magnitude sum>>
+          for (j=0;j<turb->N_a;j++)
+	    {
+	      <<frequency angle sum>>
+	      for (l=0;l<_N_LAYER_;l++)
+		{
+		  <<layer sum>>
+		}
+	      sum += sqrt_spectrum_kernel*sum_l;
+	    }
+	}
+      phase_screen[kl] = 1.4*powf(r0,-5.0/6.0)*sum;
+    }
+}
+@ 
+The kernel starts with some declarations:
+<<declarations>>=
+  int i, j, l, ij, ijl, kl;
+float freq_mag0, delta_freq_mag0, f_red0, f_red, 
+  freq_L0_square, x_kl, y_kl, gl,
+  freq_mag, delta_freq_mag, sqrt_spectrum_kernel,
+  freq_ang, cos_freq_ang, sin_freq_ang, sum, sum_l;
+@ 
+Each thread is computing one value of the phase screen at the coordinate [[x_kl = x[kl]]] and [[y_kl = y[kl]]]
+<<thread to coordinate index>>=
+i = blockIdx.x * blockDim.x + threadIdx.x;
+j = blockIdx.y * blockDim.y + threadIdx.y;
+kl = j * gridDim.x * blockDim.x + i;
+
+@ 
+Next a few new variables are defined, $$[[f_red0]]=f^{1/N_k},$$, $$[[freq_mag0]]=\kappa_{min}{[[f_red0]]+1)\over 2[[f_red0]]},$$ $$[[delta_freq_mag0]]=\kappa_{min}{[[f_red0]]-1)\over [[f_red0]]},$$ $$[[freq_L0_square]]=\left(2\pi\over\mathcal L_0\right)^2.$$
+<<variables>>=
+f_red0 = powf(turb->f,1/turb->N_k);
+freq_mag0 = 0.5*turb->kmin*( f_red0 + 1 )/f_red0;
+delta_freq_mag0 = turb->kmin*( f_red0 - 1 )/f_red0;
+f_red  = 1;
+freq_L0_square = 2*PI/turb->L0;
+freq_L0_square *= freq_L0_square;
+@ 
+The outer loop is the sum over the frequency magnitude. It computes $\bk$, $\dk$ and $\Gamma\left( \bk\right)$:
+<<frequency magnitude sum>>=
+f_red *= f_red0;
+freq_mag = freq_mag0*f_red;
+delta_freq_mag = delta_freq_mag0*f_red;
+sqrt_spectrum_kernel =
+  powf( freq_mag*freq_mag + freq_L0_square, -11.0/12.0)*
+  sqrt(freq_mag*delta_freq_mag*turb->delta);
+@ 
+The inner loop is the sum over the frequency angle. It computes $\varphi_j$, $\sin(\varphi_j)$ and $\cos(\varphi_j)$.
+<<frequency angle sum>>=
+ freq_ang = (j+0.5)*turb->delta;
+ sincosf(freq_ang, &sin_freq_ang, &cos_freq_ang);
+ ij = i*turb->N_a + j;
+ sum_l = 0;
+@ 
+The innest loop is the sum over the layer.
+<<layer sum>>=
+  ijl = ij + l*turb->N_a*turb->N_k;
+gl = 1 - turb->altitude[l]/src->height;
+x_kl = x[kl] - turb->vx[l]*time;
+y_kl = y[kl] - turb->vy[l]*time;
+x_kl = gl*x_kl + turb->altitude[l]*src->theta_x;
+y_kl = gl*y_kl + turb->altitude[l]*src->theta_y;
+sum_l += sqrt(turb->xi0[l])*
+   ( zeta1[ijl]*cosf( eta1[ijl] +
+		     freq_mag*( x_kl*cos_freq_ang + y_kl*sin_freq_ang ) ) +
+     zeta2[ijl]*cosf( eta2[ijl] -
+		     freq_mag*( x_kl*sin_freq_ang - y_kl*cos_freq_ang ) ));
+@ 
+The test suite is a Matlab script.
+It calls the mex function:
+<<atmosphere.mex>>=
+#include <math.h>
+#include <cuda_runtime.h>
+#include "cublas_v2.h"
+#include "mex.h"
+#include "gpu/mxGPUArray.h"
+
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+#ifndef __SOURCE_H__
+#include "source.h"
+#endif
+#ifndef __ATMOSPHERE_H__
+#include "atmosphere.h"
+#endif
+
+static source src, *d__src;
+static profile turbulence;
+static atmosphere atm;
+static unsigned int INIT=0;
+static void cleanup(void)
+{
+    atm.cleanup();
+    INIT = 0;
+}
+void mexFunction(int nlhs, mxArray *plhs[],
+        int nrhs, mxArray const *prhs[])
+{
+    unsigned int inputIndex;
+    float const *d__x, *d__y;
+    float *d__phase_screen;
+    double *reset, *L0, *time;
+    
+    char const * const errId = "parallel:gpu:CEO_SCAO_MEX:InvalidInput";
+    char const * const errMsg = "Invalid input to MEX file.";
+    
+    /* Check for proper number of input and output arguments */
+    if (nrhs != 5) {
+        mexErrMsgIdAndTxt( "MATLAB:mxislogical:invalidNumInputs",
+                "Five input argument required.");
+    }
+    if(nlhs > 1){
+        mexErrMsgIdAndTxt( "MATLAB:mxislogical:maxlhs",
+                "Too many output arguments.");
+    }
+
+    inputIndex = 0;
+    
+    /* Create GPUArray from mxArray input and get underlying pointer. */
+    mxGPUArray const *x;
+    x = mxGPUCreateFromMxArray(prhs[inputIndex++]);
+    if (mxGPUGetClassID(x) != mxSINGLE_CLASS) {
+        mexErrMsgIdAndTxt(errId, errMsg);
+    }
+    d__x = (float const *)(mxGPUGetDataReadOnly(x));
+    // ---------------------------------------
+    mxGPUArray const *y;
+    y = mxGPUCreateFromMxArray(prhs[inputIndex++]);
+    if (mxGPUGetClassID(y) != mxSINGLE_CLASS) {
+        mexErrMsgIdAndTxt(errId, errMsg);
+    }
+    d__y = (float const *)(mxGPUGetDataReadOnly(y));
+    // ---------------------------------------
+    reset = mxGetPr(prhs[inputIndex++]);
+    L0 = mxGetPr(prhs[inputIndex++]);
+    time = mxGetPr(prhs[inputIndex++]);
+
+    /* Create GPUArray to hold the result and get underlying pointer. */
+    mxGPUArray *phase_screen;
+    phase_screen = mxGPUCreateGPUArray(2,mxGPUGetDimensions(x),
+            mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
+    d__phase_screen = (float *)(mxGPUGetData(phase_screen));
+    
+    if (INIT==0) {
+        // Source
+        src.zenith = ARCSEC(60);
+        src.azimuth = 0;
+        src.height = 90e3;//INFINITY;
+        src.setup();
+//         mexPrintf ("src.Ox=%4.1f ; src.Oy=%4.1f\n",src.theta_x,src.theta_y);
+        cudaMalloc( (void**)&d__src, sizeof(source) );
+        cudaMemcpy( d__src, &src,
+                sizeof(source) ,
+                cudaMemcpyHostToDevice );
+        
+        // GMT 7 layers turbulence profile
+        float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
+              xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
+              wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
+              wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+        // N layers
+//         float altitude[] =       {0, 500, 1000, 2000, 5000, 8000, 13000};
+//         float xi0[] =            {0.2, 0.1, 0.1, 0.3, 0.2, 0.05, 0.05};
+//         float wind_speed[] =     {10, 5, 7.5, 5, 10, 12, 15};
+//         float wind_direction[] = {0, 0.25, 0.5, 1, 1.5, 1.75, 2};
+                        
+        turbulence.L0 = (float) (*L0);
+        // single layer
+//         turbulence.altitude[0] = 0;
+//         turbulence.xi0[0]      = 1;
+//         turbulence.wind_speed[0]     = 10;
+//         turbulence.wind_direction[0] = 0;
+        // multi-layer
+        for (int k=0;k<_N_LAYER_;k++) {
+            turbulence.altitude[k] = altitude[k];
+            turbulence.xi0[k]      = xi0[k];
+            turbulence.wind_speed[k]     = wind_speed[k];
+            turbulence.wind_direction[k] = wind_direction[k];
+        }
+
+        // Atmosphere
+        atm.turbulence = turbulence;
+        atm.r0 = 0.15;
+        atm.setup();
+        mexAtExit(cleanup);
+        INIT = 1;
+    }
+    
+   if (*reset>0) { atm.reset(); }
+    
+   atm.get_phase_screen(d__phase_screen,d__x,d__y,_N_PIXEL_,d__src,(float)(*time));
+    
+    /* Wrap the result up as a MATLAB gpuArray for return. */
+    plhs[0] = mxGPUCreateMxArrayOnGPU(phase_screen);
+    
+//   atm.cleanup();
+    mxGPUDestroyGPUArray(x);
+    mxGPUDestroyGPUArray(y);
+    mxGPUDestroyGPUArray(phase_screen);
+}

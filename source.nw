@@ -1,0 +1,115 @@
+The source structure is written in the header:
+<<source.h>>=
+#ifndef __SOURCE_H__
+#define __SOURCE_H__
+
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+
+struct source {
+
+  <<source parameters>>
+
+  void setup(void);
+
+  void info(void);
+
+  float wavelength(void);
+
+  float n_photon(void);
+};
+#endif // __SOURCE_H__
+@ The routines are expanded in the source:
+<<source.cu>>=
+#include "source.h"
+
+<<setup>>
+
+<<info>>
+
+<<wavelength>>
+   
+<<number of photons>>
+@
+The source specify a celestial object by its coordinates:
+<<source parameters>>=
+float zenith, azimuth, height;
+@  and magnitude at a given photometric band.
+<<source parameters>>=
+char *photometric_band;
+float magnitude;
+@ 
+The main parameters of the  atmosphere are displayed with the [[info]] routine:
+<<info>>=
+void source::info(void)
+{
+printf("\n@(CEO)>source\n");
+printf(" zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+printf(" %5.2f      %6.2f    %8.2f\n",
+                        zenith*RADIAN2ARCSEC,
+                        azimuth*180/PI,height);
+printf("----------------------------------------------------\n");
+}
+
+@  The [[wavelength]] in \textsl{micron} corresponding to the photometric band is given by
+<<wavelength>>=
+float source::wavelength(void) {
+  if (strcmp(photometric_band,"V")==0)
+    return 0.550;
+  if (strcmp(photometric_band,"R")==0)
+    return 0.640;
+  if (strcmp(photometric_band,"I")==0)
+    return 0.790;
+  if (strcmp(photometric_band,"J")==0)
+    return 1.215;
+  if (strcmp(photometric_band,"H")==0)
+    return 1.654;
+  if (strcmp(photometric_band,"K")==0)
+    return 2.179;
+  if (strcmp(photometric_band,"Ks")==0)
+    return 2.157;
+  if (strcmp(photometric_band,"Na")==0)
+    return 0.589;
+  return 0;
+}
+@ The number of photon in $m^{-2}.s^{-1}$ is derived with
+<<number of photons>>=
+float source::n_photon(void) {
+  float zero_point;
+  if (strcmp(photometric_band,"V")==0)
+    zero_point = 3.3e12;
+  if (strcmp(photometric_band,"R")==0)
+    zero_point = 4.0e12 ;
+  if (strcmp(photometric_band,"I")==0)
+    zero_point = 2.7e12;
+  if (strcmp(photometric_band,"J")==0)
+    zero_point = 1.9e12;
+  if (strcmp(photometric_band,"H")==0)
+    zero_point = 1.1e12;
+  if (strcmp(photometric_band,"K")==0)
+    zero_point = 7.0e11;
+  if (strcmp(photometric_band,"Ks")==0)
+    zero_point = 5.5e11;
+  if (strcmp(photometric_band,"Na")==0)
+    zero_point =3.3e12 ;
+  return zero_point*powf(10 , -0.4*magnitude );
+}
+@ If the source is resolved by the  optical system, one must define its normalized irradiance map
+<<source parameters>>=
+float *irradiance, *irradiance_ft;
+@ The irradiance is normalized such as is sum is equal to 1. The Fourier transform of the irradiance map must be given too.
+ The last parameter is the complex amplitude of the wavefront associated with the source,
+<<source parameters>>=
+float amplitude[_SOURCE_N_PX_], phase[_SOURCE_N_PX_];
+@ that is given as amplitude and phase.
+The direction  towards the source from the origin of coordinates is given by the components $\theta_x,\theta_y$ of the direction vector:
+<<source parameters>>=
+float theta_x, theta_y;
+@ This components are computed with the setup function
+<<setup>>=
+void source::setup(void) {
+  info();
+  theta_x = tanf(zenith)*cosf(azimuth);
+  theta_y = tanf(zenith)*sinf(azimuth);
+}
