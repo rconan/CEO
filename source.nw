@@ -31,6 +31,8 @@ struct source {
 <<source.cu>>=
 #include "source.h"
 
+<<square geometry>>
+
 <<setup>>
 
 <<cleanup>>
@@ -110,7 +112,7 @@ float *irradiance, *irradiance_ft;
 @ The irradiance is normalized such as is sum is equal to 1. The Fourier transform of the irradiance map must be given too.
  The last parameter is the complex amplitude of the wavefront associated with the source,
 <<source parameters>>=
-float amplitude[_SOURCE_N_PX_], phase[_SOURCE_N_PX_];
+float *amplitude, *phase;
 @ that is given as amplitude and phase.
 A structure containing the source data and its copy on the device is also declared
 <<source parameters>>=
@@ -124,17 +126,35 @@ void source::setup(float zenith, float azimuth, float height) {
   data.zenith  = zenith;
   data.azimuth = azimuth;
   data.height  = height;
-  info();
+  data.theta_x = tanf(data.zenith)*cosf(data.azimuth);
+  data.theta_y = tanf(data.zenith)*sinf(data.azimuth);
   HANDLE_ERROR( cudaMalloc( (void**)&d__data, sizeof(source_data) ) );
   HANDLE_ERROR( cudaMemcpy( d__data, &data,
 			    sizeof(source_data) ,
 			    cudaMemcpyHostToDevice ) );
-  data.theta_x = tanf(data.zenith)*cosf(data.azimuth);
-  data.theta_y = tanf(data.zenith)*sinf(data.azimuth);
+  HANDLE_ERROR( cudaMalloc( (void**)&amplitude, sizeof(float)*_SOURCE_N_PX_ ) );
+  HANDLE_ERROR( cudaMalloc( (void**)&phase    , sizeof(float)*_SOURCE_N_PX_ ) );
+  dim3 blockDim(256,1);
+  dim3 gridDim( 1+_SOURCE_N_PX_/256 , 1 );
+  squarePupil LLL gridDim,blockDim RRR (amplitude,phase);
+  info();
 }
 @ Allocated variable are freed with the [[cleanup]] routine
 <<cleanup>>=
 void source::cleanup(void) {
   printf("\n@(CEO)>source: freeing memory!\n");
   HANDLE_ERROR( cudaFree( d__data ) );
+  HANDLE_ERROR( cudaFree( amplitude ) );
+  HANDLE_ERROR( cudaFree( phase ) );
+}
+@ 
+The amplitude and phase are initialized to respectively 1 and 0:
+<<square geometry>>=
+__global__ void squarePupil(float* amplitude, float *phase) {
+  int id;
+  id = blockIdx.x * blockDim.x + threadIdx.x;
+  if (id<_SOURCE_N_PX_) {
+    amplitude[id] = 1.0;
+    phase[id]     = 0.0;
+  }
 }

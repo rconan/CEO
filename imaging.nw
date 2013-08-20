@@ -1,0 +1,396 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+The imaging header and source are written
+<<imaging.h>>=
+#ifndef __IMAGING_H__
+#define __IMAGING_H__
+
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+
+#define NRANK 2
+
+struct imaging {
+
+  cufftHandle plan;
+  float2 *d__wave_PUPIL;
+  float  *d__frame;
+
+  void setup(void);
+
+  void cleanup(void);
+   
+  void propagate(source *src);
+
+};
+
+#endif  // __IMAGING_H__
+@
+<<imaging.cu>>=
+#include "imaging.h"
+
+<<imaging complex amplitude>>
+
+<<binning>>
+
+<<setup>>
+
+<<cleanup>>
+   
+<<propagation>>
+@
+
+In this section, we are dealing with the process of computing images from wavefronts in the pupil.
+A [[setup]] routine is defined to initialize any required variables:
+<<setup>>=
+void imaging::setup(void) {
+  printf("\n@(CEO)>imaging: Device memory allocation\n");
+  int N_DFT_bytes = _N_DFT_ * _N_DFT_ * _N_LENSLET_*_N_SOURCE_;
+  cudaMalloc( (void**)&d__wave_PUPIL , sizeof(float2) * N_DFT_bytes);
+  cudaMalloc( (void**)&d__frame , sizeof(float) *_N_PX_CAMERA_*_N_PX_CAMERA_*_N_LENSLET_*_N_SOURCE_ );
+  <<imaging CUFFT plan creation>>
+}
+@ 
+As we are considering only the case of imaging sources at infinity, the wavefront propagation is performed with the Fraunhofer approximation meaning that the image in the focal plane is simply the Fourier transform of the complex amplitude in the pupil plane.
+The propagation is computing with a call to the [[propagate]] routine:
+<<propagation>>=
+void imaging::propagate(source *src) {
+  dim3 gridDim(_N_DFT_*N_SIDE_LENSLET/16,_N_DFT_*N_SIDE_LENSLET/16,_N_SOURCE_);
+  dim3 blockDim(16,16);
+  complexAmplitude LLL gridDim , blockDim RRR(d__wave_PUPIL, src);
+  if (cudaThreadSynchronize() != cudaSuccess){
+    fprintf(stderr, "Cuda error: Failed to synchronize\n");
+  }    
+  <<imaging CUFFT execution>>
+  binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL);
+}
+@ 
+The Fourier transform is done with the CUFFT library:
+<<imaging CUFFT execution>>=
+if (cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_FORWARD) 
+    != CUFFT_SUCCESS){
+  fprintf(stderr,"CUFFT Error: Unable to execute plan\n");
+}
+if (cudaThreadSynchronize() != cudaSuccess){
+  fprintf(stderr, "Cuda error: Failed to synchronize\n");
+ }
+@ that computes the discrete Fourier tranform (DFT) from the complex amplitude [[d__wave_PUPIL]] in the pupil plane.
+CUFFT requires to define a plan first:
+<<imaging CUFFT plan creation>>=
+printf("\n@(CEO)>imaging: Creating a 2D FFT plan\n");
+int n_DFT[NRANK] = {_N_DFT_, _N_DFT_};
+int iodist = _N_DFT_*_N_DFT_;
+int BATCH = _N_LENSLET_*_N_SOURCE_;
+/* Create a 2D FFT plan. */
+if (cufftPlanMany(&plan, NRANK, n_DFT,
+		  NULL, 1, iodist,
+		  NULL, 1, iodist,
+		  CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
+  fprintf(stderr,
+	  "CUFFT Error: Unable to create plan\n");
+  return;
+ }
+if (cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
+  fprintf(stderr,
+	  "CUFFT Error: Unable to set compatibility mode to native\n");
+    return;
+ }
+@  Dynamically allocated variables are freed with the cleanup routine:
+<<cleanup>>=
+void imaging::cleanup(void) {
+  printf("\n@(CEO)>imaging: Device memory free\n");
+  cufftDestroy(plan);
+  cudaFree( d__wave_PUPIL );
+  cudaFree( d__frame );
+}
+
+@ The rank of the DFT [[NRANK]] is always 2 and the size of each DFT is $[[_N_DFT_]]\times[[_N_DFT_]]$.
+CUFFT can execute several Fourier transform in one batch.
+All the inputs wave must be concatenated into a single array and you must specify the number of elements between 2 consecutive waves that is here $[[_N_DFT_]]^2$.
+[[BATCH]] gives the number of DFT to execute.
+The memory allocate for the plan is freed with
+<<imaging CUFFT plan destruction>>=
+cufftDestroy(plan);
+@
+The imaging routine is modeling the propagation of [[_N_SOURCE_]] sources through a square lenslet array of length $[[N_SIDE_LENSLET]]\geq 1$ to the lenslet focal plane.
+For a given lenslet, the wave $\Psi=[[wave_PUPIL]]$ is sampled with $N_{pupil}\times N_{pupil}$ pixels.
+The complex amplitude in the image plane $\Psi^\prime=[[wave_IMAGE]]$ is given by
+\begin{equation}
+  \label{eq:1}
+  \Psi^\prime_{kl} = \sum_{i=0}^{N_{pupil}-1}\;\sum_{j=0}^{N_{pupil}-1} \Psi_{ij} \exp\left[-2\iota\pi{ik+jl \over N_{pupil} } \right]
+\end{equation}
+with $k\in[0,\dots,N_{pupil}-1]$ and $l\in[0,\dots,N_{pupil}-1]$.
+To avoid numerical aliasing, $\Psi$ is usually padded with zeros, this is usually called a zero--padded DFT (ZP--DFT).
+The new size of $\Psi$ is $N_{DFT}\times N_{DFT}$ with $N_{DFT} = 2 N_{pupil}$.
+$\Psi^\prime$ is rewritten
+\begin{equation}
+  \label{eq:3}
+  \Psi^\prime_{kl} = \sum_{i=0}^{N_{DFT}-1}\;\sum_{j=0}^{N_{DFT}-1} \Psi_{ij} \exp\left[-2\iota\pi{ik+jl \over N_{DFT} } \right]
+\end{equation}
+with $k\in[0,\dots,N_{DFT}-1]$ and $l\in[0,\dots,N_{DFT}-1]$.
+the zero frequency point in the image is at the pixel [0,0] whereas it should be located on the system optical axis.
+To shift the image, the following substitution is performed
+$$k \leftarrow k - { 1 - N_{DFT} + w \over 2 },$$
+$$l \leftarrow l - { 1 - N_{DFT} + w \over 2 }$$
+and
+$$\Psi_{ij} \leftarrow \Psi_{ij}\exp\left[\iota\pi{(i+j)(1 - N_{DFT} + w) \over N_{DFT} }\right].$$
+
+When the pupil is mapped with a lenslet array, the complex amplitude of each lenslet must be stacked in a row.
+A pixel $(i_p,j_p)$ in the lenslet $(i_L,j_L)$ of a square lenslet array of side length [[N_SIDE_LENSLET]] is at coordinates $(i,j)$ in the lenslet array and at coordinates $(i^\prime,j^\prime)$ in the row of lenslets with 
+\begin{eqnarray}
+  \label{eq:1}
+  i &=& i_LN_{pupil} + i_p \\
+  j &=& j_LN_{pupil} + j_p \\
+\end{eqnarray}
+and
+\begin{eqnarray}
+  \label{eq:2}
+  i^\prime &=& k_LN_{pupil} + i_p \\
+  j^\prime &=& j_p
+\end{eqnarray}
+with $k_L= i_L[[N_SIDE_LENSLET]] + j_L$.
+<<imaging complex amplitude>>=
+__global__ void complexAmplitude(float2 *wave_PUPIL, 
+                                 source *src)
+{
+  int i, j, iLenslet, jLenslet, ij_PUPIL, ij_DFT, iSource;
+  float c ,s, phasor;
+@ The  pixel coordinates ([[i]],[[j]]) in the lenslet ([[iLenslet]],[[jLenslet]]) is derrived from the thread blocks:
+<<imaging complex amplitude>>=
+  //  wave pixel coordinate (_N_DFT_LxN_SIDE_LENSLET)^2
+  threads2lenslet(threadIdx, blockIdx, blockDim, 
+		   &i, &j, _N_DFT_, 
+		  &iLenslet, &jLenslet);
+@ The source index is given by the third coordinates of the thread block
+<<imaging complex amplitude>>=
+  // source index
+  iSource = blockIdx.z;
+  if ((iLenslet<N_SIDE_LENSLET) & (jLenslet<N_SIDE_LENSLET) ) {
+@ The linear index of the vertically concatenated lenslet array is computed
+<<imaging complex amplitude>>=
+    ij_DFT = lenslet2row(i,j,_N_DFT_,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
+    if ((i<_N_PX_PUPIL_) && (j<_N_PX_PUPIL_))
+      {
+@ The linear index in the square lenslet array is computed
+<<imaging complex amplitude>>=
+	ij_PUPIL = lenslet2array(i,j,_N_PX_PUPIL_,iLenslet,jLenslet,N_SIDE_LENSLET,0,1);
+@ The phase shift is applied on the wavefront
+<<imaging complex amplitude>>=
+        phasor = PI*(i+j)*(1-_N_DFT_ + (_N_PX_IMAGE_ & 1))/_N_DFT_;
+        phasor += src[iSource].phase[ij_PUPIL];
+        sincosf(phasor,&c,&s);
+@ The wavefront in the pupil plane is written in the complex amplitude array ready to be processed by CUFFT
+<<imaging complex amplitude>>=
+        wave_PUPIL[ij_DFT].x = src[iSource].amplitude[ij_PUPIL]*c;
+        wave_PUPIL[ij_DFT].y = src[iSource].amplitude[ij_PUPIL]*s;
+        return;
+      }
+    if ((i<_N_DFT_) && (j<_N_DFT_))
+      wave_PUPIL[ij_DFT].x = wave_PUPIL[ij_DFT].y = 0;
+  }
+}
+@
+\begin{figure}
+  \centering
+  \begin{tikzpicture}[x=1mm,y=1mm]
+    \begin{scope}[xshift=-60mm]
+      \fill[orange!20] (-8,-8) rectangle (8,8); 
+      \draw[step=1,gray,thin] (-8,-8) grid (8,8);
+      \node[anchor=south] at (0,8) {Pupil plane};
+      \draw[<->,yshift=-2mm] (-8,-8) -- node[below] {[[_N_PX_PUPIL_]]} (8,-8);
+    \end{scope}
+    \begin{scope}[xshift=-10mm]
+      \fill[blue!20] (-35,-35) rectangle (35,35); 
+      \fill[green!50] (-16,-16) rectangle (16,16); 
+      \draw[step=1,gray,thin] (-35,-35) grid (35,35);
+      \draw[step=5,red,thin] (-35,-35) grid (35,35);
+      \node[anchor=south] at (0,35) {Nyquist sampled image plane};
+      \draw[<->,yshift=-2mm] (-16,-35) -- node[below] {[[_N_DFT_]]} (16,-35);
+      \draw[<->,yshift=-6mm] (-35,-35) -- node[below] {[[_N_PX_IMAGE_]]} (35,-35);
+    \end{scope}
+    \begin{scope}[xshift=65mm]
+      \fill[red!50] (-35,-35) rectangle (35,35); 
+      \draw[step=5,red,thin] (-35,-35) grid (35,35);
+      \node[anchor=south] at (0,35) {Binned image plane};
+      \draw[<->,yshift=-2mm] (-35,-35) -- node[below] {[[N_PX_CAM]]} (35,-35);
+   \end{scope}
+  \end{tikzpicture}
+  \caption{Pupil and image arrays}
+  \label{fig:4}
+\end{figure}
+@
+The imagelets are binned into framelets on the detector frame:
+<<binning>>=
+__global__ void binning(float *frame, const float2 *wave)
+{
+  int u, v, iLenslet, jLenslet, ij_DFT, 
+    M, offset, iPxL, jPxL, i, j, ij_CAM, ii, jj,iSource;
+
+  threads2lenslet(threadIdx, blockIdx, blockDim, 
+		   &u, &v, _N_PX_CAMERA_, 
+		  &iLenslet, &jLenslet);
+  // source index
+  iSource = blockIdx.z;
+  // BINNING
+  if ( (iLenslet<N_SIDE_LENSLET) && (jLenslet<N_SIDE_LENSLET) )
+    {
+
+      M = _N_PX_IMAGE_/_N_PX_CAMERA_;
+      offset = (_N_PX_IMAGE_-_N_DFT_)/2;
+  
+      __shared__ float bin[16][16];
+      ii = threadIdx.x;
+      jj = threadIdx.y;
+
+      bin[ii][jj] = 0.0;
+      for (i=0;i<M;i++)
+      	{
+      	  iPxL = u*M + i - offset;
+      	  if ( iPxL>=0 && iPxL<_N_DFT_)
+      	    for (j=0;j<M;j++)
+      	      {
+      		jPxL = v*M + j - offset;
+      		if ( jPxL>=0 && jPxL<_N_DFT_)
+      		  {
+      		    ij_DFT = lenslet2row(iPxL,jPxL,_N_DFT_,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
+      		    bin[ii][jj] += wave[ij_DFT].x*wave[ij_DFT].x + wave[ij_DFT].y*wave[ij_DFT].y;
+      		  }
+      	      }
+      	}
+      ij_CAM = lenslet2array(u,v,_N_PX_CAMERA_,iLenslet,jLenslet,N_SIDE_LENSLET,iSource,_N_SOURCE_);
+      frame[ij_CAM] =   bin[ii][jj]/(_N_DFT_*_N_DFT_);
+    }
+
+}
+
+@ 
+The test suite is a Matlab script.
+It calls the mex function:
+<<imaging.mex>>=
+#include <math.h>
+#include <cuda_runtime.h>
+#include "cublas_v2.h"
+#include "mex.h"
+#include "gpu/mxGPUArray.h"
+
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+#ifndef __SOURCE_H__
+#include "source.h"
+#endif
+#ifndef __ATMOSPHERE_H__
+#include "atmosphere.h"
+#endif
+#ifndef __IMAGING_H__
+#include "imaging.h"
+#endif
+
+static source src;
+static atmosphere atm;
+static imaging lenslet_array;
+
+static unsigned int INIT=0;
+
+static void cleanup(void)
+{
+    atm.cleanup();
+    src.cleanup();
+    lenslet_array.cleanup();
+    INIT = 0;
+}
+void mexFunction(int nlhs, mxArray *plhs[],
+        int nrhs, mxArray const *prhs[])
+{
+    unsigned int inputIndex;
+    float const *d__x, *d__y;
+    float *d__phase_screen, *d__frame;
+    double *reset, *L0, *time;
+    mwSize dims[2];
+    
+    char const * const errId = "parallel:gpu:CEO_SCAO_MEX:InvalidInput";
+    char const * const errMsg = "Invalid input to MEX file.";
+    
+    /* Check for proper number of input and output arguments */
+    if (nrhs != 5) {
+        mexErrMsgIdAndTxt( "MATLAB:mxislogical:invalidNumInputs",
+                "Five input argument required.");
+    }
+    if(nlhs > 2){
+        mexErrMsgIdAndTxt( "MATLAB:mxislogical:maxlhs",
+                "Too many output arguments.");
+    }
+
+    inputIndex = 0;
+    
+    /* Create GPUArray from mxArray input and get underlying pointer. */
+    mxGPUArray const *x;
+    x = mxGPUCreateFromMxArray(prhs[inputIndex++]);
+    if (mxGPUGetClassID(x) != mxSINGLE_CLASS) {
+        mexErrMsgIdAndTxt(errId, errMsg);
+    }
+    d__x = (float const *)(mxGPUGetDataReadOnly(x));
+    // ---------------------------------------
+    mxGPUArray const *y;
+    y = mxGPUCreateFromMxArray(prhs[inputIndex++]);
+    if (mxGPUGetClassID(y) != mxSINGLE_CLASS) {
+        mexErrMsgIdAndTxt(errId, errMsg);
+    }
+    d__y = (float const *)(mxGPUGetDataReadOnly(y));
+    // ---------------------------------------
+    reset = mxGetPr(prhs[inputIndex++]);
+    L0 = mxGetPr(prhs[inputIndex++]);
+    time = mxGetPr(prhs[inputIndex++]);
+
+    /* Create GPUArray to hold the result and get underlying pointer. */
+    mxGPUArray *phase_screen;
+    phase_screen = mxGPUCreateGPUArray(2,mxGPUGetDimensions(x),
+            mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
+    d__phase_screen = (float *)(mxGPUGetData(phase_screen));
+    mxGPUArray *frame;
+    dims[0] = _N_PX_CAMERA_*N_SIDE_LENSLET;
+    dims[1] = _N_PX_CAMERA_*N_SIDE_LENSLET;
+    frame = mxGPUCreateGPUArray(2,dims,
+            mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
+    d__frame = (float *)(mxGPUGetData(frame));
+    
+    if (INIT==0) {
+        // Source
+        src.setup(ARCSEC(60) , 0, INFINITY);
+        
+        // Single layer turbulence profile
+        float altitude[] = {0},
+              xi0[] = {1},
+              wind_speed[] = {10},
+              wind_direction[] = {0};
+	      /*
+        // GMT 7 layers turbulence profile
+        float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
+              xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
+              wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
+              wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+              */
+        // Atmosphere
+        atm.setup(0.15,(float) (*L0),altitude,xi0,wind_speed,wind_direction);
+        mexAtExit(cleanup);
+        INIT = 1;
+    }
+    
+   if (*reset>0) { atm.reset(); }
+    
+   atm.get_phase_screen(d__phase_screen,d__x,d__y,_N_PIXEL_,&src,(float)(*time));
+
+ 
+   lenslet_array.setup();
+   //  lenslet_array.propagate(&src);
+
+    
+    /* Wrap the result up as a MATLAB gpuArray for return. */
+    plhs[0] = mxGPUCreateMxArrayOnGPU(phase_screen);
+    plhs[1] = mxGPUCreateMxArrayOnGPU(frame);
+   
+//   atm.cleanup();
+    mxGPUDestroyGPUArray(x);
+    mxGPUDestroyGPUArray(y);
+    mxGPUDestroyGPUArray(phase_screen);
+}
