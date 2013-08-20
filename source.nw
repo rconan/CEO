@@ -1,3 +1,4 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
 The source structure is written in the header:
 <<source.h>>=
 #ifndef __SOURCE_H__
@@ -7,11 +8,17 @@ The source structure is written in the header:
 #include "ceo.h"
 #endif
 
+struct source_data {
+  <<source data parameters>>
+};
+
 struct source {
 
   <<source parameters>>
 
-  void setup(void);
+  void setup(float zenith, float azimuth, float height);
+
+  void cleanup(void);
 
   void info(void);
 
@@ -26,6 +33,8 @@ struct source {
 
 <<setup>>
 
+<<cleanup>>
+
 <<info>>
 
 <<wavelength>>
@@ -33,7 +42,7 @@ struct source {
 <<number of photons>>
 @
 The source specify a celestial object by its coordinates:
-<<source parameters>>=
+<<source data parameters>>=
 float zenith, azimuth, height;
 @  and magnitude at a given photometric band.
 <<source parameters>>=
@@ -47,8 +56,8 @@ void source::info(void)
 printf("\n@(CEO)>source\n");
 printf(" zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
 printf(" %5.2f      %6.2f    %8.2f\n",
-                        zenith*RADIAN2ARCSEC,
-                        azimuth*180/PI,height);
+                        data.zenith*RADIAN2ARCSEC,
+                        data.azimuth*180/PI,data.height);
 printf("----------------------------------------------------\n");
 }
 
@@ -103,13 +112,29 @@ float *irradiance, *irradiance_ft;
 <<source parameters>>=
 float amplitude[_SOURCE_N_PX_], phase[_SOURCE_N_PX_];
 @ that is given as amplitude and phase.
-The direction  towards the source from the origin of coordinates is given by the components $\theta_x,\theta_y$ of the direction vector:
+A structure containing the source data and its copy on the device is also declared
 <<source parameters>>=
+source_data data, *d__data;
+@ The direction  towards the source from the origin of coordinates is given by the components $\theta_x,\theta_y$ of the direction vector:
+<<source data parameters>>=
 float theta_x, theta_y;
 @ This components are computed with the setup function
 <<setup>>=
-void source::setup(void) {
+void source::setup(float zenith, float azimuth, float height) {
+  data.zenith  = zenith;
+  data.azimuth = azimuth;
+  data.height  = height;
   info();
-  theta_x = tanf(zenith)*cosf(azimuth);
-  theta_y = tanf(zenith)*sinf(azimuth);
+  HANDLE_ERROR( cudaMalloc( (void**)&d__data, sizeof(data) ) );
+  HANDLE_ERROR( cudaMemcpy( d__data, &data,
+			    sizeof(data) ,
+			    cudaMemcpyHostToDevice ) );
+  data.theta_x = tanf(data.zenith)*cosf(data.azimuth);
+  data.theta_y = tanf(data.zenith)*sinf(data.azimuth);
+}
+@ Allocated variable are freed with the [[cleanup]] routine
+<<cleanup>>=
+void source::cleanup(void) {
+  printf("\n@(CEO)>source: freeing memory!\n");
+  HANDLE_ERROR( cudaFree( d__data ) );
 }

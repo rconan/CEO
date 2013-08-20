@@ -25,7 +25,8 @@ struct profile {
 
   <<profile parameters>>
 
-  void setup(void);
+  void setup(float *altitude, float *xi0,
+	     float *wind_speed, float *wind_direction);
 
 };
 
@@ -33,7 +34,9 @@ struct atmosphere {
 
   <<atmosphere parameters>>
 
-  void setup(void);
+  void setup(float r0_, float L0, 
+	     float *altitude, float *xi0,
+	     float *wind_speed, float *wind_direction);
 
   <<cleanup>>
 
@@ -61,9 +64,7 @@ struct atmosphere {
 
 <<phase screen kernel>>
 
-void profile::setup(void) {
-  <<profile setup>>
-}
+<<profile setup>>
 
 <<atmosphere setup>>
 
@@ -233,9 +234,14 @@ curandState *devStates;
 profile turbulence, *d__turbulence;
 @ This variables are defined in the setup routines:
 <<atmosphere setup>>=
-  void atmosphere::setup(void) {
+void atmosphere::setup(float r0_, float L0, 
+		       float *altitude, float *xi0,
+		       float *wind_speed, float *wind_direction) {
+  r0 = r0_;
+  turbulence.L0 = L0;
+  turbulence.setup(altitude, xi0,
+		   wind_speed, wind_direction);
   info();
-  turbulence.setup();
   HANDLE_ERROR( cudaMalloc( (void**)&d__turbulence, sizeof(profile) ) );
   HANDLE_ERROR( cudaMemcpy( d__turbulence, &turbulence,
 			    sizeof(profile), cudaMemcpyHostToDevice ) );
@@ -256,8 +262,14 @@ printf("done!\n");
 }
 @ 
 <<profile setup>>=
+void profile::setup(float *altitude_, float *xi0_,
+		    float *wind_speed_, float *wind_direction_) {
   for (int k=0;k<_N_LAYER_;k++)
     {
+      altitude[k] = altitude_[k];
+      xi0[k]      = xi0_[k];
+      wind_speed[k]     = wind_speed_[k];
+      wind_direction[k] = wind_direction_[k];
       vx[k] = wind_speed[k]*cosf(wind_direction[k]);
       vy[k] = wind_speed[k]*sinf(wind_direction[k]);
     }
@@ -269,17 +281,18 @@ printf("done!\n");
   delta = 0.1;
   N_k = logf(f)/log( (2+delta)/(2-delta) );
   N_a = powf( f , 1/N_k ) ;
-N_a = 0.25*PI*( (N_a + 1)/(N_a - 1) );
-N_k = ceilf( N_k );
-N_a = ceilf( N_a );
-f = powf( (4*N_a + PI)/(4*N_a - PI) , N_k );
-delta = 0.5*PI/N_a;
-printf("\n@(CEO)>profile:\n");
-printf(" . N_k = %f\n",N_k);
-	       printf(" . N_a = %f\n",N_a);
+  N_a = 0.25*PI*( (N_a + 1)/(N_a - 1) );
+  N_k = ceilf( N_k );
+  N_a = ceilf( N_a );
+  f = powf( (4*N_a + PI)/(4*N_a - PI) , N_k );
+  delta = 0.5*PI/N_a;
+  printf("\n@(CEO)>profile:\n");
+  printf(" . N_k = %f\n",N_k);
+  printf(" . N_a = %f\n",N_a);
   printf(" . frequency range      = %8.2f\n",f);
   printf(" . frequency resolution = %6.4f\n",delta);
   printf(" . minimum frequency    = %6.4f\n",kmin);
+}
 @ 
 The random generator is initialized within the following kernel:
 <<init random variates>>=
@@ -355,7 +368,7 @@ void atmosphere::get_phase_screen(float *phase_screen,
 				   x, y, N_xy, 
 				   d__turbulence, r0,
 				   zeta1, eta1, zeta2, eta2,
-				   src, time);
+				   src->d__data, time);
 }
 @ and computed with the kernel
 <<phase screen kernel>>=
@@ -363,7 +376,7 @@ void atmosphere::get_phase_screen(float *phase_screen,
 		       float const *x, float const *y, int N_xy, 
 		       profile *turb, float r0,
 		       float *zeta1, float *eta1, float *zeta2, float *eta2,
-		       source *src, float time)
+		       source_data *src, float time)
 {
   <<declarations>>
 
@@ -466,13 +479,13 @@ It calls the mex function:
 #include "atmosphere.h"
 #endif
 
-static source src, *d__src;
-static profile turbulence;
+static source src;
 static atmosphere atm;
 static unsigned int INIT=0;
 static void cleanup(void)
 {
     atm.cleanup();
+    src.cleanup();
     INIT = 0;
 }
 void mexFunction(int nlhs, mxArray *plhs[],
@@ -525,52 +538,23 @@ void mexFunction(int nlhs, mxArray *plhs[],
     
     if (INIT==0) {
         // Source
-        src.zenith = ARCSEC(60);
-        src.azimuth = 0;
-        src.height = 90e3;//INFINITY;
-        src.setup();
-//         mexPrintf ("src.Ox=%4.1f ; src.Oy=%4.1f\n",src.theta_x,src.theta_y);
-        cudaMalloc( (void**)&d__src, sizeof(source) );
-        cudaMemcpy( d__src, &src,
-                sizeof(source) ,
-                cudaMemcpyHostToDevice );
+        src.setup(ARCSEC(60) , 0, 90e3);
         
         // GMT 7 layers turbulence profile
         float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
               xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
               wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
               wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
-        // N layers
-//         float altitude[] =       {0, 500, 1000, 2000, 5000, 8000, 13000};
-//         float xi0[] =            {0.2, 0.1, 0.1, 0.3, 0.2, 0.05, 0.05};
-//         float wind_speed[] =     {10, 5, 7.5, 5, 10, 12, 15};
-//         float wind_direction[] = {0, 0.25, 0.5, 1, 1.5, 1.75, 2};
-                        
-        turbulence.L0 = (float) (*L0);
-        // single layer
-//         turbulence.altitude[0] = 0;
-//         turbulence.xi0[0]      = 1;
-//         turbulence.wind_speed[0]     = 10;
-//         turbulence.wind_direction[0] = 0;
-        // multi-layer
-        for (int k=0;k<_N_LAYER_;k++) {
-            turbulence.altitude[k] = altitude[k];
-            turbulence.xi0[k]      = xi0[k];
-            turbulence.wind_speed[k]     = wind_speed[k];
-            turbulence.wind_direction[k] = wind_direction[k];
-        }
 
         // Atmosphere
-        atm.turbulence = turbulence;
-        atm.r0 = 0.15;
-        atm.setup();
+        atm.setup(0.15,(float) (*L0),altitude,xi0,wind_speed,wind_direction);
         mexAtExit(cleanup);
         INIT = 1;
     }
     
    if (*reset>0) { atm.reset(); }
     
-   atm.get_phase_screen(d__phase_screen,d__x,d__y,_N_PIXEL_,d__src,(float)(*time));
+   atm.get_phase_screen(d__phase_screen,d__x,d__y,_N_PIXEL_,&src,(float)(*time));
     
     /* Wrap the result up as a MATLAB gpuArray for return. */
     plhs[0] = mxGPUCreateMxArrayOnGPU(phase_screen);
