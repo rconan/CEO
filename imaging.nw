@@ -285,26 +285,31 @@ It calls the mex function:
 #ifndef __IMAGING_H__
 #include "imaging.h"
 #endif
+#ifndef __CENTROIDING_H__
+#include "centroiding.h"
+#endif
 
-static source src;
+static source src, *d__src;
 static atmosphere atm;
 static imaging lenslet_array;
+static centroiding cog;
 
 static unsigned int INIT=0;
 
 static void cleanup(void)
 {
-    atm.cleanup();
-    src.cleanup();
-    lenslet_array.cleanup();
-    INIT = 0;
+  HANDLE_ERROR( cudaFree( d__src) );
+  atm.cleanup();
+  lenslet_array.cleanup();
+  cog.cleanup();
+  INIT = 0;
 }
 void mexFunction(int nlhs, mxArray *plhs[],
         int nrhs, mxArray const *prhs[])
 {
     unsigned int inputIndex;
     float const *d__x, *d__y;
-    float *d__phase_screen, *d__frame;
+    float *d__phase_screen;
     double *reset, *L0, *time;
     mwSize dims[2];
     
@@ -316,7 +321,7 @@ void mexFunction(int nlhs, mxArray *plhs[],
         mexErrMsgIdAndTxt( "MATLAB:mxislogical:invalidNumInputs",
                 "Five input argument required.");
     }
-    if(nlhs > 2){
+    if(nlhs > 5){
         mexErrMsgIdAndTxt( "MATLAB:mxislogical:maxlhs",
                 "Too many output arguments.");
     }
@@ -351,12 +356,26 @@ void mexFunction(int nlhs, mxArray *plhs[],
     dims[0] = _N_PX_CAMERA_*N_SIDE_LENSLET;
     dims[1] = _N_PX_CAMERA_*N_SIDE_LENSLET;
     frame = mxGPUCreateGPUArray(2,dims,
-            mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
-    d__frame = (float *)(mxGPUGetData(frame));
+				mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
+    mxGPUArray *cx;
+    dims[0] = _N_LENSLET_*_N_SOURCE_;
+    dims[1] = 1;
+    cx = mxGPUCreateGPUArray(2,dims,
+			     mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
+    mxGPUArray *cy;
+    cy = mxGPUCreateGPUArray(2,dims,
+			     mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
+    mxGPUArray *flux;
+    flux = mxGPUCreateGPUArray(2,dims,
+			       mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
     
     if (INIT==0) {
         // Source
         src.setup(ARCSEC(60) , 0, INFINITY);
+	HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source)*_N_SOURCE_ ) );
+	HANDLE_ERROR( cudaMemcpy( d__src, &src,
+				  sizeof(source)*_N_SOURCE_ ,
+				  cudaMemcpyHostToDevice ) );
         
         // Single layer turbulence profile
         float altitude[] = {0},
@@ -372,22 +391,40 @@ void mexFunction(int nlhs, mxArray *plhs[],
               */
         // Atmosphere
         atm.setup(0.15,(float) (*L0),altitude,xi0,wind_speed,wind_direction);
+
+	// SH WFS
+	lenslet_array.setup();
+	HANDLE_ERROR( cudaFree( lenslet_array.d__frame ) );
+
+	// Centroid
+	cog.setup();
+	cog.cleanup();
+
         mexAtExit(cleanup);
         INIT = 1;
     }
     
    if (*reset>0) { atm.reset(); }
     
-   atm.get_phase_screen(d__phase_screen,d__x,d__y,_N_PIXEL_,&src,(float)(*time));
+   atm.get_phase_screen(d__x,d__y,_N_PIXEL_,d__src,(float)(*time));
+   HANDLE_ERROR( cudaMemcpy( d__phase_screen, d__src->phase,
+				  sizeof(float)*_SOURCE_N_PX_,
+				  cudaMemcpyDeviceToDevice ) );
 
- 
-   lenslet_array.setup();
-   //  lenslet_array.propagate(&src);
+   lenslet_array.d__frame  = (float *)(mxGPUGetData(frame));
+   lenslet_array.propagate(d__src);
+   cog.d__cx   = (float *)(mxGPUGetData(cx));
+   cog.d__cy   = (float *)(mxGPUGetData(cy));
+   cog.d__mass = (float *)(mxGPUGetData(flux));
+   cog.get_data(lenslet_array.d__frame);
 
     
     /* Wrap the result up as a MATLAB gpuArray for return. */
     plhs[0] = mxGPUCreateMxArrayOnGPU(phase_screen);
     plhs[1] = mxGPUCreateMxArrayOnGPU(frame);
+    plhs[2] = mxGPUCreateMxArrayOnGPU(cx);
+    plhs[3] = mxGPUCreateMxArrayOnGPU(cy);
+    plhs[4] = mxGPUCreateMxArrayOnGPU(flux);
    
 //   atm.cleanup();
     mxGPUDestroyGPUArray(x);

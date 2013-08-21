@@ -14,7 +14,7 @@ CDIR		= ./imaging
 INCS		= -I$(CDIR) -I./include -I/priv/monarcas1/rconan/MATLAB/R2013a/extern/include \
 		 -I/export/monarcas1/rconan/MATLAB/R2013a/toolbox/distcomp/gpu/extern/include
 
-nwsrc = ceo.nw source.nw atmosphere.nw imaging.nw
+nwsrc = ceo.nw source.nw atmosphere.nw imaging.nw centroiding.nw
 texsrc = $(nwsrc:%.nw=%.tex)
 header = $(nwsrc:%.nw=%.h)
 obj    = $(nwsrc:%.nw=%.o)

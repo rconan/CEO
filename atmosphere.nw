@@ -48,6 +48,9 @@ struct atmosphere {
 			float const *x, float const *y, int N_xy, 
 			source *src, float time);
 
+  void get_phase_screen(float const *x, float const *y, int N_xy, 
+			source *src, float time);
+
 };
 
 #endif // __ATMOSPHERE_H__
@@ -71,7 +74,9 @@ struct atmosphere {
 
 <<info>>
 
-<<phase screen>>
+<<phase screen I>>
+
+<<phase screen II>>
 
 @
 The atmosphere parameters are
@@ -339,7 +344,7 @@ void atmosphere::cleanup(void) {
 }
 @
 The phase screen are defined in the telescope pupil at the ground 
-<<phase screen>>=
+<<phase screen I>>=
 void atmosphere::get_phase_screen(float *phase_screen,
 		       float const *x, float const *y, int N_xy, 
 		       source *src, float time)
@@ -350,7 +355,20 @@ void atmosphere::get_phase_screen(float *phase_screen,
 				   x, y, N_xy, 
 				   d__turbulence, r0,
 				   zeta1, eta1, zeta2, eta2,
-				   src->d__data, time);
+				   src, time);
+}
+@ 
+<<phase screen II>>=
+void atmosphere::get_phase_screen(float const *x, float const *y, int N_xy, 
+		       source *src, float time)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim( ceilf(sqrt(N_xy)/16) , ceilf(sqrt(N_xy)/16));
+  plps LLL gridDim , blockDim RRR (src->phase,
+				   x, y, N_xy, 
+				   d__turbulence, r0,
+				   zeta1, eta1, zeta2, eta2,
+				   src, time);
 }
 @ and computed with the kernel
 <<phase screen kernel>>=
@@ -358,7 +376,7 @@ void atmosphere::get_phase_screen(float *phase_screen,
 		       float const *x, float const *y, int N_xy, 
 		       profile *turb, float r0,
 		       float *zeta1, float *eta1, float *zeta2, float *eta2,
-		       source_data *src, float time)
+		       source *src, float time)
 {
   <<declarations>>
 
@@ -463,13 +481,12 @@ It calls the mex function:
 #include "atmosphere.h"
 #endif
 
-static source src;
+static source src, *d__src;
 static atmosphere atm;
 static unsigned int INIT=0;
 static void cleanup(void)
 {
     atm.cleanup();
-    src.cleanup();
     INIT = 0;
 }
 void mexFunction(int nlhs, mxArray *plhs[],
@@ -523,7 +540,11 @@ void mexFunction(int nlhs, mxArray *plhs[],
     if (INIT==0) {
         // Source
         src.setup(ARCSEC(60) , 0, INFINITY);
-        
+	HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source)*_N_SOURCE_ ) );
+	HANDLE_ERROR( cudaMemcpy( d__src, &src,
+				  sizeof(source)*_N_SOURCE_ ,
+				  cudaMemcpyHostToDevice ) );
+       
         // Single layer turbulence profile
         float altitude[] = {0},
               xi0[] = {1},
@@ -545,7 +566,7 @@ void mexFunction(int nlhs, mxArray *plhs[],
     
    if (*reset>0) { atm.reset(); }
     
-   atm.get_phase_screen(d__phase_screen,d__x,d__y,_N_PIXEL_,&src,(float)(*time));
+   atm.get_phase_screen(d__phase_screen,d__x,d__y,_N_PIXEL_,d__src,(float)(*time));
     
     /* Wrap the result up as a MATLAB gpuArray for return. */
     plhs[0] = mxGPUCreateMxArrayOnGPU(phase_screen);

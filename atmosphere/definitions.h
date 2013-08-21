@@ -1,5 +1,5 @@
 #define _N_LAYER_ 1
-#define _N_PIXEL_ 262144
+#define _N_PIXEL_ 1000
 #define _SOURCE_N_PX_ _N_PIXEL_
 #define N_SIDE_LENSLET 1
 #define _N_LENSLET_ (N_SIDE_LENSLET*N_SIDE_LENSLET)
