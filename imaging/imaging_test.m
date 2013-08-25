@@ -56,7 +56,8 @@ colorbar('location','NorthOutside')
 %%
 nSample = 2500;
 Gcc = gpuArray.zeros(nLenslet^2*2,'single');
-nP = nxy;%3*nLenslet+1;
+alpha = 4;
+nP = alpha*nLenslet+1;
 Gpc = gpuArray.zeros( nP^2 , nLenslet^2*2, 'single' );
 h = waitbar(0,'Building covariance matrices ...!');
 ui = linspace(1,nxy,nP);
@@ -67,14 +68,15 @@ for kSammple=1:nSample
     cy = cy - 7.5;
     c = [cx;cy];
     Gcc = Gcc + c*c';
-%     phsi = interp2(gather(phs),xi,yi);
-    Gpc = Gpc + phs(:)*c';
+%     [phsi,~,~,~,~] = ceo_imaging(xi,yi,0,L0,0);
+    phsi = interp2(gather(phs),xi,yi);
+    Gpc = Gpc + reshape(phsi,1,[])'*c';
     waitbar(kSammple/nSample,h)
 end
 close(h)
 Gcc = Gcc./nSample;
 Gpc = Gpc./nSample;
-figure(22)
+figure
 ha1 = subplot(1,2,1);
 imagesc(Gcc)
 axis equal tight
@@ -84,7 +86,98 @@ imagesc(Gpc)
 colorbar('location','NorthOutside')
 
 %%
-[phs,frame,cx,cy,flux] = ceo_imaging(x,y,1,L0,0);
+d = D/nLenslet;
+[fx,fy] = freqspace(nLenslet*2,'meshgrid');
+fx = fx/d;
+fy = fy/d;
+
+r0 = 15e-2;
+L0 = 30;
+atm = atmosphere(photometry.V,r0,L0);
+
+delta = 1/d/nLenslet;
+
+spectrum = @(u,v) 4*pi^2.*(fx.*u(1) + fy.*u(2)).*(fx.*v(1) + fy.*v(2)).*...
+        delta.^2.*phaseStats.spectrum(hypot(fx,fy),atm).*...
+        (d.^2*tools.sinc(d*fx).*tools.sinc(d*fy)).^2;
+% spectrum = ...
+%     fx.^2.*phaseStats.spectrum(hypot(fx,fy),atm).*...
+%     tools.sombrero(1,pi*d*hypot(fx,fy)).^2;
+spectrum0 = ...
+    phaseStats.spectrum(hypot(fx,fy),atm);
+
+%%
+nm = ones(1,2)*nLenslet;
+covxx = real( fftshift( fft2( fftshift( spectrum([1,0],[1,0]) ) ) ) );
+T = toeplitzBlockToeplitz( nm, nm, covxx(2:2*nLenslet,2:2*nLenslet) );
+CC{1,1} = full(T);
+covyy = real( fftshift( fft2( fftshift( spectrum([0,1],[0,1]) ) ) ) );
+T = toeplitzBlockToeplitz( nm, nm, covyy(2:2*nLenslet,2:2*nLenslet) );
+CC{2,2} = full(T);
+cov = real( fftshift( fft2( fftshift( spectrum([0,1],[1,0]) ) ) ) );
+T = toeplitzBlockToeplitz( nm, nm, cov(2:2*nLenslet,2:2*nLenslet) );
+CC{1,2} = full(T);
+CC{2,1} = CC{1,2}';
+C = cell2mat(CC);
+figure(103)
+imagesc([ C/max(C(:));Gcc/max(Gcc(:)) ])
+axis equal tight
+colorbar('location','NorthOutside')
+
+figure
+imagesc([covxx,covyy])
+%%
+Gcc_cell = mat2cell( gather(Gcc) , ones(1,nLenslet*2)*nLenslet, ones(1,nLenslet*2)*nLenslet );
+Gcxcx_cell = gather( Gcc_cell(1:nLenslet,1:nLenslet) );
+idx = [nLenslet:-1:1 nLenslet*(1:3)+1];
+cov_cxcx = cellfun( @(x) x(idx)' , Gcxcx_cell(idx) , 'UniformOutput', false);
+Gcycy_cell = gather( Gcc_cell((1:nLenslet)+nLenslet,(1:nLenslet)+nLenslet) );
+idx = [nLenslet:-1:1 nLenslet*(1:3)+1];
+cov_cycy = cellfun( @(x) x(idx)' , Gcycy_cell(idx) , 'UniformOutput', false);
+figure
+imagesc([cell2mat(cov_cxcx),cell2mat(cov_cycy)])
+%%
+[fx,fy] = freqspace(nP*2,'meshgrid');
+fx = alpha*fx/d;
+fy = alpha*fy/d;
+delta = alpha/d/nP;
+spectrum1 = @(u) -2.*pi.*1i*(fx.*u(1) + fy.*u(2)).*...
+        delta.^2.*phaseStats.spectrum(hypot(fx,fy),atm).*...
+        d.^2.*tools.sinc(d*fx).*tools.sinc(d*fy);
+covx  = fftshift(real( fft2( fftshift( spectrum1([1,0]) ) ) ) );
+covy  = fftshift(real( fft2( fftshift( spectrum1([0,1]) ) ) ) );
+% c = reshape( cov(1:nLenslet,1:nLenslet) , 1 , [] );
+% S = myToeplitz( c,c );
+% figure
+% imagesc(imag(S))
+
+%%
+nm = ones(1,2)*nP;
+T = toeplitzBlockToeplitz( nm, nm, covx(2:2*nP,2:2*nP) );
+Sx = full(T);
+T = toeplitzBlockToeplitz( nm, nm, covy(2:2*nP,2:2*nP) );
+Sy = full(T);
+% for k=0:nP-1
+%     S = [S ; reshape( cov((nP+1:end)-k,(nP+1:end)-k) , 1 ,[] )];
+% end
+w = (alpha-1):alpha:nP;
+nm = ones(1,nP)*nP;
+Sx = mat2cell( Sx , nm, nm );
+Sx = cellfun( @(x) x(:,w) , Sx(:,w), 'UniformOutput', false );
+Sy = mat2cell( Sy , nm, nm );
+Sy = cellfun( @(x) x(:,w) , Sy(:,w), 'UniformOutput', false );
+S = [ cell2mat(Sx) cell2mat(Sy) ];
+figure(102)
+imagesc([S./max(S(:)),Gpc./max(Gpc(:))])
+colorbar('location','NorthOutside')
+
+%%
+iC = calibrationVault(C);
+iC.cond = 100;
+% iC.nThresholded = 1;
+%%
+[gphs,frame,cx,cy,flux] = ceo_imaging(x,y,1,L0,0);
+    phs = interp2(gather(gphs),xi,yi);
 cx = cx - 7.5;
 cy = cy - 7.5;
 c = [cx;cy];
@@ -105,3 +198,28 @@ imagesc(phs_err)
 title(sprintf('WFE rms [nm] : %5.2f',std(phs_err(:)) ) )
 axis square
 colorbar
+
+%%
+scale = 0.5;
+phse_1 = S*iC.M*c;
+phse_1_zm = scale*phase2nm*( reshape(phse_1-mean(phse_1),nP,nP) );
+figure(7)
+imagesc(phse_1_zm)
+axis square
+colorbar
+
+[yy,flag,relres] = lsqr(C,c,1e-2);
+phse_2 = S*yy;
+phse_2_zm = scale*phase2nm*( reshape(phse_2-mean(phse_2),nP,nP) );
+figure(8)
+imagesc(phse_2_zm)
+axis square
+colorbar
+
+phse_1_2_err = phse_2_zm - phse_1_zm;
+std(phse_1_2_err(:))
+phse_1_err = phse_zm - phse_1_zm;
+std(phse_1_err(:))
+phse_2_err = phse_zm - phse_2_zm;
+std(phse_2_err(:))
+
