@@ -74,8 +74,9 @@ for kSammple=1:nSample
     waitbar(kSammple/nSample,h)
 end
 close(h)
-Gcc = Gcc./nSample;
-Gpc = Gpc./nSample;
+slopes2Angle = (lambda/2/d);
+Gcc = slopes2Angle^2*Gcc./nSample;
+Gpc = slopes2Angle*Gpc./nSample;
 figure
 ha1 = subplot(1,2,1);
 imagesc(Gcc)
@@ -87,19 +88,21 @@ colorbar('location','NorthOutside')
 
 %%
 d = D/nLenslet;
-[fx,fy] = freqspace(nLenslet*2,'meshgrid');
-fx = fx/d;
-fy = fy/d;
+nF = nLenslet*2*128;
+[fx,fy] = freqspace(nF,'meshgrid');
+sf = 4;
+lf = sf/(d*2);
+fx = lf*fx;
+fy = lf*fy;
 
 r0 = 15e-2;
 L0 = 30;
 atm = atmosphere(photometry.V,r0,L0);
-
-delta = 1/d/nLenslet;
-
-spectrum = @(u,v) 4*pi^2.*(fx.*u(1) + fy.*u(2)).*(fx.*v(1) + fy.*v(2)).*...
+lambda = atm.wavelength;
+delta = 2*lf/nF;
+spectrum = @(u,v) lambda.^2*(fx.*u(1) + fy.*u(2)).*(fx.*v(1) + fy.*v(2)).*...
         delta.^2.*phaseStats.spectrum(hypot(fx,fy),atm).*...
-        (d.^2*tools.sinc(d*fx).*tools.sinc(d*fy)).^2;
+        (tools.sinc(d*fx).*tools.sinc(d*fy)).^2;
 % spectrum = ...
 %     fx.^2.*phaseStats.spectrum(hypot(fx,fy),atm).*...
 %     tools.sombrero(1,pi*d*hypot(fx,fy)).^2;
@@ -108,24 +111,26 @@ spectrum0 = ...
 
 %%
 nm = ones(1,2)*nLenslet;
+b0 = nF/2+1;
+b  = ((1-nLenslet)*sf:sf:sf*(nLenslet-1)) + b0;
 covxx = real( fftshift( fft2( fftshift( spectrum([1,0],[1,0]) ) ) ) );
-T = toeplitzBlockToeplitz( nm, nm, covxx(2:2*nLenslet,2:2*nLenslet) );
+T = toeplitzBlockToeplitz( nm, nm, covxx(b,b) );
 CC{1,1} = full(T);
 covyy = real( fftshift( fft2( fftshift( spectrum([0,1],[0,1]) ) ) ) );
-T = toeplitzBlockToeplitz( nm, nm, covyy(2:2*nLenslet,2:2*nLenslet) );
+T = toeplitzBlockToeplitz( nm, nm, covyy(b,b) );
 CC{2,2} = full(T);
 cov = real( fftshift( fft2( fftshift( spectrum([0,1],[1,0]) ) ) ) );
-T = toeplitzBlockToeplitz( nm, nm, cov(2:2*nLenslet,2:2*nLenslet) );
+T = toeplitzBlockToeplitz( nm, nm, cov(b,b) );
 CC{1,2} = full(T);
 CC{2,1} = CC{1,2}';
 C = cell2mat(CC);
 figure(103)
-imagesc([ C/max(C(:));Gcc/max(Gcc(:)) ])
+imagesc([ C;Gcc])
 axis equal tight
 colorbar('location','NorthOutside')
 
-figure
-imagesc([covxx,covyy])
+% figure
+% imagesc([covxx,covyy])
 %%
 Gcc_cell = mat2cell( gather(Gcc) , ones(1,nLenslet*2)*nLenslet, ones(1,nLenslet*2)*nLenslet );
 Gcxcx_cell = gather( Gcc_cell(1:nLenslet,1:nLenslet) );
@@ -137,13 +142,16 @@ cov_cycy = cellfun( @(x) x(idx)' , Gcycy_cell(idx) , 'UniformOutput', false);
 figure
 imagesc([cell2mat(cov_cxcx),cell2mat(cov_cycy)])
 %%
-[fx,fy] = freqspace(nP*2,'meshgrid');
-fx = alpha*fx/d;
-fy = alpha*fy/d;
-delta = alpha/d/nP;
-spectrum1 = @(u) -2.*pi.*1i*(fx.*u(1) + fy.*u(2)).*...
+nPF = nP*2*32;
+[fx,fy] = freqspace(nPF,'meshgrid');
+sf = 4;
+lf = sf/(d*2);
+fx = lf*alpha*fx;
+fy = lf*alpha*fy;
+delta = 2*lf*alpha/nPF;
+spectrum1 = @(u) -lambda.*1i*(fx.*u(1) + fy.*u(2)).*...
         delta.^2.*phaseStats.spectrum(hypot(fx,fy),atm).*...
-        d.^2.*tools.sinc(d*fx).*tools.sinc(d*fy);
+        tools.sinc(d*fx).*tools.sinc(d*fy);
 covx  = fftshift(real( fft2( fftshift( spectrum1([1,0]) ) ) ) );
 covy  = fftshift(real( fft2( fftshift( spectrum1([0,1]) ) ) ) );
 % c = reshape( cov(1:nLenslet,1:nLenslet) , 1 , [] );
@@ -153,9 +161,11 @@ covy  = fftshift(real( fft2( fftshift( spectrum1([0,1]) ) ) ) );
 
 %%
 nm = ones(1,2)*nP;
-T = toeplitzBlockToeplitz( nm, nm, covx(2:2*nP,2:2*nP) );
+b0 = nPF/2+1;
+b  = ((1-nP)*sf:sf:sf*(nP-1)) + b0;
+T = toeplitzBlockToeplitz( nm, nm, covx(b,b) );
 Sx = full(T);
-T = toeplitzBlockToeplitz( nm, nm, covy(2:2*nP,2:2*nP) );
+T = toeplitzBlockToeplitz( nm, nm, covy(b,b) );
 Sy = full(T);
 % for k=0:nP-1
 %     S = [S ; reshape( cov((nP+1:end)-k,(nP+1:end)-k) , 1 ,[] )];
@@ -168,7 +178,7 @@ Sy = mat2cell( Sy , nm, nm );
 Sy = cellfun( @(x) x(:,w) , Sy(:,w), 'UniformOutput', false );
 S = [ cell2mat(Sx) cell2mat(Sy) ];
 figure(102)
-imagesc([S./max(S(:)),Gpc./max(Gpc(:))])
+imagesc([S,Gpc])
 colorbar('location','NorthOutside')
 
 %%
@@ -180,7 +190,7 @@ iC.cond = 100;
     phs = interp2(gather(gphs),xi,yi);
 cx = cx - 7.5;
 cy = cy - 7.5;
-c = [cx;cy];
+c = slopes2Angle*[cx;cy];
 M = Gpc/Gcc;
 phse = M*c;
 phase2nm = 500/2/pi;
@@ -200,7 +210,7 @@ axis square
 colorbar
 
 %%
-scale = 0.5;
+scale = 1.2;
 phse_1 = S*iC.M*c;
 phse_1_zm = scale*phase2nm*( reshape(phse_1-mean(phse_1),nP,nP) );
 figure(7)
