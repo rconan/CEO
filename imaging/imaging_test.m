@@ -17,7 +17,8 @@ D = 8;
 
 nLenslet = 20;
 d = D/nLenslet;
-nPxLenslet = 16;
+nPxLenslet = 8;
+cxy0 = 0.5*(nPxLenslet-1);
 nxy = nLenslet*nPxLenslet;
 ceodir = '~/CEO';
 cd([ceodir,'/imaging'])
@@ -48,7 +49,7 @@ imagesc(frame)
 axis square
 colorbar
 ax3 = axes('pos',[0.1000    0.32    0.3643    0.4306]);
-imagesc([reshape(cx-7.5,nLenslet,nLenslet),reshape(cy-7.5,nLenslet,nLenslet)])
+imagesc([reshape(cx-cxy0,nLenslet,nLenslet),reshape(cy-cxy0,nLenslet,nLenslet)])
 axis equal tight
 colorbar('location','NorthOutside')
 ax4 = axes('pos',[ 0.5979    0.445   0.1879    0.1799]);
@@ -67,8 +68,8 @@ ui = linspace(1,nxy,nP);
 [xi,yi] = meshgrid( ui );
 for kSammple=1:nSample
     [phs,~,cx,cy,~] = ceo_imaging(x,y,1,L0,0);
-    cx = cx - 7.5;
-    cy = cy - 7.5;
+    cx = cx - cxy0;
+    cy = cy - cxy0;
     c = [cx;cy];
     Gcc = Gcc + c*c';
 %     [phsi,~,~,~,~] = ceo_imaging(xi,yi,0,L0,0);
@@ -215,8 +216,8 @@ iGcc.cond = 1000;
 %%
 [gphs,frame,cx,cy,flux] = ceo_imaging(x,y,1,L0,0);
     phs = interp2(gather(gphs),xi,yi);
-cx = cx - 7.5;
-cy = cy - 7.5;
+cx = cx - cxy0;
+cy = cy - cxy0;
 c = slopes2Angle*[cx(mask_c);cy(mask_c)];
 M = Gpc(mask,mask_c_c)*iGcc.M;
 phse = zeros(nP^2,1);
