@@ -116,12 +116,16 @@ b0 = nF/2+1;
 b  = ((1-nLenslet)*sf:sf:sf*(nLenslet-1)) + b0;
 covxx = real( fftshift( fft2( fftshift( spectrum([1,0],[1,0]) ) ) ) );
 T = toeplitzBlockToeplitz( nm, nm, covxx(b,b) );
+CTBT{1,1} = T;
 CC{1,1} = full(T);
 covyy = real( fftshift( fft2( fftshift( spectrum([0,1],[0,1]) ) ) ) );
 T = toeplitzBlockToeplitz( nm, nm, covyy(b,b) );
+CTBT{2,2} = T;
 CC{2,2} = full(T);
 cov = real( fftshift( fft2( fftshift( spectrum([0,1],[1,0]) ) ) ) );
 T = toeplitzBlockToeplitz( nm, nm, cov(b,b) );
+CTBT{1,2} = T;
+CTBT{2,1} = T';
 CC{1,2} = full(T);
 CC{2,1} = CC{1,2}';
 C = cell2mat(CC);
@@ -186,33 +190,40 @@ colorbar('location','NorthOutside')
 %%
 ww = w'*ones(1,nLenslet);
 idx = sub2ind( ones(1,2)*nP , ww ,  ww');
+mask = tools.piston(nP,'type','logical');
+mask_c = tools.piston(nP-4,nP,'type','logical');
+mask_c = mask_c(idx);
 [ix,iy] = meshgrid(0:nP-1);
 figure(21)
-plot(ix(:),iy(:),'.')
-line(ix(idx),iy(idx),'LineStyle','none','marker','o','color','r')
+plot(ix(mask),iy(mask),'.')
+ix_c = ix(idx);
+iy_c = iy(idx);
+line(ix_c(mask_c),iy_c(mask_c),'LineStyle','none','marker','o','color','r')
 axis equal tight
 xytick = [0:alpha:nP];
 set(gca,'xtick',xytick,'ytick',xytick)
 grid
 legend('Phase','Slopes','location','EastOutside')
 %%
-iC = calibrationVault(C);
+mask_c_c = repmat( mask_c(:), 2 ,1);
+iC = calibrationVault(C(mask_c_c,mask_c_c));
 iC.cond = 1000;
 % iC.nThresholded = 1;
 %%
-iGcc = calibrationVault(Gcc);
+iGcc = calibrationVault(Gcc(mask_c_c,mask_c_c));
 iGcc.cond = 1000;
 %%
 [gphs,frame,cx,cy,flux] = ceo_imaging(x,y,1,L0,0);
     phs = interp2(gather(gphs),xi,yi);
 cx = cx - 7.5;
 cy = cy - 7.5;
-c = slopes2Angle*[cx;cy];
-M = Gpc*iGcc.M;
-phse = M*c;
+c = slopes2Angle*[cx(mask_c);cy(mask_c)];
+M = Gpc(mask,mask_c_c)*iGcc.M;
+phse = zeros(nP^2,1);
+phse(mask) = gather( M*c );
 phase2nm = 500/2/pi;
-phs_zm = phase2nm*( phs-mean(phs(:)) );
-phse_zm = phase2nm*( reshape(phse-mean(phse),nP,nP) );
+phs_zm = mask.*phase2nm.*( phs-mean(phs(mask)) );
+phse_zm = mask.*phase2nm.*( reshape(phse-mean(phse(mask)),nP,nP) );
 phs_err = phs_zm - phse_zm;
 
 scale = 1;
@@ -222,19 +233,26 @@ cpy = zeros(nP^2,1);
 yy = iC.M*gather(c);
 % phse_1 = S*yy;
 
-cpx(idx) = yy(1:end/2);
-cpy(idx) = yy(1+end/2:end);
+cpx(idx(mask_c)) = yy(1:end/2);
+cpy(idx(mask_c)) = yy(1+end/2:end);
 % cp = [cpx ; cpy];
 % phse_1 = Sfull*cp;
 phse_1 = STx*cpx + STy*cpy;
-phse_1_zm = scale*phase2nm*( reshape(phse_1-mean(phse_1),nP,nP) );
+phse_1_zm = mask.*scale.*phase2nm.*( reshape(phse_1-mean(phse_1(mask)),nP,nP) );
 
-[yy,flag,relres,iter,resvec] = minres(C,gather(c),1e-3,50);
+% c = slopes2Angle*[cx;cy];
+% [yy0,flag,relres,iter,resvec] = minres(C,gather(c),1e-3,50);
+c = slopes2Angle*[cx.*mask_c(:);cy.*mask_c(:)];
+fun = @(x) mtimes4squareBlocks(CTBT,x);
+tic;
+[yy,flag,relres,iter,resvec] = my_minres(fun,gather(c),1e-3,50,[],[],[],mask_c_c);
+toc
+%yy = yy.*mask_c_c;
 cpx(idx) = yy(1:end/2);
 cpy(idx) = yy(1+end/2:end);
 % phse_2 = S*yy;
 phse_2 = STx*cpx + STy*cpy;
-phse_2_zm = scale*phase2nm*( reshape(phse_2-mean(phse_2),nP,nP) );
+phse_2_zm = mask.*scale.*phase2nm.*( reshape(phse_2-mean(phse_2(mask)),nP,nP) );
 
 phse_1_2_err = phse_2_zm - phse_1_zm;
 % std(phse_1_2_err(:))
