@@ -1,7 +1,7 @@
 #define _N_LAYER_ 1
-#define _N_PIXEL_ 4096
+#define _N_PIXEL_ 102400
 #define _SOURCE_N_PX_ _N_PIXEL_
-#define N_SIDE_LENSLET 4
+#define N_SIDE_LENSLET 20
 #define _N_LENSLET_ (N_SIDE_LENSLET*N_SIDE_LENSLET)
 #define _N_PX_PUPIL_ 16
 #define _N_DFT_ (2*_N_PX_PUPIL_)
