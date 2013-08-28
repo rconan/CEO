@@ -5,7 +5,7 @@
  L0 = 30;
  atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
 lambda = atm.wavelength;
-D = 8;
+D = 5;
 %  atm = atmosphere(photometry.V,r0,L0,...
 %      'altitude',[0, 500, 1000, 2000, 5000, 8000. 13000],...
 %      'fractionnalR0',[0.2, 0.1, 0.1, 0.3, 0.2, 0.05, 0.05],...
@@ -17,7 +17,7 @@ D = 8;
 
 nLenslet = 20;
 d = D/nLenslet;
-nPxLenslet = 8;
+nPxLenslet = 16;
 cxy0 = 0.5*(nPxLenslet-1);
 nxy = nLenslet*nPxLenslet;
 ceodir = '~/CEO';
@@ -38,27 +38,28 @@ u = single( 0.5*D*gpuArray.linspace(-1,1,nxy) );
 [x,y] = meshgrid( u );
 %%
 [phs,frame,cx,cy,flux] = ceo_imaging(x,y,1,L0,0);
+
 figure(1)
-clf
-ax1 = axes('pos',[0.1300    0.6149    0.6589    0.3412]);
+subplot(7,3,[1,9])
 imagesc(u,u,phs)
 axis square
 colorbar
-ax2 = axes('pos',[0.1300    0.0634    0.6589    0.3412]);
+subplot(7,3,[13,21])
 imagesc(frame)
 axis square
 colorbar
-ax3 = axes('pos',[0.1000    0.32    0.3643    0.4306]);
+subplot(7,3,[10,11])
 imagesc([reshape(cx-cxy0,nLenslet,nLenslet),reshape(cy-cxy0,nLenslet,nLenslet)])
 axis equal tight
-colorbar('location','NorthOutside')
-ax4 = axes('pos',[ 0.5979    0.445   0.1879    0.1799]);
-imagesc(reshape(flux/256,nLenslet,nLenslet))
+colorbar
+subplot(7,3,12)
+imagesc(reshape(flux/nPxLenslet^2,nLenslet,nLenslet))
 axis equal tight
-colorbar('location','NorthOutside')
+colorbar
+drawnow
 
 %%
-nSample = 500;
+nSample = 2500;
 Gcc = gpuArray.zeros(nLenslet^2*2,'single');
 alpha = 4;
 nP = alpha*nLenslet+1;
@@ -81,14 +82,14 @@ close(h)
 slopes2Angle = (lambda/2/d);
 Gcc = slopes2Angle^2*Gcc./nSample;
 Gpc = slopes2Angle*Gpc./nSample;
-figure
-ha1 = subplot(1,2,1);
-imagesc(Gcc)
-axis equal tight
-colorbar('location','NorthOutside')
-ha2 = subplot(1,2,2);
-imagesc(Gpc)
-colorbar('location','NorthOutside')
+% figure
+% ha1 = subplot(1,2,1);
+% imagesc(Gcc)
+% axis equal tight
+% colorbar('location','NorthOutside')
+% ha2 = subplot(1,2,2);
+% imagesc(Gpc)
+% colorbar('location','NorthOutside')
 
 %%
 d = D/nLenslet;
@@ -191,8 +192,8 @@ colorbar('location','NorthOutside')
 %%
 ww = w'*ones(1,nLenslet);
 idx = sub2ind( ones(1,2)*nP , ww ,  ww');
-mask = tools.piston(nP,'type','logical');
-mask_c = tools.piston(nP-4,nP,'type','logical');
+mask = tools.piston(nP,'shape','square','type','logical');
+mask_c = mask;%tools.piston(nP-4,nP,'type','logical');
 mask_c = mask_c(idx);
 [ix,iy] = meshgrid(0:nP-1);
 figure(21)
@@ -208,11 +209,11 @@ legend('Phase','Slopes','location','EastOutside')
 %%
 mask_c_c = repmat( mask_c(:), 2 ,1);
 iC = calibrationVault(C(mask_c_c,mask_c_c));
-iC.cond = 1000;
+iC.cond = 100;
 % iC.nThresholded = 1;
 %%
 iGcc = calibrationVault(Gcc(mask_c_c,mask_c_c));
-iGcc.cond = 1000;
+iGcc.cond = 100;
 %%
 [gphs,frame,cx,cy,flux] = ceo_imaging(x,y,1,L0,0);
     phs = interp2(gather(gphs),xi,yi);
@@ -241,12 +242,16 @@ cpy(idx(mask_c)) = yy(1+end/2:end);
 phse_1 = STx*cpx + STy*cpy;
 phse_1_zm = mask.*scale.*phase2nm.*( reshape(phse_1-mean(phse_1(mask)),nP,nP) );
 
+
 % c = slopes2Angle*[cx;cy];
 % [yy0,flag,relres,iter,resvec] = minres(C,gather(c),1e-3,50);
 c = slopes2Angle*[cx.*mask_c(:);cy.*mask_c(:)];
 fun = @(x) mtimes4squareBlocks(CTBT,x);
 tic;
 [yy,flag,relres,iter,resvec] = my_minres(fun,gather(c),1e-3,50,[],[],[],mask_c_c);
+%[yy,flag,relres,iter,resvec] = symmlq(fun,gather(c),1e-3,5);
+%[yy,flag,relres,iter,resvec] = cgs(fun,gather(c),1e-3,5);
+%[yy,flag,relres,iter,resvec] = pcg(fun,gather(c),1e-3,20);
 toc
 %yy = yy.*mask_c_c;
 cpx(idx) = yy(1:end/2);

@@ -83,6 +83,21 @@ classdef toeplitzBlockToeplitz
             out = P(xi(:)+1);
         end
         
+        function out = maskedMtimes(obj,b,mask)
+            n = obj.nRow;
+            [j1,j2] = ndgrid ( 1:n );
+            mu = 2*n*(n-1)-(j1-1)*(2*n-1)-(j2-1);
+            mu = mu';
+            xi = 2*n*(2*n-1) - j1*(2*n-1) - j2;
+            xi = xi';
+            na = (obj.nBlockRow+obj.nBlockCol-1)*(obj.nRow+obj.nCol-1);
+            U = zeros(na,1);
+            U(mu(:)+1) = b;
+            na = 2*na;
+            P = ifft(obj.elementsFT.*fft(U,na));
+            out = mask.*P(xi(:)+1);
+        end
+        
         function out = size(obj,idx)
             out = [obj.nBlockRow*obj.nRow,obj.nBlockCol*obj.nCol];
             if nargin>1

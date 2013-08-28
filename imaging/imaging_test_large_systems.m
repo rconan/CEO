@@ -5,7 +5,7 @@
  L0 = 30;
  atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
 lambda = atm.wavelength;
-D = 25;
+D = 8;
 phase2nm = 1e9*lambda/2/pi;
 
 %  atm = atmosphere(photometry.V,r0,L0,...
@@ -17,9 +17,9 @@ phase2nm = 1e9*lambda/2/pi;
 % r0 = atm.r0;
 % L0 = atm.L0;
 
-nLenslet = 60;
+nLenslet = 40;
 d = D/nLenslet;
-nPxLenslet = 8;
+nPxLenslet = 16;
 cxy0 = 0.5*(nPxLenslet-1);
 nxy = nLenslet*nPxLenslet;
 clear ceo_imaging
@@ -61,7 +61,7 @@ colorbar
 drawnow
 
 %% slopes-to-slopes covariance matrix
-nF = nLenslet*2*10;%128;
+nF = 2^nextpow2(nLenslet*10);%nLenslet*2*10;%128;
 [fx,fy] = freqspace(nF,'meshgrid');
 sf = 4;
 lf = sf/(d*2);
@@ -101,7 +101,7 @@ fprintf(' ==> slopes-to-slopes covariance matrix computed in %5.2fs\n',elapsedTi
 %% phase-to-slopes covariance matrix
 alpha = 4;
 nP = alpha*nLenslet+1;
-nPF = nP*2*4;%32;
+nPF = 2^nextpow2(nP*8);%nP*2*4;%32;
 [fx,fy] = freqspace(nPF,'meshgrid');
 sf = 4;
 lf = sf/(d*2);
@@ -133,6 +133,7 @@ mask_c = tools.piston(nP-4,nP,'type','logical');
 mask_c = mask_c(idx);
 mask_c_c = repmat( mask_c(:), 2 ,1);
 [ix,iy] = meshgrid(0:nP-1);
+if nLenslet<41
 figure(21)
 plot(ix(mask),iy(mask),'.')
 ix_c = ix(idx);
@@ -143,63 +144,110 @@ xytick = 0:alpha:nP;
 set(gca,'xtick',xytick,'ytick',xytick)
 grid
 legend('Phase','Slopes','location','EastOutside')
-
+end
+%% Deformable Mirror
+bifLR = influenceFunction('monotonic',0.5);
+dmLR = deformableMirror(nLenslet+1,'modes',bifLR,'resolution',nP);
+F = bifLR.modes;
+bif = influenceFunction('monotonic',0.5);
+dm = deformableMirror(nLenslet+1,'modes',bif,'resolution',nxy);
+pupil = tools.piston(nxy-nPxLenslet*2,nxy,'type','logical');
 %%
 [gphs,frame,cx,cy,flux] = ceo_imaging(x,y,1,L0,0);
 cx = cx - cxy0;
 cy = cy - cxy0;
 
-ui = linspace(1,nxy,nP);
-[xi,yi] = meshgrid( ui );
-phs = interp2(gather(gphs),xi,yi);
-phs_zm = mask.*phase2nm.*( phs-mean(phs(mask)) );
+phs = gather(gphs);
+phs_zm = pupil.*phase2nm.*( phs-mean(phs(pupil)) );
 
 slopes2Angle = (lambda/2/d);
 c = slopes2Angle*[cx.*mask_c(:);cy.*mask_c(:)];
-fun = @(x) mtimes4squareBlocks(CTBT,x);
+fun = @(x) mtimes4squareBlocks(CTBT,x,mask_c(:));
 
 cpx = zeros(nP^2,1);
 cpy = zeros(nP^2,1);
 
 tic
-[yy,flag,relres,iter,resvec] = my_minres(fun,gather(c),1e-3,50,[],[],[],mask_c_c);
+% [yy,flag,relres,iter,resvec] = my_minres(fun,gather(c),1e-3,50,[],[],[],mask_c_c);
+[yy,flag,relres,iter,resvec] = minres(fun,gather(c),1e-3,50);
 cpx(idx) = yy(1:end/2);
 cpy(idx) = yy(1+end/2:end);
 phse_2 = STx*cpx + STy*cpy;
 phse_2_zm = mask.*phase2nm.*( reshape(phse_2-mean(phse_2(mask)),nP,nP) );
+dm.coefs = lsqr(F,phse_2_zm(:),1e-3,50);
+phs_dm = dm.surface;
+phs_dm_zm = pupil.*( phs_dm-mean(phs_dm(pupil)) );
 elapsedTime = toc;
 fprintf(' ==> phase estimate computed in %5.2fms\n',elapsedTime*1e3);
 
-phse_2_err = phs_zm - phse_2_zm;
+% phse_2_err = phs_zm - phse_2_zm;
+wfe = phs_zm - phs_dm_zm;
+wfe_rms = std(wfe(pupil));
+marechal_strehl = exp(-(1e-9*wfe_rms*2*pi/2.2e-6).^2);
+fprintf(' ==> Marechal Strehl: %5.2f%%\n',marechal_strehl*1e2);
 
 figure(23)
 subplot(2,3,[1,4])
-imagesc([ phs_zm; phse_2_zm])
-title(sprintf('Orig.(WF rms [nm] : %5.2f) / Est.Theo.Iter',std(phs_zm(:)) ) )
+imagesc([ phs_zm; phs_dm_zm])
+title(sprintf('Orig.(WF rms [nm] : %5.2f) / Est.Theo.Iter',std(phs_zm(pupil)) ) )
 axis equal tight
 colorbar('location','south')
 subplot(2,3,[2,6])
-imagesc(phse_2_err)
-title(sprintf('Est.Theo.Iter wfe rms [nm] : %5.2f',std(phse_2_err(:)) ) )
+imagesc(wfe)
+title(sprintf('Est.Theo.Iter. wfe rms [nm] : %5.2f', wfe_rms) )
 axis equal tight
 colorbar
 
-%%
-%{
+%% OPEN-LOOP CONTROL
 nIt = 50;
 [gphs,frame,cx,cy,flux] = ceo_imaging(x,y,1,L0,0);
 cx = cx - cxy0;
 cy = cy - cxy0;
-c = slopes2Angle*[cx.*mask_c(:);cy.*mask_c(:)];
+c = gather( slopes2Angle*[cx.*mask_c(:);cy.*mask_c(:)] );
+
+phs = interp2(gather(gphs),xi,yi);
+phs_zm = mask.*phase2nm.*( phs-mean(phs(mask)) );
+
+c_dm = zeros(nLenslet^2*2,1);
+gain = 1;
 
 for kiT=1:nIt
     
-    [yy,flag,relres,iter,resvec] = my_minres(fun,gather(c),1e-3,50,[],[],[],mask_c_c);
-    cpx(idx) = yy(1:end/2);
-    cpy(idx) = yy(1+end/2:end);
+    [gphs,frame,cx,cy,flux] = ceo_imaging(x,y,0,L0,0);
+    cx = cx - cxy0;
+    cy = cy - cxy0;
+    c = gather( slopes2Angle*[cx.*mask_c(:);cy.*mask_c(:)] );
+    
+    phs = gather(gphs);
+    phs_zm = pupil.*phase2nm.*( phs-mean(phs(pupil)) );
+
+    c_ol = c_dm + c;
+    [c_est,flag,relres,iter,resvec] = minres(fun,c,1e-3,50);    
+    c_e = c_est - c_dm;
+    c_dm = c_dm + gain*c_e;
+    
+    cpx(idx) = c_dm(1:end/2);
+    cpy(idx) = c_dm(1+end/2:end);
     phse_2 = STx*cpx + STy*cpy;
     phse_2_zm = mask.*phase2nm.*( reshape(phse_2-mean(phse_2(mask)),nP,nP) );
-
+    dm.coefs = lsqr(F,phse_2_zm(:),1e-3,50);
+    phs_dm = dm.surface;
+    phs_dm_zm = pupil.*( phs_dm-mean(phs_dm(pupil)) );
+   
+    wfe = phs_zm - phs_dm_zm;
     
+    figure(23)
+    subplot(2,3,[1,4])
+    imagesc([ phs_zm; phs_dm_zm])
+    title(sprintf('Orig.(WF rms [nm] : %5.2f) / Est.Theo.Iter',std(phs_zm(pupil)) ) )
+    axis equal tight
+    colorbar('location','south')
+    subplot(2,3,[2,6])
+    imagesc(wfe)
+    title(sprintf('Est.Theo.Iter. wfe rms [nm] : %5.2f', wfe_rms) )
+    axis equal tight
+    colorbar
+    
+    pause
+
 end
-%}
