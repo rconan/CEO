@@ -289,6 +289,14 @@ It calls the mex function:
 #include "centroiding.h"
 #endif
 
+__global__ void apply_phase_offset(float* phase_io, const float* phase_offset, int n_phase)
+{
+  int idx;
+  idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx<n_phase)
+    phase_io[idx] += phase_offset[idx];
+}
+
 static source src, *d__src;
 static atmosphere atm;
 static imaging lenslet_array;
@@ -308,7 +316,7 @@ void mexFunction(int nlhs, mxArray *plhs[],
         int nrhs, mxArray const *prhs[])
 {
     unsigned int inputIndex;
-    float const *d__x, *d__y;
+    float const *d__x, *d__y, *d__phase_offset;
     float *d__phase_screen;
     double *reset, *L0, *time;
     mwSize dims[2];
@@ -317,9 +325,9 @@ void mexFunction(int nlhs, mxArray *plhs[],
     char const * const errMsg = "Invalid input to MEX file.";
     
     /* Check for proper number of input and output arguments */
-    if (nrhs != 5) {
+    if (!( (nrhs == 5) || (nrhs == 6) )) {
         mexErrMsgIdAndTxt( "MATLAB:mxislogical:invalidNumInputs",
-                "Five input argument required.");
+                "Five or six input argument required.");
     }
     if(nlhs > 5){
         mexErrMsgIdAndTxt( "MATLAB:mxislogical:maxlhs",
@@ -346,7 +354,17 @@ void mexFunction(int nlhs, mxArray *plhs[],
     reset = mxGetPr(prhs[inputIndex++]);
     L0 = mxGetPr(prhs[inputIndex++]);
     time = mxGetPr(prhs[inputIndex++]);
-
+    // ---------------------------------------
+    if (nrhs==6)
+      {
+	mxGPUArray const *phase_offset;
+	phase_offset = mxGPUCreateFromMxArray(prhs[inputIndex++]);
+	if (mxGPUGetClassID(y) != mxSINGLE_CLASS) {
+	  mexErrMsgIdAndTxt(errId, errMsg);
+	}
+	d__phase_offset = (float const *)(mxGPUGetDataReadOnly(phase_offset));
+      }
+ 
     /* Create GPUArray to hold the result and get underlying pointer. */
     mxGPUArray *phase_screen;
     phase_screen = mxGPUCreateGPUArray(2,mxGPUGetDimensions(x),
@@ -407,18 +425,25 @@ void mexFunction(int nlhs, mxArray *plhs[],
    if (*reset>0) { atm.reset(); }
     
    atm.get_phase_screen(d__x,d__y,_N_PIXEL_,d__src,(float)(*time));
-   HANDLE_ERROR( cudaMemcpy( d__phase_screen, d__src->phase,
-				  sizeof(float)*_SOURCE_N_PX_,
-				  cudaMemcpyDeviceToDevice ) );
 
+   if (nrhs==6)
+     {
+       mexPrintf("\nApplying phase offset!\n");
+       dim3 gridDim(ceilf(_SOURCE_N_PX_/256),1);
+       dim3 blockDim(256,1);
+       apply_phase_offset LLL gridDim,blockDim RRR (d__src->phase, d__phase_offset, _SOURCE_N_PX_);
+     }
+
+   HANDLE_ERROR( cudaMemcpy( d__phase_screen, d__src->phase,
+			     sizeof(float)*_SOURCE_N_PX_,
+			     cudaMemcpyDeviceToDevice ) );
    lenslet_array.d__frame  = (float *)(mxGPUGetData(frame));
    lenslet_array.propagate(d__src);
    cog.d__cx   = (float *)(mxGPUGetData(cx));
    cog.d__cy   = (float *)(mxGPUGetData(cy));
    cog.d__mass = (float *)(mxGPUGetData(flux));
    cog.get_data(lenslet_array.d__frame);
-
-    
+   
     /* Wrap the result up as a MATLAB gpuArray for return. */
     plhs[0] = mxGPUCreateMxArrayOnGPU(phase_screen);
     plhs[1] = mxGPUCreateMxArrayOnGPU(frame);

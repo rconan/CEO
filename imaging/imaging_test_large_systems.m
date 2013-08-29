@@ -99,7 +99,7 @@ elapsedTime = toc;
 fprintf(' ==> slopes-to-slopes covariance matrix computed in %5.2fs\n',elapsedTime);
 
 %% phase-to-slopes covariance matrix
-alpha = 4;
+alpha = 2;
 nP = alpha*nLenslet+1;
 nPF = 2^nextpow2(nP*8);%nP*2*4;%32;
 [fx,fy] = freqspace(nPF,'meshgrid');
@@ -125,7 +125,7 @@ elapsedTime = toc;
 fprintf(' ==> phase-to-slopes covariance matrix computed in %5.2fs\n',elapsedTime);
 
 %%
-w = (alpha-1):alpha:nP;
+w = (alpha/2+1):alpha:nP;
 ww = w'*ones(1,nLenslet);
 idx = sub2ind( ones(1,2)*nP , ww ,  ww');
 mask = tools.piston(nP,'type','logical');
@@ -182,8 +182,8 @@ fprintf(' ==> phase estimate computed in %5.2fms\n',elapsedTime*1e3);
 
 % phse_2_err = phs_zm - phse_2_zm;
 wfe = phs_zm - phs_dm_zm;
-wfe_rms = std(wfe(pupil));
-marechal_strehl = exp(-(1e-9*wfe_rms*2*pi/2.2e-6).^2);
+wfe_rms0 = std(wfe(pupil));
+marechal_strehl = exp(-(1e-9*wfe_rms0*2*pi/2.2e-6).^2);
 fprintf(' ==> Marechal Strehl: %5.2f%%\n',marechal_strehl*1e2);
 
 figure(23)
@@ -194,60 +194,71 @@ axis equal tight
 colorbar('location','south')
 subplot(2,3,[2,6])
 imagesc(wfe)
-title(sprintf('Est.Theo.Iter. wfe rms [nm] : %5.2f', wfe_rms) )
+title(sprintf('Est.Theo.Iter. wfe rms [nm] : %5.2f', wfe_rms0) )
 axis equal tight
 colorbar
 
 %% OPEN-LOOP CONTROL
 nIt = 50;
-[gphs,frame,cx,cy,flux] = ceo_imaging(x,y,1,L0,0);
-cx = cx - cxy0;
-cy = cy - cxy0;
-c = gather( slopes2Angle*[cx.*mask_c(:);cy.*mask_c(:)] );
-
-phs = interp2(gather(gphs),xi,yi);
-phs_zm = mask.*phase2nm.*( phs-mean(phs(mask)) );
 
 c_dm = zeros(nLenslet^2*2,1);
+c_est = zeros(nLenslet^2*2,1);
+phs_dm_zm = zeros(nxy);
 gain = 1;
+tau = 1e-3;
+elt_loop = zeros(1,nIt);
+wf_rms = zeros(1,nIt);
+wfe_rms = zeros(1,nIt);
 
-for kiT=1:nIt
-    
-    [gphs,frame,cx,cy,flux] = ceo_imaging(x,y,0,L0,0);
+for kIt=1:nIt
+            
+    [gphs,frame,cx,cy,flux] = ceo_imaging(x,y,0,L0,kIt*tau);
     cx = cx - cxy0;
     cy = cy - cxy0;
     c = gather( slopes2Angle*[cx.*mask_c(:);cy.*mask_c(:)] );
     
     phs = gather(gphs);
     phs_zm = pupil.*phase2nm.*( phs-mean(phs(pupil)) );
+    
+    t_loop = tic;
 
-    c_ol = c_dm + c;
-    [c_est,flag,relres,iter,resvec] = minres(fun,c,1e-3,50);    
-    c_e = c_est - c_dm;
-    c_dm = c_dm + gain*c_e;
+%     [c_dm,flag,relres,iter,resvec] = minres(fun,c,5e-2,5,[],[],c_dm);    
+    c_dm = minres(fun,c,5e-2,10,[],[],c_dm);    
     
     cpx(idx) = c_dm(1:end/2);
     cpy(idx) = c_dm(1+end/2:end);
     phse_2 = STx*cpx + STy*cpy;
     phse_2_zm = mask.*phase2nm.*( reshape(phse_2-mean(phse_2(mask)),nP,nP) );
-    dm.coefs = lsqr(F,phse_2_zm(:),1e-3,50);
+    dm.coefs = lsqr(F,phse_2_zm(:),5e-2,5,[],[],dm.coefs);
+    
+    elt_loop(kIt) = toc(t_loop);
+    
     phs_dm = dm.surface;
     phs_dm_zm = pupil.*( phs_dm-mean(phs_dm(pupil)) );
    
     wfe = phs_zm - phs_dm_zm;
+    wf_rms(kIt) = std(phs_zm(pupil));
+    wfe_rms(kIt) = std(wfe(pupil));
+    
+    fprintf(' -- It#:%d - Est.Theo.Iter. wfe rms [nm] : %5.2f [ %5.2f ] \n',...
+        kIt, wfe_rms(kIt),wfe_rms0)
     
     figure(23)
     subplot(2,3,[1,4])
     imagesc([ phs_zm; phs_dm_zm])
-    title(sprintf('Orig.(WF rms [nm] : %5.2f) / Est.Theo.Iter',std(phs_zm(pupil)) ) )
+    title(sprintf('Orig.(WF rms [nm] : %5.2f) / Est.Theo.Iter', wf_rms(kIt)) )
     axis equal tight
     colorbar('location','south')
     subplot(2,3,[2,6])
     imagesc(wfe)
-    title(sprintf('Est.Theo.Iter. wfe rms [nm] : %5.2f', wfe_rms) )
+    title(sprintf('It#:%d - Est.Theo.Iter. wfe rms [nm] : %5.2f', kIt, wfe_rms(kIt)) )
     axis equal tight
     colorbar
-    
-    pause
+
+    drawnow
 
 end
+
+fprintf(' ==> wavefront reconstruction computing time: %5.0fms +/- %2.0fms\n',...
+    mean(elt_loop)*1e3,std(elt_loop)*1e3);
+

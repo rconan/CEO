@@ -8,6 +8,7 @@ classdef toeplitzBlockToeplitz
        elements;
        bytes;
        elementsFT;
+       tag = 'Toeplitz-Block-Toeplitz';
     end
 
     methods
@@ -23,8 +24,23 @@ classdef toeplitzBlockToeplitz
             a = a(:);
             na = length(a)*2;
             obj.elementsFT = fft(a,na);
+            
+            display(obj)
 
         end
+        
+        function display(obj)
+            %% DISPLAY Display object information
+            %
+            % display(obj) prints information about the toeplitzBlockToeplitz object
+            
+            fprintf('___ %s ___\n',obj.tag)
+            fprintf(' . number of blocks: %dX%d\n',obj.nBlockRow,obj.nBlockCol);
+            fprintf(' . size of blocks: %dX%d\n',obj.nRow,obj.nCol);
+            fprintf(' . compression factor: %4.0f \n',compressionFactor(obj));
+            fprintf('----------------------------------------------------\n')
+            
+        end        
         
         function t = full(obj,mask)
             T = cell(1,obj.nBlockRow+obj.nBlockCol-1);
@@ -107,6 +123,18 @@ classdef toeplitzBlockToeplitz
         
         function out = length(obj)
             out = max( size( obj ) );
+        end
+        
+        function out = numel(obj)
+            out = prod( size( obj ) ); %#ok<PSIZE>
+        end
+        
+        function out = nnz(obj)
+            out = (obj.nBlockRow+obj.nBlockCol+1).*(obj.nRow+obj.nCol+1);
+        end
+        
+        function out = compressionFactor(obj)
+            out = numel(obj)/nnz(obj);
         end
         
     end
