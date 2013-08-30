@@ -22,7 +22,7 @@ classdef toeplitzBlockToeplitz
             
             a = obj.elements(end:-1:1,end:-1:1);
             a = a(:);
-            na = length(a)*2;
+            na = length(a);
             obj.elementsFT = fft(a,na);
             
             display(obj)
@@ -94,7 +94,6 @@ classdef toeplitzBlockToeplitz
             na = (obj.nBlockRow+obj.nBlockCol-1)*(obj.nRow+obj.nCol-1);
             U = zeros(na,1);
             U(mu(:)+1) = b;
-            na = 2*na;
             P = ifft(obj.elementsFT.*fft(U,na));
             out = P(xi(:)+1);
         end
@@ -109,7 +108,6 @@ classdef toeplitzBlockToeplitz
             na = (obj.nBlockRow+obj.nBlockCol-1)*(obj.nRow+obj.nCol-1);
             U = zeros(na,1);
             U(mu(:)+1) = b;
-            na = 2*na;
             P = ifft(obj.elementsFT.*fft(U,na));
             out = mask.*P(xi(:)+1);
         end

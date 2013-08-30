@@ -197,19 +197,23 @@ imagesc(wfe)
 title(sprintf('Est.Theo.Iter. wfe rms [nm] : %5.2f', wfe_rms0) )
 axis equal tight
 colorbar
+drawnow
 
 %% OPEN-LOOP CONTROL
-nIt = 50;
+nIt = 500;
 
 c_dm = zeros(nLenslet^2*2,1);
 c_est = zeros(nLenslet^2*2,1);
 phs_dm_zm = zeros(nxy);
 gain = 1;
 tau = 1e-3;
-elt_loop = zeros(1,nIt);
+elt_in_loop = zeros(1,nIt);
 wf_rms = zeros(1,nIt);
 wfe_rms = zeros(1,nIt);
 
+fprintf(' ==> %s: Open-loop control started!\n',datestr(now,'dd mmm. yyyy @ HH:MM:SS'));
+
+t_loop = tic;
 for kIt=1:nIt
             
     [gphs,frame,cx,cy,flux] = ceo_imaging(x,y,0,L0,kIt*tau);
@@ -220,18 +224,19 @@ for kIt=1:nIt
     phs = gather(gphs);
     phs_zm = pupil.*phase2nm.*( phs-mean(phs(pupil)) );
     
-    t_loop = tic;
+    t_in_loop = tic;
 
-%     [c_dm,flag,relres,iter,resvec] = minres(fun,c,5e-2,5,[],[],c_dm);    
-    c_dm = minres(fun,c,5e-2,10,[],[],c_dm);    
+    [c_dm,flag_minres,relres_minres,iter_minres,resvec_minres] = minres(fun,c,5e-2,5,[],[],c_dm);    
+    %c_dm = minres(fun,c,5e-2,10,[],[],c_dm);    
     
     cpx(idx) = c_dm(1:end/2);
     cpy(idx) = c_dm(1+end/2:end);
     phse_2 = STx*cpx + STy*cpy;
     phse_2_zm = mask.*phase2nm.*( reshape(phse_2-mean(phse_2(mask)),nP,nP) );
-    dm.coefs = lsqr(F,phse_2_zm(:),5e-2,5,[],[],dm.coefs);
+    [dm.coefs,flag_lsqr,relres_lsqr,iter_lsqr,resvec_lsqr] = lsqr(F,phse_2_zm(:),5e-2,5,[],[],dm.coefs);
+    %dm.coefs = lsqr(F,phse_2_zm(:),5e-2,5,[],[],dm.coefs);
     
-    elt_loop(kIt) = toc(t_loop);
+    elt_in_loop(kIt) = toc(t_in_loop);
     
     phs_dm = dm.surface;
     phs_dm_zm = pupil.*( phs_dm-mean(phs_dm(pupil)) );
@@ -240,25 +245,29 @@ for kIt=1:nIt
     wf_rms(kIt) = std(phs_zm(pupil));
     wfe_rms(kIt) = std(wfe(pupil));
     
-    fprintf(' -- It#:%d - Est.Theo.Iter. wfe rms [nm] : %5.2f [ %5.2f ] \n',...
-        kIt, wfe_rms(kIt),wfe_rms0)
+%     fprintf(' -- It#:%d - Est.Theo.Iter. wfe rms [nm] : %5.2f [ %5.2f ] \n',...
+%         kIt, wfe_rms(kIt),wfe_rms0)
     
-    figure(23)
-    subplot(2,3,[1,4])
-    imagesc([ phs_zm; phs_dm_zm])
-    title(sprintf('Orig.(WF rms [nm] : %5.2f) / Est.Theo.Iter', wf_rms(kIt)) )
-    axis equal tight
-    colorbar('location','south')
-    subplot(2,3,[2,6])
-    imagesc(wfe)
-    title(sprintf('It#:%d - Est.Theo.Iter. wfe rms [nm] : %5.2f', kIt, wfe_rms(kIt)) )
-    axis equal tight
-    colorbar
-
-    drawnow
+%     figure(23)
+%     subplot(2,3,[1,4])
+%     imagesc([ phs_zm; phs_dm_zm])
+%     title(sprintf('Orig.(WF rms [nm] : %5.2f) / Est.Theo.Iter', wf_rms(kIt)) )
+%     axis equal tight
+%     colorbar('location','south')
+%     subplot(2,3,[2,6])
+%     imagesc(wfe)
+%     title(sprintf('It#:%d - Est.Theo.Iter. wfe rms [nm] : %5.2f', kIt, wfe_rms(kIt)) )
+%     axis equal tight
+%     colorbar
+% 
+%     drawnow
 
 end
+elt_loop = toc(t_loop);
+
+fprintf(' ==> %s: Open-loop control ended!\n',datestr(now,'dd mmm. yyyy @ HH:MM:SS'));
 
 fprintf(' ==> wavefront reconstruction computing time: %5.0fms +/- %2.0fms\n',...
-    mean(elt_loop)*1e3,std(elt_loop)*1e3);
+    median(elt_in_loop)*1e3,std(elt_in_loop)*1e3);
+fprintf(' ==> average number of iterations per second: time: %5.2f\n',nIt/elt_loop);
 
