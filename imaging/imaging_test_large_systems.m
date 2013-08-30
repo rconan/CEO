@@ -24,7 +24,7 @@ cxy0 = 0.5*(nPxLenslet-1);
 nxy = nLenslet*nPxLenslet;
 clear ceo_imaging
 ceodir = '~/CEO';
-cd([ceodir,'/imaging'])
+cd([ceodir,'/include'])
 unix(['sed -i ',...
     '-e ''s/#define N_SIDE_LENSLET [0-9]*/#define N_SIDE_LENSLET ',num2str(nLenslet),'/g'' ',...
     '-e ''s/#define _N_PX_PUPIL_ [0-9]*/#define _N_PX_PUPIL_ ',num2str(nPxLenslet),'/g'' ',...
@@ -32,8 +32,9 @@ unix(['sed -i ',...
     num2str((nLenslet*nPxLenslet)^2),'/g'' definitions.h']);
 unix('cat definitions.h');
 cd(ceodir)
-unix('make clean lib imaging.mex')
+unix('make clean all')
 cd([ceodir,'/imaging'])
+unix('make imaging.mex')
 clear ceo_imaging
 mex -largeArrayDims -I../include -L../lib -lceo -o ceo_imaging imaging.mex.cu
 
