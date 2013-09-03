@@ -266,7 +266,7 @@ for kIt=1:nIt
 end
 elt_loop = toc(t_loop);
 
-fprintf(' ==> %s: Open-loop control ended!\n',datestr(now,'dd mmm. yyyy @ HH:MM:SS'));
+fprintf(' ==> %s: Open-loop control ended (%.0fs)!\n',datestr(now,'dd mmm. yyyy @ HH:MM:SS'),elt_loop);
 
 fprintf(' ==> wavefront reconstruction computing time: %5.0fms +/- %2.0fms\n',...
     median(elt_in_loop)*1e3,std(elt_in_loop)*1e3);
