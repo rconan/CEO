@@ -10,7 +10,7 @@ tex: $(texsrc)
 	for i in $(SOURCE_DIR); do (make -C $$i tex); done
 
 doc: tex
-	pdflatex -output-directory doc doc/ceo_manual.tex
+	make -C doc all
 
 touch: 
 	find . -name \*.nw -exec touch {} \;
