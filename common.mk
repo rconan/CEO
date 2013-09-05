@@ -45,4 +45,5 @@ libsrc = lib/libceo.a
 	$(TANGLE) -L -R$@ $< > $@
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
 	mv $@ $@.cu
+	make -C ../ all
 	$(NVCC) $(INCS) $(LIBS) $@.cu -lceo

@@ -104,10 +104,32 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
     printf("|");
     for (int j=0;j<NF;j++) {
       k = i*NF + j;
-      printf("| (%d,%d) %+4.2f ; %+4.2f |",i,j,psd[k].x,psd[k].y);
+      printf("|(%d,%d)%+4.2E;%+4.2E|",i,j,psd[k].x,psd[k].y);
     }
     printf("|\n");
   }
+
+  cufftHandle plan;
+  <<aaStats CUFFT plan creation>>
+  if (cufftExecC2C(plan, d__psd, d__psd, CUFFT_FORWARD) 
+      != CUFFT_SUCCESS){
+    fprintf(stderr,"CUFFT Error: Unable to execute plan\n");
+  }
+  if (cudaThreadSynchronize() != cudaSuccess){
+    fprintf(stderr, "Cuda error: Failed to synchronize\n");
+  }
+  cufftDestroy(plan);
+
+  HANDLE_ERROR( cudaMemcpy( psd, d__psd, psd_size, cudaMemcpyDeviceToHost) );
+  for (int i=0;i<NF;i++) {
+    printf("|");
+    for (int j=0;j<NF;j++) {
+      k = i*NF + j;
+      printf("|(%d,%d)%+4.2E;%+4.2E|",i,j,psd[k].x,psd[k].y);
+    }
+    printf("|\n");
+  }
+
   HANDLE_ERROR( cudaFree( d__psd ) );
   HANDLE_ERROR( cudaFree( d__alpha ) );
   HANDLE_ERROR( cudaFree( d__beta ) );
@@ -178,6 +200,26 @@ __device__ float gatePSF(float fx, float fy) {
 __device__ float sinc(float x) {
   return (x==0) ? 1.0 : sinf( PI*x) / (PI*x) ; 
 }
+@ 
+<<aaStats CUFFT plan creation>>=
+printf("\n@(CEO)>imaging: Creating a 2D FFT plan\n");
+int n_DFT[2] = {NF, NF};
+int iodist = NF*NF;
+int BATCH = 1;
+/* Create a 2D FFT plan. */
+if (cufftPlanMany(&plan, 2, n_DFT,
+		  NULL, 1, iodist,
+		  NULL, 1, iodist,
+		  CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
+  fprintf(stderr,
+	  "CUFFT Error: Unable to create plan\n");
+  return;
+ }
+if (cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
+  fprintf(stderr,
+	  "CUFFT Error: Unable to set compatibility mode to native\n");
+    return;
+ }
 @  
 The test routine is written:
 <<aaStats.bin>>=
