@@ -9,8 +9,7 @@ CPIF	    	= $(NOWEBPATH)/bin/cpif
 TEXTOPDF  	= pdflatex
 NVCCFLAGS	= -gencode=arch=compute_20,code=\"sm_20,compute_20\" \
 		--compiler-options=-ansi,-D_GNU_SOURCE,-fPIC,-fno-omit-frame-pointer,-pthread -O2
-LIBS 		= -L./lib $(CUDALIBPATH:%=-L%) $(CUDALIBS:%=-l%)
-CDIR		= ./imaging
+LIBS 		= -L../lib $(CUDALIBPATH:%=-L%) $(CUDALIBS:%=-l%)
 INCS		= -I. -I../include -I/priv/monarcas1/rconan/MATLAB/R2013a/extern/include \
 		 -I/export/monarcas1/rconan/MATLAB/R2013a/toolbox/distcomp/gpu/extern/include
 
@@ -20,7 +19,7 @@ obj    = $(nwsrc:%.nw=%.o)
 cusrc  = $(nwsrc:.%nw=%.cu)
 libsrc = lib/libceo.a 
 
-.SUFFIXES: .nw .tex .cu .mex
+.SUFFIXES: .nw .tex .cu .mex .bin
 
 .cu.o:
 	$(NVCC) $(INCS) $(NVCCFLAGS) -o $@ -c $<
@@ -32,7 +31,7 @@ libsrc = lib/libceo.a
 .nw.h:
 	$(TANGLE) -R$@ $< > $@
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
-	cp -P $@ ../include/
+	mv $@ ../include/
 .nw.cu: 
 	$(TANGLE) -L -R$@ $< > $@
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
@@ -41,3 +40,9 @@ libsrc = lib/libceo.a
 	$(TANGLE) -L -R$@ $< > $@
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
 	mv $@ $@.cu
+
+.nw.bin:
+	$(TANGLE) -L -R$@ $< > $@
+	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
+	mv $@ $@.cu
+	$(NVCC) $(INCS) $(LIBS) $@.cu -lceo

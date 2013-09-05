@@ -118,7 +118,7 @@ classdef toeplitzBlockToeplitz
         end
         
         function out = nnz(obj)
-            out = (obj.nBlockRow+obj.nBlockCol+1).*(obj.nRow+obj.nCol+1);
+            out = (obj.nBlockRow+obj.nBlockCol-1).*(obj.nRow+obj.nCol-1);
         end
         
         function out = compressionFactor(obj)

@@ -1,0 +1,198 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+[[aaStats]] contains a structure and the routines to compute the covariance matrix of the angle--of--arrival.
+The aaStats structure is written in the header:
+<<aaStats.h>>=
+#ifndef __AASTATS_H__
+#define __AASTATS_H__
+
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+
+#ifndef __ATMOSPHERE_H__
+#include "atmosphere.h"
+#endif
+
+struct aaStats {
+
+  <<aaStats parameters>>
+
+  void setup(int N, atmosphere *atm, float lenslet_pitch);
+
+  void info(void);
+
+};
+#endif // __AASTATS_H__
+@ The routines are expanded in the source file:
+<<aaStats.cu>>=
+#include "aaStats.h"
+
+<<sinc>>
+
+<<subaperture PSF>>
+
+<<phase power spectrum>>
+
+<<power spectrum>>
+
+<<setup>>
+
+<<info>>
+
+@
+Shack--Hartmann WFS centroids are a measure of the spatial derivatives of the wavefront averaged on each subaperture.
+These derivatives are often referred as angle of arrivals:
+\begin{eqnarray}
+  \label{eq:1}
+  \alpha_x &=& {\lambda\over 2\pi d^2} {\partial\varphi\over\partial x} \ast \Pi\left(x\over d\right)\Pi\left(y\over d\right),\\
+  \alpha_y &=& {\lambda\over 2\pi d^2} {\partial\varphi\over\partial y} \ast \Pi\left(x\over d\right)\Pi\left(y\over d\right),
+\end{eqnarray}
+where $\lambda$ is the sensing wavelength and $d$ in the size of one subaperture.
+
+The covariance is derived from the power spectrum density of the angle of arrivals $W_{\vec \alpha \cdot\ \vec \beta}(\vec f)$:
+  \begin{equation}
+    \label{eq:2}
+    W_{\vec \alpha\vec \beta}(\vec f) = \lambda^2\left( \vec f \cdot \vec\alpha \right)\left( \vec f \cdot \vec\beta \right) W_\varphi(\vec f) G^2(\vec f)
+  \end{equation}
+$W_\varphi(f)$ is the wavefront power spectrum density given by
+\begin{equation}
+  \label{eq:3}
+  W_\varphi(f) = 0.0229 r_0^{-5/3} \left( f^2 + {1\over\mathcal L_0^2} \right)^{-11/6}.
+\end{equation}
+$G(\vec f)$ is the point spread function of a subaperture of the WFS,
+\begin{equation}
+  \label{eq:4}
+  G(\vec f) = {\sin(\pi d f_x) \over \pi d f_x }{ \sin(\pi d f_y) \over \pi d f_y } .
+\end{equation}
+
+The covariance $C_{\vec \alpha \cdot\ \vec \beta}(\vec\rho)$ is derived from the Wiener--Khinchine theorem:
+\begin{equation}
+  \label{eq:5}
+  C_{\vec \alpha \cdot\ \vec \beta}(\vec\rho) = \mathcal F^{-1} \left[ W_{\vec \alpha\vec \beta}(\vec f) \right] (\vec\rho)
+\end{equation}
+where $mathcal F^{-1}$ stands for the inverse Fourier transform.
+
+The covariance is computed when the setup function is called with the size of a block, an [[atmosphere]] structure and the lenslet pitch:
+<<setup>>=
+void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
+{
+  N = N_;
+  float2 *d__psd, *psd;
+  float *d__alpha, *d__beta;
+  int NF = 8, psd_size;
+  float alpha[2] = {1,0}, beta[2] = {0,1}; 
+  info();
+  psd_size = sizeof(float2)*NF*NF;
+
+  HANDLE_ERROR( cudaMalloc((void**)&d__alpha, 2*sizeof(float) ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__beta,  2*sizeof(float) ) );
+  HANDLE_ERROR( cudaMemcpy( d__alpha, alpha, 2*sizeof(float), cudaMemcpyHostToDevice) );
+  HANDLE_ERROR( cudaMemcpy( d__beta, beta, 2*sizeof(float), cudaMemcpyHostToDevice) );
+  
+  HANDLE_ERROR( cudaMalloc((void**)&d__psd, psd_size ) );
+  psd = (float2 *)malloc( psd_size );
+
+  dim3 blockDim(16,16);
+  dim3 gridDim( 1+NF/16 , 1+NF/16 );
+  powerSpectrum LLL gridDim,blockDim RRR (d__psd, NF, lenslet_pitch, 
+					  atm->r0, atm->turbulence.L0,
+					  d__alpha, d__alpha);
+  HANDLE_ERROR( cudaDeviceSynchronize() );
+  HANDLE_ERROR( cudaMemcpy( psd, d__psd, psd_size, cudaMemcpyDeviceToHost) );
+  int k;
+  for (int i=0;i<NF;i++) {
+    printf("|");
+    for (int j=0;j<NF;j++) {
+      k = i*NF + j;
+      printf("| (%d,%d) %+4.2f ; %+4.2f |",i,j,psd[k].x,psd[k].y);
+    }
+    printf("|\n");
+  }
+  HANDLE_ERROR( cudaFree( d__psd ) );
+  HANDLE_ERROR( cudaFree( d__alpha ) );
+  HANDLE_ERROR( cudaFree( d__beta ) );
+  free(psd);		
+}
+@ The main parameters of [[aaStats]] are displayed with the [[info]] routine:
+<<info>>=
+void aaStats::info(void)
+{
+  printf("\n@(CEO)>aaStats:\n");
+  printf(" . number of blocks: %dX%d\n",N,N);
+  printf(" . size of blocks: %dX%d\n",N,N);
+  float n_total = powf(N,4), n_unique = powf(2*N-1,2);
+  printf(" . compression factor: %4.0f \n",n_total/n_unique);
+  printf("----------------------------------------------------\n");
+}
+@
+The parameters of the [[aaStats]] structure are:
+<<aaStats parameters>>=
+int N;
+float2 *elementFT;
+@ 
+The power spectrum is computed with the kernel:
+<<power spectrum>>=
+  __global__ void powerSpectrum(float2 *d__psd, int NF, float d,
+				float r0, float L0,
+				float *alpha, float *beta)
+{
+  int i, j, k;
+  float fx, fy, f_square;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = i*NF + j;
+  if ( (i<NF) && (j<(NF)) ) {
+    fx = (float) i;
+    fy = (float) j;
+    if (i>=(NF/2))
+      fx = fx - NF;
+    if (j>=(NF/2))
+      fy = fy - NF;
+    fx *= (2.0/NF);
+    fy *= (2.0/NF);
+    k = i*NF + j;
+    f_square = fx*fx + fy*fy;
+    d__psd[k].x = (fx*alpha[0] + fy*alpha[1])*(fx*beta[0] + fy*beta[1])* //WAVELENGTH MISSING
+      powf(r0,-5.0/3.0)*
+      phasePowerSpectrum(f_square, 1/L0)*
+      gatePSF(fx*d,fy*d);
+    d__psd[k].y = 0;
+  }
+}
+@ 
+The phase power spectrum is given by:
+<<phase power spectrum>>=
+ __device__ float phasePowerSpectrum(float f_square, float f0) {
+  return 0.0229*powf(f_square + f0*f0,-11.0/6.0);
+}
+@ 
+The subaperture Fourier transform is written in
+<<subaperture PSF>>=
+__device__ float gatePSF(float fx, float fy) {
+  float out;
+  out = sinc(fx)*sinc(fy);
+  return out*out;
+}
+@ that depends on the $sinc$ function:
+<<sinc>>=
+__device__ float sinc(float x) {
+  return (x==0) ? 1.0 : sinf( PI*x) / (PI*x) ; 
+}
+@  
+The test routine is written:
+<<aaStats.bin>>=
+
+#include "ceo.h"
+#include "aaStats.h"
+
+int main( void) {
+  atmosphere atm;
+  aaStats C;
+  float altitude[] = {0},
+        xi0[] = {1},
+        wind_speed[] = {10},
+  	wind_direction[] = {0};
+  atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
+  C.setup(8,&atm,1);
+  atm.cleanup();
+}
