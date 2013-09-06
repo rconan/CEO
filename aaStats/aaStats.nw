@@ -33,7 +33,9 @@ struct aaStats {
 
 <<phase power spectrum>>
 
-<<power spectrum>>
+<<power spectrum kernel>>
+
+<<covariance extraction>>
 
 <<setup>>
 
@@ -70,7 +72,7 @@ The covariance $C_{\vec \alpha \cdot\ \vec \beta}(\vec\rho)$ is derived from the
   \label{eq:5}
   C_{\vec \alpha \cdot\ \vec \beta}(\vec\rho) = \mathcal F^{-1} \left[ W_{\vec \alpha\vec \beta}(\vec f) \right] (\vec\rho)
 \end{equation}
-where $mathcal F^{-1}$ stands for the inverse Fourier transform.
+where $\mathcal F^{-1}$ stands for the inverse Fourier transform.
 
 The covariance is computed when the setup function is called with the size of a block, an [[atmosphere]] structure and the lenslet pitch:
 <<setup>>=
@@ -78,62 +80,49 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
 {
   N = N_;
   float2 *d__psd, *psd;
-  float *d__alpha, *d__beta;
-  int NF = 8, psd_size;
-  float alpha[2] = {1,0}, beta[2] = {0,1}; 
-  info();
-  psd_size = sizeof(float2)*NF*NF;
+  float *d__alpha, *d__beta, *d__cov, *cov;
+  int NF, psd_size;
+  float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
 
-  HANDLE_ERROR( cudaMalloc((void**)&d__alpha, 2*sizeof(float) ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__beta,  2*sizeof(float) ) );
-  HANDLE_ERROR( cudaMemcpy( d__alpha, alpha, 2*sizeof(float), cudaMemcpyHostToDevice) );
-  HANDLE_ERROR( cudaMemcpy( d__beta, beta, 2*sizeof(float), cudaMemcpyHostToDevice) );
-  
-  HANDLE_ERROR( cudaMalloc((void**)&d__psd, psd_size ) );
-  psd = (float2 *)malloc( psd_size );
+  info();  
 
-  dim3 blockDim(16,16);
-  dim3 gridDim( 1+NF/16 , 1+NF/16 );
-  powerSpectrum LLL gridDim,blockDim RRR (d__psd, NF, lenslet_pitch, 
-					  atm->r0, atm->turbulence.L0,
-					  d__alpha, d__alpha);
+  <<power spectrum>>
   HANDLE_ERROR( cudaDeviceSynchronize() );
+  psd = (float2 *)malloc( psd_size );
   HANDLE_ERROR( cudaMemcpy( psd, d__psd, psd_size, cudaMemcpyDeviceToHost) );
-  int k;
-  for (int i=0;i<NF;i++) {
-    printf("|");
-    for (int j=0;j<NF;j++) {
-      k = i*NF + j;
-      printf("|(%d,%d)%+4.2E;%+4.2E|",i,j,psd[k].x,psd[k].y);
+  if (NF<=8) {
+    int k;
+    for (int i=0;i<NF;i++) {
+      printf("|");
+      for (int j=0;j<NF;j++) {
+	k = i*NF + j;
+	printf("|(%d,%d)%+4.2E;%+4.2E|",i,j,psd[k].x,psd[k].y);
+      }
+      printf("|\n");
     }
-    printf("|\n");
   }
 
-  cufftHandle plan;
-  <<aaStats CUFFT plan creation>>
-  if (cufftExecC2C(plan, d__psd, d__psd, CUFFT_FORWARD) 
-      != CUFFT_SUCCESS){
-    fprintf(stderr,"CUFFT Error: Unable to execute plan\n");
-  }
-  if (cudaThreadSynchronize() != cudaSuccess){
-    fprintf(stderr, "Cuda error: Failed to synchronize\n");
-  }
-  cufftDestroy(plan);
-
-  HANDLE_ERROR( cudaMemcpy( psd, d__psd, psd_size, cudaMemcpyDeviceToHost) );
-  for (int i=0;i<NF;i++) {
-    printf("|");
-    for (int j=0;j<NF;j++) {
-      k = i*NF + j;
-      printf("|(%d,%d)%+4.2E;%+4.2E|",i,j,psd[k].x,psd[k].y);
+  <<covariance>>
+  cov = (float *)malloc( cov_size );
+  HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
+  if (N<=16) {
+    int k;
+    for (int i=0;i<(2*N-1);i++) {
+      printf("|");
+      for (int j=0;j<(2*N-1);j++) {
+	k = i*(2*N-1) + j;
+	printf("|(%d,%d)%+4.2E|",i,j,cov[k]);
+      }
+      printf("|\n");
     }
-    printf("|\n");
   }
 
   HANDLE_ERROR( cudaFree( d__psd ) );
   HANDLE_ERROR( cudaFree( d__alpha ) );
   HANDLE_ERROR( cudaFree( d__beta ) );
+  HANDLE_ERROR( cudaFree( d__cov ) );
   free(psd);		
+  free(cov);		
 }
 @ The main parameters of [[aaStats]] are displayed with the [[info]] routine:
 <<info>>=
@@ -152,14 +141,40 @@ The parameters of the [[aaStats]] structure are:
 int N;
 float2 *elementFT;
 @ 
-The power spectrum is computed with the kernel:
+The power spectrum  must be sampled such as its Fourier transform gives unbiased values of the covariance.
+The largest spatial frequency is $f_{max}=\kappa/2d$ with $\kappa\ge 1$.
+The number of sample is given by $[[N_F]]\ge [[N_SIDE_LENSLET]]$.
+The spatial frequencies are given by
+\begin{eqnarray}
+  \label{eq:6}
+  f_{x,y} &=& (i,j){2\over[[NF]]}{\kappa\over 2d}, (i,j) \in \left[0,\dots,[[NF]]/2-1\right] \\
+  f_{x,y} &=& (i,j){2\over[[NF]]}{\kappa\over 2d}, (i,j) \in \left[[[NF]]/2,\dots,[[NF]]-1\right] 
+\end{eqnarray}
+Note that [[NF]] must be even.
 <<power spectrum>>=
+NF = 1024;
+kappa = 4;
+
+psd_size = sizeof(float2)*NF*NF;
+HANDLE_ERROR( cudaMalloc((void**)&d__psd, psd_size ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__alpha, 2*sizeof(float) ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__beta,  2*sizeof(float) ) );
+HANDLE_ERROR( cudaMemcpy( d__alpha, alpha, 2*sizeof(float), cudaMemcpyHostToDevice) );
+HANDLE_ERROR( cudaMemcpy( d__beta, beta, 2*sizeof(float), cudaMemcpyHostToDevice) );
+
+dim3 blockDim(16,16);
+dim3 gridDim( 1+NF/16 , 1+NF/16 );
+powerSpectrum LLL gridDim,blockDim RRR (d__psd, NF, lenslet_pitch, 
+					atm->wavelength, atm->r0, atm->turbulence.L0,
+					d__alpha, d__alpha, kappa);
+@ The power spectrum is computed with the following kernel:
+<<power spectrum kernel>>=
   __global__ void powerSpectrum(float2 *d__psd, int NF, float d,
-				float r0, float L0,
-				float *alpha, float *beta)
+				float wavelength, float r0, float L0,
+				float *alpha, float *beta, float kappa)
 {
   int i, j, k;
-  float fx, fy, f_square;
+  float fx, fy, f_square, fs;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = i*NF + j;
@@ -170,13 +185,16 @@ The power spectrum is computed with the kernel:
       fx = fx - NF;
     if (j>=(NF/2))
       fy = fy - NF;
-    fx *= (2.0/NF);
-    fy *= (2.0/NF);
+    fs = (2.0/NF)*(kappa/2*d);
+    fx *= fs;
+    fy *= fs;
     k = i*NF + j;
     f_square = fx*fx + fy*fy;
-    d__psd[k].x = (fx*alpha[0] + fy*alpha[1])*(fx*beta[0] + fy*beta[1])* //WAVELENGTH MISSING
+    wavelength *= wavelength;
+    fs *= fs;
+    d__psd[k].x = fs*wavelength*(fx*alpha[0] + fy*alpha[1])*(fx*beta[0] + fy*beta[1])*
       powf(r0,-5.0/3.0)*
-      phasePowerSpectrum(f_square, 1/L0)*
+      phasePowerSpectrum(f_square, 1.0/L0)*
       gatePSF(fx*d,fy*d);
     d__psd[k].y = 0;
   }
@@ -201,8 +219,12 @@ __device__ float sinc(float x) {
   return (x==0) ? 1.0 : sinf( PI*x) / (PI*x) ; 
 }
 @ 
-<<aaStats CUFFT plan creation>>=
+The covariance derived from the power spectrum is sampled every $\rho_s=d/\kappa$.
+The covariance derived from the slopes of the lenslet array is sampled every $d$.
+Consequently the lenslet array slope covariance is extracted from the power spectrum covariance at $(i\kappa,j\kappa)$.
+<<covariance>>=
 printf("\n@(CEO)>imaging: Creating a 2D FFT plan\n");
+cufftHandle plan;
 int n_DFT[2] = {NF, NF};
 int iodist = NF*NF;
 int BATCH = 1;
@@ -220,6 +242,43 @@ if (cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS)
 	  "CUFFT Error: Unable to set compatibility mode to native\n");
     return;
  }
+if (cufftExecC2C(plan, d__psd, d__psd, CUFFT_FORWARD) 
+    != CUFFT_SUCCESS){
+  fprintf(stderr,"CUFFT Error: Unable to execute plan\n");
+ }
+if (cudaThreadSynchronize() != cudaSuccess){
+  fprintf(stderr, "Cuda error: Failed to synchronize\n");
+ }
+cufftDestroy(plan);
+int cov_size = sizeof(float)*(2*N-1)*(2*N-1);
+HANDLE_ERROR( cudaMalloc((void**)&d__cov, cov_size ) );
+
+int NU = 2*N-1;
+blockDim = dim3(16,16);
+gridDim = dim3( 1+NU/16 , 1+NU/16 );
+covariance_extraction LLL gridDim,blockDim RRR( d__cov, NU, d__psd, NF, kappa);
+@ The extraction of the covariance is done with the kernel:
+<<covariance extraction>>=
+__global__ void covariance_extraction(float *cov_out, int NC_out, float2 *cov_in, int NC_in, float kappa)
+{
+  int i, j, k_out, k_in, h;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<NC_out) && (j<(NC_out)) ) {
+    h = (NC_out-1)/2;
+    k_out = ((i+h)%NC_out)*NC_out + (j+h)%NC_out;
+    if (i>=((NC_out+1)/2))
+      i = kappa*(i - NC_out) + NC_in;
+    else
+      i *= kappa;
+    if (j>=(NC_out+1)/2)
+      j = kappa*(j - NC_out) + NC_in;
+    else
+      j *= kappa;
+    k_in = i*NC_in + j;      
+    cov_out[k_out] = cov_in[k_in].x;
+  }
+}
 @  
 The test routine is written:
 <<aaStats.bin>>=
@@ -235,6 +294,6 @@ int main( void) {
         wind_speed[] = {10},
   	wind_direction[] = {0};
   atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
-  C.setup(8,&atm,1);
+  C.setup(4,&atm,1);
   atm.cleanup();
 }

@@ -22,6 +22,8 @@ d = D/nLenslet;
 nPxLenslet = 16;
 cxy0 = 0.5*(nPxLenslet-1);
 nxy = nLenslet*nPxLenslet;
+
+%%
 clear ceo_imaging
 ceodir = '~/CEO';
 cd([ceodir,'/include'])
@@ -72,7 +74,7 @@ fy = lf*fy;
 r0 = 15e-2;
 L0 = 30;
 delta = 2*lf/nF;
-spectrum = @(u,v) lambda.^2*(fx.*u(1) + fy.*u(2)).*(fx.*v(1) + fy.*v(2)).*...
+spectrum = @(fx,fy,u,v) lambda.^2*(fx.*u(1) + fy.*u(2)).*(fx.*v(1) + fy.*v(2)).*...
         delta.^2.*phaseStats.spectrum(hypot(fx,fy),atm).*...
         (tools.sinc(d*fx).*tools.sinc(d*fy)).^2;
 % spectrum = ...
@@ -86,13 +88,13 @@ b0 = nF/2+1;
 b  = ((1-nLenslet)*sf:sf:sf*(nLenslet-1)) + b0;
 
 tic
-covxx = real( fftshift( fft2( fftshift( spectrum([1,0],[1,0]) ) ) ) );
+covxx = real( fftshift( fft2( fftshift( spectrum(fx,fy,[1,0],[1,0]) ) ) ) );
 T = toeplitzBlockToeplitz( nm, nm, covxx(b,b) );
 CTBT{1,1} = T;
-covyy = real( fftshift( fft2( fftshift( spectrum([0,1],[0,1]) ) ) ) );
+covyy = real( fftshift( fft2( fftshift( spectrum(fx,fy,[0,1],[0,1]) ) ) ) );
 T = toeplitzBlockToeplitz( nm, nm, covyy(b,b) );
 CTBT{2,2} = T;
-cov = real( fftshift( fft2( fftshift( spectrum([0,1],[1,0]) ) ) ) );
+cov = real( fftshift( fft2( fftshift( spectrum(fx,fy,[0,1],[1,0]) ) ) ) );
 T = toeplitzBlockToeplitz( nm, nm, cov(b,b) );
 CTBT{1,2} = T;
 CTBT{2,1} = T';
