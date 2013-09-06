@@ -79,8 +79,10 @@ The covariance is computed when the setup function is called with the size of a 
 void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
 {
   N = N_;
-  float2 *d__psd, *psd;
-  float *d__alpha, *d__beta, *d__cov, *cov;
+  NU = 2*N-1;
+  NU2 = NU*NU;
+  float2 *d__psd, *psd, *cov;
+  float *d__alpha, *d__beta;
   int NF, psd_size;
   float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
 
@@ -103,19 +105,24 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
   }
 
   <<covariance>>
-  cov = (float *)malloc( cov_size );
+  cov = (float2 *)malloc( cov_size );
   HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
   if (N<=16) {
     int k;
-    for (int i=0;i<(2*N-1);i++) {
+    for (int i=0;i<NU;i++) {
       printf("|");
-      for (int j=0;j<(2*N-1);j++) {
-	k = i*(2*N-1) + j;
-	printf("|(%d,%d)%+4.2E|",i,j,cov[k]);
+      for (int j=0;j<NU;j++) {
+	k = i*(NU) + j;
+	printf("|(%d,%d)%+4.2E|",i,j,cov[k].x);
       }
       printf("|\n");
     }
   }
+
+  <<raster covariance FT>>
+  HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
+  for (int k=0;k<NU2;k++)
+    printf("%2d: %+4.2E %+4.2E.I\n",k,cov[k].x,cov[k].y);
 
   HANDLE_ERROR( cudaFree( d__psd ) );
   HANDLE_ERROR( cudaFree( d__alpha ) );
@@ -131,15 +138,15 @@ void aaStats::info(void)
   printf("\n@(CEO)>aaStats:\n");
   printf(" . number of blocks: %dX%d\n",N,N);
   printf(" . size of blocks: %dX%d\n",N,N);
-  float n_total = powf(N,4), n_unique = powf(2*N-1,2);
+  float n_total = powf(N,4), n_unique = powf(NU,2);
   printf(" . compression factor: %4.0f \n",n_total/n_unique);
   printf("----------------------------------------------------\n");
 }
 @
 The parameters of the [[aaStats]] structure are:
 <<aaStats parameters>>=
-int N;
-float2 *elementFT;
+int N, NU, NU2;
+float2 *d__cov;
 @ 
 The power spectrum  must be sampled such as its Fourier transform gives unbiased values of the covariance.
 The largest spatial frequency is $f_{max}=\kappa/2d$ with $\kappa\ge 1$.
@@ -147,8 +154,8 @@ The number of sample is given by $[[N_F]]\ge [[N_SIDE_LENSLET]]$.
 The spatial frequencies are given by
 \begin{eqnarray}
   \label{eq:6}
-  f_{x,y} &=& (i,j){2\over[[NF]]}{\kappa\over 2d}, (i,j) \in \left[0,\dots,[[NF]]/2-1\right] \\
-  f_{x,y} &=& (i,j){2\over[[NF]]}{\kappa\over 2d}, (i,j) \in \left[[[NF]]/2,\dots,[[NF]]-1\right] 
+  f_{x,y} &=& (i,j){2\over [[NF]] }{\kappa\over 2d}, (i,j) \in \left[ 0,\dots,[[NF]]/2-1\right] \\
+  f_{x,y} &=& (i,j){2\over [[NF]] }{\kappa\over 2d}, (i,j) \in \left[ [[NF]]/2,\dots,[[NF]]-1\right] 
 \end{eqnarray}
 Note that [[NF]] must be even.
 <<power spectrum>>=
@@ -221,7 +228,19 @@ __device__ float sinc(float x) {
 @ 
 The covariance derived from the power spectrum is sampled every $\rho_s=d/\kappa$.
 The covariance derived from the slopes of the lenslet array is sampled every $d$.
-Consequently the lenslet array slope covariance is extracted from the power spectrum covariance at $(i\kappa,j\kappa)$.
+Consequently the lenslet--array--slope--covariance is extracted from the power--spectrum--covariance at $(i\kappa,j\kappa)$.
+Due to the symmetry of the Fourier transform output, the subscripts in the power--spectrum--covariance are in fact given by
+\begin{eqnarray}
+  \label{eq:8}
+  (i,j)\kappa, (i,j) \in \left[ 0,\dots,[[N]]-1 \right] \\
+  \left[(i,j)-[[NU]]\right]\kappa + [[NF]], (i,j) \in \left[ [[N]],\dots,[[NU]]-1 \right]
+\end{eqnarray}
+
+The lenslet--array--slope--covariance is shifted such as the baseline coordinate $(0,0$) is a the center of the array i.e.
+\begin{equation}
+  \label{eq:7}
+  (i,j) \leftarrow \left[ (i,j) + (2[[N]]-2)/2 \right] \mod ( 2[[N]]-1 )
+\end{equation}
 <<covariance>>=
 printf("\n@(CEO)>imaging: Creating a 2D FFT plan\n");
 cufftHandle plan;
@@ -250,16 +269,16 @@ if (cudaThreadSynchronize() != cudaSuccess){
   fprintf(stderr, "Cuda error: Failed to synchronize\n");
  }
 cufftDestroy(plan);
-int cov_size = sizeof(float)*(2*N-1)*(2*N-1);
+int cov_size = sizeof(float2)*NU2;
 HANDLE_ERROR( cudaMalloc((void**)&d__cov, cov_size ) );
 
-int NU = 2*N-1;
 blockDim = dim3(16,16);
 gridDim = dim3( 1+NU/16 , 1+NU/16 );
 covariance_extraction LLL gridDim,blockDim RRR( d__cov, NU, d__psd, NF, kappa);
 @ The extraction of the covariance is done with the kernel:
 <<covariance extraction>>=
-__global__ void covariance_extraction(float *cov_out, int NC_out, float2 *cov_in, int NC_in, float kappa)
+__global__ void covariance_extraction(float2 *cov_out, int NC_out, 
+				      float2 *cov_in, int NC_in, float kappa)
 {
   int i, j, k_out, k_in, h;
   i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -276,9 +295,38 @@ __global__ void covariance_extraction(float *cov_out, int NC_out, float2 *cov_in
     else
       j *= kappa;
     k_in = i*NC_in + j;      
-    cov_out[k_out] = cov_in[k_in].x;
+    cov_out[k_out].x = cov_in[k_in].x;
+    cov_out[k_out].y = 0.0;
   }
 }
+@ 
+The 1D Fourier transform is now applied to the raster covariance
+<<raster covariance FT>>=
+printf("\n@(CEO)>imaging: Creating a 2D FFT plan\n");
+cufftHandle raster_plan;
+BATCH = 1;
+/* Create a 2D FFT plan. */
+if (cufftPlanMany(&raster_plan, 1, &NU2,
+		  NULL, 1, 0,
+		  NULL, 1, 0,
+		  CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
+  fprintf(stderr,
+	  "CUFFT Error: Unable to create plan\n");
+  return;
+ }
+if (cufftSetCompatibilityMode(raster_plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
+  fprintf(stderr,
+	  "CUFFT Error: Unable to set compatibility mode to native\n");
+    return;
+ }
+if (cufftExecC2C(raster_plan, d__cov, d__cov, CUFFT_FORWARD) 
+    != CUFFT_SUCCESS){
+  fprintf(stderr,"CUFFT Error: Unable to execute plan\n");
+ }
+if (cudaThreadSynchronize() != cudaSuccess){
+  fprintf(stderr, "Cuda error: Failed to synchronize\n");
+ }
+cufftDestroy(raster_plan);
 @  
 The test routine is written:
 <<aaStats.bin>>=
