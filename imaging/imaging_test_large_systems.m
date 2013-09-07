@@ -5,7 +5,7 @@
  L0 = 30;
  atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
 lambda = atm.wavelength;
-D = 8;
+D = 4;
 phase2nm = 1e9*lambda/2/pi;
 
 %  atm = atmosphere(photometry.V,r0,L0,...
@@ -17,7 +17,7 @@ phase2nm = 1e9*lambda/2/pi;
 % r0 = atm.r0;
 % L0 = atm.L0;
 
-nLenslet = 40;
+nLenslet = 4;
 d = D/nLenslet;
 nPxLenslet = 16;
 cxy0 = 0.5*(nPxLenslet-1);
@@ -64,7 +64,7 @@ colorbar
 drawnow
 
 %% slopes-to-slopes covariance matrix
-nF = 2^nextpow2(nLenslet*10);%nLenslet*2*10;%128;
+nF = 1024;%2^nextpow2(nLenslet*10);%nLenslet*2*10;%128;
 [fx,fy] = freqspace(nF,'meshgrid');
 sf = 4;
 lf = sf/(d*2);

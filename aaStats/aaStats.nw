@@ -19,6 +19,8 @@ struct aaStats {
 
   void setup(int N, atmosphere *atm, float lenslet_pitch);
 
+  void cleanup(void);
+
   void info(void);
 
 };
@@ -38,6 +40,8 @@ struct aaStats {
 <<covariance extraction>>
 
 <<setup>>
+
+<<cleanup>>
 
 <<info>>
 
@@ -78,15 +82,59 @@ The covariance is computed when the setup function is called with the size of a 
 <<setup>>=
 void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
 {
+  float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
   N = N_;
   NU = 2*N-1;
   NU2 = NU*NU;
-  float2 *d__psd, *psd, *cov;
-  float *d__alpha, *d__beta;
-  int NF, psd_size;
-  float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
+  NF = 1024;
+  NF2 = NF*NF;
+  kappa = 4;
 
-  info();  
+  psd_size = sizeof(float2)*NF2*4;
+  cov_size = sizeof(float2)*NU2*4;
+  HANDLE_ERROR( cudaMalloc((void**)&d__psd, psd_size ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__alpha, 2*sizeof(float) ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__beta,  2*sizeof(float) ) );
+  HANDLE_ERROR( cudaMemcpy( d__alpha, alpha, 2*sizeof(float), cudaMemcpyHostToDevice) );
+  HANDLE_ERROR( cudaMemcpy( d__beta, beta, 2*sizeof(float), cudaMemcpyHostToDevice) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__cov, cov_size ) );
+
+  printf("\n@(CEO)>imaging: Creating a 2D FFT plan\n");
+  int n_DFT[2] = {NF, NF};
+  int iodist = NF2;
+  int BATCH = 4;
+  /* Create a 2D FFT plan. */
+  if (cufftPlanMany(&plan, 2, n_DFT,
+		    NULL, 1, iodist,
+		    NULL, 1, iodist,
+		    CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
+    fprintf(stderr,
+	    "CUFFT Error: Unable to create plan\n");
+    return;
+  }
+  if (cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
+    fprintf(stderr,
+	    "CUFFT Error: Unable to set compatibility mode to native\n");
+    return;
+  }
+
+  printf("\n@(CEO)>imaging: Creating a 2D FFT plan\n");
+  /* Create a 2D FFT plan. */
+  if (cufftPlanMany(&raster_plan, 1, &NU2,
+		    NULL, 1, NU2,
+		    NULL, 1, NU2,
+		    CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
+    fprintf(stderr,
+	    "CUFFT Error: Unable to create plan\n");
+    return;
+  }
+  if (cufftSetCompatibilityMode(raster_plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
+    fprintf(stderr,
+	    "CUFFT Error: Unable to set compatibility mode to native\n");
+    return;
+  }
+
+ info();  
 
   <<power spectrum>>
   HANDLE_ERROR( cudaDeviceSynchronize() );
@@ -122,14 +170,12 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
   <<raster covariance FT>>
   HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
   for (int k=0;k<NU2;k++)
-    printf("%2d: %+4.2E %+4.2E.I\n",k,cov[k].x,cov[k].y);
+    printf("%2d: %+4.2E %+4.2E.I||%+4.2E %+4.2E.I||%+4.2E %+4.2E.I||%+4.2E%+4.2E.I\n",k,
+	   cov[k].x,cov[k].y,
+	   cov[k+NU2].x,cov[k+NU2].y,
+	   cov[k+2*NU2].x,cov[k+2*NU2].y,
+	   cov[k+3*NU2].x,cov[k+3*NU2].y);
 
-  HANDLE_ERROR( cudaFree( d__psd ) );
-  HANDLE_ERROR( cudaFree( d__alpha ) );
-  HANDLE_ERROR( cudaFree( d__beta ) );
-  HANDLE_ERROR( cudaFree( d__cov ) );
-  free(psd);		
-  free(cov);		
 }
 @ The main parameters of [[aaStats]] are displayed with the [[info]] routine:
 <<info>>=
@@ -142,11 +188,27 @@ void aaStats::info(void)
   printf(" . compression factor: %4.0f \n",n_total/n_unique);
   printf("----------------------------------------------------\n");
 }
+@ 
+<<cleanup>>=
+void aaStats::cleanup(void)
+{
+  printf("\n@(CEO)>aaStats: freeing memory!\n");
+  cufftDestroy(plan);
+  cufftDestroy(raster_plan);
+  HANDLE_ERROR( cudaFree( d__psd ) );
+  HANDLE_ERROR( cudaFree( d__alpha ) );
+  HANDLE_ERROR( cudaFree( d__beta ) );
+  HANDLE_ERROR( cudaFree( d__cov ) );
+  free(psd);		
+  free(cov);		
+}
 @
 The parameters of the [[aaStats]] structure are:
 <<aaStats parameters>>=
-int N, NU, NU2;
-float2 *d__cov;
+  int N, NU, NU2, NF, NF2, psd_size, cov_size;
+float2 *d__cov, *d__psd, *psd, *cov;
+float *d__alpha, *d__beta;
+cufftHandle plan, raster_plan;
 @ 
 The power spectrum  must be sampled such as its Fourier transform gives unbiased values of the covariance.
 The largest spatial frequency is $f_{max}=\kappa/2d$ with $\kappa\ge 1$.
@@ -159,21 +221,20 @@ The spatial frequencies are given by
 \end{eqnarray}
 Note that [[NF]] must be even.
 <<power spectrum>>=
-NF = 1024;
-kappa = 4;
-
-psd_size = sizeof(float2)*NF*NF;
-HANDLE_ERROR( cudaMalloc((void**)&d__psd, psd_size ) );
-HANDLE_ERROR( cudaMalloc((void**)&d__alpha, 2*sizeof(float) ) );
-HANDLE_ERROR( cudaMalloc((void**)&d__beta,  2*sizeof(float) ) );
-HANDLE_ERROR( cudaMemcpy( d__alpha, alpha, 2*sizeof(float), cudaMemcpyHostToDevice) );
-HANDLE_ERROR( cudaMemcpy( d__beta, beta, 2*sizeof(float), cudaMemcpyHostToDevice) );
-
 dim3 blockDim(16,16);
 dim3 gridDim( 1+NF/16 , 1+NF/16 );
 powerSpectrum LLL gridDim,blockDim RRR (d__psd, NF, lenslet_pitch, 
 					atm->wavelength, atm->r0, atm->turbulence.L0,
 					d__alpha, d__alpha, kappa);
+powerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2, NF, lenslet_pitch,
+					atm->wavelength, atm->r0, atm->turbulence.L0,
+					d__beta, d__beta, kappa);
+powerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2*2, NF, lenslet_pitch,
+					atm->wavelength, atm->r0, atm->turbulence.L0,
+					d__alpha, d__beta, kappa);
+powerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2*3, NF, lenslet_pitch,
+					atm->wavelength, atm->r0, atm->turbulence.L0,
+					d__beta, d__alpha, kappa);
 @ The power spectrum is computed with the following kernel:
 <<power spectrum kernel>>=
   __global__ void powerSpectrum(float2 *d__psd, int NF, float d,
@@ -242,25 +303,6 @@ The lenslet--array--slope--covariance is shifted such as the baseline coordinate
   (i,j) \leftarrow \left[ (i,j) + (2[[N]]-2)/2 \right] \mod ( 2[[N]]-1 )
 \end{equation}
 <<covariance>>=
-printf("\n@(CEO)>imaging: Creating a 2D FFT plan\n");
-cufftHandle plan;
-int n_DFT[2] = {NF, NF};
-int iodist = NF*NF;
-int BATCH = 1;
-/* Create a 2D FFT plan. */
-if (cufftPlanMany(&plan, 2, n_DFT,
-		  NULL, 1, iodist,
-		  NULL, 1, iodist,
-		  CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
-  fprintf(stderr,
-	  "CUFFT Error: Unable to create plan\n");
-  return;
- }
-if (cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
-  fprintf(stderr,
-	  "CUFFT Error: Unable to set compatibility mode to native\n");
-    return;
- }
 if (cufftExecC2C(plan, d__psd, d__psd, CUFFT_FORWARD) 
     != CUFFT_SUCCESS){
   fprintf(stderr,"CUFFT Error: Unable to execute plan\n");
@@ -268,13 +310,12 @@ if (cufftExecC2C(plan, d__psd, d__psd, CUFFT_FORWARD)
 if (cudaThreadSynchronize() != cudaSuccess){
   fprintf(stderr, "Cuda error: Failed to synchronize\n");
  }
-cufftDestroy(plan);
-int cov_size = sizeof(float2)*NU2;
-HANDLE_ERROR( cudaMalloc((void**)&d__cov, cov_size ) );
-
 blockDim = dim3(16,16);
 gridDim = dim3( 1+NU/16 , 1+NU/16 );
 covariance_extraction LLL gridDim,blockDim RRR( d__cov, NU, d__psd, NF, kappa);
+covariance_extraction LLL gridDim,blockDim RRR( d__cov + NU2, NU, d__psd + NF2, NF, kappa);
+covariance_extraction LLL gridDim,blockDim RRR( d__cov + 2*NU2, NU, d__psd + 2*NF2, NF, kappa);
+covariance_extraction LLL gridDim,blockDim RRR( d__cov + 3*NU2, NU, d__psd + 3*NF2, NF, kappa);
 @ The extraction of the covariance is done with the kernel:
 <<covariance extraction>>=
 __global__ void covariance_extraction(float2 *cov_out, int NC_out, 
@@ -302,23 +343,6 @@ __global__ void covariance_extraction(float2 *cov_out, int NC_out,
 @ 
 The 1D Fourier transform is now applied to the raster covariance
 <<raster covariance FT>>=
-printf("\n@(CEO)>imaging: Creating a 2D FFT plan\n");
-cufftHandle raster_plan;
-BATCH = 1;
-/* Create a 2D FFT plan. */
-if (cufftPlanMany(&raster_plan, 1, &NU2,
-		  NULL, 1, 0,
-		  NULL, 1, 0,
-		  CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
-  fprintf(stderr,
-	  "CUFFT Error: Unable to create plan\n");
-  return;
- }
-if (cufftSetCompatibilityMode(raster_plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
-  fprintf(stderr,
-	  "CUFFT Error: Unable to set compatibility mode to native\n");
-    return;
- }
 if (cufftExecC2C(raster_plan, d__cov, d__cov, CUFFT_FORWARD) 
     != CUFFT_SUCCESS){
   fprintf(stderr,"CUFFT Error: Unable to execute plan\n");
@@ -326,7 +350,6 @@ if (cufftExecC2C(raster_plan, d__cov, d__cov, CUFFT_FORWARD)
 if (cudaThreadSynchronize() != cudaSuccess){
   fprintf(stderr, "Cuda error: Failed to synchronize\n");
  }
-cufftDestroy(raster_plan);
 @  
 The test routine is written:
 <<aaStats.bin>>=
@@ -344,4 +367,5 @@ int main( void) {
   atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
   C.setup(4,&atm,1);
   atm.cleanup();
+  C.cleanup();
 }
