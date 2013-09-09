@@ -8,7 +8,9 @@ classdef toeplitzBlockToeplitz
        elements;
        bytes;
        elementsFT;
-       tag = 'Toeplitz-Block-Toeplitz';
+       mu;
+       xi;
+	   tag = 'Toeplitz-Block-Toeplitz';
     end
 
     methods
@@ -25,8 +27,14 @@ classdef toeplitzBlockToeplitz
             na = length(a);
             obj.elementsFT = fft(a,na);
             
-            display(obj)
+            n = obj.nRow;
+            [j1,j2] = ndgrid ( 1:n );
+            mu_ = 2*n*(n-1)-(j1-1)*(2*n-1)-(j2-1);
+            obj.mu = mu_'+1;
+            xi_ = 2*n*(2*n-1) - j1*(2*n-1) - j2;
+            obj.xi = xi_'+1;
 
+            display(obj)
         end
         
         function display(obj)
@@ -85,17 +93,20 @@ classdef toeplitzBlockToeplitz
         end
         
         function out = mtimes(obj,b)
-            n = obj.nRow;
-            [j1,j2] = ndgrid ( 1:n );
-            mu = 2*n*(n-1)-(j1-1)*(2*n-1)-(j2-1);
-            mu = mu';
-            xi = 2*n*(2*n-1) - j1*(2*n-1) - j2;
-            xi = xi';
             na = (obj.nBlockRow+obj.nBlockCol-1)*(obj.nRow+obj.nCol-1);
             U = zeros(na,1);
-            U(mu(:)+1) = b;
+            U(obj.mu(:)) = b;
             P = ifft(obj.elementsFT.*fft(U,na));
-            out = P(xi(:)+1);
+            out = P(obj.xi(:));
+        end
+        
+        function P = debugGpu(obj,b)
+            na = (obj.nBlockRow+obj.nBlockCol-1)*(obj.nRow+obj.nCol-1);
+            U = zeros(na,1);
+            U(obj.mu(:)) = b;
+            P = obj.elementsFT.*fft(U,na);
+%             P = ifft(obj.elementsFT.*fft(U,na));
+%             out = P(obj.xi(:));
         end
         
         function out = maskedMtimes(obj,b,mask)

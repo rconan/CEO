@@ -23,6 +23,8 @@ struct aaStats {
 
   void info(void);
 
+  void MVM(float *y, float *x);
+
 };
 #endif // __AASTATS_H__
 @ The routines are expanded in the source file:
@@ -39,12 +41,21 @@ struct aaStats {
 
 <<covariance extraction>>
 
+<<ordering indices>>
+
+<<MVM input ordering kernel>>
+
+<<MVM complex multiplication>>
+
+<<MVM output ordering kernel>>
+
 <<setup>>
 
 <<cleanup>>
 
 <<info>>
 
+<<matrix--to--vector multiplication>>
 @
 Shack--Hartmann WFS centroids are a measure of the spatial derivatives of the wavefront averaged on each subaperture.
 These derivatives are often referred as angle of arrivals:
@@ -84,6 +95,7 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
 {
   float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
   N = N_;
+  N2 = N*N;
   NU = 2*N-1;
   NU2 = NU*NU;
   NF = 1024;
@@ -92,14 +104,19 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
 
   psd_size = sizeof(float2)*NF2*4;
   cov_size = sizeof(float2)*NU2*4;
+  ind_size = sizeof(int)*N2;
   HANDLE_ERROR( cudaMalloc((void**)&d__psd, psd_size ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__alpha, 2*sizeof(float) ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__beta,  2*sizeof(float) ) );
   HANDLE_ERROR( cudaMemcpy( d__alpha, alpha, 2*sizeof(float), cudaMemcpyHostToDevice) );
   HANDLE_ERROR( cudaMemcpy( d__beta, beta, 2*sizeof(float), cudaMemcpyHostToDevice) );
   HANDLE_ERROR( cudaMalloc((void**)&d__cov, cov_size ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__mu, ind_size ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__xi, ind_size ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__b, 2*sizeof(float2)*NU2 ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__c, 2*sizeof(float2)*NU2 ) );
 
-  printf("\n@(CEO)>imaging: Creating a 2D FFT plan\n");
+  printf("\n@(CEO)>imaging: Creating 2D covariance FFT plan\n");
   int n_DFT[2] = {NF, NF};
   int iodist = NF2;
   int BATCH = 4;
@@ -118,7 +135,7 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
     return;
   }
 
-  printf("\n@(CEO)>imaging: Creating a 2D FFT plan\n");
+  printf("\n@(CEO)>imaging: Creating a 1D covariance FFT plan\n");
   /* Create a 2D FFT plan. */
   if (cufftPlanMany(&raster_plan, 1, &NU2,
 		    NULL, 1, NU2,
@@ -134,6 +151,23 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
     return;
   }
 
+  printf("\n@(CEO)>imaging: Creating a 1D MVM FFT plan\n");
+  /* Create a 2D FFT plan. */
+  BATCH = 2;
+  if (cufftPlanMany(&MVM_plan, 1, &NU2,
+		    NULL, 1, NU2,
+		    NULL, 1, NU2,
+		    CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
+    fprintf(stderr,
+	    "CUFFT Error: Unable to create plan\n");
+    return;
+  }
+  if (cufftSetCompatibilityMode(MVM_plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
+    fprintf(stderr,
+	    "CUFFT Error: Unable to set compatibility mode to native\n");
+    return;
+  }
+
  info();  
 
   <<power spectrum>>
@@ -142,6 +176,7 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
   HANDLE_ERROR( cudaMemcpy( psd, d__psd, psd_size, cudaMemcpyDeviceToHost) );
   if (NF<=8) {
     int k;
+    printf("\n@(CEO)>aaStats: power spectrum\n");
     for (int i=0;i<NF;i++) {
       printf("|");
       for (int j=0;j<NF;j++) {
@@ -157,6 +192,7 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
   HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
   if (N<=16) {
     int k;
+    printf("\n@(CEO)>aaStats: covariance\n");
     for (int i=0;i<NU;i++) {
       printf("|");
       for (int j=0;j<NU;j++) {
@@ -169,13 +205,28 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
 
   <<raster covariance FT>>
   HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
-  for (int k=0;k<NU2;k++)
-    printf("%2d: %+4.2E %+4.2E.I||%+4.2E %+4.2E.I||%+4.2E %+4.2E.I||%+4.2E%+4.2E.I\n",k,
-	   cov[k].x,cov[k].y,
-	   cov[k+NU2].x,cov[k+NU2].y,
-	   cov[k+2*NU2].x,cov[k+2*NU2].y,
-	   cov[k+3*NU2].x,cov[k+3*NU2].y);
+  if (N<=16) {
+    printf("\n@(CEO)>aaStats: raster covariance\n");
+    for (int k=0;k<NU2;k++)
+      printf("%2d: %+4.2E %+4.2E.I||%+4.2E %+4.2E.I||%+4.2E %+4.2E.I||%+4.2E%+4.2E.I\n",k,
+	     cov[k].x,cov[k].y,
+	     cov[k+NU2].x,cov[k+NU2].y,
+	     cov[k+2*NU2].x,cov[k+2*NU2].y,
+	     cov[k+3*NU2].x,cov[k+3*NU2].y);
+  }
 
+  blockDim = dim3(16,16);
+  gridDim = dim3( 1+N/16 , 1+N/16 );
+  ordering LLL gridDim,blockDim RRR(d__mu, d__xi, N);
+  mu = (unsigned int *)malloc( ind_size );
+  HANDLE_ERROR( cudaMemcpy( mu, d__mu, ind_size, cudaMemcpyDeviceToHost) );
+  xi = (unsigned int *)malloc( ind_size );
+  HANDLE_ERROR( cudaMemcpy( xi, d__xi, ind_size, cudaMemcpyDeviceToHost) );
+  if (N<=16) {
+    printf("\n|( i) mu xi|\n");
+    for (int i=0;i<N*N;i++) 
+      printf("|(%2d) %2d %2d|\n",i,mu[i],xi[i]);
+  }
 }
 @ The main parameters of [[aaStats]] are displayed with the [[info]] routine:
 <<info>>=
@@ -195,20 +246,28 @@ void aaStats::cleanup(void)
   printf("\n@(CEO)>aaStats: freeing memory!\n");
   cufftDestroy(plan);
   cufftDestroy(raster_plan);
+  cufftDestroy(MVM_plan);
   HANDLE_ERROR( cudaFree( d__psd ) );
   HANDLE_ERROR( cudaFree( d__alpha ) );
   HANDLE_ERROR( cudaFree( d__beta ) );
   HANDLE_ERROR( cudaFree( d__cov ) );
+  HANDLE_ERROR( cudaFree( d__mu ) );
+  HANDLE_ERROR( cudaFree( d__xi ) );
+  HANDLE_ERROR( cudaFree( d__b ) );
+  HANDLE_ERROR( cudaFree( d__c ) );
   free(psd);		
   free(cov);		
+  free(mu);		
+  free(xi);		
 }
 @
 The parameters of the [[aaStats]] structure are:
 <<aaStats parameters>>=
-  int N, NU, NU2, NF, NF2, psd_size, cov_size;
-float2 *d__cov, *d__psd, *psd, *cov;
+int N, N2, NU, NU2, NF, NF2, psd_size, cov_size, ind_size;
+float2 *d__cov, *d__psd, *psd, *cov, *d__b, *d__c;
 float *d__alpha, *d__beta;
-cufftHandle plan, raster_plan;
+unsigned int *d__mu, *d__xi, *mu, *xi;
+cufftHandle plan, raster_plan, MVM_plan;
 @ 
 The power spectrum  must be sampled such as its Fourier transform gives unbiased values of the covariance.
 The largest spatial frequency is $f_{max}=\kappa/2d$ with $\kappa\ge 1$.
@@ -228,13 +287,13 @@ powerSpectrum LLL gridDim,blockDim RRR (d__psd, NF, lenslet_pitch,
 					d__alpha, d__alpha, kappa);
 powerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2, NF, lenslet_pitch,
 					atm->wavelength, atm->r0, atm->turbulence.L0,
-					d__beta, d__beta, kappa);
+					d__alpha, d__beta, kappa);
 powerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2*2, NF, lenslet_pitch,
 					atm->wavelength, atm->r0, atm->turbulence.L0,
-					d__alpha, d__beta, kappa);
+					d__beta, d__alpha, kappa);
 powerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2*3, NF, lenslet_pitch,
 					atm->wavelength, atm->r0, atm->turbulence.L0,
-					d__beta, d__alpha, kappa);
+					d__beta, d__beta, kappa);
 @ The power spectrum is computed with the following kernel:
 <<power spectrum kernel>>=
   __global__ void powerSpectrum(float2 *d__psd, int NF, float d,
@@ -350,7 +409,158 @@ if (cufftExecC2C(raster_plan, d__cov, d__cov, CUFFT_FORWARD)
 if (cudaThreadSynchronize() != cudaSuccess){
   fprintf(stderr, "Cuda error: Failed to synchronize\n");
  }
-@  
+@ 
+The multiplication $Cs$ are efficiently performed as follows
+\begin{enumerate}
+\item Construct polynomials $C(t)$ and $s(t)$ from the matrix $C$ and the vector $s$:
+  \begin{equation}
+    \label{eq:33}
+    C(t) = \sum_{i_1=-(N_l-1)}^{N_l-1}\sum_{i_2=-(N_l-1)}^{N_l-1} c_{{i_1}{i_2}}t^{\lambda_{{i_1}{i_2}}},
+  \end{equation}
+where $c_{{i_1}{i_2}}$ is an entry of $C$ and $\lambda_{{i_1}{i_2}}=(N_l+i_1-1)(2N_l-1)+(N_l+i_2-1)$ and
+\begin{equation}
+  \label{eq:34}
+    S(t) = \sum_{j_1=1}^{N_l}\sum_{j_2=1}^{N_l} s_{{j_1}{j_2}}t^{\mu_{{j_1}{j_2}}},  
+\end{equation}
+where $\mu_{{j_1}{j_2}}=2N_l(N_l-1)-j_1(2N_l-1)-j_2$.
+\item Compute $P(t)=C(t)\times S(t)$ using the Discrete Fourier Transform.
+\item The entry $b_{{j_1}{j_2}}$ of the vector $b$ is $b_{{j_1}{j_2}}=p_{\xi_{{j_1}{j_2}}}$, where $\xi_{{j_1}{j_2}}=2N_l(2N_l-1)-(j_1+1)(2N_l-1)-(j_2+1).$
+\end{enumerate}
+with $(j_1,j_2)\in [0,\dots,[[N]]-1]$.
+<<ordering indices>>=
+__global__ void ordering(unsigned int *mu, unsigned int *xi, int n)
+{
+  int j1, j2, k;
+  j1 = blockIdx.x * blockDim.x + threadIdx.x;
+  j2 = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (j1<n) && (j2<n) ) {
+    k = j1*n + j2;
+    mu[k] = 2*n*(n-1)-j1*(2*n-1)-j2;
+    xi[k] = 2*n*(2*n-1) - (j1+1)*(2*n-1) - (j2+1);
+  }
+}
+@ 
+The MVM routine computes the matrix--to--vector multiplication $y=C_{\vec\alpha\cdot\vec\beta}s$.
+<<matrix--to--vector multiplication>>=
+void aaStats::MVM(float *y, float *x)
+{
+  <<MVM STEP 1: input ordering>>
+  <<MVM STEP 2: input FT>>
+  <<MVM STEP 3: Fourier domain multiplication>>
+  <<MVM STEP 4: output FT>>
+  <<MVM STEP 5: output ordering>>
+}
+@
+The vector $s$ is made of 2 components of length [[N2]]: $$s= \left[
+\begin{array}{c}
+  s_x \\
+  s_y
+\end{array}
+\right]
+$$
+and lets define another complex vector $b$ also made of two components but of length [[NU2]]: $$b=\left[
+\begin{array}{c}
+  b_x \\
+  b_y
+\end{array}
+\right]
+$$
+The matrix--to--vector multiplication $y=C_{\vec\alpha\dot\vec\beta}s$ is derived through the following steps:
+\begin{enumerate}
+\item input allocation and ordering:
+  \begin{itemize}
+  \item the $s_x$ components of $s$ is allocated into the real
+    part of the complex vector $b_x$ according to the ordering in
+    vector $\mu$ i.e. $b_x[\mu].x=s_x$,
+  \item the $s_y$ components of $s$ is allocated into the real part of
+    the complex vector $b_y$ according to the ordering in vector $\mu$
+    i.e. $b_y[\mu].x=s_y$,
+  \end{itemize}
+<<MVM STEP 1: input ordering>>=
+dim3 blockDim(256,1);
+dim3 gridDim( 1+NU2/256,1);
+mvm_input_order LLL gridDim,blockDim RRR (d__b      , NU2, x     , N2, d__mu);
+mvm_input_order LLL gridDim,blockDim RRR (d__b + NU2, NU2, x + N2, N2, d__mu);
+@  using the kernel:
+<<MVM input ordering kernel>>=
+__global__ void mvm_input_order(float2 *x_out, int n_x_out, 
+                                float *x_in, int n_x_in, 
+                                unsigned int *ind) 
+{
+  int k;
+  k = blockIdx.x * blockDim.x + threadIdx.x;
+  if (k<n_x_out) {
+    x_out[k].x = 0.0;
+    x_out[k].y = 0.0;
+  }
+  __syncthreads();
+  if (k<n_x_in) {
+    x_out[ind[k]].x = x_in[k];
+  }
+}
+@ 
+\item the Fourier transform of $b_{(x,y)}$ is computed i.e. $\tilde b_{(x,y)}=\mathcal F [b_{(x,y)}]$,
+<<MVM STEP 2: input FT>>=
+if (cufftExecC2C(MVM_plan, d__b, d__b, CUFFT_FORWARD) 
+    != CUFFT_SUCCESS){
+  fprintf(stderr,"CUFFT Error: Unable to execute plan forward FT with MVM plan\n");
+ }
+ HANDLE_ERROR( cudaThreadSynchronize() );
+@
+\item $\tilde b$ and $\tilde T$ are multiplied element wise i.e. 
+$$\tilde c = \tilde b\tilde T =
+\left[
+\begin{array}{c}
+  \tilde b_x.x\tilde T_{xx}.x - \tilde b_x.y\tilde T_{xx}.y + \tilde b_y.x\tilde T_{xy}.x - \tilde b_y.y\tilde T_{xy}.y \\
+  \tilde b_x.x\tilde T_{xx}.y + \tilde b_x.y\tilde T_{xx}.x + \tilde b_y.x\tilde T_{xy}.y + \tilde b_y.y\tilde T_{xy}.x 
+\end{array}
+\right]
+$$
+<<MVM STEP 3: Fourier domain multiplication>>=
+cpx_mult LLL gridDim,blockDim RRR (d__c      , d__cov        , d__b, NU2);
+cpx_mult LLL gridDim,blockDim RRR (d__c + NU2, d__cov + 2*NU2, d__b, NU2);
+@ 
+using the kernel:
+<<MVM complex multiplication>>=
+ __global__ void cpx_mult(float2* c, float2 *x1, float2*x2, int n_x) {
+  int k, l;
+  k = blockIdx.x * blockDim.x + threadIdx.x;
+  if (k<n_x) {
+    c[k].x  = x1[k].x*x2[k].x - x1[k].y*x2[k].y;
+    c[k].y  = x1[k].x*x2[k].y + x1[k].y*x2[k].x;
+    l = k + n_x;
+    c[k].x += x1[l].x*x2[l].x - x1[l].y*x2[l].y;
+    c[k].y += x1[l].x*x2[l].y + x1[l].y*x2[l].x;
+  }
+}
+@ 
+\item the inverse Fourier transform of $\tilde c$ is computed i.e. $c=\mathcal F^{-1} [\tilde c]$,
+<<MVM STEP 4: output FT>>=
+if (cufftExecC2C(MVM_plan, d__c, d__c, CUFFT_INVERSE) 
+    != CUFFT_SUCCESS){
+  fprintf(stderr,"CUFFT Error: Unable to execute inverse FT with MVM plan\n");
+ }
+ HANDLE_ERROR( cudaThreadSynchronize() );
+@
+\item the real part of $c$ is affected into vector $y$ according to the ordering in vector $\xi$ i.e. $y=c[\xi].x$.
+<<MVM STEP 5: output ordering>>=
+blockDim = dim3(256,1);
+gridDim  = dim3( 1+N2/256,1);
+mvm_output_order LLL gridDim,blockDim RRR (y     , N2, d__c      , NU2, d__xi);
+mvm_output_order LLL gridDim,blockDim RRR (y + N2, N2, d__c + NU2, NU2, d__xi);
+@  using the kernel:
+<<MVM output ordering kernel>>=
+__global__ void mvm_output_order(float *x_out, int n_x_out, 
+                                float2 *x_in, int n_x_in, 
+                                unsigned int *ind) 
+{
+  int k;
+  k = blockIdx.x * blockDim.x + threadIdx.x;
+  if (k<n_x_out) {
+    x_out[k] = x_in[ind[k]].x/n_x_in;
+  }
+}
+@ \end{enumerate}
 The test routine is written:
 <<aaStats.bin>>=
 
@@ -360,12 +570,32 @@ The test routine is written:
 int main( void) {
   atmosphere atm;
   aaStats C;
+  int k, data_size;
   float altitude[] = {0},
         xi0[] = {1},
         wind_speed[] = {10},
   	wind_direction[] = {0};
+  float x[32], y[32], *d__x, *d__y;
+  data_size = sizeof(float)*32;
+  HANDLE_ERROR( cudaMalloc((void**)&d__x, data_size ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__y, data_size ) );
   atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
   C.setup(4,&atm,1);
+
+  for (k=0;k<32;k++) {
+    x[k] = (float)k;
+  }
+  HANDLE_ERROR( cudaMemcpy( d__x, x, data_size, cudaMemcpyHostToDevice) );
+  C.MVM(d__y,d__x);
+  HANDLE_ERROR( cudaMemcpy( y, d__y, data_size, cudaMemcpyDeviceToHost) );
+  printf("\nMVM:\n");
+  for (k=0;k<32;k++) {
+    printf("(%2d) %4.2E\n",k,y[k]);
+  }
+
   atm.cleanup();
   C.cleanup();
+  HANDLE_ERROR( cudaFree( d__x ) );
+  HANDLE_ERROR( cudaFree( d__y ) );
+
 }
