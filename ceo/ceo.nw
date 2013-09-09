@@ -35,6 +35,8 @@ static void HandleError( cudaError_t err,
 
 <<threads2lenslet>>
 
+<<tic-toc>>
+
 #endif  // __CEO_H__
 @
 <<ceo.cu>>=
@@ -225,3 +227,24 @@ where $N_s$ is the number of sources.
   \caption{3 $6\times6$ lenslet arrays with $5\times5$ pixels per lenslet}
   \label{fig:3}
 \end{figure}
+
+In the following, a structure to time chunk of CUDA code is defined:
+<<tic-toc>>=
+struct stopwatch{
+  cudaEvent_t     start, stop;
+  void tic(void) {
+    HANDLE_ERROR( cudaEventCreate( &start ) );
+    HANDLE_ERROR( cudaEventCreate( &stop ) );
+    HANDLE_ERROR( cudaEventRecord( start, 0 ) );
+  }
+  void toc(void) {
+    HANDLE_ERROR( cudaEventRecord( stop, 0 ) );
+    HANDLE_ERROR( cudaEventSynchronize( stop ) );
+    float   elapsedTime;
+    HANDLE_ERROR( cudaEventElapsedTime( &elapsedTime,
+                                        start, stop ) );
+    printf("\nElapsed time:  %3.1f microsec\n", elapsedTime*1e3 );
+    HANDLE_ERROR( cudaEventDestroy( start ) );
+    HANDLE_ERROR( cudaEventDestroy( stop ) );
+  }
+};

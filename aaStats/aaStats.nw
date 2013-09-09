@@ -94,6 +94,7 @@ The covariance is computed when the setup function is called with the size of a 
 void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
 {
   float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
+  int DEBUG = 0;
   N = N_;
   N2 = N*N;
   NU = 2*N-1;
@@ -174,7 +175,7 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
   HANDLE_ERROR( cudaDeviceSynchronize() );
   psd = (float2 *)malloc( psd_size );
   HANDLE_ERROR( cudaMemcpy( psd, d__psd, psd_size, cudaMemcpyDeviceToHost) );
-  if (NF<=8) {
+  if (DEBUG>0) {
     int k;
     printf("\n@(CEO)>aaStats: power spectrum\n");
     for (int i=0;i<NF;i++) {
@@ -190,7 +191,7 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
   <<covariance>>
   cov = (float2 *)malloc( cov_size );
   HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
-  if (N<=16) {
+  if (DEBUG>0) {
     int k;
     printf("\n@(CEO)>aaStats: covariance\n");
     for (int i=0;i<NU;i++) {
@@ -205,7 +206,7 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
 
   <<raster covariance FT>>
   HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
-  if (N<=16) {
+  if (DEBUG>0) {
     printf("\n@(CEO)>aaStats: raster covariance\n");
     for (int k=0;k<NU2;k++)
       printf("%2d: %+4.2E %+4.2E.I||%+4.2E %+4.2E.I||%+4.2E %+4.2E.I||%+4.2E%+4.2E.I\n",k,
@@ -222,7 +223,7 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
   HANDLE_ERROR( cudaMemcpy( mu, d__mu, ind_size, cudaMemcpyDeviceToHost) );
   xi = (unsigned int *)malloc( ind_size );
   HANDLE_ERROR( cudaMemcpy( xi, d__xi, ind_size, cudaMemcpyDeviceToHost) );
-  if (N<=16) {
+  if (DEBUG>0) {
     printf("\n|( i) mu xi|\n");
     for (int i=0;i<N*N;i++) 
       printf("|(%2d) %2d %2d|\n",i,mu[i],xi[i]);
@@ -235,8 +236,22 @@ void aaStats::info(void)
   printf("\n@(CEO)>aaStats:\n");
   printf(" . number of blocks: %dX%d\n",N,N);
   printf(" . size of blocks: %dX%d\n",N,N);
-  float n_total = powf(N,4), n_unique = powf(NU,2);
-  printf(" . compression factor: %4.0f \n",n_total/n_unique);
+  float n_total = powf(N,4);
+  printf(" . full matrix elements #      : %10d\n",4*n_total);
+  printf(" . compressed matrix elements #: %10d\n",4*NU2);
+  printf(" . compression factor: %4.0f \n",n_total/NU2);
+  float mb = powf(2,20);
+  float mb_total = 4*n_total*sizeof(float);
+  if (mb_total>mb)
+    printf(" . full matrix storage [MB]      : %6.0f\n",mb_total/mb);
+  else
+    printf(" . full matrix storage [KB]      : %6.0f\n",mb_total/1024.0);
+  float mb_comp = cov_size;
+  if (mb_comp>mb)
+    printf(" . compressed matrix storage [MB]: %6.1f\n",mb_comp/mb);
+  else
+    printf(" . compressed matrix storage [KB]: %6.1f\n",mb_comp/1024.0);
+  printf(" . compression factor: %4.0f \n",mb_total/mb_comp);
   printf("----------------------------------------------------\n");
 }
 @ 
@@ -567,6 +582,9 @@ The test routine is written:
 #include "ceo.h"
 #include "aaStats.h"
 
+#define N 40
+#define NX (N*N*2)
+
 int main( void) {
   atmosphere atm;
   aaStats C;
@@ -575,23 +593,26 @@ int main( void) {
         xi0[] = {1},
         wind_speed[] = {10},
   	wind_direction[] = {0};
-  float x[32], y[32], *d__x, *d__y;
-  data_size = sizeof(float)*32;
+  float x[NX], y[NX], *d__x, *d__y;
+  data_size = sizeof(float)*NX;
   HANDLE_ERROR( cudaMalloc((void**)&d__x, data_size ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__y, data_size ) );
   atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
-  C.setup(4,&atm,1);
+  C.setup(N,&atm,1);
 
-  for (k=0;k<32;k++) {
+  for (k=0;k<NX;k++) {
     x[k] = (float)k;
   }
   HANDLE_ERROR( cudaMemcpy( d__x, x, data_size, cudaMemcpyHostToDevice) );
+  stopwatch tid;
+  tid.tic();
   C.MVM(d__y,d__x);
-  HANDLE_ERROR( cudaMemcpy( y, d__y, data_size, cudaMemcpyDeviceToHost) );
-  printf("\nMVM:\n");
-  for (k=0;k<32;k++) {
-    printf("(%2d) %4.2E\n",k,y[k]);
-  }
+  tid.toc();
+  /* HANDLE_ERROR( cudaMemcpy( y, d__y, data_size, cudaMemcpyDeviceToHost) ); */
+  /* printf("\nMVM:\n"); */
+  /* for (k=0;k<NX;k++) { */
+  /*   printf("(%2d) %4.2E\n",k,y[k]); */
+  /* } */
 
   atm.cleanup();
   C.cleanup();
