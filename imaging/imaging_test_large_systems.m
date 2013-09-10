@@ -5,7 +5,7 @@
  L0 = 30;
  atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
 lambda = atm.wavelength;
-D = 4;
+D = 8;
 phase2nm = 1e9*lambda/2/pi;
 
 %  atm = atmosphere(photometry.V,r0,L0,...
@@ -17,7 +17,7 @@ phase2nm = 1e9*lambda/2/pi;
 % r0 = atm.r0;
 % L0 = atm.L0;
 
-nLenslet = 4;
+nLenslet = 40;
 d = D/nLenslet;
 nPxLenslet = 16;
 cxy0 = 0.5*(nPxLenslet-1);

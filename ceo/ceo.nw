@@ -1,3 +1,4 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
 <<ceo.h>>=
 #ifndef __CEO_H__
 #define __CEO_H__
@@ -228,7 +229,7 @@ where $N_s$ is the number of sources.
   \label{fig:3}
 \end{figure}
 
-In the following, a structure to time chunk of CUDA code is defined:
+In the following, a structure to  chunk of CUDA code is defined:
 <<tic-toc>>=
 struct stopwatch{
   cudaEvent_t     start, stop;
@@ -243,7 +244,17 @@ struct stopwatch{
     float   elapsedTime;
     HANDLE_ERROR( cudaEventElapsedTime( &elapsedTime,
                                         start, stop ) );
-    printf("\nElapsed time:  %3.1f microsec\n", elapsedTime*1e3 );
+    printf("\n\x1B[33mElapsed time: %8.2E ms\x1B[0m\n", elapsedTime );
+    HANDLE_ERROR( cudaEventDestroy( start ) );
+    HANDLE_ERROR( cudaEventDestroy( stop ) );
+  }
+  void toc(char *message) {
+    HANDLE_ERROR( cudaEventRecord( stop, 0 ) );
+    HANDLE_ERROR( cudaEventSynchronize( stop ) );
+    float   elapsedTime;
+    HANDLE_ERROR( cudaEventElapsedTime( &elapsedTime,
+                                        start, stop ) );
+    printf("\n\x1B[33m%s: Elapsed time: %8.2E ms\x1B[0m\n", message, elapsedTime );
     HANDLE_ERROR( cudaEventDestroy( start ) );
     HANDLE_ERROR( cudaEventDestroy( stop ) );
   }

@@ -13,6 +13,8 @@ The aaStats structure is written in the header:
 #include "atmosphere.h"
 #endif
 
+//#define AASTATS_DEBUG
+
 struct aaStats {
 
   <<aaStats parameters>>
@@ -94,7 +96,6 @@ The covariance is computed when the setup function is called with the size of a 
 void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
 {
   float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
-  int DEBUG = 0;
   N = N_;
   N2 = N*N;
   NU = 2*N-1;
@@ -171,69 +172,76 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
 
  info();  
 
-  <<power spectrum>>
-  HANDLE_ERROR( cudaDeviceSynchronize() );
-  psd = (float2 *)malloc( psd_size );
-  HANDLE_ERROR( cudaMemcpy( psd, d__psd, psd_size, cudaMemcpyDeviceToHost) );
-  if (DEBUG>0) {
-    int k;
-    printf("\n@(CEO)>aaStats: power spectrum\n");
-    for (int i=0;i<NF;i++) {
-      printf("|");
-      for (int j=0;j<NF;j++) {
-	k = i*NF + j;
-	printf("|(%d,%d)%+4.2E;%+4.2E|",i,j,psd[k].x,psd[k].y);
-      }
-      printf("|\n");
-    }
-  }
 
-  <<covariance>>
-  cov = (float2 *)malloc( cov_size );
-  HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
-  if (DEBUG>0) {
-    int k;
-    printf("\n@(CEO)>aaStats: covariance\n");
-    for (int i=0;i<NU;i++) {
-      printf("|");
-      for (int j=0;j<NU;j++) {
-	k = i*(NU) + j;
-	printf("|(%d,%d)%+4.2E|",i,j,cov[k].x);
-      }
-      printf("|\n");
-    }
-  }
-
-  <<raster covariance FT>>
-  HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
-  if (DEBUG>0) {
-    printf("\n@(CEO)>aaStats: raster covariance\n");
-    for (int k=0;k<NU2;k++)
-      printf("%2d: %+4.2E %+4.2E.I||%+4.2E %+4.2E.I||%+4.2E %+4.2E.I||%+4.2E%+4.2E.I\n",k,
-	     cov[k].x,cov[k].y,
-	     cov[k+NU2].x,cov[k+NU2].y,
-	     cov[k+2*NU2].x,cov[k+2*NU2].y,
-	     cov[k+3*NU2].x,cov[k+3*NU2].y);
-  }
-
-  blockDim = dim3(16,16);
-  gridDim = dim3( 1+N/16 , 1+N/16 );
+  dim3 blockDim(16,16);
+  dim3 gridDim( 1+N/16 , 1+N/16 );
   ordering LLL gridDim,blockDim RRR(d__mu, d__xi, N);
+#ifdef AASTATS_DEBUG
   mu = (unsigned int *)malloc( ind_size );
   HANDLE_ERROR( cudaMemcpy( mu, d__mu, ind_size, cudaMemcpyDeviceToHost) );
   xi = (unsigned int *)malloc( ind_size );
   HANDLE_ERROR( cudaMemcpy( xi, d__xi, ind_size, cudaMemcpyDeviceToHost) );
-  if (DEBUG>0) {
-    printf("\n|( i) mu xi|\n");
-    for (int i=0;i<N*N;i++) 
-      printf("|(%2d) %2d %2d|\n",i,mu[i],xi[i]);
-  }
+  printf("\n|( i) mu xi|\n");
+  for (int i=0;i<N*N;i++) 
+    printf("|(%2d) %2d %2d|\n",i,mu[i],xi[i]);
+#endif
+
+  stopwatch tid;
+  tid.tic();
+  <<evaluate covariance>>
+  tid.toc("Covariance evaluation");
 }
+@ 
+The covariance is computed with
+<<evaluate covariance>>=
+<<power spectrum>>
+#ifdef AASTATS_DEBUG
+HANDLE_ERROR( cudaDeviceSynchronize() );
+psd = (float2 *)malloc( psd_size );
+HANDLE_ERROR( cudaMemcpy( psd, d__psd, psd_size, cudaMemcpyDeviceToHost) );
+int k;
+printf("\n@(CEO)>aaStats: power spectrum\n");
+for (int i=0;i<NF;i++) {
+  printf("|");
+  for (int j=0;j<NF;j++) {
+    k = i*NF + j;
+    printf("|(%d,%d)%+4.2E;%+4.2E|",i,j,psd[k].x,psd[k].y);
+  }
+  printf("|\n");
+}
+#endif
+
+<<covariance>>
+#ifdef AASTATS_DEBUG
+cov = (float2 *)malloc( cov_size );
+HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
+printf("\n@(CEO)>aaStats: covariance\n");
+for (int i=0;i<NU;i++) {
+  printf("|");
+  for (int j=0;j<NU;j++) {
+    k = i*(NU) + j;
+    printf("|(%d,%d)%+4.2E|",i,j,cov[k].x);
+  }
+  printf("|\n");
+}
+#endif
+
+<<raster covariance FT>>
+#ifdef AASTATS_DEBUG
+HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
+printf("\n@(CEO)>aaStats: raster covariance\n");
+for (int k=0;k<NU2;k++)
+printf("%2d: %+4.2E %+4.2E.I||%+4.2E %+4.2E.I||%+4.2E %+4.2E.I||%+4.2E%+4.2E.I\n",k,
+cov[k].x,cov[k].y,
+cov[k+NU2].x,cov[k+NU2].y,
+cov[k+2*NU2].x,cov[k+2*NU2].y,
+cov[k+3*NU2].x,cov[k+3*NU2].y);
+#endif
 @ The main parameters of [[aaStats]] are displayed with the [[info]] routine:
 <<info>>=
 void aaStats::info(void)
 {
-  printf("\n@(CEO)>aaStats:\n");
+  printf("\n\x1B[1;42m@(CEO)>aaStats:\x1B[;42m\n");
   printf(" . number of blocks: %dX%d\n",N,N);
   printf(" . size of blocks: %dX%d\n",N,N);
   float n_total = powf(N,4);
@@ -243,16 +251,16 @@ void aaStats::info(void)
   float mb = powf(2,20);
   float mb_total = 4*n_total*sizeof(float);
   if (mb_total>mb)
-    printf(" . full matrix storage [MB]      : %6.0f\n",mb_total/mb);
+    printf(" . full matrix storage [MB]      : %6.1f\n",mb_total/mb);
   else
-    printf(" . full matrix storage [KB]      : %6.0f\n",mb_total/1024.0);
+    printf(" . full matrix storage [KB]      : %6.1f\n",mb_total/1024.0);
   float mb_comp = cov_size;
   if (mb_comp>mb)
     printf(" . compressed matrix storage [MB]: %6.1f\n",mb_comp/mb);
   else
     printf(" . compressed matrix storage [KB]: %6.1f\n",mb_comp/1024.0);
   printf(" . compression factor: %4.0f \n",mb_total/mb_comp);
-  printf("----------------------------------------------------\n");
+  printf("----------------------------------------------------\x1B[0m\n");
 }
 @ 
 <<cleanup>>=
@@ -270,19 +278,25 @@ void aaStats::cleanup(void)
   HANDLE_ERROR( cudaFree( d__xi ) );
   HANDLE_ERROR( cudaFree( d__b ) );
   HANDLE_ERROR( cudaFree( d__c ) );
+#ifdef AASTATS_DEBUG
   free(psd);		
   free(cov);		
   free(mu);		
-  free(xi);		
+  free(xi);
+#endif		
 }
 @
 The parameters of the [[aaStats]] structure are:
 <<aaStats parameters>>=
 int N, N2, NU, NU2, NF, NF2, psd_size, cov_size, ind_size;
-float2 *d__cov, *d__psd, *psd, *cov, *d__b, *d__c;
+float2 *d__cov, *d__psd, *d__b, *d__c;
 float *d__alpha, *d__beta;
-unsigned int *d__mu, *d__xi, *mu, *xi;
+unsigned int *d__mu, *d__xi;
 cufftHandle plan, raster_plan, MVM_plan;
+#ifdef AASTATS_DEBUG
+float2 *psd, *cov;
+unsigned int *mu, *xi;
+#endif
 @ 
 The power spectrum  must be sampled such as its Fourier transform gives unbiased values of the covariance.
 The largest spatial frequency is $f_{max}=\kappa/2d$ with $\kappa\ge 1$.
@@ -295,8 +309,8 @@ The spatial frequencies are given by
 \end{eqnarray}
 Note that [[NF]] must be even.
 <<power spectrum>>=
-dim3 blockDim(16,16);
-dim3 gridDim( 1+NF/16 , 1+NF/16 );
+blockDim = dim3(16,16);
+gridDim  = dim3( 1+NF/16 , 1+NF/16 );
 powerSpectrum LLL gridDim,blockDim RRR (d__psd, NF, lenslet_pitch, 
 					atm->wavelength, atm->r0, atm->turbulence.L0,
 					d__alpha, d__alpha, kappa);
@@ -327,7 +341,7 @@ powerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2*3, NF, lenslet_pitch,
       fx = fx - NF;
     if (j>=(NF/2))
       fy = fy - NF;
-    fs = (2.0/NF)*(kappa/2*d);
+    fs = (2.0/NF)*(kappa/(2*d));
     fx *= fs;
     fy *= fs;
     k = i*NF + j;
@@ -348,7 +362,12 @@ The phase power spectrum is given by:
   return 0.0229*powf(f_square + f0*f0,-11.0/6.0);
 }
 @ 
-The subaperture Fourier transform is written in
+The subaperture Fourier transform is given by
+\begin{equation}
+  \label{eq:9}
+  {\mathrm sinc}^2(f_x){\mathrm sinc}^2(f_y)
+\end{equation}
+and written in
 <<subaperture PSF>>=
 __device__ float gatePSF(float fx, float fy) {
   float out;
@@ -356,6 +375,10 @@ __device__ float gatePSF(float fx, float fy) {
   return out*out;
 }
 @ that depends on the $sinc$ function:
+\begin{equation}
+  \label{eq:10}
+  {\sin(\pi x)\over \pi x}
+\end{equation}
 <<sinc>>=
 __device__ float sinc(float x) {
   return (x==0) ? 1.0 : sinf( PI*x) / (PI*x) ; 
@@ -459,11 +482,22 @@ The MVM routine computes the matrix--to--vector multiplication $y=C_{\vec\alpha\
 <<matrix--to--vector multiplication>>=
 void aaStats::MVM(float *y, float *x)
 {
+  /* stopwatch tid; */
+  /* tid.tic(); */
   <<MVM STEP 1: input ordering>>
+  /* tid.toc("STEP 1"); */
+  /* tid.tic(); */
   <<MVM STEP 2: input FT>>
+  /* tid.toc("STEP 2"); */
+  /* tid.tic(); */
   <<MVM STEP 3: Fourier domain multiplication>>
+  /* tid.toc("STEP 3"); */
+  /* tid.tic(); */
   <<MVM STEP 4: output FT>>
+  /* tid.toc("STEP 4"); */
+  /* tid.tic(); */
   <<MVM STEP 5: output ordering>>
+  /* tid.toc("STEP 5"); */
 }
 @
 The vector $s$ is made of 2 components of length [[N2]]: $$s= \left[
@@ -598,16 +632,16 @@ int main( void) {
   HANDLE_ERROR( cudaMalloc((void**)&d__x, data_size ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__y, data_size ) );
   atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
-  C.setup(N,&atm,1);
 
   for (k=0;k<NX;k++) {
     x[k] = (float)k;
   }
   HANDLE_ERROR( cudaMemcpy( d__x, x, data_size, cudaMemcpyHostToDevice) );
   stopwatch tid;
+  C.setup(N,&atm,0.1);
   tid.tic();
   C.MVM(d__y,d__x);
-  tid.toc();
+  tid.toc("Covariance MVM: ");
   /* HANDLE_ERROR( cudaMemcpy( y, d__y, data_size, cudaMemcpyDeviceToHost) ); */
   /* printf("\nMVM:\n"); */
   /* for (k=0;k<NX;k++) { */
