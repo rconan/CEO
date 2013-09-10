@@ -189,7 +189,7 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
   stopwatch tid;
   tid.tic();
   <<evaluate covariance>>
-  tid.toc("Covariance evaluation");
+  tid.toc(&cov_eval_et,"Covariance evaluation");
 }
 @ 
 The covariance is computed with
@@ -244,22 +244,23 @@ void aaStats::info(void)
   printf("\n\x1B[1;42m@(CEO)>aaStats:\x1B[;42m\n");
   printf(" . number of blocks: %dX%d\n",N,N);
   printf(" . size of blocks: %dX%d\n",N,N);
-  float n_total = powf(N,4);
-  printf(" . full matrix elements #      : %10d\n",4*n_total);
-  printf(" . compressed matrix elements #: %10d\n",4*NU2);
-  printf(" . compression factor: %4.0f \n",n_total/NU2);
+  n_full = powf(N,4)*4;
+  printf(" . full matrix elements #      : %10.0f\n",n_full);
+  n_comp = 4*NU2;
+  printf(" . compressed matrix elements #: %10d\n",n_comp);
+  printf(" . compression factor: %4.0f \n",n_full/n_comp);
   float mb = powf(2,20);
-  float mb_total = 4*n_total*sizeof(float);
-  if (mb_total>mb)
-    printf(" . full matrix storage [MB]      : %6.1f\n",mb_total/mb);
+  b_full = n_full*sizeof(float);
+  if (b_full>mb)
+    printf(" . full matrix storage [MB]      : %6.1f\n",b_full/mb);
   else
-    printf(" . full matrix storage [KB]      : %6.1f\n",mb_total/1024.0);
-  float mb_comp = cov_size;
-  if (mb_comp>mb)
-    printf(" . compressed matrix storage [MB]: %6.1f\n",mb_comp/mb);
+    printf(" . full matrix storage [KB]      : %6.1f\n",b_full/1024.0);
+  b_comp = cov_size;
+  if (b_comp>mb)
+    printf(" . compressed matrix storage [MB]: %6.1f\n",b_comp/mb);
   else
-    printf(" . compressed matrix storage [KB]: %6.1f\n",mb_comp/1024.0);
-  printf(" . compression factor: %4.0f \n",mb_total/mb_comp);
+    printf(" . compressed matrix storage [KB]: %6.1f\n",b_comp/1024.0);
+  printf(" . compression factor: %4.0f \n",b_full/b_comp);
   printf("----------------------------------------------------\x1B[0m\n");
 }
 @ 
@@ -290,7 +291,7 @@ The parameters of the [[aaStats]] structure are:
 <<aaStats parameters>>=
 int N, N2, NU, NU2, NF, NF2, psd_size, cov_size, ind_size;
 float2 *d__cov, *d__psd, *d__b, *d__c;
-float *d__alpha, *d__beta;
+float *d__alpha, *d__beta, n_full, n_comp, b_full, b_comp, cov_eval_et;
 unsigned int *d__mu, *d__xi;
 cufftHandle plan, raster_plan, MVM_plan;
 #ifdef AASTATS_DEBUG
@@ -613,44 +614,108 @@ __global__ void mvm_output_order(float *x_out, int n_x_out,
 The test routine is written:
 <<aaStats.bin>>=
 
+#include "cublas_v2.h"
 #include "ceo.h"
 #include "aaStats.h"
 
-#define N 40
-#define NX (N*N*2)
+#define N_RUN 7
+
+__global__ void fill(float *A, int n_a) {
+  int i, j, k;
+  float n;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = i*n_a +j;
+  n = (float) n_a*n_a;
+  if (k<n)
+    A[k] = ((float)k)/n;
+}
 
 int main( void) {
   atmosphere atm;
   aaStats C;
-  int k, data_size;
+  int k, data_size, M, N, NX, k_N;
   float altitude[] = {0},
         xi0[] = {1},
         wind_speed[] = {10},
   	wind_direction[] = {0};
-  float x[NX], y[NX], *d__x, *d__y;
-  data_size = sizeof(float)*NX;
-  HANDLE_ERROR( cudaMalloc((void**)&d__x, data_size ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__y, data_size ) );
+  float *x, *y, *d__x, *d__y, *d__A;
+  stopwatch tid;
+  cublasHandle_t handle;
+  cublasCreate(&handle);
+  cublasStatus_t status;
+
   atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
 
-  for (k=0;k<NX;k++) {
-    x[k] = (float)k;
+  int N_[N_RUN] = {10,20,40,60,100,200,500};
+  float full_mvm_et[N_RUN], comp_mvm_et[N_RUN], comp_eval_et[N_RUN], 
+    b_full[N_RUN], b_comp[N_RUN];
+
+  dim3 blockDim(16,16);
+  dim3 gridDim;
+  float alpha, beta;
+  alpha = 1;
+  beta  = 0;
+
+  for (k_N=0;k_N<N_RUN;k_N++) {
+
+    N = N_[k_N];
+    NX = N*N*2;
+    data_size = sizeof(float)*NX;
+
+    x = (float *)malloc( data_size );
+    y = (float *)malloc( data_size );
+    HANDLE_ERROR( cudaMalloc((void**)&d__x, data_size ) );
+    HANDLE_ERROR( cudaMalloc((void**)&d__y, data_size ) );
+
+    for (k=0;k<NX;k++) {
+      x[k] = (float)k;
+    }
+    HANDLE_ERROR( cudaMemcpy( d__x, x, data_size, cudaMemcpyHostToDevice) );
+    C.setup(N,&atm,0.1);
+    
+    comp_eval_et[k_N] = C.cov_eval_et;
+    b_full[k_N] = C.b_full;
+    b_comp[k_N] = C.b_comp;
+
+    tid.tic();
+    C.MVM(d__y,d__x);
+    tid.toc(comp_mvm_et + k_N,"Covariance MVM");
+    /* HANDLE_ERROR( cudaMemcpy( y, d__y, data_size, cudaMemcpyDeviceToHost) ); */
+    /* printf("\nMVM:\n"); */
+    /* for (k=0;k<NX;k++) { */
+    /*   printf("(%2d) %4.2E\n",k,y[k]); */
+    /* } */
+
+    if (N<=100) {
+      M = 2*N*N;
+      data_size = sizeof(float)*M*M;
+      HANDLE_ERROR( cudaMalloc((void**)&d__A, data_size ) );
+      gridDim = dim3(1+M/16,1+M/16);
+      tid.tic();
+      fill LLL gridDim,blockDim RRR (d__A, M);
+      tid.toc("Filling of A");
+      tid.tic();
+      status = cublasSgemv(handle, CUBLAS_OP_N, M, M, &alpha, d__A, M, d__x, 1, &beta, d__y, 1);
+      tid.toc(full_mvm_et + k_N,"A MVM");
+      if (status!=CUBLAS_STATUS_SUCCESS)
+	printf(">>> ERROR! CUBLAS FAILED! <<<\n");
+      HANDLE_ERROR( cudaFree( d__A ) );
+    }
+
+    C.cleanup();
+    HANDLE_ERROR( cudaFree( d__x ) );
+    HANDLE_ERROR( cudaFree( d__y ) );
+    free(x);
+    free(y);
   }
-  HANDLE_ERROR( cudaMemcpy( d__x, x, data_size, cudaMemcpyHostToDevice) );
-  stopwatch tid;
-  C.setup(N,&atm,0.1);
-  tid.tic();
-  C.MVM(d__y,d__x);
-  tid.toc("Covariance MVM: ");
-  /* HANDLE_ERROR( cudaMemcpy( y, d__y, data_size, cudaMemcpyDeviceToHost) ); */
-  /* printf("\nMVM:\n"); */
-  /* for (k=0;k<NX;k++) { */
-  /*   printf("(%2d) %4.2E\n",k,y[k]); */
-  /* } */
 
   atm.cleanup();
-  C.cleanup();
-  HANDLE_ERROR( cudaFree( d__x ) );
-  HANDLE_ERROR( cudaFree( d__y ) );
+  cublasDestroy(handle);
 
+  printf("\n N   FULL MVM   COMP MVM   COMP EVAL\n");
+  for (k_N=0;k_N<N_RUN;k_N++) {
+    printf("%3d    %6.3f     %6.3f     %6.3f\n",
+	   N_[k_N],full_mvm_et[k_N],comp_mvm_et[k_N],comp_eval_et[k_N]);
+  }
 }

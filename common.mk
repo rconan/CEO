@@ -1,7 +1,7 @@
 CUDAPATH	= /opt/local/cuda
 NVCC          	= $(CUDAPATH)/bin/nvcc
 CUDALIBPATH   	= $(CUDAPATH)/lib64
-CUDALIBS	= cufft cudart cuda
+CUDALIBS	= cufft cublas cudart cuda
 NOWEBPATH	= /opt/local/noweb
 WEAVE   	= $(NOWEBPATH)/bin/noweave
 TANGLE    	= $(NOWEBPATH)/bin/notangle
