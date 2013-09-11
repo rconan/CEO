@@ -60,7 +60,7 @@ struct aaStats {
 <<matrix--to--vector multiplication>>
 @
 Shack--Hartmann WFS centroids are a measure of the spatial derivatives of the wavefront averaged on each subaperture.
-These derivatives are often referred as angle of arrivals:
+These derivatives are often referred as angle of arrivals $\vec \alpha=(\alpha_x\alpha_y,)$:
 \begin{eqnarray}
   \label{eq:1}
   \alpha_x &=& {\lambda\over 2\pi d^2} {\partial\varphi\over\partial x} \ast \Pi\left(x\over d\right)\Pi\left(y\over d\right),\\
@@ -71,7 +71,7 @@ where $\lambda$ is the sensing wavelength and $d$ in the size of one subaperture
 The covariance is derived from the power spectrum density of the angle of arrivals $W_{\vec \alpha \cdot\ \vec \beta}(\vec f)$:
   \begin{equation}
     \label{eq:2}
-    W_{\vec \alpha\vec \beta}(\vec f) = \lambda^2\left( \vec f \cdot \vec\alpha \right)\left( \vec f \cdot \vec\beta \right) W_\varphi(\vec f) G^2(\vec f)
+    W_{\vec \alpha\cdot\vec \beta}(\vec f) = \lambda^2\left( \vec f \cdot \vec\alpha \right)\left( \vec f \cdot \vec\beta \right) W_\varphi(\vec f) G^2(\vec f)
   \end{equation}
 $W_\varphi(f)$ is the wavefront power spectrum density given by
 \begin{equation}
@@ -87,7 +87,7 @@ $G(\vec f)$ is the point spread function of a subaperture of the WFS,
 The covariance $C_{\vec \alpha \cdot\ \vec \beta}(\vec\rho)$ is derived from the Wiener--Khinchine theorem:
 \begin{equation}
   \label{eq:5}
-  C_{\vec \alpha \cdot\ \vec \beta}(\vec\rho) = \mathcal F^{-1} \left[ W_{\vec \alpha\vec \beta}(\vec f) \right] (\vec\rho)
+  C_{\vec \alpha \cdot\ \vec \beta}(\vec\rho) = \mathcal F^{-1} \left[ W_{\vec \alpha\cdot\vec \beta}(\vec f) \right] (\vec\rho)
 \end{equation}
 where $\mathcal F^{-1}$ stands for the inverse Fourier transform.
 
@@ -242,13 +242,17 @@ cov[k+3*NU2].x,cov[k+3*NU2].y);
 void aaStats::info(void)
 {
   printf("\n\x1B[1;42m@(CEO)>aaStats:\x1B[;42m\n");
-  printf(" . number of blocks: %dX%d\n",N,N);
-  printf(" . size of blocks: %dX%d\n",N,N);
+  <<info content>>
+  printf("----------------------------------------------------\x1B[0m\n");
+}
+<<info content>>=
+  printf(" . number of blocks              : %dX%d\n",N,N);
+  printf(" . size of blocks                : %dX%d\n",N,N);
   n_full = powf(N,4)*4;
-  printf(" . full matrix elements #      : %10.0f\n",n_full);
+  printf(" . full matrix elements #        : %.3E\n",n_full);
   n_comp = 4*NU2;
-  printf(" . compressed matrix elements #: %10d\n",n_comp);
-  printf(" . compression factor: %4.0f \n",n_full/n_comp);
+  printf(" . compressed matrix elements #  : %.3E\n",n_comp);
+  printf(" . compression factor            : %4.0f \n",n_full/n_comp);
   float mb = powf(2,20);
   b_full = n_full*sizeof(float);
   if (b_full>mb)
@@ -260,9 +264,7 @@ void aaStats::info(void)
     printf(" . compressed matrix storage [MB]: %6.1f\n",b_comp/mb);
   else
     printf(" . compressed matrix storage [KB]: %6.1f\n",b_comp/1024.0);
-  printf(" . compression factor: %4.0f \n",b_full/b_comp);
-  printf("----------------------------------------------------\x1B[0m\n");
-}
+  printf(" . compression factor            : %4.0f \n",b_full/b_comp);
 @ 
 <<cleanup>>=
 void aaStats::cleanup(void)
@@ -360,7 +362,7 @@ powerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2*3, NF, lenslet_pitch,
 The phase power spectrum is given by:
 <<phase power spectrum>>=
  __device__ float phasePowerSpectrum(float f_square, float f0) {
-  return 0.0229*powf(f_square + f0*f0,-11.0/6.0);
+  return 0.0228955871*powf(f_square + f0*f0,-11.0/6.0);
 }
 @ 
 The subaperture Fourier transform is given by
@@ -424,7 +426,7 @@ __global__ void covariance_extraction(float2 *cov_out, int NC_out,
   j = blockIdx.y * blockDim.y + threadIdx.y;
   if ( (i<NC_out) && (j<(NC_out)) ) {
     h = (NC_out-1)/2;
-    k_out = ((i+h)%NC_out)*NC_out + (j+h)%NC_out;
+    k_out = (NC_out - 1 - (i+h)%NC_out)*NC_out + (NC_out - 1 - (j+h)%NC_out);
     if (i>=((NC_out+1)/2))
       i = kappa*(i - NC_out) + NC_in;
     else
@@ -515,7 +517,7 @@ and lets define another complex vector $b$ also made of two components but of le
 \end{array}
 \right]
 $$
-The matrix--to--vector multiplication $y=C_{\vec\alpha\dot\vec\beta}s$ is derived through the following steps:
+The matrix--to--vector multiplication $y=C_{\vec\alpha\cdot\vec\beta}s$ is derived through the following steps:
 \begin{enumerate}
 \item input allocation and ordering:
   \begin{itemize}
