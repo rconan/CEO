@@ -58,6 +58,7 @@ Memory is freed with
 <<CG cleanup>>= 
 void iterativeSolvers::cg_cleanup(void)
 {
+  printf("\n@(CEO)>iterativeSolvers: freeing memory!\n");
   HANDLE_ERROR( cudaFree( d__vectors ) );
   cublasDestroy(handle);
 }
@@ -70,6 +71,7 @@ The next routine implements the conjugate gradient iterative method:
   int k;
   <<conjugate gradient init>>
   for (k=0;k<max_it;k++) {
+    printf("CG IT=%d - ",k);
     <<conjugate gradient loop part 1>>
       if (k<(max_it-1)) {
 	  <<conjugate gradient loop part 2>>
@@ -102,6 +104,8 @@ mvm( q , p);
 @ \item $\gamma=r_k^Tr_k$
 <<conjugate gradient loop part 1>>=
 cublasSdot(handle, N, r, 1, r, 1, &gamma);
+printf("r norm=%6.2f\n",sqrtf(gamma));
+if (gamma==0) break;
 @ \item $\alpha_k = {\displaystyle \gamma\over p_K^Tq}$
 <<conjugate gradient loop part 1>>=
 cublasSdot(handle, N, p, 1, q, 1, &alpha);
@@ -124,3 +128,44 @@ alpha = 1;
 cublasSaxpy(handle, N, &alpha, r, 1, p, 1);
 @  \end{enumerate}
  \end{itemize}
+
+In the following a simple test is performed:
+<<iterativeSolvers.bin>>=
+#include "iterativeSolvers.h"
+
+#define N 10
+
+// Identity
+void mvm(float *y, float *x) {
+  cublasHandle_t handle;
+  cublasCreate(&handle);
+  cublasScopy(handle, N, x, 1, y, 1);
+  cublasDestroy(handle);
+}
+
+// Solving Ax=b
+int main( void) {
+
+  float *d__x, *d__b;
+  HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
+  HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__b, sizeof(float)*N ) );
+  float b[N] = {1,2,3,4,5,6,7,8,9,10};
+  HANDLE_ERROR( cudaMemcpy( d__b, b, N*sizeof(float), cudaMemcpyHostToDevice) );
+
+  iterativeSolvers iSolve;
+  iSolve.cg_setup(N);
+  iSolve.cg(d__x, mvm, d__b, 5, d__x);
+  iSolve.cg_cleanup();
+
+  float *x;
+  x = (float *)malloc(sizeof(float)*N);
+  HANDLE_ERROR( cudaMemcpy( x, d__x, N*sizeof(float), cudaMemcpyDeviceToHost) );
+
+  for (int k=0;k<N;k++)
+    printf("(%d) %5.1f\n",k,x[k]);
+
+  HANDLE_ERROR( cudaFree( d__x ) );
+  HANDLE_ERROR( cudaFree( d__b ) );
+  free(x);
+}
