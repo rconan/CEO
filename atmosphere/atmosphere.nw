@@ -51,6 +51,9 @@ struct atmosphere {
   void get_phase_screen(float const *x, float const *y, int N_xy, 
 			source *src, float time);
 
+  void get_phase_screen(float const delta_x, int N_x, float const delta_y, int N_y, 
+			source *src, float time);
+
 };
 
 #endif // __ATMOSPHERE_H__
@@ -66,6 +69,8 @@ struct atmosphere {
 
 <<phase screen kernel>>
 
+<<phase screen kernel (square)>>
+
 <<profile setup>>
 
 <<atmosphere setup>>
@@ -78,6 +83,7 @@ struct atmosphere {
 
 <<phase screen II>>
 
+<<phase screen III>>
 @
 The atmosphere parameters are
 \begin{itemize}
@@ -411,7 +417,7 @@ The kernel starts with some declarations:
 <<declarations>>=
   int i, j, l, ij, ijl, kl;
 float freq_mag0, delta_freq_mag0, f_red0, f_red, 
-  freq_L0_square, x_kl, y_kl, gl,
+  freq_L0_square, x_kl, y_kl, x_kl0, y_kl0, gl,
   freq_mag, delta_freq_mag, sqrt_spectrum_kernel,
   freq_ang, cos_freq_ang, sin_freq_ang, sum, sum_l;
 @ 
@@ -420,7 +426,8 @@ Each thread is computing one value of the phase screen at the coordinate [[x_kl 
 i = blockIdx.x * blockDim.x + threadIdx.x;
 j = blockIdx.y * blockDim.y + threadIdx.y;
 kl = j * gridDim.x * blockDim.x + i;
-
+x_kl0 = x[kl];
+y_kl0 = y[kl];
 @ 
 Next a few new variables are defined, $$[[f_red0]]=f^{1/N_k},$$, $$[[freq_mag0]]=\kappa_{min}{[[f_red0]]+1)\over 2[[f_red0]]},$$ $$[[delta_freq_mag0]]=\kappa_{min}{[[f_red0]]-1)\over [[f_red0]]},$$ $$[[freq_L0_square]]=\left(2\pi\over\mathcal L_0\right)^2.$$
 <<variables>>=
@@ -451,8 +458,8 @@ The innest loop is the sum over the layer.
 <<layer sum>>=
   ijl = ij + l*turb->N_a*turb->N_k;
 gl = 1 - turb->altitude[l]/src->height;
-x_kl = x[kl] - turb->vx[l]*time;
-y_kl = y[kl] - turb->vy[l]*time;
+x_kl = x_kl0 - turb->vx[l]*time;
+y_kl = y_kl0 - turb->vy[l]*time;
 x_kl = gl*x_kl + turb->altitude[l]*src->theta_x;
 y_kl = gl*y_kl + turb->altitude[l]*src->theta_y;
 sum_l += sqrt(turb->xi0[l])*
@@ -460,6 +467,63 @@ sum_l += sqrt(turb->xi0[l])*
 		     freq_mag*( x_kl*cos_freq_ang + y_kl*sin_freq_ang ) ) +
      zeta2[ijl]*cosf( eta2[ijl] -
 		     freq_mag*( x_kl*sin_freq_ang - y_kl*cos_freq_ang ) ));
+@ 
+The next routine compute the phase screen on a square grid of size [[N_x]]$\times$[[N_y]]
+<<phase screen III>>=
+void atmosphere::get_phase_screen(float const delta_x, int N_x, float const delta_y, int N_y, 
+		       source *src, float time)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim( ceilf(sqrt(N_x)/16) , ceilf(sqrt(N_y)/16));
+  square_plps LLL gridDim , blockDim RRR (src->phase,
+				   delta_x, N_x, delta_y, N_y, 
+				   d__turbulence, r0,
+				   zeta1, eta1, zeta2, eta2,
+				   src, time);
+}
+@ and computed with the kernel
+<<phase screen kernel (square)>>=
+  __global__ void square_plps(float *phase_screen,
+		       float const delta_x, int N_x, float const delta_y, int N_y, 
+		       profile *turb, float r0,
+		       float *zeta1, float *eta1, float *zeta2, float *eta2,
+		       source *src, float time)
+{
+  <<declarations>>
+
+  <<thread to coordinate index (square)>>
+  
+  sum = 0;
+  
+  if ( (i<N_x) && (j<N_y) )
+    {
+
+      <<variables>>
+
+      for (i=0;i<turb->N_k;i++)
+	{
+	  <<frequency magnitude sum>>
+          for (j=0;j<turb->N_a;j++)
+	    {
+	      <<frequency angle sum>>
+	      for (l=0;l<_N_LAYER_;l++)
+		{
+		  <<layer sum>>
+		}
+	      sum += sqrt_spectrum_kernel*sum_l;
+	    }
+	}
+      phase_screen[kl] = 1.4*powf(r0,-5.0/6.0)*sum;
+    }
+}
+@
+Each thread is computing one value of the phase screen at the coordinate [[x_kl = i*delta_x]] and [[y_kl = j*delta_y]]
+<<thread to coordinate index (square)>>=
+i = blockIdx.x * blockDim.x + threadIdx.x;
+j = blockIdx.y * blockDim.y + threadIdx.y;
+kl = j * gridDim.x * blockDim.x + i;
+x_kl0 = i*delta_x;
+y_kl0 = j*delta_y;
 @ 
 The test suite is a Matlab script.
 It calls the mex function:

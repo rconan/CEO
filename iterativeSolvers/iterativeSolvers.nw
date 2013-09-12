@@ -8,6 +8,10 @@ The iterativeSolvers structure is written in the header:
 #include "ceo.h"
 #endif
 
+#ifndef __AASTATS_H__
+#include "aaStats.h"
+#endif
+
 #include "cublas_v2.h"
 
 struct iterativeSolvers {
@@ -18,7 +22,8 @@ struct iterativeSolvers {
 
   void cg_cleanup(void);
 
-  void cg(float *x, void (*mvm)(float*, float*), float *b, int max_it, float* x0);
+  //  void cg(float *x, void (*mvm)(float*, float*), float *b, int max_it, float* x0);
+  void cg(aaStats* A, float *x, void (*mvm)(aaStats* A, float*, float*), float *b, int max_it, float* x0);
 
   //  void info(void);
 };
@@ -32,6 +37,7 @@ struct iterativeSolvers {
 <<CG cleanup>>
 
 <<conjugate gradient>>
+
 @
 The iterativeSolvers structure gather several routines implementing iterative methods to solve the linear system: $Ax=b$.
 The setup method is allocated the required memory depending of the iterative method type:
@@ -64,8 +70,22 @@ void iterativeSolvers::cg_cleanup(void)
 }
 @ 
 The next routine implements the conjugate gradient iterative method:
-<<conjugate gradient>>=
+<<conjugate gradient I>>=
   void iterativeSolvers::cg(float *x, void (*mvm)(float*, float*), float *b, int max_it, float* x0)
+{
+  float alpha, beta, gamma;
+  int k;
+  <<conjugate gradient init>>
+  for (k=0;k<max_it;k++) {
+    printf("CG IT=%d - ",k);
+    <<conjugate gradient loop part 1>>
+      if (k<(max_it-1)) {
+	  <<conjugate gradient loop part 2>>
+      }
+  }    
+}
+<<conjugate gradient>>=
+  void iterativeSolvers::cg(aaStats* A, float *x, void (*mvm)(aaStats* A, float*, float*), float *b, int max_it, float* x0)
 {
   float alpha, beta, gamma;
   int k;
@@ -85,7 +105,7 @@ The conjugate gradient algorithm is written:
   \begin{enumerate}
   \item $r=Ax_0$
 <<conjugate gradient init>>=
-mvm( r , x0);
+    mvm(A, r , x0);
 @ \item $r_0 = b - r_0$
 <<conjugate gradient init>>=
 beta = -1;
@@ -100,7 +120,7 @@ cublasScopy(handle, N, r, 1, p, 1);
   \begin{enumerate}
   \item $q=Ap_k$
 <<conjugate gradient loop part 1>>=
-mvm( q , p);
+    mvm(A, q , p);
 @ \item $\gamma=r_k^Tr_k$
 <<conjugate gradient loop part 1>>=
 cublasSdot(handle, N, r, 1, r, 1, &gamma);
@@ -129,43 +149,141 @@ cublasSaxpy(handle, N, &alpha, r, 1, p, 1);
 @  \end{enumerate}
  \end{itemize}
 
-In the following a simple test is performed:
+The test routine is:
 <<iterativeSolvers.bin>>=
-#include "iterativeSolvers.h"
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+#ifndef __SOURCE_H__
+#include "source.h"
+#endif
+#ifndef __ATMOSPHERE_H__
+#include "atmosphere.h"
+#endif
+#ifndef __IMAGING_H__
+#include "imaging.h"
+#endif
+#ifndef __CENTROIDING_H__
+#include "centroiding.h"
+#endif
 
-#define N 10
+#include "iterativeSolvers.h"
+#include "aaStats.h"
+#include "paStats.h"
+
+   //#define N 10
 
 // Identity
-void mvm(float *y, float *x) {
-  cublasHandle_t handle;
-  cublasCreate(&handle);
-  cublasScopy(handle, N, x, 1, y, 1);
-  cublasDestroy(handle);
+/* void mvm(float *y, float *x) { */
+/*   cublasHandle_t handle; */
+/*   cublasCreate(&handle); */
+/*   cublasScopy(handle, N, x, 1, y, 1); */
+/*   cublasDestroy(handle); */
+/* } */
+void mvm(aaStats* A, float *y, float *x) {
+A->MVM(y,x);
 }
 
 // Solving Ax=b
 int main( void) {
 
-  float *d__x, *d__b;
-  HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
-  HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__b, sizeof(float)*N ) );
-  float b[N] = {1,2,3,4,5,6,7,8,9,10};
-  HANDLE_ERROR( cudaMemcpy( d__b, b, N*sizeof(float), cudaMemcpyHostToDevice) );
+ <<complete test>>
 
-  iterativeSolvers iSolve;
-  iSolve.cg_setup(N);
-  iSolve.cg(d__x, mvm, d__b, 5, d__x);
-  iSolve.cg_cleanup();
-
-  float *x;
-  x = (float *)malloc(sizeof(float)*N);
-  HANDLE_ERROR( cudaMemcpy( x, d__x, N*sizeof(float), cudaMemcpyDeviceToHost) );
-
-  for (int k=0;k<N;k++)
-    printf("(%d) %5.1f\n",k,x[k]);
-
-  HANDLE_ERROR( cudaFree( d__x ) );
-  HANDLE_ERROR( cudaFree( d__b ) );
-  free(x);
 }
+@
+In the following a simple test is performed:
+<<simple test>>=
+float *d__x, *d__b;
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
+HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__b, sizeof(float)*N ) );
+float b[N] = {1,2,3,4,5,6,7,8,9,10};
+HANDLE_ERROR( cudaMemcpy( d__b, b, N*sizeof(float), cudaMemcpyHostToDevice) );
+
+iterativeSolvers iSolve;
+iSolve.cg_setup(N);
+iSolve.cg(d__x, mvm, d__b, 5, d__x);
+iSolve.cg_cleanup();
+
+float *x;
+x = (float *)malloc(sizeof(float)*N);
+HANDLE_ERROR( cudaMemcpy( x, d__x, N*sizeof(float), cudaMemcpyDeviceToHost) );
+
+for (int k=0;k<N;k++)
+  printf("(%d) %5.1f\n",k,x[k]);
+
+HANDLE_ERROR( cudaFree( d__x ) );
+HANDLE_ERROR( cudaFree( d__b ) );
+free(x);
+@ 
+A more complete test:
+<<complete test>>=
+source src, *d__src;
+atmosphere atm;
+imaging lenslet_array;
+centroiding cog;
+aaStats A;
+paStats B;
+iterativeSolvers iSolve;
+
+int N = _N_LENSLET_*2;
+float *d__x, *d__b;
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
+HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__b, sizeof(float)*N ) );
+
+src.setup(ARCSEC(0) , 0, INFINITY);
+HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source)*_N_SOURCE_ ) );
+HANDLE_ERROR( cudaMemcpy( d__src, &src,
+			  sizeof(source)*_N_SOURCE_ ,
+			  cudaMemcpyHostToDevice ) );
+        
+// Single layer turbulence profile
+float altitude[] = {0},
+  xi0[] = {1},
+  wind_speed[] = {10},
+  wind_direction[] = {0};
+/*
+// GMT 7 layers turbulence profile
+float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
+xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
+wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
+wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+*/
+// Atmosphere
+atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
+
+// SH WFS
+lenslet_array.setup();
+
+// Centroid
+cog.setup();
+
+float D = 0.4;
+float d = D/N_SIDE_LENSLET;
+printf("\nd    =%.4f\n",d);
+float delta = d/_N_PX_PUPIL_;
+printf("\ndelta=%.4f\n",delta);
+
+A.setup(N_SIDE_LENSLET,&atm,d);
+
+atm.get_phase_screen(delta,_N_PIXEL_,delta,_N_PIXEL_,d__src,0);
+lenslet_array.propagate(d__src);
+cog.get_data(lenslet_array.d__frame);
+HANDLE_ERROR( cudaMemcpy( d__b              , cog.d__cx,  
+			  _N_LENSLET_*sizeof(float), cudaMemcpyDeviceToDevice) );
+HANDLE_ERROR( cudaMemcpy( d__b + _N_LENSLET_, cog.d__cy,  
+			  _N_LENSLET_*sizeof(float), cudaMemcpyDeviceToDevice) );
+
+iSolve.cg_setup(N);
+
+iSolve.cg(&A, d__x, mvm, d__b, 10, d__x);
+
+HANDLE_ERROR( cudaFree( d__src) );
+atm.cleanup();
+lenslet_array.cleanup();
+cog.cleanup();
+A.cleanup();
+iSolve.cg_cleanup();
+HANDLE_ERROR( cudaFree( d__x ) );
+HANDLE_ERROR( cudaFree( d__b ) );
