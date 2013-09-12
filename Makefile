@@ -8,6 +8,9 @@ all: makefile
 
 tex: $(texsrc)
 	for i in $(SOURCE_DIR); do (make -C $$i tex); done
+	rm -f doc/ceo.manual.main.tex
+	for i in $(SOURCE_DIR); do (echo -e "\include{ceo.manual.$$i}\n">>doc/ceo.manual.main.tex); done
+	for i in $(SOURCE_DIR); do (echo -e "\section{$$i}\n\label{sec:$$i}\n\n\input{../$$i/$$i}">doc/ceo.manual.$$i.tex); done
 
 doc: tex
 	make -C doc all
