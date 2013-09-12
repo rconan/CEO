@@ -7,8 +7,15 @@ N = C(:,1);
 %%
 figure(50)
 subplot(1,2,1)
-ht = loglog(N,C(:,2:end),'o--');
-grid
+if ishandle(50)
+    hold on
+end
+ht = loglog(N,C(:,2:end),'s--');
+if ishandle(50)
+    hold off
+else
+    grid
+end
 xlabel('Lenslet Array Size')
 ylabel('Runtime [ms]')
 legend('MVM Full','MVM Compressed','Compressed cov.',0)
@@ -23,8 +30,15 @@ nP = 2*N + 1;
 b_full = nP.^4*4*2/2^20;
 b_comp = (2*nP-1).^2*2*4*2/2^20;
 subplot(1,2,2)
-hb = loglog(N,[b_full,b_comp],'o--');
-grid
+if ishandle(50)
+    hold on
+end
+hb = loglog(N,[b_full,b_comp],'s--');
+if ishandle(50)
+    hold off
+else
+    grid
+end
 xlabel('Lenslet Array Size')
 ylabel('Matrix Memory Rqt. [MB]')
 legend('Full','Compressed',0)

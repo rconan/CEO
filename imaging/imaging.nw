@@ -51,7 +51,8 @@ void imaging::setup(void) {
   printf("\n@(CEO)>imaging: Device memory allocation\n");
   int N_DFT_bytes = _N_DFT_ * _N_DFT_ * _N_LENSLET_*_N_SOURCE_;
   cudaMalloc( (void**)&d__wave_PUPIL , sizeof(float2) * N_DFT_bytes);
-  cudaMalloc( (void**)&d__frame , sizeof(float) *_N_PX_CAMERA_*_N_PX_CAMERA_*_N_LENSLET_*_N_SOURCE_ );
+  cudaMalloc( (void**)&d__frame , 
+	      sizeof(float) *_N_PX_CAMERA_*_N_PX_CAMERA_*_N_LENSLET_*_N_SOURCE_ );
   <<imaging CUFFT plan creation>>
 }
 @ 
@@ -256,12 +257,15 @@ __global__ void binning(float *frame, const float2 *wave)
       		jPxL = v*M + j - offset;
       		if ( jPxL>=0 && jPxL<_N_DFT_)
       		  {
-      		    ij_DFT = lenslet2row(iPxL,jPxL,_N_DFT_,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
-      		    bin[ii][jj] += wave[ij_DFT].x*wave[ij_DFT].x + wave[ij_DFT].y*wave[ij_DFT].y;
+      		    ij_DFT = lenslet2row(iPxL,jPxL,_N_DFT_,
+					 iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
+      		    bin[ii][jj] += 
+		      wave[ij_DFT].x*wave[ij_DFT].x + wave[ij_DFT].y*wave[ij_DFT].y;
       		  }
       	      }
       	}
-      ij_CAM = lenslet2array(u,v,_N_PX_CAMERA_,iLenslet,jLenslet,N_SIDE_LENSLET,iSource,_N_SOURCE_);
+      ij_CAM = lenslet2array(u,v,_N_PX_CAMERA_,
+			     iLenslet,jLenslet,N_SIDE_LENSLET,iSource,_N_SOURCE_);
       frame[ij_CAM] =   bin[ii][jj]/(_N_DFT_*_N_DFT_);
     }
 
@@ -435,7 +439,9 @@ void mexFunction(int nlhs, mxArray *plhs[],
        mexPrintf("\nApplying phase offset!\n");
        dim3 gridDim(ceilf(_SOURCE_N_PX_/256),1);
        dim3 blockDim(256,1);
-       apply_phase_offset LLL gridDim,blockDim RRR (d__src->phase, d__phase_offset, _SOURCE_N_PX_);
+       apply_phase_offset LLL gridDim,blockDim RRR (d__src->phase, 
+						    d__phase_offset, 
+						    _SOURCE_N_PX_);
      }
 
    HANDLE_ERROR( cudaMemcpy( d__phase_screen, d__src->phase,

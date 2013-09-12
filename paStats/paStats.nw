@@ -154,10 +154,10 @@ void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch)
     return;
   }
 
-  printf("\n@(CEO)>imaging: Creating a 1D MVM FFT plan\n");
+  printf("\n@(CEO)>imaging: Creating a 1D input MVM FFT plan\n");
   /* Create a 2D FFT plan. */
   BATCH = 2;
-  if (cufftPlanMany(&MVM_plan, 1, &NU2,
+  if (cufftPlanMany(&MVM_input_plan, 1, &NU2,
 		    NULL, 1, NU2,
 		    NULL, 1, NU2,
 		    CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
@@ -165,7 +165,26 @@ void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch)
 	    "CUFFT Error: Unable to create plan\n");
     return;
   }
-  if (cufftSetCompatibilityMode(MVM_plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
+  if (cufftSetCompatibilityMode(MVM_input_plan, 
+				CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
+    fprintf(stderr,
+	    "CUFFT Error: Unable to set compatibility mode to native\n");
+    return;
+  }
+
+  printf("\n@(CEO)>imaging: Creating a 1D output MVM FFT plan\n");
+  /* Create a 2D FFT plan. */
+  BATCH = 1;
+  if (cufftPlanMany(&MVM_output_plan, 1, &NU2,
+		    NULL, 1, NU2,
+		    NULL, 1, NU2,
+		    CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
+    fprintf(stderr,
+	    "CUFFT Error: Unable to create plan\n");
+    return;
+  }
+  if (cufftSetCompatibilityMode(MVM_output_plan, 
+				CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
     fprintf(stderr,
 	    "CUFFT Error: Unable to set compatibility mode to native\n");
     return;
@@ -271,7 +290,8 @@ void paStats::cleanup(void)
   printf("\n@(CEO)>paStats: freeing memory!\n");
   cufftDestroy(plan);
   cufftDestroy(raster_plan);
-  cufftDestroy(MVM_plan);
+  cufftDestroy(MVM_input_plan);
+  cufftDestroy(MVM_output_plan);
   HANDLE_ERROR( cudaFree( d__psd ) );
   HANDLE_ERROR( cudaFree( d__alpha ) );
   HANDLE_ERROR( cudaFree( d__beta ) );
@@ -294,7 +314,7 @@ int N, N2, NU, NU2, NF, NF2, psd_size, cov_size, ind_size, osf;
 float2 *d__cov, *d__psd, *d__b, *d__c;
 float *d__alpha, *d__beta, n_full, n_comp, b_full, b_comp, cov_eval_et;
 unsigned int *d__mu, *d__xi;
-cufftHandle plan, raster_plan, MVM_plan;
+cufftHandle plan, raster_plan, MVM_input_plan, MVM_output_plan;
 #ifdef PASTATS_DEBUG
 float2 *psd, *cov;
 unsigned int *mu, *xi;
@@ -544,7 +564,7 @@ __global__ void mvm_input_order(float2 *x_out, int n_x_out,
 @ 
 \item the Fourier transform of $b_{(x,y)}$ is computed i.e. $\tilde b_{(x,y)}=\mathcal F [b_{(x,y)}]$,
 <<MVM STEP 2: input FT>>=
-if (cufftExecC2C(MVM_plan, d__b, d__b, CUFFT_FORWARD) 
+if (cufftExecC2C(MVM_input_plan, d__b, d__b, CUFFT_FORWARD) 
     != CUFFT_SUCCESS){
   fprintf(stderr,"CUFFT Error: Unable to execute plan forward FT with MVM plan\n");
  }
@@ -578,7 +598,7 @@ using the kernel:
 @ 
 \item the inverse Fourier transform of $\tilde c$ is computed i.e. $c=\mathcal F^{-1} [\tilde c]$,
 <<MVM STEP 4: output FT>>=
-if (cufftExecC2C(MVM_plan, d__c, d__c, CUFFT_INVERSE) 
+if (cufftExecC2C(MVM_output_plan, d__c, d__c, CUFFT_INVERSE) 
     != CUFFT_SUCCESS){
   fprintf(stderr,"CUFFT Error: Unable to execute inverse FT with MVM plan\n");
  }
