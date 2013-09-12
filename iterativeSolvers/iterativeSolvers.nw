@@ -1,0 +1,126 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+The iterativeSolvers structure is written in the header:
+<<iterativeSolvers.h>>=
+#ifndef __ITERATIVESOLVERS_H__
+#define __ITERATIVESOLVERS_H__
+
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+
+#include "cublas_v2.h"
+
+struct iterativeSolvers {
+
+  <<parameters>>
+
+  void cg_setup(int n_vector);
+
+  void cg_cleanup(void);
+
+  void cg(float *x, void (*mvm)(float*, float*), float *b, int max_it, float* x0);
+
+  //  void info(void);
+};
+#endif // __ITERATIVESOLVERS_H__
+@ The routines are expanded in the source:
+<<iterativeSolvers.cu>>=
+#include "iterativeSolvers.h"
+
+<<CG setup>>
+
+<<CG cleanup>>
+
+<<conjugate gradient>>
+@
+The iterativeSolvers structure gather several routines implementing iterative methods to solve the linear system: $Ax=b$.
+The setup method is allocated the required memory depending of the iterative method type:
+<<CG setup>>=
+void iterativeSolvers::cg_setup(int n_vector)
+{
+  N = n_vector;
+  HANDLE_ERROR( cudaMalloc((void**)&d__vectors, sizeof(float)*N*4 ) );
+  q = d__vectors;
+  x = d__vectors + N;
+  r = d__vectors + 2*N;
+  p = d__vectors + 3*N;
+  cublasCreate(&handle);
+}
+@ 
+The structure parameters are
+<<parameters>>=
+float *d__vectors, *q, *x, *r, *p;
+int N;
+cublasHandle_t handle;
+cublasStatus_t status;
+@
+Memory is freed with
+<<CG cleanup>>= 
+void iterativeSolvers::cg_cleanup(void)
+{
+  HANDLE_ERROR( cudaFree( d__vectors ) );
+  cublasDestroy(handle);
+}
+@ 
+The next routine implements the conjugate gradient iterative method:
+<<conjugate gradient>>=
+  void iterativeSolvers::cg(float *x, void (*mvm)(float*, float*), float *b, int max_it, float* x0)
+{
+  float alpha, beta, gamma;
+  int k;
+  <<conjugate gradient init>>
+  for (k=0;k<max_it;k++) {
+    <<conjugate gradient loop part 1>>
+      if (k<(max_it-1)) {
+	  <<conjugate gradient loop part 2>>
+      }
+  }    
+}
+@ 
+The conjugate gradient algorithm is written:
+\begin{itemize}
+\item initialization:
+  \begin{enumerate}
+  \item $r=Ax_0$
+<<conjugate gradient init>>=
+mvm( r , x0);
+@ \item $r_0 = b - r_0$
+<<conjugate gradient init>>=
+beta = -1;
+cublasSscal(handle, N, &beta, r, 1);
+alpha = 1;
+cublasSaxpy(handle, N, &alpha, b, 1, r, 1);
+@ \item $p_0=r_0$
+<<conjugate gradient init>>=
+cublasScopy(handle, N, r, 1, p, 1);
+@ \end{enumerate}
+\item loop:
+  \begin{enumerate}
+  \item $q=Ap_k$
+<<conjugate gradient loop part 1>>=
+mvm( q , p);
+@ \item $\gamma=r_k^Tr_k$
+<<conjugate gradient loop part 1>>=
+cublasSdot(handle, N, r, 1, r, 1, &gamma);
+@ \item $\alpha_k = {\displaystyle \gamma\over p_K^Tq}$
+<<conjugate gradient loop part 1>>=
+cublasSdot(handle, N, p, 1, q, 1, &alpha);
+alpha = gamma/alpha;
+@ \item $x_{k+1} = x_k + \alpha_kp_k$
+<<conjugate gradient loop part 1>>=
+cublasSaxpy(handle, N, &alpha, p, 1, x, 1);
+@ \item $r_{k+1} = r_k - \alpha_kq$
+<<conjugate gradient loop part 2>>=
+alpha = -alpha;
+cublasSaxpy(handle, N, &alpha, q, 1, r, 1);
+@ \item $\beta_k = {\displaystyle r_{k+1}^Tr_{k+1} \over \gamma} $
+<<conjugate gradient loop part 2>>=
+cublasSdot(handle, N, r, 1, r, 1, &beta);
+beta = beta/gamma;
+@ \item $p_{k+1} = r_{k+1} + \beta_k p_k$
+<<conjugate gradient loop part 2>>=
+cublasSscal(handle, N, &beta, p, 1);
+alpha = 1;
+cublasSaxpy(handle, N, &alpha, r, 1, p, 1);
+@  \end{enumerate}
+ \end{itemize}

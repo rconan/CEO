@@ -1,6 +1,6 @@
 include common.mk
 
-SOURCE_DIR	= ceo source atmosphere imaging centroiding aaStats paStats
+SOURCE_DIR	= ceo source atmosphere imaging centroiding aaStats paStats iterativeSolvers
 
 all: makefile 
 	mkdir -p include lib
