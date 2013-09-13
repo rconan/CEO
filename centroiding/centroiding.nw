@@ -10,13 +10,13 @@ The centroiding header and source are written
 
 struct centroiding {
 
-  float  *d__cx, *d__cy, *d__mass;
+  float *d__c, *d__cx, *d__cy, *d__mass;
 
   void setup(void);
 
   void cleanup(void);
    
-  void get_data(float *frame);
+  void get_data(float *frame, float cx0, float cy0);
 
 };
 
@@ -36,30 +36,34 @@ struct centroiding {
 <<setup>>=
 void centroiding::setup(void) {
   printf("\n@(CEO)>allocating: allocating memory!\n");
-  HANDLE_ERROR( cudaMalloc( (void**)&d__cx   , sizeof(float) *_N_LENSLET_*_N_SOURCE_ ) );
-  HANDLE_ERROR( cudaMalloc( (void**)&d__cy   , sizeof(float) *_N_LENSLET_*_N_SOURCE_ ) );
+  HANDLE_ERROR( cudaMalloc( (void**)&d__c   , sizeof(float) *_N_LENSLET_*_N_SOURCE_*2 ) );
+  d__cx = d__c;
+  d__cy = d__c + _N_LENSLET_*_N_SOURCE_;
   HANDLE_ERROR( cudaMalloc( (void**)&d__mass , sizeof(float) *_N_LENSLET_*_N_SOURCE_ ) );     
 }
 @ and de--allocated with the [[cleanup]] routine
 <<cleanup>>=
 void centroiding::cleanup(void) {
   printf("\n@(CEO)>centroiding: freeing memory!\n");
-  HANDLE_ERROR( cudaFree( d__cx ) );
-  HANDLE_ERROR( cudaFree( d__cy ) );
+  HANDLE_ERROR( cudaFree( d__c ) );
   HANDLE_ERROR( cudaFree( d__mass ) );
 }
 @ 
 The framelets are processed to retrieve centroids and flux
 <<data>>=
-void centroiding::get_data(float *frame) {
+void centroiding::get_data(float *frame, float cx0, float cy0) {
      dim3 blockGrid(N_SIDE_LENSLET,N_SIDE_LENSLET*_N_SOURCE_);
      dim3 threadGrid(_N_PX_CAMERA_,1);
-     centroidingEngine LLL blockGrid , threadGrid RRR (d__cx, d__cy, d__mass, frame);
+     centroidingEngine LLL blockGrid , threadGrid RRR (d__cx, d__cy,
+						       d__mass, frame,
+						       cx0, cy0);
 }
 @ 
 The framelets are processed with the kernel:
 <<centroiding>>=
-__global__ void centroidingEngine(float *cx, float *cy, float *flux, const float *frame)
+__global__ void centroidingEngine(float *cx, float *cy,
+				  float *flux, const float *frame,
+				  float cx0, float cy0)
 {
   int u, k, i, ij, ij_inc, iLenslet,jLenslet;
   u = threadIdx.x;
@@ -104,7 +108,9 @@ __global__ void centroidingEngine(float *cx, float *cy, float *flux, const float
       if (flux[k]>0)
       {
           cx[k] /= flux[k];
+	  cx[k] -= cx0;
           cy[k] /= flux[k];
+	  cy[k] -= cy0;
       }
   }
 }

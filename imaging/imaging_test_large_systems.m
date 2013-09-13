@@ -5,7 +5,7 @@
  L0 = 30;
  atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
 lambda = atm.wavelength;
-D = 8;
+D = 0.4;
 phase2nm = 1e9*lambda/2/pi;
 
 %  atm = atmosphere(photometry.V,r0,L0,...
@@ -17,7 +17,7 @@ phase2nm = 1e9*lambda/2/pi;
 % r0 = atm.r0;
 % L0 = atm.L0;
 
-nLenslet = 40;
+nLenslet = 4;
 d = D/nLenslet;
 nPxLenslet = 16;
 cxy0 = 0.5*(nPxLenslet-1);
@@ -39,6 +39,8 @@ cd([ceodir,'/imaging'])
 unix('make imaging.mex')
 clear ceo_imaging
 mex -largeArrayDims -I../include -L../lib -lceo -o ceo_imaging imaging.mex.cu
+
+%%
 
 u = single( 0.5*D*gpuArray.linspace(-1,1,nxy) );
 [x,y] = meshgrid( u );
@@ -154,7 +156,7 @@ dmLR = deformableMirror(nLenslet+1,'modes',bifLR,'resolution',nP);
 F = bifLR.modes;
 bif = influenceFunction('monotonic',0.5);
 dm = deformableMirror(nLenslet+1,'modes',bif,'resolution',nxy);
-pupil = tools.piston(nxy-nPxLenslet*2,nxy,'type','logical');
+pupil = tools.piston(nxy-nPxLenslet*0,nxy,'type','logical');
 %%
 [gphs,frame,cx,cy,flux] = ceo_imaging(x,y,1,L0,0);
 cx = cx - cxy0;
@@ -172,7 +174,8 @@ cpy = zeros(nP^2,1);
 
 tic
 % [yy,flag,relres,iter,resvec] = my_minres(fun,gather(c),1e-3,50,[],[],[],mask_c_c);
-[yy,flag,relres,iter,resvec] = minres(fun,gather(c),1e-3,50);
+%[yy,flag,relres,iter,resvec] = minres(fun,gather(c),1e-3,50);
+[yy,flag,relres,iter,resvec] = pcg(fun,gather(c),1e-3,50);
 cpx(idx) = yy(1:end/2);
 cpy(idx) = yy(1+end/2:end);
 phse_2 = STx*cpx + STy*cpy;

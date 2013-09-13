@@ -12,7 +12,6 @@ The iterativeSolvers structure is written in the header:
 #include "aaStats.h"
 #endif
 
-#include "cublas_v2.h"
 
 struct iterativeSolvers {
 
@@ -22,8 +21,7 @@ struct iterativeSolvers {
 
   void cg_cleanup(void);
 
-  //  void cg(float *x, void (*mvm)(float*, float*), float *b, int max_it, float* x0);
-  void cg(aaStats* A, float *x, void (*mvm)(aaStats* A, float*, float*), float *b, int max_it, float* x0);
+  void cg(float *x, aaStats* A, float *b, int max_it, float* x0);
 
   //  void info(void);
 };
@@ -70,22 +68,8 @@ void iterativeSolvers::cg_cleanup(void)
 }
 @ 
 The next routine implements the conjugate gradient iterative method:
-<<conjugate gradient I>>=
-  void iterativeSolvers::cg(float *x, void (*mvm)(float*, float*), float *b, int max_it, float* x0)
-{
-  float alpha, beta, gamma;
-  int k;
-  <<conjugate gradient init>>
-  for (k=0;k<max_it;k++) {
-    printf("CG IT=%d - ",k);
-    <<conjugate gradient loop part 1>>
-      if (k<(max_it-1)) {
-	  <<conjugate gradient loop part 2>>
-      }
-  }    
-}
 <<conjugate gradient>>=
-  void iterativeSolvers::cg(aaStats* A, float *x, void (*mvm)(aaStats* A, float*, float*), float *b, int max_it, float* x0)
+  void iterativeSolvers::cg(float *x, aaStats* A, float *b, int max_it, float* x0)
 {
   float alpha, beta, gamma;
   int k;
@@ -105,7 +89,7 @@ The conjugate gradient algorithm is written:
   \begin{enumerate}
   \item $r=Ax_0$
 <<conjugate gradient init>>=
-    mvm(A, r , x0);
+    A->MVM(r , x0);
 @ \item $r_0 = b - r_0$
 <<conjugate gradient init>>=
 beta = -1;
@@ -120,7 +104,7 @@ cublasScopy(handle, N, r, 1, p, 1);
   \begin{enumerate}
   \item $q=Ap_k$
 <<conjugate gradient loop part 1>>=
-    mvm(A, q , p);
+    A->MVM(q , p);
 @ \item $\gamma=r_k^Tr_k$
 <<conjugate gradient loop part 1>>=
 cublasSdot(handle, N, r, 1, r, 1, &gamma);
@@ -225,8 +209,10 @@ centroiding cog;
 aaStats A;
 paStats B;
 iterativeSolvers iSolve;
+stats S;
+S.setup();
 
-int N = _N_LENSLET_*2;
+int N = _N_LENSLET_*2, PS_N_PX, i, j ,k;
 float *d__x, *d__b;
 HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
@@ -267,17 +253,47 @@ printf("\ndelta=%.4f\n",delta);
 
 A.setup(N_SIDE_LENSLET,&atm,d);
 
-atm.get_phase_screen(delta,_N_PIXEL_,delta,_N_PIXEL_,d__src,0);
+PS_N_PX = N_SIDE_LENSLET*_N_PX_PUPIL_;
+atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
+float wf_rms, phase2nm;
+phase2nm = 1E9*atm.wavelength/2/PI;
+wf_rms = phase2nm*S.std(d__src->phase, _N_PIXEL_);
+printf("\n WF RMS: %7.2fnm\n",wf_rms);
+
+float phase_screen[_N_PIXEL_];
+HANDLE_ERROR( cudaMemcpy( phase_screen, d__src->phase,
+			  sizeof(float)*_N_PIXEL_,
+			  cudaMemcpyDeviceToHost ) );
+for (i=0;i<16;i++) {
+  printf("|");
+  for (j=0;j<16;j++) {
+    k = i*PS_N_PX + j;
+    printf("%+6.4E|",phase_screen[k]);
+  } 
+  printf("\n");
+}
+
 lenslet_array.propagate(d__src);
-cog.get_data(lenslet_array.d__frame);
+float cxy0 = (_N_PX_PUPIL_ - 1)/2.0;
+cog.get_data(lenslet_array.d__frame, cxy0, cxy0);
 HANDLE_ERROR( cudaMemcpy( d__b              , cog.d__cx,  
 			  _N_LENSLET_*sizeof(float), cudaMemcpyDeviceToDevice) );
 HANDLE_ERROR( cudaMemcpy( d__b + _N_LENSLET_, cog.d__cy,  
 			  _N_LENSLET_*sizeof(float), cudaMemcpyDeviceToDevice) );
 
+float* b;
+b = (float *)malloc(sizeof(float)*N);
+HANDLE_ERROR( cudaMemcpy( b, d__b,
+			  sizeof(float)*N,
+			  cudaMemcpyDeviceToHost ) );
+printf("\n   Cx       Cy\n");
+for (k=0;k<_N_LENSLET_;k++) {
+  printf("%+6.4E  %+6.4E\n",b[k],b[k+_N_LENSLET_]);
+}
+
 iSolve.cg_setup(N);
 
-iSolve.cg(&A, d__x, mvm, d__b, 10, d__x);
+iSolve.cg(d__x, &A, d__b, 10, d__x);
 
 HANDLE_ERROR( cudaFree( d__src) );
 atm.cleanup();
@@ -285,5 +301,7 @@ lenslet_array.cleanup();
 cog.cleanup();
 A.cleanup();
 iSolve.cg_cleanup();
+S.cleanup();
 HANDLE_ERROR( cudaFree( d__x ) );
 HANDLE_ERROR( cudaFree( d__b ) );
+free(b);

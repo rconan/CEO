@@ -3,12 +3,14 @@
 #ifndef __CEO_H__
 #define __CEO_H__
 
+
 #include <stdio.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <curand.h>
 #include <curand_kernel.h>
 #include <cufft.h>
+#include "cublas_v2.h"
 
 #include "definitions.h"
 
@@ -38,10 +40,16 @@ static void HandleError( cudaError_t err,
 
 <<tic-toc>>
 
+<<statistics definition>>
 #endif  // __CEO_H__
 @
 <<ceo.cu>>=
 #include "ceo.h"
+
+<<cublas error>>
+
+<<statistics functions>>
+
 __global__ void centroiding(float *cx, float *cy, float *flux, const float *frame)
 {
   int u, k, i, ij, ij_inc, iLenslet,jLenslet;
@@ -268,3 +276,70 @@ struct stopwatch{
     HANDLE_ERROR( cudaEventDestroy( stop ) );
   }
 };
+@ Statistical moment are computed with the structure [[stats]]
+<<statistics definition>>=
+struct stats {
+  cublasHandle_t handle;
+  cublasStatus_t status;
+  void setup(void);
+  void cleanup(void);
+  float mean(float *data, int n_data);
+  float var(float *data, int n_data);
+  float std(float *data, int n_data);
+};
+<<statistics functions>>=
+void stats::setup(void) {
+  cublasCreate(&handle);
+}
+void stats::cleanup(void) {
+  cublasDestroy(handle);
+}
+<<mean>> 
+<<variance>> 
+<<standart deviation>>
+@  
+Computing the mean of a vector [[data]]$=x$, $\bar x = \langle x \rangle$:
+<<mean>>=
+float stats::mean(float *data, int n_data) {
+  float results;
+  CUBLAS_ERROR( cublasSasum(handle, n_data, data, 1, &results) );
+  return results/n_data;
+}
+@  
+Computing the variance of a vector [[data]]$=x$, $\sigma^2_x=\langle x^2 \rangle - \langle x \rangle^2$:
+<<variance>>=
+float stats::var(float *data, int n_data) {
+  <<variance algorithm>>
+  return results;
+}
+@  with 
+<<variance algorithm>>=
+float results, mean_data;
+CUBLAS_ERROR( cublasSasum(handle, n_data, data, 1, &mean_data) );
+mean_data /= n_data;
+CUBLAS_ERROR( cublasSdot(handle, n_data, data, 1, data, 1, &results) );
+results /= n_data;
+results -= (mean_data*mean_data);
+@  
+Computing the standart deviation $\sigma_x$ of a vector [[data]]$=x$:
+<<standart deviation>>=
+float stats::std(float *data, int n_data) {
+  <<variance algorithm>>
+  return sqrtf(results);
+}
+@
+The error function;
+<<cublas error>>=
+void CUBLAS_ERROR(cublasStatus_t status) {
+  printf("\nCUBLAS: ");
+  if (status==CUBLAS_STATUS_SUCCESS)
+    printf("the operation completed successfully\n");
+  else if (status==CUBLAS_STATUS_NOT_INITIALIZED)
+    printf("the library was not initialized\n");
+  else if (status==CUBLAS_STATUS_ALLOC_FAILED)
+    printf("the reduction buffer could not be allocated\n");
+  else if (status==CUBLAS_STATUS_ARCH_MISMATCH)
+    printf("the device does not support double-precision\n");
+  else if (status==CUBLAS_STATUS_EXECUTION_FAILED)
+    printf("the function failed to launch on the GPU\n");
+}
