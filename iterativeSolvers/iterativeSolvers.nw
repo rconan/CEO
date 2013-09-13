@@ -152,11 +152,15 @@ The test routine is:
 #endif
 
 #include "iterativeSolvers.h"
+#ifndef __AASTATS_H__
 #include "aaStats.h"
+#endif
+#ifndef __PASTATS_H__
 #include "paStats.h"
+#endif
 
    //#define N 10
-
+<<PA input>>
 // Identity
 /* void mvm(float *y, float *x) { */
 /*   cublasHandle_t handle; */
@@ -212,7 +216,7 @@ iterativeSolvers iSolve;
 stats S;
 S.setup();
 
-int N = _N_LENSLET_*2, PS_N_PX, i, j ,k;
+int N = _N_LENSLET_*2, PS_N_PX, PS_E_N_PX, i, j ,k;
 float *d__x, *d__b;
 HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
@@ -252,6 +256,7 @@ float delta = d/_N_PX_PUPIL_;
 printf("\ndelta=%.4f\n",delta);
 
 A.setup(N_SIDE_LENSLET,&atm,d);
+B.setup(N_SIDE_LENSLET,2,&atm,d);
 
 PS_N_PX = N_SIDE_LENSLET*_N_PX_PUPIL_;
 atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
@@ -264,14 +269,18 @@ float phase_screen[_N_PIXEL_];
 HANDLE_ERROR( cudaMemcpy( phase_screen, d__src->phase,
 			  sizeof(float)*_N_PIXEL_,
 			  cudaMemcpyDeviceToHost ) );
-for (i=0;i<16;i++) {
-  printf("|");
-  for (j=0;j<16;j++) {
-    k = i*PS_N_PX + j;
-    printf("%+6.4E|",phase_screen[k]);
-  } 
-  printf("\n");
-}
+/* for (i=0;i<16;i++) { */
+/*   printf("|"); */
+/*   for (j=0;j<16;j++) { */
+/*     k = i*PS_N_PX + j; */
+/*     printf("%+6.4E|",phase_screen[k]); */
+/*   }  */
+/*   printf("\n"); */
+/* } */
+FILE *fid;
+fid = fopen("phaseScreen.bin","wb");
+fwrite(phase_screen,sizeof(float),_N_PIXEL_,fid);
+fclose(fid);
 
 lenslet_array.propagate(d__src);
 float cxy0 = (_N_PX_PUPIL_ - 1)/2.0;
@@ -291,17 +300,63 @@ for (k=0;k<_N_LENSLET_;k++) {
   printf("%+6.4E  %+6.4E\n",b[k],b[k+_N_LENSLET_]);
 }
 
+PS_E_N_PX = 2*N_SIDE_LENSLET + 1;
+PS_E_N_PX *= PS_E_N_PX;
+int *idx, *d__idx;
+idx = (int *)malloc(sizeof(int)*_N_LENSLET_);
+k = -1;
+printf("\n k   idx\n");
+for (i=1;i<2*N_SIDE_LENSLET;i+=2) {
+  for (j=1;j<2*N_SIDE_LENSLET;j+=2) {
+    idx[++k] = i*(2*N_SIDE_LENSLET + 1) + j;
+    printf("(%2d) %2d\n",k,idx[k]);
+  }
+ }
+HANDLE_ERROR( cudaMalloc( (void**)&d__idx, sizeof(int)*_N_LENSLET_ ) );
+HANDLE_ERROR( cudaMemcpy( d__idx, idx,
+			  sizeof(int)*_N_LENSLET_,
+			  cudaMemcpyHostToDevice ) );
+float *d__ce;
+HANDLE_ERROR( cudaMalloc((void**)&d__ce, sizeof(float)*PS_E_N_PX*2 ) );
+HANDLE_ERROR( cudaMemset(d__ce, 0, sizeof(float)*PS_E_N_PX*2 ) );
+
 iSolve.cg_setup(N);
 
 iSolve.cg(d__x, &A, d__b, 10, d__x);
+
+dim3 blockDim(16,16);
+dim3 gridDim(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
+set_pa_input LLL gridDim,blockDim RRR (d__ce, d__x, d__idx, N_SIDE_LENSLET);
+set_pa_input LLL gridDim,blockDim RRR (d__ce + PS_E_N_PX, d__x + _N_LENSLET_, d__idx, N_SIDE_LENSLET);
+
+float *d__phase_est;
+HANDLE_ERROR( cudaMalloc((void**)&d__phase_est, sizeof(float)*PS_E_N_PX ) );
+B.MVM(d__phase_est,d__ce);
 
 HANDLE_ERROR( cudaFree( d__src) );
 atm.cleanup();
 lenslet_array.cleanup();
 cog.cleanup();
 A.cleanup();
+B.cleanup();
 iSolve.cg_cleanup();
 S.cleanup();
 HANDLE_ERROR( cudaFree( d__x ) );
 HANDLE_ERROR( cudaFree( d__b ) );
+HANDLE_ERROR( cudaFree( d__idx ) );
+HANDLE_ERROR( cudaFree( d__ce ) );
+HANDLE_ERROR( cudaFree( d__phase_est ) );
 free(b);
+free(idx);
+@ 
+<<PA input>>=
+__global__ void set_pa_input(float *pa_c, float *aa_c, int *idx, int N) 
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<N) && (j<N) ) {
+    k = i*N + j;
+    pa_c[idx[k]] = aa_c[k];
+  }
+}
