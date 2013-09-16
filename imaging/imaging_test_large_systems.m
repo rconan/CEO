@@ -42,7 +42,7 @@ mex -largeArrayDims -I../include -L../lib -lceo -o ceo_imaging imaging.mex.cu
 
 %%
 
-u = single( 0.5*D*gpuArray.linspace(-1,1,nxy) );
+u = single( 0.5*D*gpuArray.linspace(0,2,nxy) );
 [x,y] = meshgrid( u );
 
 [phs,frame,cx,cy,flux] = ceo_imaging(x,y,1,L0,0);
@@ -66,9 +66,9 @@ colorbar
 drawnow
 
 %% slopes-to-slopes covariance matrix
-nF = 1024;%2^nextpow2(nLenslet*10);%nLenslet*2*10;%128;
+nF = 16;%1024;%2^nextpow2(nLenslet*10);%nLenslet*2*10;%128;
 [fx,fy] = freqspace(nF,'meshgrid');
-sf = 4;
+sf = 1;%4;
 lf = sf/(d*2);
 fx = lf*fx;
 fy = lf*fy;
