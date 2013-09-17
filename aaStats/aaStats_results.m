@@ -33,7 +33,7 @@ arrayfun( @(k) set(hb(k),'MarkerFaceColor',get(hb(k),'color')), 1:length(hb) )
 %%
 nLenslet = 40;
 nSlope   = 2*nLenslet^2;
-fid = fopen(sprintf('mvm%03d.bin',nLenslet), 'r');
+fid = fopen(sprintf('aa_mvm%03d.bin',nLenslet), 'r');
 y = fread(fid, nSlope, 'float');
 fclose(fid);
 % slopes-to-slopes covariance matrix

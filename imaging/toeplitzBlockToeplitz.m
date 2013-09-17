@@ -20,9 +20,9 @@ classdef toeplitzBlockToeplitz
             obj.nBlockCol = nmBlock(2);
             obj.nRow      = blockNM(1);
             obj.nCol      = blockNM(2);
-            obj.elements  = T;
+            obj.elements  = T(end:-1:1,end:-1:1);
             
-            a = obj.elements(end:-1:1,end:-1:1);
+            a = obj.elements;
             a = a(:);
             na = length(a);
             obj.elementsFT = fft(a,na);

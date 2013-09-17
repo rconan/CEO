@@ -106,9 +106,9 @@ fprintf(' ==> slopes-to-slopes covariance matrix computed in %5.2fs\n',elapsedTi
 %% phase-to-slopes covariance matrix
 alpha = 2;
 nP = alpha*nLenslet+1;
-nPF = 2^nextpow2(nP*8);%nP*2*4;%32;
+nPF = 32;%2^nextpow2(nP*8);%nP*2*4;%32;
 [fx,fy] = freqspace(nPF,'meshgrid');
-sf = 4;
+sf = 1;%4;
 lf = sf/(d*2);
 fx = lf*alpha*fx;
 fy = lf*alpha*fy;

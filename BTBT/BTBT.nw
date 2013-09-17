@@ -150,9 +150,9 @@ cov = (float2*)malloc(cov_size);
 HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
 printf("\n@(CEO)>BTBT: raster covariance\n");
 for (int k=0;k<NU2;k++) {
-  printf("%2d: ", l);
+  printf("%2d: ", k);
   for (int l=0;l<N*M;l++) {
-    printf("%+4.2E %+4.2E.I||\n", cov[k+l*NU2].x,cov[k+l*NU2].y);
+    printf("%+4.2E %+4.2E.I||", cov[k+l*NU2].x,cov[k+l*NU2].y);
   }
   printf("\b\b\n");
  }
@@ -167,7 +167,7 @@ void BTBT::info(void)
 }
 <<info content>>=
   printf(" . number of outermost blocks    : %dX%d\n",M,N);
-  printf(" . size of outermost blocks      : %dX%d\n",M,N);
+  printf(" . size of outermost blocks      : %dX%d\n",NT,NT);
   printf(" . size of innermost blocks      : %dX%d\n",NT,NT);
   n_full = powf(NT,4)*M*N;
   printf(" . full matrix elements #        : %.3E\n",n_full);
@@ -267,13 +267,21 @@ void BTBT::MVM(float *y, float *x)
   /* tid.tic(); */
   <<MVM STEP 2: input FT>>
   /* tid.toc("STEP 2"); */
-  /* tid.tic(); */
+ /* tid.tic(); */
   <<MVM STEP 3: Fourier domain multiplication>>
   /* tid.toc("STEP 3"); */
+  /*  HANDLE_ERROR( cudaThreadSynchronize() ); */
+  /* float2 *b; */
+  /* b = (float2*)malloc(M*sizeof(float2)*NU2); */
+  /* HANDLE_ERROR( cudaMemcpy( b, d__c, M*sizeof(float2)*NU2, cudaMemcpyDeviceToHost) ); */
+  /* for (int i=0;i<(NU2);i++) { */
+  /*   printf("|(%3d) [%+6.4E;%+6.4E]\n",i,b[i].x,b[i].y); */
+  /* } */
+  /* free(b); */
   /* tid.tic(); */
   <<MVM STEP 4: output FT>>
   /* tid.toc("STEP 4"); */
-  /* tid.tic(); */
+/* tid.tic(); */
   <<MVM STEP 5: output ordering>>
   /* tid.toc("STEP 5"); */
 }
@@ -354,6 +362,8 @@ using the kernel:
   int k, l, i;
   k = blockIdx.x * blockDim.x + threadIdx.x;
   if (k<n_x) {
+    c[k].x = 0.0;
+    c[k].y = 0.0;
     for (i=0;i<n_in;i++) {
       l = k + i*n_x;
       c[k].x += x1[l].x*x2[l].x - x1[l].y*x2[l].y;

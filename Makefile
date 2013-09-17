@@ -2,11 +2,11 @@
 include common.mk
 
 #ls -d */ | sed -e 's,//$,,' -e 's,doc,,' -e 's,lib,,'  -e 's,include,,' | xargs
-SOURCE_DIR	= ceo source atmosphere imaging centroiding aaStats paStats iterativeSolvers BTBT
+SOURCE_DIR	= ceo source atmosphere imaging centroiding aaStats BTBT iterativeSolvers
 
 all: makefile 
 	mkdir -p include lib
-	for i in $(SOURCE_DIR); do (make -C $$i all); done
+	for i in $(SOURCE_DIR); do (make -C $$i all);echo -e "\n"; done
 
 tex: $(texsrc)
 	for i in $(SOURCE_DIR); do (make -C $$i tex); done
