@@ -16,7 +16,8 @@ struct centroiding {
 
   void cleanup(void);
    
-  void get_data(float *frame, float cx0, float cy0);
+  void get_data(float *frame);
+  void get_data(float *frame, float cx0, float cy0, float units);
 
 };
 
@@ -31,7 +32,8 @@ struct centroiding {
 
 <<cleanup>>
    
-<<data>>
+<<data I>>
+<<data II>>
 @ Parameters are allocated with the [[setup]] routine
 <<setup>>=
 void centroiding::setup(void) {
@@ -50,20 +52,28 @@ void centroiding::cleanup(void) {
 }
 @ 
 The framelets are processed to retrieve centroids and flux
-<<data>>=
-void centroiding::get_data(float *frame, float cx0, float cy0) {
+<<data I>>=
+void centroiding::get_data(float *frame) {
      dim3 blockGrid(N_SIDE_LENSLET,N_SIDE_LENSLET*_N_SOURCE_);
      dim3 threadGrid(_N_PX_CAMERA_,1);
      centroidingEngine LLL blockGrid , threadGrid RRR (d__cx, d__cy,
 						       d__mass, frame,
-						       cx0, cy0);
+						       0, 0, 1);
+}
+<<data II>>=
+void centroiding::get_data(float *frame, float cx0, float cy0, float units) {
+     dim3 blockGrid(N_SIDE_LENSLET,N_SIDE_LENSLET*_N_SOURCE_);
+     dim3 threadGrid(_N_PX_CAMERA_,1);
+     centroidingEngine LLL blockGrid , threadGrid RRR (d__cx, d__cy,
+						       d__mass, frame,
+						       cx0, cy0, units);
 }
 @ 
 The framelets are processed with the kernel:
 <<centroiding>>=
 __global__ void centroidingEngine(float *cx, float *cy,
 				  float *flux, const float *frame,
-				  float cx0, float cy0)
+				  float cx0, float cy0, float units)
 {
   int u, k, i, ij, ij_inc, iLenslet,jLenslet;
   u = threadIdx.x;
@@ -109,8 +119,10 @@ __global__ void centroidingEngine(float *cx, float *cy,
       {
           cx[k] /= flux[k];
 	  cx[k] -= cx0;
+	  cx[k] *= units;
           cy[k] /= flux[k];
 	  cy[k] -= cy0;
+	  cy[k] *= units;
       }
   }
 }

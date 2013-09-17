@@ -5,7 +5,7 @@
  L0 = 30;
  atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
 lambda = atm.wavelength;
-D = 0.4;
+D = 8;
 phase2nm = 1e9*lambda/2/pi;
 
 %  atm = atmosphere(photometry.V,r0,L0,...
@@ -17,7 +17,7 @@ phase2nm = 1e9*lambda/2/pi;
 % r0 = atm.r0;
 % L0 = atm.L0;
 
-nLenslet = 4;
+nLenslet = 40;
 d = D/nLenslet;
 nPxLenslet = 16;
 cxy0 = 0.5*(nPxLenslet-1);
@@ -66,9 +66,9 @@ colorbar
 drawnow
 
 %% slopes-to-slopes covariance matrix
-nF = 16;%1024;%2^nextpow2(nLenslet*10);%nLenslet*2*10;%128;
+nF = 1024;%2^nextpow2(nLenslet*10);%nLenslet*2*10;%128;
 [fx,fy] = freqspace(nF,'meshgrid');
-sf = 1;%4;
+sf = 4;
 lf = sf/(d*2);
 fx = lf*fx;
 fy = lf*fy;
@@ -106,9 +106,9 @@ fprintf(' ==> slopes-to-slopes covariance matrix computed in %5.2fs\n',elapsedTi
 %% phase-to-slopes covariance matrix
 alpha = 2;
 nP = alpha*nLenslet+1;
-nPF = 32;%2^nextpow2(nP*8);%nP*2*4;%32;
+nPF = 2^nextpow2(nP*8);%nP*2*4;%32;
 [fx,fy] = freqspace(nPF,'meshgrid');
-sf = 1;%4;
+sf = 4;
 lf = sf/(d*2);
 fx = lf*alpha*fx;
 fy = lf*alpha*fy;
@@ -156,7 +156,7 @@ dmLR = deformableMirror(nLenslet+1,'modes',bifLR,'resolution',nP);
 F = bifLR.modes;
 bif = influenceFunction('monotonic',0.5);
 dm = deformableMirror(nLenslet+1,'modes',bif,'resolution',nxy);
-pupil = tools.piston(nxy-nPxLenslet*0,nxy,'type','logical');
+pupil = tools.piston(nxy-nPxLenslet*2,nxy,'type','logical');
 %%
 [gphs,frame,cx,cy,flux] = ceo_imaging(x,y,1,L0,0);
 cx = cx - cxy0;
@@ -174,8 +174,8 @@ cpy = zeros(nP^2,1);
 
 tic
 % [yy,flag,relres,iter,resvec] = my_minres(fun,gather(c),1e-3,50,[],[],[],mask_c_c);
-%[yy,flag,relres,iter,resvec] = minres(fun,gather(c),1e-3,50);
-[yy,flag,relres,iter,resvec] = pcg(fun,gather(c),1e-3,50);
+[yy,flag,relres,iter,resvec] = minres(fun,gather(c),1e-3,50);
+% [yy,flag,relres,iter,resvec] = pcg(fun,gather(c),1e-3,50);
 cpx(idx) = yy(1:end/2);
 cpy(idx) = yy(1+end/2:end);
 phse_2 = STx*cpx + STy*cpy;

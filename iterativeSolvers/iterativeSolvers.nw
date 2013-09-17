@@ -8,8 +8,8 @@ The iterativeSolvers structure is written in the header:
 #include "ceo.h"
 #endif
 
-#ifndef __AASTATS_H__
-#include "aaStats.h"
+#ifndef __BTBT_H__
+#include "BTBT.h"
 #endif
 
 
@@ -21,7 +21,7 @@ struct iterativeSolvers {
 
   void cg_cleanup(void);
 
-  void cg(float *x, aaStats* A, float *b, int max_it, float* x0);
+  void cg(float *x, BTBT* A, float *b, int max_it, float* x0);
 
   //  void info(void);
 };
@@ -69,7 +69,7 @@ void iterativeSolvers::cg_cleanup(void)
 @ 
 The next routine implements the conjugate gradient iterative method:
 <<conjugate gradient>>=
-  void iterativeSolvers::cg(float *x, aaStats* A, float *b, int max_it, float* x0)
+  void iterativeSolvers::cg(float *x, BTBT* A, float *b, int max_it, float* x0)
 {
   float alpha, beta, gamma;
   int k;
@@ -108,7 +108,7 @@ cublasScopy(handle, N, r, 1, p, 1);
 @ \item $\gamma=r_k^Tr_k$
 <<conjugate gradient loop part 1>>=
 cublasSdot(handle, N, r, 1, r, 1, &gamma);
-printf("r norm=%6.2f\n",sqrtf(gamma));
+printf("r norm=%6.2E\n",sqrtf(gamma));
 if (gamma==0) break;
 @ \item $\alpha_k = {\displaystyle \gamma\over p_K^Tq}$
 <<conjugate gradient loop part 1>>=
@@ -150,14 +150,13 @@ The test routine is:
 #ifndef __CENTROIDING_H__
 #include "centroiding.h"
 #endif
-
-#include "iterativeSolvers.h"
 #ifndef __AASTATS_H__
 #include "aaStats.h"
 #endif
-#ifndef __PASTATS_H__
-#include "paStats.h"
+#ifndef __BTBT_H__
+#include "BTBT.h"
 #endif
+#include "iterativeSolvers.h"
 
    //#define N 10
 <<PA input>>
@@ -168,9 +167,9 @@ The test routine is:
 /*   cublasScopy(handle, N, x, 1, y, 1); */
 /*   cublasDestroy(handle); */
 /* } */
-void mvm(aaStats* A, float *y, float *x) {
-A->MVM(y,x);
-}
+/* void mvm(aaStats* A, float *y, float *x) { */
+/* A->MVM(y,x); */
+/* } */
 
 // Solving Ax=b
 int main( void) {
@@ -210,13 +209,15 @@ source src, *d__src;
 atmosphere atm;
 imaging lenslet_array;
 centroiding cog;
-aaStats A;
-paStats B;
+aaStats aa;
+BTBT aaCov;
+paStats pa;
+BTBT paCov;
 iterativeSolvers iSolve;
 stats S;
 S.setup();
 
-int N = _N_LENSLET_*2, PS_N_PX, PS_E_N_PX, i, j ,k;
+int N = _N_LENSLET_*2, NP, PS_N_PX, PS_E_N_PX, i, j ,k;
 float *d__x, *d__b;
 HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
@@ -255,13 +256,23 @@ printf("\nd    =%.4f\n",d);
 float delta = d/_N_PX_PUPIL_;
 printf("\ndelta=%.4f\n",delta);
 
-A.setup(N_SIDE_LENSLET,&atm,d);
-B.setup(N_SIDE_LENSLET,2,&atm,d);
+aa.setup(N_SIDE_LENSLET,&atm,d);
+aaCov.setup(2,2,N_SIDE_LENSLET,aa.d__cov);
+int osf = 2;
+pa.setup(N_SIDE_LENSLET,osf,&atm,d);
+NP = osf*N_SIDE_LENSLET+1;
+PS_E_N_PX = NP;
+PS_E_N_PX *= PS_E_N_PX;
+float delta_e = d/osf;
+printf("\ndelta_e=%.4f\n",delta_e);
 
 PS_N_PX = N_SIDE_LENSLET*_N_PX_PUPIL_;
 atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
-float wf_rms, phase2nm;
+
+float wf_rms, phase2nm, slopes2Angle;
 phase2nm = 1E9*atm.wavelength/2/PI;
+slopes2Angle = (atm.wavelength/2/d);
+
 wf_rms = phase2nm*S.std(d__src->phase, _N_PIXEL_);
 printf("\n WF RMS: %7.2fnm\n",wf_rms);
 
@@ -282,14 +293,29 @@ fid = fopen("phaseScreen.bin","wb");
 fwrite(phase_screen,sizeof(float),_N_PIXEL_,fid);
 fclose(fid);
 
+/* float *d__phase_screen_low_res; */
+/* HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*PS_E_N_PX ) ); */
+/* atm.get_phase_screen(d__phase_screen_low_res,delta_e,NP,delta_e,NP,d__src,0); */
+
+/* float *phase_screen_low_res; */
+/* phase_screen_low_res = (float*)malloc(sizeof(float)*PS_E_N_PX); */
+/* HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res, */
+/* 			  sizeof(float)*PS_E_N_PX, */
+/* 			  cudaMemcpyDeviceToHost ) ); */
+/* fid = fopen("phaseScreenLowRes.bin","wb"); */
+/* fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid); */
+/* fclose(fid); */
+/* HANDLE_ERROR( cudaFree( d__phase_screen_low_res ) ); */
+/* free(phase_screen_low_res); */
+
+// ** WAVEFRONT SENSING
 lenslet_array.propagate(d__src);
 float cxy0 = (_N_PX_PUPIL_ - 1)/2.0;
-cog.get_data(lenslet_array.d__frame, cxy0, cxy0);
+cog.get_data(lenslet_array.d__frame, cxy0, cxy0, slopes2Angle);
 HANDLE_ERROR( cudaMemcpy( d__b              , cog.d__cx,  
 			  _N_LENSLET_*sizeof(float), cudaMemcpyDeviceToDevice) );
 HANDLE_ERROR( cudaMemcpy( d__b + _N_LENSLET_, cog.d__cy,  
 			  _N_LENSLET_*sizeof(float), cudaMemcpyDeviceToDevice) );
-
 float* b;
 b = (float *)malloc(sizeof(float)*N);
 HANDLE_ERROR( cudaMemcpy( b, d__b,
@@ -299,9 +325,10 @@ printf("\n   Cx       Cy\n");
 for (k=0;k<_N_LENSLET_;k++) {
   printf("%+6.4E  %+6.4E\n",b[k],b[k+_N_LENSLET_]);
 }
+fid = fopen("centroids.bin","wb");
+fwrite(b,sizeof(float),N,fid);
+fclose(fid);
 
-PS_E_N_PX = 2*N_SIDE_LENSLET + 1;
-PS_E_N_PX *= PS_E_N_PX;
 int *idx, *d__idx;
 idx = (int *)malloc(sizeof(int)*_N_LENSLET_);
 k = -1;
@@ -316,29 +343,45 @@ HANDLE_ERROR( cudaMalloc( (void**)&d__idx, sizeof(int)*_N_LENSLET_ ) );
 HANDLE_ERROR( cudaMemcpy( d__idx, idx,
 			  sizeof(int)*_N_LENSLET_,
 			  cudaMemcpyHostToDevice ) );
-float *d__ce;
-HANDLE_ERROR( cudaMalloc((void**)&d__ce, sizeof(float)*PS_E_N_PX*2 ) );
-HANDLE_ERROR( cudaMemset(d__ce, 0, sizeof(float)*PS_E_N_PX*2 ) );
 
 iSolve.cg_setup(N);
 
-iSolve.cg(d__x, &A, d__b, 10, d__x);
+iSolve.cg(d__x, &aaCov, d__b, 10, d__x);
 
+// ** WAVEFRONT ESTIMATION
+
+HANDLE_ERROR( cudaThreadSynchronize());
+
+float *d__ce;
+HANDLE_ERROR( cudaMalloc((void**)&d__ce, sizeof(float)*PS_E_N_PX*2 ) );
+HANDLE_ERROR( cudaMemset(d__ce, 0, sizeof(float)*PS_E_N_PX*2 ) );
 dim3 blockDim(16,16);
 dim3 gridDim(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
 set_pa_input LLL gridDim,blockDim RRR (d__ce, d__x, d__idx, N_SIDE_LENSLET);
 set_pa_input LLL gridDim,blockDim RRR (d__ce + PS_E_N_PX, d__x + _N_LENSLET_, d__idx, N_SIDE_LENSLET);
 
 float *d__phase_est;
-HANDLE_ERROR( cudaMalloc((void**)&d__phase_est, sizeof(float)*PS_E_N_PX ) );
-B.MVM(d__phase_est,d__ce);
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
+paCov.setup(1,2,NP,pa.d__cov);
+paCov.MVM(d__phase_est,d__ce);
+
+float *phase_screen_est;
+phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
+HANDLE_ERROR( cudaMemcpy( phase_screen_est, d__phase_est,
+			  sizeof(float)*PS_E_N_PX,
+			  cudaMemcpyDeviceToHost ) );
+fid = fopen("phaseScreenEst.bin","wb");
+fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
+fclose(fid);
 
 HANDLE_ERROR( cudaFree( d__src) );
 atm.cleanup();
 lenslet_array.cleanup();
 cog.cleanup();
-A.cleanup();
-B.cleanup();
+aa.cleanup();
+pa.cleanup();
+aaCov.cleanup();
+paCov.cleanup();
 iSolve.cg_cleanup();
 S.cleanup();
 HANDLE_ERROR( cudaFree( d__x ) );
@@ -348,6 +391,7 @@ HANDLE_ERROR( cudaFree( d__ce ) );
 HANDLE_ERROR( cudaFree( d__phase_est ) );
 free(b);
 free(idx);
+free(phase_screen_est);
 @ 
 <<PA input>>=
 __global__ void set_pa_input(float *pa_c, float *aa_c, int *idx, int N) 
