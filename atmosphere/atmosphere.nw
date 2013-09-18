@@ -477,7 +477,7 @@ void atmosphere::get_phase_screen(float const delta_x, int N_x, float const delt
 		       source *src, float time)
 {
   dim3 blockDim(16,16);
-  dim3 gridDim( ceilf(N_x/16) , ceilf(N_y/16));
+  dim3 gridDim( 1+N_x/16 , 1+N_y/16);
   square_plps LLL gridDim , blockDim RRR (src->phase,
 				   delta_x, N_x, delta_y, N_y, 
 				   d__turbulence, r0,
@@ -490,7 +490,7 @@ void atmosphere::get_phase_screen(float *phase_screen,
 		       source *src, float time)
 {
   dim3 blockDim(16,16);
-  dim3 gridDim( ceilf(N_x/16) , ceilf(N_y/16));
+  dim3 gridDim( 1+N_x/16 , 1+N_y/16);
   square_plps LLL gridDim , blockDim RRR (phase_screen,
 				   delta_x, N_x, delta_y, N_y, 
 				   d__turbulence, r0,
@@ -510,7 +510,6 @@ void atmosphere::get_phase_screen(float *phase_screen,
   <<thread to coordinate index (square)>>
   
   sum = 0;
-  
   if ( (i<N_x) && (j<N_y) )
     {
 
@@ -537,7 +536,7 @@ Each thread is computing one value of the phase screen at the coordinate [[x_kl 
 <<thread to coordinate index (square)>>=
 i = blockIdx.x * blockDim.x + threadIdx.x;
 j = blockIdx.y * blockDim.y + threadIdx.y;
-kl = j * gridDim.x * blockDim.x + i;
+kl = j * N_x + i;
 x_kl0 = i*delta_x;
 y_kl0 = j*delta_y;
 @ 
@@ -967,4 +966,96 @@ C = mean( bsxfun( @times , zernCoefs(:,1,:) , zernCoefs ) , 3);
 hold all
 h_num = plot(tau_,C(2:8,:)','.','MarkerSize',15);
 hold off
+@ 
+<<atmosphere.bin>>=
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+#ifndef __SOURCE_H__
+#include "source.h"
+#endif
+#ifndef __ATMOSPHERE_H__
+#include "atmosphere.h"
+#endif
+#ifndef __IMAGING_H__
+#include "imaging.h"
+#endif
+#ifndef __CENTROIDING_H__
+#include "centroiding.h"
+#endif
+#ifndef __AASTATS_H__
+#include "aaStats.h"
+#endif
+#ifndef __BTBT_H__
+#include "BTBT.h"
+#endif
+#include "iterativeSolvers.h"
+int main( void) {
 
+atmosphere atm;
+float altitude[] = {0},
+  xi0[] = {1},
+  wind_speed[] = {10},
+  wind_direction[] = {0};
+atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
+
+source src, *d__src;
+src.setup(ARCSEC(0) , 0, INFINITY);
+HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source)*_N_SOURCE_ ) );
+HANDLE_ERROR( cudaMemcpy( d__src, &src,
+			  sizeof(source)*_N_SOURCE_ ,
+			  cudaMemcpyHostToDevice ) );
+
+float phase_screen[4096];
+float delta, delta_e;
+int PS_N_PX, PS_E_N_PX, NP;
+FILE *fid;
+float *phase_screen_low_res, *d__phase_screen_low_res;
+
+PS_N_PX = 64;
+PS_E_N_PX = PS_N_PX*PS_N_PX;
+NP = PS_N_PX;
+
+delta=1./16.;
+atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
+
+HANDLE_ERROR( cudaMemcpy( phase_screen,d__src->phase,
+			  sizeof(float)*PS_E_N_PX,
+			  cudaMemcpyDeviceToHost ) );
+fid = fopen("phaseScreen.bin","wb");
+fwrite(phase_screen,sizeof(float),PS_E_N_PX,fid);
+fclose(fid);
+
+PS_N_PX = 9;
+PS_E_N_PX = PS_N_PX*PS_N_PX;
+NP = PS_N_PX;
+
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*PS_E_N_PX ) );
+
+delta_e = 0.5;
+atm.get_phase_screen(d__phase_screen_low_res,delta_e,NP,delta_e,NP,d__src,0);
+
+phase_screen_low_res = (float*)malloc(sizeof(float)*PS_E_N_PX);
+HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res,
+			  sizeof(float)*PS_E_N_PX,
+			  cudaMemcpyDeviceToHost ) );
+/* int k; */
+/* printf("ps=\n"); */
+/* for (int i=0;i<NP;i++){ */
+/* for (int j=0;j<NP;j++){ */
+/* k = i*NP+j; */
+/* printf(" %+5.2f ",phase_screen_low_res[k]); */
+/* } */
+/* printf("\n"); */
+/* } */
+//FILE *fid;
+fid = fopen("phaseScreenLowRes.bin","wb");
+fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid);
+fclose(fid);
+
+atm.cleanup();
+
+HANDLE_ERROR( cudaFree( d__src) );
+HANDLE_ERROR( cudaFree( d__phase_screen_low_res ) );
+free(phase_screen_low_res);
+}
