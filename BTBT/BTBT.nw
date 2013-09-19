@@ -19,6 +19,8 @@ struct BTBT {
 
   <<BTBT parameters>>
 
+  void setup(int n_x);
+
   void setup(int M_, int N_, int NT_, float2 *d__cov_);
 
   void cleanup(void);
@@ -41,13 +43,15 @@ struct BTBT {
 
 <<MVM output ordering kernel>>
 
+<<setup (test)>>
+
 <<setup>>
 
 <<cleanup>>
 
 <<info>>
 
-<<matrix--to--vector multiplication>>
+<< MVM >>
 @
 A BTBT matrix is a $M\times N$ block matrix with $M$ and $N$ the number of block rows and columns respectively.
 Each block is a square matrix of type Toeplitz--Block--Toeplitz meaning that each block contains $N_T\times N_T$ blocks of size $N_T\times N_T$.
@@ -257,7 +261,7 @@ __global__ void ordering(unsigned int *mu, unsigned int *xi, int n)
 }
 @ 
 The MVM routine computes the matrix--to--vector multiplication $y=C_{\vec\alpha\cdot\vec\beta}s$.
-<<matrix--to--vector multiplication>>=
+<< MVM >>=
 void BTBT::MVM(float *y, float *x)
 {
   /* stopwatch tid; */
@@ -399,3 +403,30 @@ __global__ void mvm_output_order(float *x_out, int n_x_out,
   }
 }
 @ \end{enumerate}
+
+New matrix--to--vector multiplication routines are defined for test purposes.
+The next routine implement the MVM for an identity matrix
+<< MVM (Test 1)>>=
+void BTBT::MVM(float *y, float *x)
+{
+  printf("@(CEO)>BTBT: MVM (Test 1)\n");
+  cublasHandle_t handle;
+  cublasCreate(&handle);
+  cublasScopy(handle, 10, x, 1, y, 1);
+  cublasDestroy(handle);
+}
+<< MVM (Test 2)>>=
+void BTBT::MVM(float *y, float *x)
+{
+  printf("@(CEO)>BTBT: MVM (Test 2)\n");
+
+  cublasHandle_t handle;
+  cublasCreate(&handle);
+  for (int k=0;k<N;k++)
+    cublasSasum(handle, N, x, 1, y+k);
+  cublasDestroy(handle);
+}
+@
+We also define a void setup routine:
+<<setup (test)>>=
+void BTBT::setup(int n_x) { N = n_x; }

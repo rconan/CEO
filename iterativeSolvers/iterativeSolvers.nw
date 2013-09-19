@@ -12,6 +12,7 @@ The iterativeSolvers structure is written in the header:
 #include "BTBT.h"
 #endif
 
+#define MINRES_DEBUG
 
 struct iterativeSolvers {
 
@@ -136,7 +137,7 @@ cublasScopy(handle, N, r, 1, p, 1);
 @ \item $\gamma=r_k^Tr_k$
 <<conjugate gradient loop part 1>>=
 cublasSdot(handle, N, r, 1, r, 1, &gamma);
-//printf("r norm=%6.2E\n",sqrtf(gamma));
+//printf("r norm=%6.2E\n",(gamma));
 if (gamma==0) break;
 @ \item $\alpha_k = {\displaystyle \gamma\over p_K^Tq}$
 <<conjugate gradient loop part 1>>=
@@ -170,7 +171,7 @@ The MINRES iterative solver method is implemented in the next routine:
   int k;
   <<MINRES init>>
   for (k=0;k<max_it;k++) {
-    //printf("CG IT=%d - ",k);
+    printf("MINRES IT=%d - ",k);
     <<MINRES loop>>
   }    
 }
@@ -191,10 +192,13 @@ cublasSaxpy(handle, N, &alpha, b, 1, nu_i, 1);
 @ \item $\beta_1=\left\| \nu_1 \right\|_2$
 <<MINRES init>>=
 cublasSnrm2(handle, N, nu_i, 1, &beta);
+#ifdef MINRES_DEBUG
+printf("beta=%6.2f\n",beta);
+#endif
 @ \item $\eta=beta_1$, $\gamma_1=\gamma_0=1$, $\sigma_1=\sigma_0=0$, $\nu_0=0$
 <<MINRES init>>=
 eta = beta;
-gamma_i = gamma_im1 = 0;
+gamma_i = gamma_im1 = 1;
 sigma_i = sigma_im1 = 0;
 @ \item $\nu_0=0$, $w_0=w_{-1}=0$
 <<MINRES init>>=
@@ -206,13 +210,17 @@ HANDLE_ERROR( cudaMemset(w_im2 , 0, sizeof(float)*N ) );
   \begin{enumerate}
   \item $\nu_i = \nu_i / \beta_i$
 <<MINRES loop>>=
-cublasSscal(handle, N, &beta, nu_i, 1);
+rho1 = 1/beta;
+cublasSscal(handle, N, &rho1, nu_i, 1);
 @ \item $\nu_{i+1}= A\nu_i$
 <<MINRES loop>>=
 A->MVM(nu_ip1 , nu_i);
 @ \item $\alpha_i = \nu_i^T\nu_{i+1}$
 <<MINRES loop>>=
 cublasSdot(handle, N, nu_i, 1, nu_ip1, 1, &alpha);
+#ifdef MINRES_DEBUG
+printf("alpha=%6.2f\n",alpha);
+#endif
 @ \item $\nu_{i+1} = \nu_{i+1} - \alpha_i\nu_i - \beta_i\nu_{i-1}$
 <<MINRES loop>>=
 alpha = -alpha;
@@ -224,26 +232,49 @@ beta  = -beta;
 @ \item $\delta = \gamma_i\alpha_i - \gamma_{i-1}\sigma_i\beta_i$
 <<MINRES loop>>=
 delta = gamma_i*alpha - gamma_im1*sigma_i*beta;
+#ifdef MINRES_DEBUG
+printf("delta=%6.2f\n",delta);
+#endif
 @ \item $\rho_2 = \sigma_i\alpha_i + \gamma_{i-1}\gamma_i\beta_i$
 <<MINRES loop>>=
 rho2 = sigma_i*alpha + gamma_im1*gamma_i*beta;
+#ifdef MINRES_DEBUG
+printf("rho2=%6.2f\n",rho2);
+#endif
 @ \item $\rho_3 = \sigma_{i-1}\beta_i$
 <<MINRES loop>>=
 rho3 = sigma_im1*beta;
+#ifdef MINRES_DEBUG
+printf("rho3=%6.2f\n",rho3);
+#endif
 @ \item $\beta_{i+1}=\left\| \nu_{i+1} \right\|_2$
 <<MINRES loop>>=
 cublasSnrm2(handle, N, nu_ip1, 1, &beta);
+#ifdef MINRES_DEBUG
+printf("beta=%.2E\n",beta);
+#endif
 @ \item $\rho_1 = \sqrt{\delta^2+\beta_{i+1}^2}$
 <<MINRES loop>>=
 rho1 = hypotf(delta,beta);
+#ifdef MINRES_DEBUG
+printf("rho1=%6.2f\n",rho1);
+#endif
 @ \item $\gamma_{i+1} = \delta / \rho_1$
 <<MINRES loop>>=
 gamma_im1 = gamma_i;
 gamma_i = delta/rho1;
+#ifdef MINRES_DEBUG
+printf("gamma_im1=%6.2f\n",gamma_im1);
+printf("gamma_i=%6.2f\n",gamma_i);
+#endif
 @ \item $\sigma_{i+1} = \beta_{i+1} / \rho_1$
 <<MINRES loop>>=
 sigma_im1 = sigma_i;
 sigma_i = beta/rho1;
+#ifdef MINRES_DEBUG
+printf("sigma_im1=%6.2f\n",sigma_im1);
+printf("sigma_i=%6.2f\n",sigma_i);
+#endif
 @ \item $w_i = (\nu_i-\rho_3w_{i-2}-\rho_2w_{i-1})/\rho_1$
 <<MINRES loop>>=
 cublasScopy(handle, N, nu_i, 1, w_i, 1);
@@ -257,9 +288,13 @@ cublasSaxpy(handle, N, &rho2, w_im1, 1, w_i, 1);
 <<MINRES loop>>=
 rho1 = gamma_i*eta;
 cublasSaxpy(handle, N, &rho1, w_i, 1, x, 1);
+@ \item $\left\| r_i \right\|_2 = left| \sigma_{i+1} \right|\left\| r_{i-1} \right\|_2 $
 @ \item $\eta = \sigma_{i+1}\eta$
 <<MINRES loop>>=
 eta = -sigma_i*eta;
+#ifdef MINRES_DEBUG
+printf("eta=%6.2f\n",eta);
+#endif
 @ \item
 \begin{eqnarray}
   \label{eq:1}
@@ -273,6 +308,7 @@ cublasScopy(handle, N, nu_i  , 1, nu_im1, 1);
 cublasScopy(handle, N, nu_ip1, 1, nu_i  , 1);
 cublasScopy(handle, N, w_im1 , 1, w_im2 , 1);
 cublasScopy(handle, N, w_im1 , 1, w_i   , 1);
+if (beta==0) break;
 @  \end{enumerate}
  \end{itemize}
 
@@ -303,27 +339,29 @@ The test routine is:
 #include "iterativeSolvers.h"
 
    //#define N 10
-<<PA input>>
-// Identity
-/* void mvm(float *y, float *x) { */
-/*   cublasHandle_t handle; */
-/*   cublasCreate(&handle); */
-/*   cublasScopy(handle, N, x, 1, y, 1); */
-/*   cublasDestroy(handle); */
-/* } */
-/* void mvm(aaStats* A, float *y, float *x) { */
-/* A->MVM(y,x); */
-/* } */
+
+   <<PA input>>
+
+__global__ void fill(float *data, int n_data, float value)
+{
+  int k = blockIdx.x * blockDim.x + threadIdx.x;
+  if (k<n_data)
+    data[k] = value;
+}
 
 // Solving Ax=b
 int main( void) {
 
- <<complete test>>
-
+  
+<<complete test>>
 }
 @
 In the following a simple test is performed:
-<<simple test>>=
+<<simple test I>>=
+/*
+  The test requires to replace the MVM with MVM (Test 1) 
+  in the code chunk BTBT.cu in the file BTBT.nw
+*/
 float *d__x, *d__b;
 HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
@@ -331,13 +369,61 @@ HANDLE_ERROR( cudaMalloc((void**)&d__b, sizeof(float)*N ) );
 float b[N] = {1,2,3,4,5,6,7,8,9,10};
 HANDLE_ERROR( cudaMemcpy( d__b, b, N*sizeof(float), cudaMemcpyHostToDevice) );
 
+BTBT A;
+A.setup(N);
+
 iterativeSolvers iSolve;
-iSolve.cg_setup(N);
-iSolve.cg(d__x, mvm, d__b, 5, d__x);
-iSolve.cg_cleanup();
+/* iSolve.cg_setup(N); */
+/* iSolve.cg(d__x, &A, d__b, 5, d__x); */
+iSolve.minres_setup(N);
+iSolve.minres(d__x, &A, d__b, 5, d__x);
+iSolve.cleanup();
 
 float *x;
 x = (float *)malloc(sizeof(float)*N);
+HANDLE_ERROR( cudaMemcpy( x, d__x, N*sizeof(float), cudaMemcpyDeviceToHost) );
+
+for (int k=0;k<N;k++)
+  printf("(%d) %5.1f\n",k,x[k]);
+
+HANDLE_ERROR( cudaFree( d__x ) );
+HANDLE_ERROR( cudaFree( d__b ) );
+free(x);
+@ 
+<<simple test II>>=
+/*
+  The test requires to replace the MVM with MVM (Test 2) 
+  in the code chunk BTBT.cu in the file BTBT.nw
+*/
+float *x;
+x = (float *)malloc(sizeof(float)*N);
+float *d__x, *d__b;
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__b, sizeof(float)*N ) );
+
+for (int k=0;k<N;k++) {
+  x[k] = 1.0 + (float)rand();
+  printf("(%d) %.3E\n",k,x[k]);
+ }
+HANDLE_ERROR( cudaMemcpy( d__b, x, N*sizeof(float), cudaMemcpyHostToDevice ) );
+
+BTBT A;
+A.setup(N);
+/* A.MVM(d__b,d__x); */
+/* HANDLE_ERROR( cudaMemcpy( x, d__b, N*sizeof(float), cudaMemcpyDeviceToHost) ); */
+
+/* for (int k=0;k<N;k++) */
+/*   printf("(%d) %5.1f\n",k,x[k]); */
+
+fill LLL (1+N/16),16 RRR (d__x, N, 0);
+
+iterativeSolvers iSolve;
+/* iSolve.cg_setup(N); */
+/* iSolve.cg(d__x, &A, d__b, 5, d__x); */
+iSolve.minres_setup(N);
+iSolve.minres(d__x, &A, d__b, 5, d__x);
+iSolve.cleanup();
+
 HANDLE_ERROR( cudaMemcpy( x, d__x, N*sizeof(float), cudaMemcpyDeviceToHost) );
 
 for (int k=0;k<N;k++)
@@ -354,7 +440,7 @@ float *d__x, *d__b, *b, *d__ce, *d__phase_est, *phase_screen_est;
 float D, d, delta, delta_e, wf_rms, phase2nm, slopes2Angle, cxy0;
 int *idx, *d__idx;
 
-D = 8;
+D = 0.4;
 d = D/N_SIDE_LENSLET;
 delta = d/_N_PX_PUPIL_;
 osf = 2;
@@ -395,7 +481,7 @@ float altitude[] = {0},
   wind_direction[] = {0};
 // Atmosphere
 atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
-//atm.reset();
+atm.reset();
 
 phase2nm = 1E9*atm.wavelength/2/PI;
 slopes2Angle = (atm.wavelength/2/d);
@@ -414,7 +500,8 @@ pa.setup(N_SIDE_LENSLET,osf,&atm,d);
 paCov.setup(1,2,NP,pa.d__cov);
 
 // CG
-iSolve.cg_setup(N);
+//iSolve.cg_setup(N);
+iSolve.minres_setup(N);
 
 atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
 
@@ -450,7 +537,7 @@ fclose(fid);
 
 tid.tic();
 
-<<linear solver (conjugate gradient)>>
+<<linear solver (MINRES)>>
 
 <<MVM>>
 
@@ -533,6 +620,9 @@ HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
 @ 
 <<linear solver (conjugate gradient)>>=
 iSolve.cg(d__x, &aaCov, d__b, 50, d__x);
+@ 
+<<linear solver (MINRES)>>=
+iSolve.minres(d__x, &aaCov, d__b, 3, d__x);
 @ 
 <<MVM (prep.)>>=
 HANDLE_ERROR( cudaMalloc((void**)&d__ce, sizeof(float)*PS_E_N_PX*2 ) );
