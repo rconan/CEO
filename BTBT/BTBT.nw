@@ -67,6 +67,7 @@ The matrix is entirely defined with $M$, $N$ and $N_T$ and the $(2N_T+1)^2\times
   NT2 = NT*NT;
   NU = 2*NT-1;
   NU2 = NU*NU;
+  NDFT = NU2;//round_up_to_nhp2(NU2);
   NU_TOTAL = NU2*M*N;
   d__cov = d__cov_;
 
@@ -79,9 +80,9 @@ The matrix is entirely defined with $M$, $N$ and $N_T$ and the $(2N_T+1)^2\times
 
   int BATCH = M*N;
   printf("\n@(CEO)>imaging: Creating a 1D covariance FFT plan\n");
-  if (cufftPlanMany(&raster_plan, 1, &NU2,
-		    NULL, 1, NU2,
-		    NULL, 1, NU2,
+  if (cufftPlanMany(&raster_plan, 1, &NDFT,
+		    NULL, 1, NDFT,
+		    NULL, 1, NDFT,
 		    CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
     fprintf(stderr,
 	    "CUFFT Error: Unable to create plan\n");
@@ -95,9 +96,9 @@ The matrix is entirely defined with $M$, $N$ and $N_T$ and the $(2N_T+1)^2\times
 
   printf("\n@(CEO)>imaging: Creating a 1D MVM input FFT plan\n");
   BATCH = N;
-  if (cufftPlanMany(&MVM_input_plan, 1, &NU2,
-		    NULL, 1, NU2,
-		    NULL, 1, NU2,
+  if (cufftPlanMany(&MVM_input_plan, 1, &NDFT,
+		    NULL, 1, NDFT,
+		    NULL, 1, NDFT,
 		    CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
     fprintf(stderr,
 	    "CUFFT Error: Unable to create plan\n");
@@ -111,9 +112,9 @@ The matrix is entirely defined with $M$, $N$ and $N_T$ and the $(2N_T+1)^2\times
 
   printf("\n@(CEO)>imaging: Creating a 1D MVM output FFT plan\n");
   BATCH = M;
-  if (cufftPlanMany(&MVM_output_plan, 1, &NU2,
-		    NULL, 1, NU2,
-		    NULL, 1, NU2,
+  if (cufftPlanMany(&MVM_output_plan, 1, &NDFT,
+		    NULL, 1, NDFT,
+		    NULL, 1, NDFT,
 		    CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
     fprintf(stderr,
 	    "CUFFT Error: Unable to create plan\n");
@@ -153,10 +154,10 @@ The covariance is computed with
 cov = (float2*)malloc(cov_size);
 HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
 printf("\n@(CEO)>BTBT: raster covariance\n");
-for (int k=0;k<NU2;k++) {
+for (int k=0;k<NDFT;k++) {
   printf("%2d: ", k);
   for (int l=0;l<N*M;l++) {
-    printf("%+4.2E %+4.2E.I||", cov[k+l*NU2].x,cov[k+l*NU2].y);
+    printf("%+4.2E %+4.2E.I||", cov[k+l*NDFT].x,cov[k+l*NDFT].y);
   }
   printf("\b\b\n");
  }
@@ -174,6 +175,7 @@ void BTBT::info(void)
   printf(" . size of outermost blocks      : %dX%d\n",NT,NT);
   printf(" . size of innermost blocks      : %dX%d\n",NT,NT);
   n_full = powf(NT,4)*M*N;
+  printf(" . DFT length                    : %d\n",NDFT);
   printf(" . full matrix elements #        : %.3E\n",n_full);
   n_comp = M*N*NU2;
   printf(" . compressed matrix elements #  : %.3E\n",n_comp);
@@ -210,7 +212,7 @@ void BTBT::cleanup(void)
 @
 The parameters of the [[BTBT]] structure are:
 <<BTBT parameters>>=
-int M, N, NT, NT2, NU, NU2, NU_TOTAL, NF, NF2, ind_size, cov_size;
+int M, N, NT, NT2, NU, NU2, NDFT, NU_TOTAL, NF, NF2, ind_size, cov_size;
 float2 *d__cov, *d__b, *d__c;
 float *d__alpha, *d__beta, n_full, n_comp, b_full, b_comp, cov_eval_et;
 unsigned int *d__mu, *d__xi;
@@ -317,10 +319,10 @@ The matrix--to--vector multiplication $y=C_{\vec\alpha\cdot\vec\beta}s$ is deriv
   \end{itemize}
 <<MVM STEP 1: input ordering>>=
 dim3 blockDim(256,1);
-dim3 gridDim( 1+NU2/256,1);
+dim3 gridDim( 1+NDFT/256,1);
 int k;
 for (k=0;k<N;k++)
-  mvm_input_order LLL gridDim,blockDim RRR (d__b + k*NU2, NU2, x + k*NT2, NT2, d__mu);
+  mvm_input_order LLL gridDim,blockDim RRR (d__b + k*NDFT, NDFT, x + k*NT2, NT2, d__mu);
 @  using the kernel:
 <<MVM input ordering kernel>>=
 __global__ void mvm_input_order(float2 *x_out, int n_x_out, 
@@ -358,7 +360,7 @@ $$\tilde c = \tilde b\tilde T =
 $$
 <<MVM STEP 3: Fourier domain multiplication>>=
 for (k=0;k<M;k++) 
-  cpx_mult LLL gridDim,blockDim RRR (d__c + k*NU2, d__cov + 2*k*NU2, d__b, NU2, N);
+  cpx_mult LLL gridDim,blockDim RRR (d__c + k*NDFT, d__cov + 2*k*NDFT, d__b, NDFT, N);
 @ 
 using the kernel:
 <<MVM complex multiplication>>=
@@ -389,7 +391,7 @@ if (cufftExecC2C(MVM_output_plan, d__c, d__c, CUFFT_INVERSE)
 blockDim = dim3(256,1);
 gridDim  = dim3( 1+NT2/256,1);
 for (k=0;k<M;k++) 
-  mvm_output_order LLL gridDim,blockDim RRR (y + k*NT2, NT2, d__c + k*NU2, NU2, d__xi);
+  mvm_output_order LLL gridDim,blockDim RRR (y + k*NT2, NT2, d__c + k*NDFT, NDFT, d__xi);
 @  using the kernel:
 <<MVM output ordering kernel>>=
 __global__ void mvm_output_order(float *x_out, int n_x_out, 

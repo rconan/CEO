@@ -25,6 +25,7 @@ classdef toeplitzBlockToeplitz
             a = obj.elements;
             a = a(:);
             na = length(a);
+            na = pow2(nextpow2(na));
             obj.elementsFT = fft(a,na);
             
             n = obj.nRow;
@@ -96,6 +97,7 @@ classdef toeplitzBlockToeplitz
             na = (obj.nBlockRow+obj.nBlockCol-1)*(obj.nRow+obj.nCol-1);
             U = zeros(na,1);
             U(obj.mu(:)) = b;
+            na = pow2(nextpow2(na));
             P = ifft(obj.elementsFT.*fft(U,na));
             out = P(obj.xi(:));
         end
