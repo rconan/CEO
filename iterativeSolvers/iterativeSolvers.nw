@@ -53,6 +53,7 @@ The setup method is allocated the required memory depending of the iterative met
 <<CG setup>>=
 void iterativeSolvers::cg_setup(int n_vector)
 {
+  printf("\n@(CEO)>iterativeSolvers: CONJUGATE GRADIENT\n");
   N = n_vector;
   HANDLE_ERROR( cudaMalloc((void**)&d__vectors, sizeof(float)*N*4 ) );
   q = d__vectors;
@@ -65,6 +66,7 @@ void iterativeSolvers::cg_setup(int n_vector)
 <<MINRES setup>>=
 void iterativeSolvers::minres_setup(int n_vector)
 {
+  printf("\n@(CEO)>iterativeSolvers: MINRES\n");
   N = n_vector;
   HANDLE_ERROR( cudaMalloc((void**)&d__vectors, sizeof(float)*N*6 ) );
   nu_i   = d__vectors;
@@ -104,7 +106,7 @@ The next routine implements the conjugate gradient iterative method:
   int k;
   <<conjugate gradient init>>
   for (k=0;k<max_it;k++) {
-    //printf("CG IT=%d - ",k);
+    printf("CG IT=%d - ",k);
     <<conjugate gradient loop part 1>>
       if (k<(max_it-1)) {
 	  <<conjugate gradient loop part 2>>
@@ -137,7 +139,7 @@ cublasScopy(handle, N, r, 1, p, 1);
 @ \item $\gamma=r_k^Tr_k$
 <<conjugate gradient loop part 1>>=
 cublasSdot(handle, N, r, 1, r, 1, &gamma);
-//printf("r norm=%6.2E\n",(gamma));
+printf("r norm=%6.2E\n",sqrt(gamma));
 if (gamma==0) break;
 @ \item $\alpha_k = {\displaystyle \gamma\over p_K^Tq}$
 <<conjugate gradient loop part 1>>=
@@ -167,7 +169,7 @@ The MINRES iterative solver method is implemented in the next routine:
   void iterativeSolvers::minres(float *x, BTBT* A, float *b, int max_it, float* x0)
 {
   float alpha, beta, gamma_i, gamma_im1, sigma_i, sigma_im1,
-  eta, delta, rho1, rho2, rho3;
+  eta, delta, rho1, rho2, rho3, nrm_r;
   int k;
   <<MINRES init>>
   for (k=0;k<max_it;k++) {
@@ -189,11 +191,16 @@ beta = -1;
 cublasSscal(handle, N, &beta, nu_i, 1);
 alpha = 1;
 cublasSaxpy(handle, N, &alpha, b, 1, nu_i, 1);
+cublasSnrm2(handle, N, b, 1, &beta);
+#ifdef MINRES_DEBUG
+printf("beta=%.2E\n",beta);
+#endif
 @ \item $\beta_1=\left\| \nu_1 \right\|_2$
 <<MINRES init>>=
 cublasSnrm2(handle, N, nu_i, 1, &beta);
+nrm_r = beta;
 #ifdef MINRES_DEBUG
-printf("beta=%6.2f\n",beta);
+printf("beta=%.2E\n",beta);
 #endif
 @ \item $\eta=beta_1$, $\gamma_1=\gamma_0=1$, $\sigma_1=\sigma_0=0$, $\nu_0=0$
 <<MINRES init>>=
@@ -219,7 +226,7 @@ A->MVM(nu_ip1 , nu_i);
 <<MINRES loop>>=
 cublasSdot(handle, N, nu_i, 1, nu_ip1, 1, &alpha);
 #ifdef MINRES_DEBUG
-printf("alpha=%6.2f\n",alpha);
+printf("alpha=%.2E\n",alpha);
 #endif
 @ \item $\nu_{i+1} = \nu_{i+1} - \alpha_i\nu_i - \beta_i\nu_{i-1}$
 <<MINRES loop>>=
@@ -233,19 +240,19 @@ beta  = -beta;
 <<MINRES loop>>=
 delta = gamma_i*alpha - gamma_im1*sigma_i*beta;
 #ifdef MINRES_DEBUG
-printf("delta=%6.2f\n",delta);
+printf("delta=%.2E\n",delta);
 #endif
 @ \item $\rho_2 = \sigma_i\alpha_i + \gamma_{i-1}\gamma_i\beta_i$
 <<MINRES loop>>=
 rho2 = sigma_i*alpha + gamma_im1*gamma_i*beta;
 #ifdef MINRES_DEBUG
-printf("rho2=%6.2f\n",rho2);
+printf("rho2=%.2E\n",rho2);
 #endif
 @ \item $\rho_3 = \sigma_{i-1}\beta_i$
 <<MINRES loop>>=
 rho3 = sigma_im1*beta;
 #ifdef MINRES_DEBUG
-printf("rho3=%6.2f\n",rho3);
+printf("rho3=%.2E\n",rho3);
 #endif
 @ \item $\beta_{i+1}=\left\| \nu_{i+1} \right\|_2$
 <<MINRES loop>>=
@@ -257,28 +264,28 @@ printf("beta=%.2E\n",beta);
 <<MINRES loop>>=
 rho1 = hypotf(delta,beta);
 #ifdef MINRES_DEBUG
-printf("rho1=%6.2f\n",rho1);
+printf("rho1=%.2E\n",rho1);
 #endif
 @ \item $\gamma_{i+1} = \delta / \rho_1$
 <<MINRES loop>>=
 gamma_im1 = gamma_i;
 gamma_i = delta/rho1;
 #ifdef MINRES_DEBUG
-printf("gamma_im1=%6.2f\n",gamma_im1);
-printf("gamma_i=%6.2f\n",gamma_i);
+printf("gamma_im1=%.2E\n",gamma_im1);
+printf("gamma_i=%.2E\n",gamma_i);
 #endif
 @ \item $\sigma_{i+1} = \beta_{i+1} / \rho_1$
 <<MINRES loop>>=
 sigma_im1 = sigma_i;
 sigma_i = beta/rho1;
 #ifdef MINRES_DEBUG
-printf("sigma_im1=%6.2f\n",sigma_im1);
-printf("sigma_i=%6.2f\n",sigma_i);
+printf("sigma_im1=%.2E\n",sigma_im1);
+printf("sigma_i=%.2E\n",sigma_i);
 #endif
 @ \item $w_i = (\nu_i-\rho_3w_{i-2}-\rho_2w_{i-1})/\rho_1$
 <<MINRES loop>>=
 cublasScopy(handle, N, nu_i, 1, w_i, 1);
-rho1 = 1/rho1;
+rho1 = 1.0/rho1;
 cublasSscal(handle, N, &rho1, w_i, 1);
 rho3 = -rho3*rho1;
 cublasSaxpy(handle, N, &rho3, w_im2, 1, w_i, 1);
@@ -288,12 +295,15 @@ cublasSaxpy(handle, N, &rho2, w_im1, 1, w_i, 1);
 <<MINRES loop>>=
 rho1 = gamma_i*eta;
 cublasSaxpy(handle, N, &rho1, w_i, 1, x, 1);
-@ \item $\left\| r_i \right\|_2 = left| \sigma_{i+1} \right|\left\| r_{i-1} \right\|_2 $
+@ \item $\left\| r_i \right\|_2 = \left| \sigma_{i+1} \right|\left\| r_{i-1} \right\|_2 $
+<<MINRES loop>>=
+nrm_r = nrm_r*fabs(sigma_i);
+printf("r norm=%6.2E\n",nrm_r);
 @ \item $\eta = \sigma_{i+1}\eta$
 <<MINRES loop>>=
 eta = -sigma_i*eta;
 #ifdef MINRES_DEBUG
-printf("eta=%6.2f\n",eta);
+printf("eta=%.2E\n",eta);
 #endif
 @ \item
 \begin{eqnarray}
@@ -436,7 +446,7 @@ free(x);
 A more complete test:
 <<complete test>>=
 int N = _N_LENSLET_*2, NP, PS_N_PX, PS_E_N_PX, i, j ,k, osf;
-float *d__x, *d__b, *b, *d__ce, *d__phase_est, *phase_screen_est;
+float *d__x, *d__b, *b, *d__ce, *d__phase_est, *phase_screen_est, *x;
 float D, d, delta, delta_e, wf_rms, phase2nm, slopes2Angle, cxy0;
 int *idx, *d__idx;
 
@@ -481,7 +491,7 @@ float altitude[] = {0},
   wind_direction[] = {0};
 // Atmosphere
 atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
-atm.reset();
+//atm.reset();
 
 phase2nm = 1E9*atm.wavelength/2/PI;
 slopes2Angle = (atm.wavelength/2/d);
@@ -500,8 +510,8 @@ pa.setup(N_SIDE_LENSLET,osf,&atm,d);
 paCov.setup(1,2,NP,pa.d__cov);
 
 // CG
-//iSolve.cg_setup(N);
 iSolve.minres_setup(N);
+//iSolve.minres_setup(N);
 
 atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
 
@@ -535,15 +545,28 @@ fclose(fid);
 <<linear solver (prep.)>>
 <<MVM (prep.)>>
 
+char filename[100];
+HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
+for (k=2;k<3;k++) {
+
+  sprintf(filename,"MINRES_phaseEst_%d.bin",k);
+
 tid.tic();
 
-<<linear solver (MINRES)>>
+iSolve.minres(d__x, &aaCov, d__b, k, d__x);
+
+HANDLE_ERROR( cudaMemcpy( x, d__x, sizeof(float)*N, cudaMemcpyDeviceToHost ) );
+printf("\nx=\n");
+for (int kk=0;kk<N;kk++)
+  printf(" (%2d) %+.2E\n",kk,x[kk]);
 
 <<MVM>>
 
 tid.toc("WAVEFRONT ESTIMATION");
 
 <<MVM (wrap.)>>
+
+}
 
 HANDLE_ERROR( cudaFree( d__src) );
 atm.cleanup();
@@ -565,6 +588,7 @@ free(phase_screen_low_res);
 free(b);
 free(idx);
 free(phase_screen_est);
+free(x);
 @ 
 <<PA input>>=
 __global__ void set_pa_input(float *pa_c, float *aa_c, int *idx, int N) 
@@ -615,14 +639,13 @@ HANDLE_ERROR( cudaMemcpy( d__idx, idx,
 			  cudaMemcpyHostToDevice ) );
 
 HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
-HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
-
+x = (float*)malloc(sizeof(float)*N);
 @ 
 <<linear solver (conjugate gradient)>>=
-iSolve.cg(d__x, &aaCov, d__b, 50, d__x);
+iSolve.cg(d__x, &aaCov, d__b, 5, d__x);
 @ 
 <<linear solver (MINRES)>>=
-iSolve.minres(d__x, &aaCov, d__b, 3, d__x);
+iSolve.minres(d__x, &aaCov, d__b, 5, d__x);
 @ 
 <<MVM (prep.)>>=
 HANDLE_ERROR( cudaMalloc((void**)&d__ce, sizeof(float)*PS_E_N_PX*2 ) );
@@ -641,6 +664,7 @@ phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
 HANDLE_ERROR( cudaMemcpy( phase_screen_est, d__phase_est,
 			  sizeof(float)*PS_E_N_PX,
 			  cudaMemcpyDeviceToHost ) );
-fid = fopen("phaseScreenEst.bin","wb");
+fid = fopen(filename,"wb");
+//fid = fopen("phaseScreenEst.bin","wb");
 fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
 fclose(fid);
