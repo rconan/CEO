@@ -12,7 +12,7 @@ The iterativeSolvers structure is written in the header:
 #include "BTBT.h"
 #endif
 
-#define MINRES_DEBUG
+//#define MINRES_DEBUG
 
 struct iterativeSolvers {
 
@@ -26,7 +26,16 @@ struct iterativeSolvers {
 
   void cg(float *x, BTBT* A, float *b, int max_it, float* x0);
 
-  void minres(float *x, BTBT* A, float *b, int max_it, float* x0);
+  void sym_ortho(float *c,float *s,float *r,
+		 float *a,float *b);
+
+  void lanczos_step(float *alpha, float *beta, float *nu_kp1,
+		    BTBT *A, float *nu_k, float *nu_km1, float sigma);
+
+
+  void minres_vorst(float *x, BTBT* A, float *b, int max_it, float* x0);
+
+  void minres_choi(float *x, BTBT* A, float *b, int max_it, float* x0);
 
   //  void info(void);
 };
@@ -43,8 +52,13 @@ struct iterativeSolvers {
 
 <<conjugate gradient>>
 
-<<MINRES>>
+<<sym-ortho algorithm>>
 
+<<Lanczos step>>
+
+<<MINRES (Vorst)>>
+
+<<MINRES (Choi)>>
 @
 The iterativeSolvers structure gather several routines implementing iterative methods to solve the linear system: $Ax=b$.
 The setup method is allocated the required memory depending of the iterative method type:
@@ -85,7 +99,9 @@ float *d__vectors,
   *q, *x, *r, *p,
   *nu_i, *nu_im1, *nu_ip1,
   *w_i, *w_im1, *w_im2;
+float rnorm, mean_time_per_iteration;
 int N;
+stopwatch tid;
 cublasHandle_t handle;
 cublasStatus_t status;
 @
@@ -105,13 +121,16 @@ The next routine implements the conjugate gradient iterative method:
   float alpha, beta, gamma;
   int k;
   <<conjugate gradient init>>
+  tid.tic();
   for (k=0;k<max_it;k++) {
-    printf("CG IT=%d - ",k);
+    //printf("CG IT=%d - ",k);
     <<conjugate gradient loop part 1>>
       if (k<(max_it-1)) {
 	  <<conjugate gradient loop part 2>>
       }
   }    
+  tid.toc(&mean_time_per_iteration);
+  mean_time_per_iteration /= max_it;
 }
 @ 
 The conjugate gradient algorithm is written:
@@ -139,7 +158,10 @@ cublasScopy(handle, N, r, 1, p, 1);
 @ \item $\gamma=r_k^Tr_k$
 <<conjugate gradient loop part 1>>=
 cublasSdot(handle, N, r, 1, r, 1, &gamma);
-printf("r norm=%6.2E\n",sqrt(gamma));
+//printf("r norm=%6.2E\n",sqrt(gamma));
+@ \item $\left\| r \right\|_2=\sqrt\gamma$
+<<conjugate gradient loop part 1>>=
+rnorm = sqrt(gamma);
 if (gamma==0) break;
 @ \item $\alpha_k = {\displaystyle \gamma\over p_K^Tq}$
 <<conjugate gradient loop part 1>>=
@@ -165,17 +187,20 @@ cublasSaxpy(handle, N, &alpha, r, 1, p, 1);
  \end{itemize}
 
 The MINRES iterative solver method is implemented in the next routine:
-<<MINRES>>=
-  void iterativeSolvers::minres(float *x, BTBT* A, float *b, int max_it, float* x0)
+<<MINRES (Vorst)>>=
+  void iterativeSolvers::minres_vorst(float *x, BTBT* A, float *b, int max_it, float* x0)
 {
   float alpha, beta, gamma_i, gamma_im1, sigma_i, sigma_im1,
-  eta, delta, rho1, rho2, rho3, nrm_r;
+    eta, delta, rho1, rho2, rho3;
   int k;
-  <<MINRES init>>
+  <<MINRES (Vorst) init>>
+  tid.tic();
   for (k=0;k<max_it;k++) {
-    printf("MINRES IT=%d - ",k);
-    <<MINRES loop>>
-  }    
+    //printf("MINRES IT=%d - ",k);
+    <<MINRES (Vorst) loop>>
+  }   
+  tid.toc(&mean_time_per_iteration);
+  mean_time_per_iteration /= max_it;
 }
 @ 
 The MINRES algorithm is written:
@@ -183,10 +208,10 @@ The MINRES algorithm is written:
 \item initialization:
   \begin{enumerate}
   \item $r=Ax_0$
-<<MINRES init>>=
+<<MINRES (Vorst) init>>=
 A->MVM(nu_i , x0);
 @ \item $r_0 = b - r_0$
-<<MINRES init>>=
+<<MINRES (Vorst) init>>=
 beta = -1;
 cublasSscal(handle, N, &beta, nu_i, 1);
 alpha = 1;
@@ -195,20 +220,20 @@ cublasSnrm2(handle, N, b, 1, &beta);
 #ifdef MINRES_DEBUG
 printf("beta=%.2E\n",beta);
 #endif
-@ \item $\beta_1=\left\| \nu_1 \right\|_2$
-<<MINRES init>>=
+@ \item $\beta_1=\left\| \nu_1 \right\|_2=\left\| r \right\|_2$
+<<MINRES (Vorst) init>>=
 cublasSnrm2(handle, N, nu_i, 1, &beta);
-nrm_r = beta;
+rnorm = beta;
 #ifdef MINRES_DEBUG
 printf("beta=%.2E\n",beta);
 #endif
 @ \item $\eta=beta_1$, $\gamma_1=\gamma_0=1$, $\sigma_1=\sigma_0=0$, $\nu_0=0$
-<<MINRES init>>=
+<<MINRES (Vorst) init>>=
 eta = beta;
 gamma_i = gamma_im1 = 1;
 sigma_i = sigma_im1 = 0;
 @ \item $\nu_0=0$, $w_0=w_{-1}=0$
-<<MINRES init>>=
+<<MINRES (Vorst) init>>=
 HANDLE_ERROR( cudaMemset(nu_im1, 0, sizeof(float)*N ) );
 HANDLE_ERROR( cudaMemset(w_im1 , 0, sizeof(float)*N ) );
 HANDLE_ERROR( cudaMemset(w_im2 , 0, sizeof(float)*N ) );
@@ -216,20 +241,20 @@ HANDLE_ERROR( cudaMemset(w_im2 , 0, sizeof(float)*N ) );
 \item loop:
   \begin{enumerate}
   \item $\nu_i = \nu_i / \beta_i$
-<<MINRES loop>>=
+<<MINRES (Vorst) loop>>=
 rho1 = 1/beta;
 cublasSscal(handle, N, &rho1, nu_i, 1);
 @ \item $\nu_{i+1}= A\nu_i$
-<<MINRES loop>>=
+<<MINRES (Vorst) loop>>=
 A->MVM(nu_ip1 , nu_i);
 @ \item $\alpha_i = \nu_i^T\nu_{i+1}$
-<<MINRES loop>>=
+<<MINRES (Vorst) loop>>=
 cublasSdot(handle, N, nu_i, 1, nu_ip1, 1, &alpha);
 #ifdef MINRES_DEBUG
 printf("alpha=%.2E\n",alpha);
 #endif
 @ \item $\nu_{i+1} = \nu_{i+1} - \alpha_i\nu_i - \beta_i\nu_{i-1}$
-<<MINRES loop>>=
+<<MINRES (Vorst) loop>>=
 alpha = -alpha;
 beta  = -beta;
 cublasSaxpy(handle, N, &alpha, nu_i, 1, nu_ip1, 1);
@@ -237,37 +262,37 @@ cublasSaxpy(handle, N, &beta, nu_im1, 1, nu_ip1, 1);
 alpha = -alpha;
 beta  = -beta;
 @ \item $\delta = \gamma_i\alpha_i - \gamma_{i-1}\sigma_i\beta_i$
-<<MINRES loop>>=
+<<MINRES (Vorst) loop>>=
 delta = gamma_i*alpha - gamma_im1*sigma_i*beta;
 #ifdef MINRES_DEBUG
 printf("delta=%.2E\n",delta);
 #endif
 @ \item $\rho_2 = \sigma_i\alpha_i + \gamma_{i-1}\gamma_i\beta_i$
-<<MINRES loop>>=
+<<MINRES (Vorst) loop>>=
 rho2 = sigma_i*alpha + gamma_im1*gamma_i*beta;
 #ifdef MINRES_DEBUG
 printf("rho2=%.2E\n",rho2);
 #endif
 @ \item $\rho_3 = \sigma_{i-1}\beta_i$
-<<MINRES loop>>=
+<<MINRES (Vorst) loop>>=
 rho3 = sigma_im1*beta;
 #ifdef MINRES_DEBUG
 printf("rho3=%.2E\n",rho3);
 #endif
 @ \item $\beta_{i+1}=\left\| \nu_{i+1} \right\|_2$
-<<MINRES loop>>=
+<<MINRES (Vorst) loop>>=
 cublasSnrm2(handle, N, nu_ip1, 1, &beta);
 #ifdef MINRES_DEBUG
 printf("beta=%.2E\n",beta);
 #endif
 @ \item $\rho_1 = \sqrt{\delta^2+\beta_{i+1}^2}$
-<<MINRES loop>>=
+<<MINRES (Vorst) loop>>=
 rho1 = hypotf(delta,beta);
 #ifdef MINRES_DEBUG
 printf("rho1=%.2E\n",rho1);
 #endif
 @ \item $\gamma_{i+1} = \delta / \rho_1$
-<<MINRES loop>>=
+<<MINRES (Vorst) loop>>=
 gamma_im1 = gamma_i;
 gamma_i = delta/rho1;
 #ifdef MINRES_DEBUG
@@ -275,7 +300,7 @@ printf("gamma_im1=%.2E\n",gamma_im1);
 printf("gamma_i=%.2E\n",gamma_i);
 #endif
 @ \item $\sigma_{i+1} = \beta_{i+1} / \rho_1$
-<<MINRES loop>>=
+<<MINRES (Vorst) loop>>=
 sigma_im1 = sigma_i;
 sigma_i = beta/rho1;
 #ifdef MINRES_DEBUG
@@ -283,7 +308,7 @@ printf("sigma_im1=%.2E\n",sigma_im1);
 printf("sigma_i=%.2E\n",sigma_i);
 #endif
 @ \item $w_i = (\nu_i-\rho_3w_{i-2}-\rho_2w_{i-1})/\rho_1$
-<<MINRES loop>>=
+<<MINRES (Vorst) loop>>=
 cublasScopy(handle, N, nu_i, 1, w_i, 1);
 rho1 = 1.0/rho1;
 cublasSscal(handle, N, &rho1, w_i, 1);
@@ -292,15 +317,15 @@ cublasSaxpy(handle, N, &rho3, w_im2, 1, w_i, 1);
 rho2 = -rho2*rho1;
 cublasSaxpy(handle, N, &rho2, w_im1, 1, w_i, 1);
 @ \item $x_i = x_{i-1} + \gamma_{i+1}\eta w_i$
-<<MINRES loop>>=
+<<MINRES (Vorst) loop>>=
 rho1 = gamma_i*eta;
 cublasSaxpy(handle, N, &rho1, w_i, 1, x, 1);
 @ \item $\left\| r_i \right\|_2 = \left| \sigma_{i+1} \right|\left\| r_{i-1} \right\|_2 $
-<<MINRES loop>>=
-nrm_r = nrm_r*fabs(sigma_i);
-printf("r norm=%6.2E\n",nrm_r);
+<<MINRES (Vorst) loop>>=
+rnorm = rnorm*fabs(sigma_i);
+//printf("r norm=%6.2E\n",nrm_r);
 @ \item $\eta = \sigma_{i+1}\eta$
-<<MINRES loop>>=
+<<MINRES (Vorst) loop>>=
 eta = -sigma_i*eta;
 #ifdef MINRES_DEBUG
 printf("eta=%.2E\n",eta);
@@ -313,7 +338,7 @@ printf("eta=%.2E\n",eta);
   w_{i-2} &\leftarrow& w_{i-1} \nonumber\\
   w_{i-1} &\leftarrow& \nu_{i} \nonumber
 \end{eqnarray}
-<<MINRES loop>>=
+<<MINRES (Vorst) loop>>=
 cublasScopy(handle, N, nu_i  , 1, nu_im1, 1);
 cublasScopy(handle, N, nu_ip1, 1, nu_i  , 1);
 cublasScopy(handle, N, w_im1 , 1, w_im2 , 1);
@@ -322,7 +347,159 @@ if (beta==0) break;
 @  \end{enumerate}
  \end{itemize}
 
+The MINRES iterative solver method is implemented in the next routine:
+<<MINRES (Choi)>>=
+  void iterativeSolvers::minres_choi(float *x, BTBT* A, float *b, int max_it, float* x0)
+{
+  float a, alpha, beta, gamma, delta1, delta2,  phi, tau, c, s, epsilon;
+  int k;
+  <<MINRES (Choi) init>>
+  tid.tic();
+  for (k=0;k<max_it;k++) {
+    //printf("MINRES IT=%d - ",k);
+    <<MINRES (Choi) loop>>
+  }    
+  tid.toc(&mean_time_per_iteration);
+  mean_time_per_iteration /= max_it;
+}
+@ 
+The MINRES algorithm is written:
+\begin{itemize}
+\item initialization:
+  \begin{enumerate}
+  \item $\beta_1=\left\| b \right\|_2$
+<<MINRES (Choi) init>>=
+cublasSnrm2(handle, N, b, 1, &beta);
+@ \item $\nu_0 = 0$
+<<MINRES (Choi) init>>=
+HANDLE_ERROR( cudaMemset(nu_im1, 0, sizeof(float)*N ) );
+@ \item $\nu_1 = b/\beta_1$
+<<MINRES (Choi) init>>=
+HANDLE_ERROR( cudaMemset(nu_i, 0, sizeof(float)*N ) );
+a = 1/beta;
+cublasSaxpy(handle, N, &a, b, 1, nu_i, 1);
+@ \item $\phi=\tau=\beta_1$, $\delta^{(1)}_1=0$, $c_0=-1$, $s_0=0$
+<<MINRES (Choi) init>>=
+phi= tau = beta;
+delta1 = 0;
+c = -1;
+s = 0;
+@ \item $d_0=d_{-1}=0$
+<<MINRES (Choi) init>>=
+HANDLE_ERROR( cudaMemset(w_im1 , 0, sizeof(float)*N ) );
+HANDLE_ERROR( cudaMemset(w_im2 , 0, sizeof(float)*N ) );
+@ \end{enumerate}
+\item loop:
+  \begin{enumerate}
+  \item Lanczos step
+<<MINRES (Choi) loop>>=
+lanczos_step(&alpha, &beta, nu_ip1, A, nu_i, nu_im1, 0);
+@ \item $\delta^{(2)}_k=c_{k-1}\delta^{(1)}_k + s_{k-1}\alpha_k$
+<<MINRES (Choi) loop>>=
+delta2 = c*delta1 + s*alpha;
+@ \item $\gamma^{(1)}_k=s_{k-1}\delta^{(1)}_k - c_{k-1}\alpha_k$
+<<MINRES (Choi) loop>>=
+gamma = s*delta1 - c*alpha;
+@ \item $\epsilon_k = s_{k-1}\beta_{k+1}$
+<<MINRES (Choi) loop>>=
+epsilon = s*beta;
+@ \item $\delta^{(1)}_k = -c_{k-1}\beta_{k+1}$
+<<MINRES (Choi) loop>>=
+delta1 = -c*beta;
+@ \item sym--ortho
+<<MINRES (Choi) loop>>=
+a = gamma;
+sym_ortho(&c, &s, &gamma, &a, &beta);
+@ \item $\tau_k = c_k\phi_k$
+<<MINRES (Choi) loop>>=
+tau = c*phi;
+@ \item $\phi_k = s_k\phi_{k-1}$
+<<MINRES (Choi) loop>>=
+phi = s*phi;
+//printf("r norm=%6.2E\n",phi);
+@ \item $\left\| r \right\|_2 = \phi_k$
+<<MINRES (Choi) loop>>=
+rnorm = phi;
+@ \item $d_k = (\nu_k-\delta^{(2)}_k d_{k-1}-\epsilon_k d_{k-2})/\gamma_k$
+<<MINRES (Choi) loop>>=
+if (gamma==0) break;
+cublasScopy(handle, N, nu_i, 1, w_i, 1);
+a = 1/gamma;
+cublasSscal(handle, N, &a, w_i, 1);
+a = -delta2/gamma;
+cublasSaxpy(handle, N, &a, w_im1, 1, w_i, 1);
+a = -epsilon/gamma;
+cublasSaxpy(handle, N, &a, w_im2, 1, w_i, 1);
+@ \item $x_k = x_{k-1} + \tau d_k$
+<<MINRES (Choi) loop>>=
+cublasSaxpy(handle, N, &tau, w_i, 1, x, 1);
+@ \item 
+\begin{eqnarray}
+  \label{eq:1}
+  \nu_{i-1} &\leftarrow& \nu_i \nonumber\\
+  \nu_{i} &\leftarrow& \nu_{i+1} \nonumber\\
+  d_{i-2} &\leftarrow& d_{i-1} \nonumber\\
+  d_{i-1} &\leftarrow& d_{i} \nonumber
+\end{eqnarray}
+<<MINRES (Choi) loop>>=
+cublasScopy(handle, N, nu_i  , 1, nu_im1, 1);
+cublasScopy(handle, N, nu_ip1, 1, nu_i  , 1);
+cublasScopy(handle, N, w_im1 , 1, w_im2 , 1);
+cublasScopy(handle, N, w_i   , 1, w_im1 , 1);
+@  \end{enumerate}
+ \end{itemize}
+@ 
+The sym--ortho function is:
+<<sym-ortho algorithm>>=
+void iterativeSolvers::sym_ortho(float *c,float *s,float *r,float *a,float *b) {
+  float abs_a, abs_b, tau;
+  abs_a = fabs(*a);
+  abs_b = fabs(*b);
+  if (*b==0) {
+    *s = 0;
+    *r = abs_a;
+    *c = (*a==0) ? 1 : sign(*a);
+  } else if (*a==0) {
+    *c = 0;
+    *s = sign(*b);
+    *r = abs_b;
+  } else if (abs_b>abs_a) {
+    tau = *a/(*b);
+    *s = sign(*b)/sqrtf(1+tau*tau);
+    *c = *s*tau;
+    *r = *b/(*s);
+  } else if (abs_a>abs_b) {
+    tau = *b/(*a);
+    *c = sign(*a)/sqrtf(1+tau*tau);
+    *s = *c*tau;
+    *r = *a/(*c);
+  }
+}
+@ 
+The Lanzcos step is:
+<<Lanczos step>>=
+void iterativeSolvers::lanczos_step(float *alpha, float *beta, float *nu_kp1,
+		  BTBT *A, float *nu_k, float *nu_km1, float sigma)
+{
+  float a;
+  A->MVM(nu_kp1, nu_k);
+  if (sigma!=0) {
+    a = -sigma;
+    cublasSaxpy(handle, N, &a, nu_k, 1, nu_kp1, 1);
+  }
+  cublasSdot(handle, N, nu_k, 1, nu_kp1, 1, alpha);
+  a = -(*alpha);
+  cublasSaxpy(handle, N, &a, nu_k, 1, nu_kp1, 1);
+  a = -(*beta);
+  cublasSaxpy(handle, N, &a, nu_km1, 1, nu_kp1, 1);
+  cublasSnrm2(handle, N, nu_kp1, 1, beta);
+  if (beta!=0) {
+    a = 1/(*beta);
+    cublasSscal(handle, N, &a, nu_kp1, 1);
+  }
+}
 
+@
 The test routine is:
 <<iterativeSolvers.bin>>=
 #ifndef __CEO_H__
@@ -450,7 +627,7 @@ float *d__x, *d__b, *b, *d__ce, *d__phase_est, *phase_screen_est, *x;
 float D, d, delta, delta_e, wf_rms, phase2nm, slopes2Angle, cxy0;
 int *idx, *d__idx;
 
-D = 0.4;
+D = 8;
 d = D/N_SIDE_LENSLET;
 delta = d/_N_PX_PUPIL_;
 osf = 2;
@@ -510,8 +687,8 @@ pa.setup(N_SIDE_LENSLET,osf,&atm,d);
 paCov.setup(1,2,NP,pa.d__cov);
 
 // CG
+//iSolve.cg_setup(N);
 iSolve.minres_setup(N);
-//iSolve.minres_setup(N);
 
 atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
 
@@ -546,19 +723,21 @@ fclose(fid);
 <<MVM (prep.)>>
 
 char filename[100];
-for (k=1;k<6;k++) {
-
-  sprintf(filename,"MINRES_phaseEst_%d.bin",k);
+/* for (k=1;k<6;k++) { */
+k = 20;
+sprintf(filename,"MINRES_phaseEst_%d.bin",k);
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
 
 tid.tic();
 
-iSolve.minres(d__x, &aaCov, d__b, k, d__x);
+iSolve.minres_vorst(d__x, &aaCov, d__b, k, d__x);
 
+/*
 HANDLE_ERROR( cudaMemcpy( x, d__x, sizeof(float)*N, cudaMemcpyDeviceToHost ) );
 printf("\nx=\n");
 for (int kk=0;kk<N;kk++)
   printf(" (%2d) %+.2E\n",kk,x[kk]);
+*/
 
 <<MVM>>
 
@@ -566,7 +745,10 @@ tid.toc("WAVEFRONT ESTIMATION");
 
 <<MVM (wrap.)>>
 
-}
+printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
+printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+
+/* } */
 
 HANDLE_ERROR( cudaFree( d__src) );
 atm.cleanup();

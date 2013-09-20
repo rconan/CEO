@@ -30,6 +30,10 @@ static void HandleError( cudaError_t err,
 }
 #define HANDLE_ERROR( err ) (HandleError( err, __FILE__, __LINE__ ))
 
+inline float sign(float x) {
+  return (float) ( (x > 0) - (x < 0) );
+}
+
 #define ARCSEC(a) (a*PI/180/3600)
 
 <<lenslet2array>>
@@ -272,6 +276,14 @@ struct stopwatch{
     HANDLE_ERROR( cudaEventElapsedTime( elapsedTime,
                                         start, stop ) );
     printf("\n\x1B[33m%s: Elapsed time: %8.2E ms\x1B[0m\n", message, *elapsedTime );
+    HANDLE_ERROR( cudaEventDestroy( start ) );
+    HANDLE_ERROR( cudaEventDestroy( stop ) );
+  }
+  void toc(float *elapsedTime) {
+    HANDLE_ERROR( cudaEventRecord( stop, 0 ) );
+    HANDLE_ERROR( cudaEventSynchronize( stop ) );
+    HANDLE_ERROR( cudaEventElapsedTime( elapsedTime,
+                                        start, stop ) );
     HANDLE_ERROR( cudaEventDestroy( start ) );
     HANDLE_ERROR( cudaEventDestroy( stop ) );
   }
