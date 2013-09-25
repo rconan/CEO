@@ -76,7 +76,7 @@ fprintf(' ==> slopes-to-slopes covariance matrix computed in %5.2fs\n',elapsedTi
 y0 = mtimes4squareBlocks(CTBT,(0:nSlope-1)',true(nSlope/2,1));
 
 figure(33)
-subplot(2,1,1)
+subplot(2,2,1)
 plot([y0,y],'.')
-subplot(2,1,2)
+subplot(2,2,3)
 plot(y0-y)
