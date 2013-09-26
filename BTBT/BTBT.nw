@@ -67,17 +67,21 @@ The matrix is entirely defined with $M$, $N$ and $N_T$ and the $(2N_T+1)^2\times
   NT2 = NT*NT;
   NU = 2*NT-1;
   NU2 = NU*NU;
-  NDFT = NU2;//round_up_to_nhp2(NU2);
+  NDFT = round_up_to_nhp2(NU2);
   NU_TOTAL = NU2*M*N;
-  d__cov = d__cov_;
 
   ind_size = sizeof(int)*NT2;
   cov_size = sizeof(float2)*NU2*N*M;
   HANDLE_ERROR( cudaMalloc((void**)&d__mu, ind_size ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__xi, ind_size ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__b, N*sizeof(float2)*NU2 ) );
-  HANDLE_ERROR( cudaMemset(d__b, 0, N*sizeof(float2)*NU2 ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__c, M*sizeof(float2)*NU2 ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__b, N*sizeof(float2)*NDFT ) );
+  HANDLE_ERROR( cudaMemset(d__b, 0, N*sizeof(float2)*NDFT ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__c, M*sizeof(float2)*NDFT ) );
+
+  HANDLE_ERROR( cudaMalloc((void**)&d__cov, M*N*sizeof(float2)*NDFT ) );
+  HANDLE_ERROR( cudaMemset(d__cov, 0, M*N*sizeof(float2)*NDFT ) );  
+  for (int k=0;k<(M*N);k++)
+    HANDLE_ERROR( cudaMemcpy( d__cov + k*NDFT, d__cov_ + k*NU2, NU2*sizeof(float2), cudaMemcpyDeviceToDevice) );
 
   int BATCH = M*N;
   printf("\n@(CEO)>imaging: Creating a 1D covariance FFT plan\n");
