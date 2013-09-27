@@ -145,7 +145,7 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
   kappa = 4;
 
   psd_size = sizeof(float2)*NF2*4;
-  cov_size = sizeof(float2)*NU2*4;
+  cov_size = sizeof(float)*NU2*4;
   ind_size = sizeof(int)*N2;
   HANDLE_ERROR( cudaMalloc((void**)&d__psd, psd_size ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__alpha, 2*sizeof(float) ) );
@@ -194,7 +194,7 @@ void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch)
   kappa = 4;
 
   psd_size = sizeof(float2)*NF2*2;
-  cov_size = sizeof(float2)*NU2*2;
+  cov_size = sizeof(float)*NU2*2;
   ind_size = sizeof(int)*N2;
   HANDLE_ERROR( cudaMalloc((void**)&d__psd, psd_size ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__alpha, 2*sizeof(float) ) );
@@ -344,8 +344,8 @@ free(cov);
 The parameters of the [[aaStats]] structure are:
 <<aaStats parameters>>=
 int N, N2, NU, NU2, NF, NF2, psd_size, cov_size, ind_size;
-float2 *d__cov, *d__psd;
-float *d__alpha, *d__beta, n_full, n_comp, b_full, b_comp, cov_eval_et;
+float2 *d__psd;
+float *d__cov, *d__alpha, *d__beta, n_full, n_comp, b_full, b_comp, cov_eval_et;
 cufftHandle plan;
 #if defined(AASTATS_DEBUG) || defined(PASTATS_DEBUG)
 float2 *psd, *cov;
@@ -539,7 +539,7 @@ covariance_extraction LLL gridDim,blockDim RRR( d__cov, NU, d__psd, NF, kappa);
 covariance_extraction LLL gridDim,blockDim RRR( d__cov + NU2, NU, d__psd + NF2, NF, kappa);
 @ The extraction of the covariance is done with the kernel:
 <<covariance extraction>>=
-__global__ void covariance_extraction(float2 *cov_out, int NC_out, 
+__global__ void covariance_extraction(float *cov_out, int NC_out, 
 				      float2 *cov_in, int NC_in, float kappa)
 {
   int i, j, k_out, k_in, h;
@@ -557,8 +557,7 @@ __global__ void covariance_extraction(float2 *cov_out, int NC_out,
     else
       j *= kappa;
     k_in = i*NC_in + j;      
-    cov_out[k_out].x = cov_in[k_in].x;
-    cov_out[k_out].y = 0.0;
+    cov_out[k_out] = cov_in[k_in].x;
   }
 }
 @ 
@@ -570,7 +569,7 @@ The test routine is written:
 #include "aaStats.h"
 #include "BTBT.h"
 
-#define N_RUN 1
+#define N_RUN 6
 
 __global__ void fill(float *A, int m_a, int n_a) {
   int i, j, k;
@@ -601,7 +600,7 @@ int main( void) {
 
   atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
 
-  int N_[N_RUN] = {40};//{10,20,40,64,84,150};
+  int N_[N_RUN] = {10,20,40,64,84,150};
   float aa_full_mvm_et[N_RUN], pa_full_mvm_et[N_RUN], aa_comp_mvm_et[N_RUN], pa_comp_mvm_et[N_RUN], 
     aa_comp_eval_et[N_RUN], pa_comp_eval_et[N_RUN];
 

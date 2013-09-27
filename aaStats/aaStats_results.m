@@ -26,10 +26,13 @@ hb = loglog(N,[b_full,b_comp],'o--');
 grid
 xlabel('Lenslet Array Size')
 ylabel('Matrix Memory Rqt. [MB]')
-legend('Full','Compressed',0)
+legend('Full','Caompressed',0)
 set(gca,'xtick',N)
 set(hb,'MarkerEdgeColor','k','MarkerSize',8,'LineWidth',2)
 arrayfun( @(k) set(hb(k),'MarkerFaceColor',get(hb(k),'color')), 1:length(hb) )
+%%
+aa_NDFT = pow2(nextpow2((2*N-1).^2));
+aa_RT = C(:,3);
 %%
 nLenslet = 40;
 nSlope   = 2*nLenslet^2;
