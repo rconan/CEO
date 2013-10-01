@@ -2,7 +2,7 @@
 include common.mk
 
 #ls -d */ | sed -e 's,//$,,' -e 's,doc,,' -e 's,lib,,'  -e 's,include,,' | xargs
-SOURCE_DIR	= ceo source atmosphere imaging centroiding aaStats BTBT iterativeSolvers
+SOURCE_DIR	= ceo source atmosphere imaging centroiding aaStats BTBT iterativeSolvers LMMSE
 
 all: makefile 
 	mkdir -p include lib

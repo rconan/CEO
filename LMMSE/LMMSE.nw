@@ -8,8 +8,16 @@ The LMMSE structure is written in the header:
 #include "ceo.h"
 #endif
 
+#ifndef __AASTATS_H__
+#include "aaStats.h"
+#endif
+
 #ifndef __BTBT_H__
 #include "BTBT.h"
+#endif
+
+#ifndef __ITERATIVESOLVERS_H__
+#include "iterativeSolvers.h"
 #endif
 
 //#define MINRES_DEBUG
@@ -18,12 +26,12 @@ struct LMMSE {
 
   <<parameters>>
 
-  void setup(int n_vector);
+  void setup(atmosphere *atm,float sampling, int N, char *solver_id);
 
   void cleanup(void);
 
+  void estimation(float* d__c, int nMaxIteration, float *d__x);
 
-  //  void info(void);
 };
 #endif // __LMMSE_H__
 @ The routines are expanded in the source:
@@ -36,32 +44,40 @@ struct LMMSE {
 
 <<cleanup>>
 
+<<wavefront estimation>>
+
 @
 The LMMSE structure gather several routines implementing iterative methods to reconstruct the wavefront from Shack--Hartmann wavefront senor data.
 The setup method is initializing the required structures:
 <<setup>>=
-void LMMSE::setup(atmosphere *atm,float sampling, char *solver_id)
+  void LMMSE::setup(atmosphere *atm,float sampling,int N, char *solver_id)
 {
   int NP, osf;
-  aa.setup(N_SIDE_LENSLET,&atm,sampling);
+  aa.setup(N_SIDE_LENSLET,atm,sampling);
   aaCov.setup(2,2,N_SIDE_LENSLET,aa.d__cov);
   osf = 2;
   NP = osf*N_SIDE_LENSLET+1;
-  pa.setup(N_SIDE_LENSLET,osf,&atm,sampling);
+  PS_E_N_PX = NP;
+  PS_E_N_PX *= PS_E_N_PX;
+  pa.setup(N_SIDE_LENSLET,osf,atm,sampling);
   paCov.setup(1,2,NP,pa.d__cov);
   if (strcmp(solver_id,"CG")==0)
     iSolve.cg_setup(N);
   if (strcmp(solver_id,"MINRES")==0)
     iSolve.minres_setup(N);
+<<linear solver (prep.)>>
+<<MVM (prep.)>>
 }
 @ 
 The structure parameters are
 <<parameters>>=
+int *d__idx, PS_E_N_PX;
+float *d__ce, *d__phase_est;
 aaStats aa;
 BTBT aaCov;
 paStats pa;
 BTBT paCov;
-LMMSE iSolve;
+iterativeSolvers iSolve;
 stopwatch tid;
 @
 Memory is freed with
@@ -74,6 +90,9 @@ void LMMSE::cleanup(void)
   aaCov.cleanup();
   paCov.cleanup();
   iSolve.cleanup();
+  HANDLE_ERROR( cudaFree( d__idx ) );
+  HANDLE_ERROR( cudaFree( d__ce ) );
+  HANDLE_ERROR( cudaFree( d__phase_est ) );
 }
 @ 
 <<PA input>>=
@@ -89,83 +108,47 @@ __global__ void set_pa_input(float *pa_c, float *aa_c, int *idx, int N)
 }
 @ 
 <<wavefront estimation>>=
-void LMMSE::estimation(void)
+  void LMMSE::estimation(float* d__c, int nMaxIteration, float *d__x)
 {
-<<linear solver (prep.)>>
-<<MVM (prep.)>>
-
-char filename[100];
-/* for (k=1;k<6;k++) { */
-k = 20;
-sprintf(filename,"MINRES_phaseEst_%d.bin",k);
-HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
 
 tid.tic();
 
-iSolve.minres_vorst(d__x, &aaCov, d__b, k, d__x);
-
-/*
-HANDLE_ERROR( cudaMemcpy( x, d__x, sizeof(float)*N, cudaMemcpyDeviceToHost ) );
-printf("\nx=\n");
-for (int kk=0;kk<N;kk++)
-  printf(" (%2d) %+.2E\n",kk,x[kk]);
-*/
+iSolve.minres_vorst(d__x, &aaCov, d__c, nMaxIteration, d__x);
 
 <<MVM>>
 
 tid.toc("WAVEFRONT ESTIMATION");
 
-<<MVM (wrap.)>>
 
 printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
 printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
 }
 @ 
 <<linear solver (prep.)>>=
+  int *idx, i, j , k;
 idx = (int *)malloc(sizeof(int)*_N_LENSLET_);
 k = -1;
-//printf("\n k   idx\n");
 for (i=1;i<2*N_SIDE_LENSLET;i+=2) {
   for (j=1;j<2*N_SIDE_LENSLET;j+=2) {
     idx[++k] = i*(2*N_SIDE_LENSLET + 1) + j;
-    //printf("(%2d) %2d\n",k,idx[k]);
   }
  }
 HANDLE_ERROR( cudaMalloc( (void**)&d__idx, sizeof(int)*_N_LENSLET_ ) );
 HANDLE_ERROR( cudaMemcpy( d__idx, idx,
 			  sizeof(int)*_N_LENSLET_,
 			  cudaMemcpyHostToDevice ) );
-
-HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
-x = (float*)malloc(sizeof(float)*N);
-@
-<<linear solver (conjugate gradient)>>=
-iSolve.cg(d__x, &aaCov, d__b, 5, d__x);
-@ 
-<<linear solver (MINRES)>>=
-iSolve.minres(d__x, &aaCov, d__b, 5, d__x);
-@ 
+free(idx);
 <<MVM (prep.)>>=
 HANDLE_ERROR( cudaMalloc((void**)&d__ce, sizeof(float)*PS_E_N_PX*2 ) );
 HANDLE_ERROR( cudaMemset(d__ce, 0, sizeof(float)*PS_E_N_PX*2 ) );
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
-dim3 blockDim(16,16);
-dim3 gridDim(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
 @ 
 <<MVM>>=
+dim3 blockDim(16,16);
+dim3 gridDim(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
 set_pa_input LLL gridDim,blockDim RRR (d__ce, d__x, d__idx, N_SIDE_LENSLET);
 set_pa_input LLL gridDim,blockDim RRR (d__ce + PS_E_N_PX, d__x + _N_LENSLET_, d__idx, N_SIDE_LENSLET);
 paCov.MVM(d__phase_est,d__ce);
-@ 
-<<MVM (wrap.)>>=
-phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
-HANDLE_ERROR( cudaMemcpy( phase_screen_est, d__phase_est,
-			  sizeof(float)*PS_E_N_PX,
-			  cudaMemcpyDeviceToHost ) );
-fid = fopen(filename,"wb");
-//fid = fopen("phaseScreenEst.bin","wb");
-fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
-fclose(fid);
 @
 The test routine is:
 <<LMMSE.bin>>=
@@ -192,9 +175,6 @@ The test routine is:
 #endif
 #include "LMMSE.h"
 
-   //#define N 10
-
-   <<PA input>>
 
 __global__ void fill(float *data, int n_data, float value)
 {
@@ -210,83 +190,6 @@ int main( void) {
 <<complete test>>
 }
 @
-In the following a simple test is performed:
-<<simple test I>>=
-/*
-  The test requires to replace the MVM with MVM (Test 1) 
-  in the code chunk BTBT.cu in the file BTBT.nw
-*/
-float *d__x, *d__b;
-HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
-HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
-HANDLE_ERROR( cudaMalloc((void**)&d__b, sizeof(float)*N ) );
-float b[N] = {1,2,3,4,5,6,7,8,9,10};
-HANDLE_ERROR( cudaMemcpy( d__b, b, N*sizeof(float), cudaMemcpyHostToDevice) );
-
-BTBT A;
-A.setup(N);
-
-LMMSE iSolve;
-/* iSolve.cg_setup(N); */
-/* iSolve.cg(d__x, &A, d__b, 5, d__x); */
-iSolve.minres_setup(N);
-iSolve.minres(d__x, &A, d__b, 5, d__x);
-iSolve.cleanup();
-
-float *x;
-x = (float *)malloc(sizeof(float)*N);
-HANDLE_ERROR( cudaMemcpy( x, d__x, N*sizeof(float), cudaMemcpyDeviceToHost) );
-
-for (int k=0;k<N;k++)
-  printf("(%d) %5.1f\n",k,x[k]);
-
-HANDLE_ERROR( cudaFree( d__x ) );
-HANDLE_ERROR( cudaFree( d__b ) );
-free(x);
-@ 
-<<simple test II>>=
-/*
-  The test requires to replace the MVM with MVM (Test 2) 
-  in the code chunk BTBT.cu in the file BTBT.nw
-*/
-float *x;
-x = (float *)malloc(sizeof(float)*N);
-float *d__x, *d__b;
-HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
-HANDLE_ERROR( cudaMalloc((void**)&d__b, sizeof(float)*N ) );
-
-for (int k=0;k<N;k++) {
-  x[k] = 1.0 + (float)rand();
-  printf("(%d) %.3E\n",k,x[k]);
- }
-HANDLE_ERROR( cudaMemcpy( d__b, x, N*sizeof(float), cudaMemcpyHostToDevice ) );
-
-BTBT A;
-A.setup(N);
-/* A.MVM(d__b,d__x); */
-/* HANDLE_ERROR( cudaMemcpy( x, d__b, N*sizeof(float), cudaMemcpyDeviceToHost) ); */
-
-/* for (int k=0;k<N;k++) */
-/*   printf("(%d) %5.1f\n",k,x[k]); */
-
-fill LLL (1+N/16),16 RRR (d__x, N, 0);
-
-LMMSE iSolve;
-/* iSolve.cg_setup(N); */
-/* iSolve.cg(d__x, &A, d__b, 5, d__x); */
-iSolve.minres_setup(N);
-iSolve.minres(d__x, &A, d__b, 5, d__x);
-iSolve.cleanup();
-
-HANDLE_ERROR( cudaMemcpy( x, d__x, N*sizeof(float), cudaMemcpyDeviceToHost) );
-
-for (int k=0;k<N;k++)
-  printf("(%d) %5.1f\n",k,x[k]);
-
-HANDLE_ERROR( cudaFree( d__x ) );
-HANDLE_ERROR( cudaFree( d__b ) );
-free(x);
-@ 
 A more complete test:
 <<complete test>>=
 int N = _N_LENSLET_*2, NP, PS_N_PX, PS_E_N_PX, i, j ,k, osf;
@@ -313,11 +216,7 @@ source src, *d__src;
 atmosphere atm;
 imaging lenslet_array;
 centroiding cog;
-aaStats aa;
-BTBT aaCov;
-paStats pa;
-BTBT paCov;
-iterativeSolvers iSolve;
+LMMSE E;
 stats S;
 S.setup();
 stopwatch tid;
@@ -346,16 +245,8 @@ lenslet_array.setup();
 // Centroid
 cog.setup();
 
-// covariances
-aa.setup(N_SIDE_LENSLET,&atm,d);
-aaCov.setup(2,2,N_SIDE_LENSLET,aa.d__cov);
-
-pa.setup(N_SIDE_LENSLET,osf,&atm,d);
-paCov.setup(1,2,NP,pa.d__cov);
-
-// CG
-//iSolve.cg_setup(N);
-iSolve.minres_setup(N);
+// LMMSE
+E.setup(&atm,N_SIDE_LENSLET,d,"MINRES");
 
 atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
 
@@ -386,8 +277,7 @@ fclose(fid);
 
 <<wavefront sensing>>
 
-<<linear solver (prep.)>>
-<<MVM (prep.)>>
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
 
 char filename[100];
 /* for (k=1;k<6;k++) { */
@@ -397,23 +287,14 @@ HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
 
 tid.tic();
 
-iSolve.minres_vorst(d__x, &aaCov, d__b, k, d__x);
-
-/*
-HANDLE_ERROR( cudaMemcpy( x, d__x, sizeof(float)*N, cudaMemcpyDeviceToHost ) );
-printf("\nx=\n");
-for (int kk=0;kk<N;kk++)
-  printf(" (%2d) %+.2E\n",kk,x[kk]);
-*/
-
-<<MVM>>
+E.estimation(cog.d__c,k,d__x);
 
 tid.toc("WAVEFRONT ESTIMATION");
 
 <<MVM (wrap.)>>
 
-printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
-printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+/* printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm); */
+/* printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration); */
 
 /* } */
 
@@ -421,35 +302,14 @@ HANDLE_ERROR( cudaFree( d__src) );
 atm.cleanup();
 lenslet_array.cleanup();
 cog.cleanup();
-aa.cleanup();
-pa.cleanup();
-aaCov.cleanup();
-paCov.cleanup();
-iSolve.cleanup();
+E.cleanup();
 S.cleanup();
 HANDLE_ERROR( cudaFree( d__x ) );
-HANDLE_ERROR( cudaFree( d__b ) );
-HANDLE_ERROR( cudaFree( d__idx ) );
-HANDLE_ERROR( cudaFree( d__ce ) );
-HANDLE_ERROR( cudaFree( d__phase_est ) );
 HANDLE_ERROR( cudaFree( d__phase_screen_low_res ) );
 free(phase_screen_low_res);
-free(b);
-free(idx);
-free(phase_screen_est);
-free(x);
-@ 
-<<PA input>>=
-__global__ void set_pa_input(float *pa_c, float *aa_c, int *idx, int N) 
-{
-  int i, j, k;
-  i = blockIdx.x * blockDim.x + threadIdx.x;
-  j = blockIdx.y * blockDim.y + threadIdx.y;
-  if ( (i<N) && (j<N) ) {
-    k = i*N + j;
-    pa_c[idx[k]] = aa_c[k];
-  }
-}
+//free(b);
+//free(phase_screen_est);
+//free(x);
 @ 
 <<wavefront sensing>>=
 lenslet_array.propagate(d__src);
@@ -472,45 +332,9 @@ fid = fopen("centroids.bin","wb");
 fwrite(b,sizeof(float),N,fid);
 fclose(fid);
 @ 
-<<linear solver (prep.)>>=
-idx = (int *)malloc(sizeof(int)*_N_LENSLET_);
-k = -1;
-//printf("\n k   idx\n");
-for (i=1;i<2*N_SIDE_LENSLET;i+=2) {
-  for (j=1;j<2*N_SIDE_LENSLET;j+=2) {
-    idx[++k] = i*(2*N_SIDE_LENSLET + 1) + j;
-    //printf("(%2d) %2d\n",k,idx[k]);
-  }
- }
-HANDLE_ERROR( cudaMalloc( (void**)&d__idx, sizeof(int)*_N_LENSLET_ ) );
-HANDLE_ERROR( cudaMemcpy( d__idx, idx,
-			  sizeof(int)*_N_LENSLET_,
-			  cudaMemcpyHostToDevice ) );
-
-HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
-x = (float*)malloc(sizeof(float)*N);
-@ 
-<<linear solver (conjugate gradient)>>=
-iSolve.cg(d__x, &aaCov, d__b, 5, d__x);
-@ 
-<<linear solver (MINRES)>>=
-iSolve.minres(d__x, &aaCov, d__b, 5, d__x);
-@ 
-<<MVM (prep.)>>=
-HANDLE_ERROR( cudaMalloc((void**)&d__ce, sizeof(float)*PS_E_N_PX*2 ) );
-HANDLE_ERROR( cudaMemset(d__ce, 0, sizeof(float)*PS_E_N_PX*2 ) );
-HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
-dim3 blockDim(16,16);
-dim3 gridDim(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
-@ 
-<<MVM>>=
-set_pa_input LLL gridDim,blockDim RRR (d__ce, d__x, d__idx, N_SIDE_LENSLET);
-set_pa_input LLL gridDim,blockDim RRR (d__ce + PS_E_N_PX, d__x + _N_LENSLET_, d__idx, N_SIDE_LENSLET);
-paCov.MVM(d__phase_est,d__ce);
-@ 
 <<MVM (wrap.)>>=
 phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
-HANDLE_ERROR( cudaMemcpy( phase_screen_est, d__phase_est,
+HANDLE_ERROR( cudaMemcpy( phase_screen_est, E.d__phase_est,
 			  sizeof(float)*PS_E_N_PX,
 			  cudaMemcpyDeviceToHost ) );
 fid = fopen(filename,"wb");
