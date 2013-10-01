@@ -34,6 +34,8 @@ struct aaStats {
 
   void MVM(float *y, float *x);
 
+  float variance(float lenslet_pitch, atmosphere* atm, float kappa, float NV);
+
 };
 @  and
 <<paStats stucture>>=
@@ -48,6 +50,8 @@ struct paStats {
   void info(int kappa, float d);
 
   void MVM(float *y, float *x);
+
+  void variance(void);
 
 };
 #endif // __AASTATS_H__
@@ -75,6 +79,8 @@ struct paStats {
 
 <<aaStats info>>
 <<paStats info>>
+
+<<aaStats variance>>
 @
 Shack--Hartmann WFS centroids are a measure of the spatial derivatives of the wavefront averaged on each subaperture.
 These derivatives are often referred as angle of arrivals $\vec \alpha=(\alpha_x\alpha_y,)$:
@@ -406,12 +412,29 @@ aaPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2*3, NF, lenslet_pitch,
     f_square = fx*fx + fy*fy;
     wavelength *= wavelength;
     fs *= fs;
-    d__psd[k].x = fs*wavelength*(fx*alpha[0] + fy*alpha[1])*(fx*beta[0] + fy*beta[1])*
+    d__psd[k].x = (k==0) ? 0 : 
+      fs*wavelength*(fx*alpha[0] + fy*alpha[1])*(fx*beta[0] + fy*beta[1])*
       powf(r0,-5.0/3.0)*
       phasePowerSpectrum(f_square, 1.0/L0)*
       gatePSF(fx*d,fy*d);
     d__psd[k].y = 0;
   }
+}
+@ From the power spectrum, once can derive the variance:
+<<aaStats variance>>=
+  float aaStats::variance(float lenslet_pitch, atmosphere *atm, float kappa, float NV) {
+dim3 blockDim(16,16);
+dim3 gridDim( 1+NV/16 , 1+NV/16 );
+int NV2 = NV*NV;
+aaPowerSpectrum LLL gridDim,blockDim RRR (d__psd, NV, lenslet_pitch, 
+					atm->wavelength, atm->r0, atm->turbulence.L0,
+					d__alpha, d__alpha, kappa);
+float res;
+cublasHandle_t handle;
+cublasCreate(&handle);
+cublasScasum(handle, NV2, d__psd, 1, &res);
+cublasDestroy(handle);
+ return res;
 }
 
 <<paStats power spectrum>>=
@@ -458,7 +481,7 @@ paPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2, NF, osf, lenslet_pitch,
 The phase power spectrum is given by:
 <<phase power spectrum>>=
  __device__ float phasePowerSpectrum(float f_square, float f0) {
-  return 0.0228955871*powf(f_square + f0*f0,-11.0/6.0);
+  return 0.022895587108555*powf(f_square + f0*f0,-11.0/6.0);
 }
 @ 
 The subaperture Fourier transform is given by
@@ -564,12 +587,18 @@ __global__ void covariance_extraction(float *cov_out, int NC_out,
 The test routine is written:
 <<aaStats.bin>>=
 
+#include <iostream>
+#include <fstream>
+#include <iomanip>
+using namespace std;
+
 #include "cublas_v2.h"
 #include "ceo.h"
 #include "aaStats.h"
 #include "BTBT.h"
-
-#define N_RUN 6
+using namespace std;
+#define N_RUN 5
+#define N_SAMPLE 100
 
 __global__ void fill(float *A, int m_a, int n_a) {
   int i, j, k;
@@ -587,7 +616,7 @@ int main( void) {
   aaStats aa;
   paStats pa;
   BTBT C, S;
-  int k, data_size, M, N, NX, NY, NA, MA, k_N, osf;
+  int k, data_size, M, N, NX, NY, NA, MA, k_N, k_SAMPLE, osf;
   float altitude[] = {0},
         xi0[] = {1},
         wind_speed[] = {10},
@@ -600,7 +629,7 @@ int main( void) {
 
   atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
 
-  int N_[N_RUN] = {10,20,40,64,84,150};
+  int N_[N_RUN] = {20,40,64,84,150};
   float aa_full_mvm_et[N_RUN], pa_full_mvm_et[N_RUN], aa_comp_mvm_et[N_RUN], pa_comp_mvm_et[N_RUN], 
     aa_comp_eval_et[N_RUN], pa_comp_eval_et[N_RUN];
 
@@ -610,6 +639,21 @@ int main( void) {
   alpha = 1;
   beta  = 0;
   osf = 2;
+
+  std::ofstream aa_fid, pa_fid;
+  aa_fid.open ("aa_runtime.txt");
+  aa_fid.setf(ios::fixed, ios::floatfield);
+  aa_fid.precision(3);
+  aa_fid << "\nAASTATS:\n";
+  aa_fid << " N   FULL MVM   COMP MVM   COMP EVAL\n";
+
+  pa_fid.open ("pa_runtime.txt");
+  pa_fid.setf(ios::fixed, ios::floatfield);
+  pa_fid.precision(3);
+  pa_fid << "\nPASTATS:\n";
+  pa_fid << " N   FULL MVM   COMP MVM   COMP EVAL\n";
+
+  for (k_SAMPLE=0;k_SAMPLE<N_SAMPLE;k_SAMPLE++) {
 
   //AASTATS TESTS
   for (k_N=0;k_N<N_RUN;k_N++) {
@@ -631,6 +675,8 @@ int main( void) {
     aa.setup(N,&atm,0.1);
     C.setup(2,2,N,aa.d__cov);
     aa_comp_eval_et[k_N] = aa.cov_eval_et;
+    
+    //printf("\n AA VARIANCE: %.4E rd^2\n",aa.variance(0.1, &atm, 4, 2048));
 
     tid.tic();
     C.MVM(d__y,d__x);
@@ -640,12 +686,12 @@ int main( void) {
     /* for (k=0;k<NX;k++) { */
     /*   printf("(%2d) %4.2E\n",k,y[k]); */
     /* } */
-    FILE *fid;
+    FILE *aa_fid;
     char filename[100];
     sprintf(filename,"aa_mvm%03d.bin",N);
-    fid = fopen(filename,"wb");
-    fwrite(y,sizeof(float),NX,fid);
-    fclose(fid);
+    aa_fid = fopen(filename,"wb");
+    fwrite(y,sizeof(float),NX,aa_fid);
+    fclose(aa_fid);
 
     if (N<=100) {
       M = 2*N*N;
@@ -669,6 +715,9 @@ int main( void) {
     HANDLE_ERROR( cudaFree( d__y ) );
     free(x);
     free(y);
+  }
+  for (k_N=0;k_N<N_RUN;k_N++) {
+    aa_fid << setw(3) << N_[k_N] << "   " << setw(6) << aa_full_mvm_et[k_N] << "     " << aa_comp_mvm_et[k_N] << "     " << aa_comp_eval_et[k_N] << "\n";
   }
 
   //PASTATS TESTS
@@ -700,12 +749,12 @@ int main( void) {
     /* for (k=0;k<NY;k++) { */
     /*   printf("(%3d) %+6.4E\n",k,y[k]); */
     /* } */
-    FILE *fid;
+    FILE *aa_fid;
     char filename[100];
     sprintf(filename,"pa_mvm%03d.bin",N);
-    fid = fopen(filename,"wb");
-    fwrite(y,sizeof(float),NY,fid);
-    fclose(fid);
+    aa_fid = fopen(filename,"wb");
+    fwrite(y,sizeof(float),NY,aa_fid);
+    fclose(aa_fid);
 
     if (N<=100) {
       MA = N*N;
@@ -731,20 +780,14 @@ int main( void) {
     free(x);
     free(y);
   }
+  for (k_N=0;k_N<N_RUN;k_N++) {
+     pa_fid << setw(3) << N_[k_N] << "   " << setw(6) << pa_full_mvm_et[k_N] << "     " << pa_comp_mvm_et[k_N] << "     " << pa_comp_eval_et[k_N] << "\n";
+  }
+
+  } // SAMPLE LOOP
 
   atm.cleanup();
   cublasDestroy(handle);
-
-  printf("\nAASTATS:\n");
-  printf(" N   FULL MVM   COMP MVM   COMP EVAL\n");
-  for (k_N=0;k_N<N_RUN;k_N++) {
-    printf("%3d    %6.3f     %6.3f     %6.3f\n",
-	   N_[k_N],aa_full_mvm_et[k_N],aa_comp_mvm_et[k_N],aa_comp_eval_et[k_N]);
-  }
-  printf("\nPASTATS:\n");
-  printf(" N   FULL MVM   COMP MVM   COMP EVAL\n");
-  for (k_N=0;k_N<N_RUN;k_N++) {
-    printf("%3d    %6.3f     %6.3f     %6.3f\n",
-  	   N_[k_N],pa_full_mvm_et[k_N],pa_comp_mvm_et[k_N],pa_comp_eval_et[k_N]);
-  }
+  aa_fid.close();
+  pa_fid.close();
 }
