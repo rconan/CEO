@@ -34,6 +34,7 @@ struct iterativeSolvers {
 
 
   void minres_vorst(float *x, BTBT* A, float *b, int max_it, float* x0);
+  void minres_vorst(float *x, float *res, BTBT* A, float *b, int max_it, float* x0);
 
   void minres_choi(float *x, BTBT* A, float *b, int max_it, float* x0);
 
@@ -57,7 +58,7 @@ struct iterativeSolvers {
 <<Lanczos step>>
 
 <<MINRES (Vorst)>>
-
+<<MINRES (Vorst) with residue>>
 <<MINRES (Choi)>>
 @
 The iterativeSolvers structure gather several routines implementing iterative methods to solve the linear system: $Ax=b$.
@@ -201,6 +202,32 @@ The MINRES iterative solver method is implemented in the next routine:
   }   
   tid.toc(&mean_time_per_iteration);
   mean_time_per_iteration /= max_it;
+}
+<<MINRES (Vorst) with residue>>=
+  void iterativeSolvers::minres_vorst(float *x, float *res, BTBT* A, float *b, int max_it, float* x0)
+{
+  float alpha, beta, gamma_i, gamma_im1, sigma_i, sigma_im1,
+    eta, delta, rho1, rho2, rho3, res_cst, result;
+  int k;
+  float *residual;
+  HANDLE_ERROR( cudaMalloc( (void**)&residual, sizeof(float)*N ) );
+  <<MINRES (Vorst) init>>
+  tid.tic();
+  for (k=0;k<max_it;k++) {
+    //printf("MINRES IT=%d - ",k);
+    <<MINRES (Vorst) loop>>
+    A->MVM(residual , x);
+    res_cst = -1;
+    cublasSscal(handle, N, &res_cst, residual, 1);
+    res_cst = 1;
+    cublasSaxpy(handle, N, &res_cst, b, 1, residual, 1);
+    cublasSnrm2(handle, N, residual, 1, &result);
+    res[k] = result;
+    printf("(%3d): Residue norm: %.2E\n",k,result);
+  }   
+  tid.toc(&mean_time_per_iteration);
+  mean_time_per_iteration /= max_it;
+  HANDLE_ERROR( cudaFree( residual) );
 }
 @ 
 The MINRES algorithm is written:
@@ -722,15 +749,22 @@ fclose(fid);
 <<linear solver (prep.)>>
 <<MVM (prep.)>>
 
+
 char filename[100];
 /* for (k=1;k<6;k++) { */
 k = 20;
+float *res, *d__res;
+
+HANDLE_ERROR( cudaMalloc((void**)&d__res, sizeof(float)*k ) );
+res = (float*)malloc(sizeof(float)*k);
+
+
 sprintf(filename,"MINRES_phaseEst_%d.bin",k);
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
 
 tid.tic();
 
-iSolve.minres_vorst(d__x, &aaCov, cog.d__c, k, d__x);
+iSolve.minres_vorst(d__x, res, &aaCov, cog.d__c, k, d__x);
 
 /*
 HANDLE_ERROR( cudaMemcpy( x, d__x, sizeof(float)*N, cudaMemcpyDeviceToHost ) );
@@ -750,6 +784,14 @@ printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration
 
 /* } */
 
+//HANDLE_ERROR( cudaMemcpy( res, d__res, sizeof(float)*k, cudaMemcpyDeviceToHost ) );
+sprintf(filename,"norm_residue_%03d.bin",N_SIDE_LENSLET);
+fid = fopen(filename,"wb");
+//fid = fopen("phaseScreenEst.bin","wb");
+fwrite(res,sizeof(float),k,fid);
+fclose(fid);
+
+
 HANDLE_ERROR( cudaFree( d__src) );
 atm.cleanup();
 lenslet_array.cleanup();
@@ -766,11 +808,13 @@ HANDLE_ERROR( cudaFree( d__idx ) );
 HANDLE_ERROR( cudaFree( d__ce ) );
 HANDLE_ERROR( cudaFree( d__phase_est ) );
 HANDLE_ERROR( cudaFree( d__phase_screen_low_res ) );
+HANDLE_ERROR( cudaFree( d__res ) );
 free(phase_screen_low_res);
 free(b);
 free(idx);
 free(phase_screen_est);
 free(x);
+free(res);
 @ 
 <<PA input>>=
 __global__ void set_pa_input(float *pa_c, float *aa_c, int *idx, int N) 
