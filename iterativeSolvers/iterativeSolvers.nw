@@ -243,13 +243,15 @@ beta = -1;
 cublasSscal(handle, N, &beta, nu_i, 1);
 alpha = 1;
 cublasSaxpy(handle, N, &alpha, b, 1, nu_i, 1);
-cublasSnrm2(handle, N, b, 1, &beta);
 #ifdef MINRES_DEBUG
+cublasSnrm2(handle, N, b, 1, &beta);
 printf("beta=%.2E\n",beta);
 #endif
 @ \item $\beta_1=\left\| \nu_1 \right\|_2=\left\| r \right\|_2$
 <<MINRES (Vorst) init>>=
-cublasSnrm2(handle, N, nu_i, 1, &beta);
+  //cublasSnrm2(handle, N, nu_i, 1, &beta);
+cublasSdot(handle, N, nu_i, 1, nu_i, 1, &beta);
+beta = sqrtf(beta);
 rnorm = beta;
 #ifdef MINRES_DEBUG
 printf("beta=%.2E\n",beta);
@@ -308,7 +310,9 @@ printf("rho3=%.2E\n",rho3);
 #endif
 @ \item $\beta_{i+1}=\left\| \nu_{i+1} \right\|_2$
 <<MINRES (Vorst) loop>>=
-cublasSnrm2(handle, N, nu_ip1, 1, &beta);
+  //cublasSnrm2(handle, N, nu_ip1, 1, &beta);
+cublasSdot(handle, N, nu_ip1, 1, nu_ip1, 1, &beta);
+beta = sqrtf(beta);
 #ifdef MINRES_DEBUG
 printf("beta=%.2E\n",beta);
 #endif
@@ -529,6 +533,9 @@ void iterativeSolvers::lanczos_step(float *alpha, float *beta, float *nu_kp1,
 @
 The test routine is:
 <<iterativeSolvers.bin>>=
+
+#include "cuda_profiler_api.h"
+
 #ifndef __CEO_H__
 #include "ceo.h"
 #endif
@@ -713,10 +720,6 @@ aaCov.setup(2,2,N_SIDE_LENSLET,aa.d__cov);
 pa.setup(N_SIDE_LENSLET,osf,&atm,d);
 paCov.setup(1,2,NP,pa.d__cov);
 
-// CG
-//iSolve.cg_setup(N);
-iSolve.minres_setup(N);
-
 atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
 
 wf_rms = phase2nm*S.std(d__src->phase, _N_PIXEL_);
@@ -746,32 +749,31 @@ fclose(fid);
 
 <<wavefront sensing>>
 
+// Iterative solver
+  //iSolve.cg_setup(N);
+iSolve.minres_setup(N);
+
 <<linear solver (prep.)>>
 <<MVM (prep.)>>
 
-
 char filename[100];
 /* for (k=1;k<6;k++) { */
-k = 200;
+k = 20;
 float *res, *d__res;
 
 HANDLE_ERROR( cudaMalloc((void**)&d__res, sizeof(float)*k ) );
 res = (float*)malloc(sizeof(float)*k);
 
-
 sprintf(filename,"MINRES_phaseEst_%d.bin",k);
+//sprintf(filename,"CG_phaseEst_%d.bin",k);
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
 
 tid.tic();
 
+//cudaProfilerStart();
 iSolve.minres_vorst(d__x, &aaCov, cog.d__c, k, d__x);
-
-/*
-HANDLE_ERROR( cudaMemcpy( x, d__x, sizeof(float)*N, cudaMemcpyDeviceToHost ) );
-printf("\nx=\n");
-for (int kk=0;kk<N;kk++)
-  printf(" (%2d) %+.2E\n",kk,x[kk]);
-*/
+//iSolve.cg(d__x, &aaCov, cog.d__c, k, d__x);
+//cudaProfilerStop();
 
 <<MVM>>
 
