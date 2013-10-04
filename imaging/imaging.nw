@@ -326,7 +326,7 @@ void mexFunction(int nlhs, mxArray *plhs[],
     unsigned int inputIndex;
     float const *d__x, *d__y, *d__phase_offset;
     float *d__phase_screen;
-    double *reset, *L0, *time;
+    double *reset, *L0, *time, *delta, *nSample;
     mwSize dims[2];
     
     char const * const errId = "parallel:gpu:CEO_SCAO_MEX:InvalidInput";
@@ -345,20 +345,22 @@ void mexFunction(int nlhs, mxArray *plhs[],
     inputIndex = 0;
     
     /* Create GPUArray from mxArray input and get underlying pointer. */
-    mxGPUArray const *x;
-    x = mxGPUCreateFromMxArray(prhs[inputIndex++]);
-    if (mxGPUGetClassID(x) != mxSINGLE_CLASS) {
-        mexErrMsgIdAndTxt(errId, errMsg);
-    }
-    d__x = (float const *)(mxGPUGetDataReadOnly(x));
+    /* mxGPUArray const *x; */
+    /* x = mxGPUCreateFromMxArray(prhs[inputIndex++]); */
+    /* if (mxGPUGetClassID(x) != mxSINGLE_CLASS) { */
+    /*     mexErrMsgIdAndTxt(errId, errMsg); */
+    /* } */
+    /* d__x = (float const *)(mxGPUGetDataReadOnly(x)); */
+    /* // --------------------------------------- */
+    /* mxGPUArray const *y; */
+    /* y = mxGPUCreateFromMxArray(prhs[inputIndex++]); */
+    /* if (mxGPUGetClassID(y) != mxSINGLE_CLASS) { */
+    /*     mexErrMsgIdAndTxt(errId, errMsg); */
+    /* } */
+    /* d__y = (float const *)(mxGPUGetDataReadOnly(y)); */
     // ---------------------------------------
-    mxGPUArray const *y;
-    y = mxGPUCreateFromMxArray(prhs[inputIndex++]);
-    if (mxGPUGetClassID(y) != mxSINGLE_CLASS) {
-        mexErrMsgIdAndTxt(errId, errMsg);
-    }
-    d__y = (float const *)(mxGPUGetDataReadOnly(y));
-    // ---------------------------------------
+    delta = mxGetPr(prhs[inputIndex++]);
+    nSample = mxGetPr(prhs[inputIndex++]);
     reset = mxGetPr(prhs[inputIndex++]);
     L0 = mxGetPr(prhs[inputIndex++]);
     time = mxGetPr(prhs[inputIndex++]);
@@ -367,7 +369,7 @@ void mexFunction(int nlhs, mxArray *plhs[],
       {
 	mxGPUArray const *phase_offset;
 	phase_offset = mxGPUCreateFromMxArray(prhs[inputIndex++]);
-	if (mxGPUGetClassID(y) != mxSINGLE_CLASS) {
+	if (mxGPUGetClassID(phase_offset) != mxSINGLE_CLASS) {
 	  mexErrMsgIdAndTxt(errId, errMsg);
 	}
 	d__phase_offset = (float const *)(mxGPUGetDataReadOnly(phase_offset));
@@ -375,8 +377,10 @@ void mexFunction(int nlhs, mxArray *plhs[],
  
     /* Create GPUArray to hold the result and get underlying pointer. */
     mxGPUArray *phase_screen;
-    phase_screen = mxGPUCreateGPUArray(2,mxGPUGetDimensions(x),
-            mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
+    dims[0] = *nSample;
+    dims[1] = *nSample;
+    phase_screen = mxGPUCreateGPUArray(2,dims,
+				       mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
     d__phase_screen = (float *)(mxGPUGetData(phase_screen));
     mxGPUArray *frame;
     dims[0] = _N_PX_CAMERA_*N_SIDE_LENSLET;
@@ -394,7 +398,7 @@ void mexFunction(int nlhs, mxArray *plhs[],
     mxGPUArray *flux;
     flux = mxGPUCreateGPUArray(2,dims,
 			       mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
-    
+
     if (INIT==0) {
         // Source
         src.setup(ARCSEC(60) , 0, INFINITY);
@@ -432,41 +436,47 @@ void mexFunction(int nlhs, mxArray *plhs[],
     
    if (*reset>0) { atm.reset(); }
     
-   atm.get_phase_screen(d__x,d__y,_N_PIXEL_,d__src,(float)(*time));
+   if (nlhs>1) {
+     //  atm.get_phase_screen(d__x,d__y,_N_PIXEL_,d__src,(float)(*time));
+     atm.get_phase_screen(*delta,*nSample,*delta,*nSample,d__src,(float)(*time));
 
-   if (nrhs==6)
-     {
-       mexPrintf("\nApplying phase offset!\n");
-       dim3 gridDim(ceilf(_SOURCE_N_PX_/256),1);
-       dim3 blockDim(256,1);
-       apply_phase_offset LLL gridDim,blockDim RRR (d__src->phase, 
-						    d__phase_offset, 
-						    _SOURCE_N_PX_);
-     }
+     if (nrhs==6)
+       {
+	 mexPrintf("\nApplying phase offset!\n");
+	 dim3 gridDim(ceilf(_SOURCE_N_PX_/256),1);
+	 dim3 blockDim(256,1);
+	 apply_phase_offset LLL gridDim,blockDim RRR (d__src->phase, 
+						      d__phase_offset, 
+						      _SOURCE_N_PX_);
+       }
 
-   HANDLE_ERROR( cudaMemcpy( d__phase_screen, d__src->phase,
-			     sizeof(float)*_SOURCE_N_PX_,
-			     cudaMemcpyDeviceToDevice ) );
-   lenslet_array.d__frame  = (float *)(mxGPUGetData(frame));
-   lenslet_array.propagate(d__src);
-   cog.d__cx   = (float *)(mxGPUGetData(cx));
-   cog.d__cy   = (float *)(mxGPUGetData(cy));
-   cog.d__mass = (float *)(mxGPUGetData(flux));
-   cog.get_data(lenslet_array.d__frame);
+     HANDLE_ERROR( cudaMemcpy( d__phase_screen, d__src->phase,
+			       sizeof(float)*_SOURCE_N_PX_,
+			       cudaMemcpyDeviceToDevice ) );
+ 
+     lenslet_array.d__frame  = (float *)(mxGPUGetData(frame));
+     lenslet_array.propagate(d__src);
+     cog.d__cx   = (float *)(mxGPUGetData(cx));
+     cog.d__cy   = (float *)(mxGPUGetData(cy));
+     cog.d__mass = (float *)(mxGPUGetData(flux));
+     cog.get_data(lenslet_array.d__frame);
+   } else {
+     atm.get_phase_screen(d__phase_screen,*delta,*nSample,*delta,*nSample,d__src,(float)(*time));
+   }
+   /* Wrap the result up as a MATLAB gpuArray for return. */
+   plhs[0] = mxGPUCreateMxArrayOnGPU(phase_screen);
+   plhs[1] = mxGPUCreateMxArrayOnGPU(frame);
+   plhs[2] = mxGPUCreateMxArrayOnGPU(cx);
+   plhs[3] = mxGPUCreateMxArrayOnGPU(cy);
+   plhs[4] = mxGPUCreateMxArrayOnGPU(flux);
    
-    /* Wrap the result up as a MATLAB gpuArray for return. */
-    plhs[0] = mxGPUCreateMxArrayOnGPU(phase_screen);
-    plhs[1] = mxGPUCreateMxArrayOnGPU(frame);
-    plhs[2] = mxGPUCreateMxArrayOnGPU(cx);
-    plhs[3] = mxGPUCreateMxArrayOnGPU(cy);
-    plhs[4] = mxGPUCreateMxArrayOnGPU(flux);
-   
-//   atm.cleanup();
-    mxGPUDestroyGPUArray(x);
-    mxGPUDestroyGPUArray(y);
-    mxGPUDestroyGPUArray(phase_screen);
-    mxGPUDestroyGPUArray(frame);
-    mxGPUDestroyGPUArray(cx);
-    mxGPUDestroyGPUArray(cy);
-    mxGPUDestroyGPUArray(flux);
+   //   atm.cleanup();
+   /* mxGPUDestroyGPUArray(x); */
+   /* mxGPUDestroyGPUArray(y); */
+   mxGPUDestroyGPUArray(phase_screen);
+   mxGPUDestroyGPUArray(frame);
+   mxGPUDestroyGPUArray(cx);
+   mxGPUDestroyGPUArray(cy);
+   mxGPUDestroyGPUArray(flux);
+
 }
