@@ -75,7 +75,7 @@ colorbar('location','north')
 
 %ps_e = phase2nm*loadBin('phaseScreenEst',[ne,ne]);
 %ps_e = phase2nm*loadBin(sprintf('CG_phaseEst_%3d_%2d',nIt,nLenslet),[ne*ne,nIt]);
-ps_e = phase2nm*loadBin('MINRES_phaseEst_20',[ne*ne]);
+ps_e = phase2nm*loadBin('MINRES_phaseEst_50',[ne*ne]);
 ps_e = bsxfun( @minus, ps_e, mean(ps_e,1) );
 ps_e_k = reshape(ps_e,[ne,ne]);
 subplot(3,4,[1,6])
