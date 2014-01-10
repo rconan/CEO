@@ -5,9 +5,10 @@ nLenslet_ = [20 40 64 84 150];
 D_        = [3.6 8 5 42 30];
     
 nIt = 200;
-rms_ps_err_minres = zeros(nIt,length(D_));
+%rms_ps_err_minres = zeros(nIt,length(D_));
+%rms_ps_minres     = cell(1,length(D_));
 
-for kRun = 1:length(D_)
+for kRun = 5%1:length(D_)
     
 D = D_(kRun);
 
@@ -26,7 +27,7 @@ nPxLenslet = 16;
 cxy0 = 0.5*(nPxLenslet-1);
 nxy = nLenslet*nPxLenslet;
 
-r0 = d;
+r0 = 0.15;
 L0 = 30;
 atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
 lambda = atm.wavelength;
@@ -65,6 +66,7 @@ toc
 end
 %%
 ps = phase2nm*loadBin(sprintf('STATS_phaseScreenLowRes_%03d',nLenslet),[ne*ne,nIt]);
+rms_ps_minres{kRun} = std(ps,[],2);
 ps = bsxfun( @minus, ps, mean(ps,1) );
 ps_e = phase2nm*loadBin(sprintf('STATS_MINRES_phaseEst_%03d_%03d',nIt,nLenslet),[ne*ne,nIt]);
 ps_e = bsxfun( @minus, ps_e, mean(ps_e,1) );
@@ -88,16 +90,26 @@ rms_ps_err_minres(:,kRun) = std(ps_err);
 end
 %%
 figure
-boxplot(rms_ps_err_minres,nLenslet_)
+% subplot(1,2,1)
+% hb = boxplot(rms_ps_minres,nLenslet_);
+% grid
+% xlabel('Lenslet linear size')
+% ylabel('WF RMS [nm]')
+% subplot(1,2,2)
+hbe = boxplot(rms_ps_err_minres,nLenslet_);
 grid
 xlabel('Lenslet linear size')
 ylabel('WFE [nm]')
-
+wf_rms_th = sqrt(phaseStats.variance(atm)).*phase2nm
+wf_rms = mean(cellfun( @mean, rms_ps_minres))
 %%
-med_rms_ps_err_minres = median(rms_ps_err_minres)
+med_rms_ps_err_minres = mean(rms_ps_err_minres)
+% h = @(fm) phase2nm*sqrt( ...
+%     phaseStats.variance(atm)-integral(@(x)2.*pi*x.*phaseStats.spectrum(x,atm),0,fm));
 h = @(fm) phase2nm*sqrt( ...
-    phaseStats.variance(atm)-integral(@(x)2.*pi*x.*phaseStats.spectrum(x,atm),0,fm));
+    phaseStats.variance(atm)-...
+    integral2(@(x,y)phaseStats.spectrum(hypot(x,y),atm),-fm,fm,-fm,fm));
 d = D_./nLenslet_;
 sfit = arrayfun( h, 1./(2*d) )
-((med_rms_ps_err_minres./phase2nm)).^2
-((sfit./phase2nm)).^2
+% ((med_rms_ps_err_minres./phase2nm)).^2
+% ((sfit./phase2nm)).^2

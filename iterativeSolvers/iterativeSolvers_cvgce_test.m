@@ -52,10 +52,10 @@ unix('make iterativeSolvers.bin')
 % clear ceo_imaging
 % mex -largeArrayDims -I../include -L../lib -lceo -o ceo_imaging imaging.mex.cu
 %%
-fprintf(' ==>>> CG (N=%d)\n',nLenslet)
-tic
-unix(sprintf('./a.out %3.1f CG > CVGCE_CG_%03d_%03d.log',D,nIt,nLenslet));
-toc
+% fprintf(' ==>>> CG (N=%d)\n',nLenslet)
+% tic
+%unix(sprintf('./a.out %3.1f CG > CVGCE_CG_%03d_%03d.log',D,nIt,nLenslet));
+%toc
 fprintf(' ==>>> MINRES (N=%d)\n',nLenslet)
 tic
 unix(sprintf('./a.out %3.1f MINRES > CVGCE_MINRES_%03d_%03d.log',D,nIt,nLenslet));
@@ -80,7 +80,7 @@ colorbar('location','north')
 %ps_e = phase2nm*loadBin(sprintf('CG_phaseEst_%3d_%2d',nIt,nLenslet),[ne*ne,nIt]);
 ps_e = phase2nm*loadBin(sprintf('CVGCE_MINRES_phaseEst_%03d_%03d',nIt,nLenslet),[ne*ne,nIt]);
 ps_e = bsxfun( @minus, ps_e, mean(ps_e,1) );
-ps_e_k = reshape(ps_e(:,20),[ne,ne]);
+ps_e_k = reshape(ps_e(:,nIt),[ne,ne]);
 subplot(3,4,[1,6])
 imagesc([ps,ps_e_k])
 axis equal tight
@@ -88,11 +88,11 @@ xlabel(colorbar('location','northOutside'),'[nm]')
 
 ps_err = bsxfun( @minus, ps(:), ps_e);
 rms_ps_err = std(ps_err);
-ps_err_k = reshape(ps_err(:,20),[ne,ne]);
+ps_err_k = reshape(ps_err(:,nIt),[ne,ne]);
 subplot(3,4,[3,8])
 imagesc(ps_err_k)
 axis equal tight
-title(sprintf('wfe=%6.2fnm',rms_ps_err(20)))
+title(sprintf('wfe=%6.2fnm',rms_ps_err(nIt)))
 xlabel(colorbar('location','southOutside'),'[nm]')
 
 end

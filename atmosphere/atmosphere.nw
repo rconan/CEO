@@ -290,7 +290,7 @@ void profile::setup(float *altitude_, float *xi0_,
   f     = MAX(L,3*L0);
   kmin  = 2*PI/f;
   f     = f/l0;
-  delta = 0.1; // TODO: like f, should depends on the input parameters
+  delta = 0.05; // TODO: like f, should depends on the input parameters
   N_k = logf(f)/log( (2+delta)/(2-delta) );
   N_a = powf( f , 1/N_k ) ;
   N_a = 0.25*PI*( (N_a + 1)/(N_a - 1) );
@@ -664,13 +664,13 @@ x_kl = gl*x_kl + turb->altitude[l]*src->theta_x;
 y_kl = gl*y_kl + turb->altitude[l]*src->theta_y;
 red0 = sqrt(turb->xi0[l])*
   sinc_atm(0.5*gl*cos_freq_ang*d)*sinc_atm(0.5*gl*sin_freq_ang*d);
-red1 = zeta1[ijl]*sinf( eta1[ijl] + cos_freq_ang*x_kl + sin_freq_ang*y_kl );
-red2 = zeta2[ijl]*sinf( eta2[ijl] - sin_freq_ang*x_kl + cos_freq_ang*y_kl );
+red1 = zeta1[ijl]*sin( eta1[ijl] + cos_freq_ang*x_kl + sin_freq_ang*y_kl );
+red2 = zeta2[ijl]*sin( eta2[ijl] - sin_freq_ang*x_kl + cos_freq_ang*y_kl );
 sum_l_x += red0*( red1*cos_freq_ang - red2*sin_freq_ang);
 sum_l_y += red0*( red1*sin_freq_ang + red2*cos_freq_ang);
 <<sinc (atm)>>=
 __device__ float sinc_atm(float x) {
-  return (x==0) ? 1.0 : sinf(x) / (x) ; 
+  return (x==0) ? 1.0 : sin(x) / (x) ; 
 }
 @ 
 \subsection{Tests}
@@ -758,7 +758,7 @@ void mexFunction(int nlhs, mxArray *plhs[],
     
     if (INIT==0) {
         // Source
-        src.setup(ARCSEC(60) , 0, INFINITY);
+        src.setup(ARCSEC(60) , 0, 90e3);//INFINITY);
 	HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source)*_N_SOURCE_ ) );
 	HANDLE_ERROR( cudaMemcpy( d__src, &src,
 				  sizeof(source)*_N_SOURCE_ ,
@@ -862,24 +862,30 @@ void mexFunction(int nlhs, mxArray *plhs[],
     
     if (INIT==0) {
         // Source
-        src.setup(ARCSEC(0) , 0, INFINITY);
+      src.setup(ARCSEC(0) , 0, 20e3);//INFINITY);
 	HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source)*_N_SOURCE_ ) );
 	HANDLE_ERROR( cudaMemcpy( d__src, &src,
 				  sizeof(source)*_N_SOURCE_ ,
 				  cudaMemcpyHostToDevice ) );
        
         // Single layer turbulence profile
-        float altitude[] = {0},
-              xi0[] = {1},
-              wind_speed[] = {10},
+	/*
+        float altitude[] = {10e3},
+	  xi0[] = {1},
+	    wind_speed[] = {2},
               wind_direction[] = {0};
-	      /*
+	*/
+	/*
+        float altitude[] = {0,5000,15000},
+	  xi0[] = {0.33,0.33,0.33},
+	    wind_speed[] = {2,5.6569,6.3246},
+              wind_direction[] = {0,2.3562,-1.8925};
+	*/
         // GMT 7 layers turbulence profile
         float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
               xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
               wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
               wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
-	      */
 
         // Atmosphere
         atm.setup(0.15,(float) (*L0),altitude,xi0,wind_speed,wind_direction);

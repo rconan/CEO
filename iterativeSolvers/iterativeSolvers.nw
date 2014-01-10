@@ -676,9 +676,9 @@ There are 3 tests available: [[[main test]]], [[convergence test]] and [[statist
 $r_0$ is set to 15cm per default but can be override to any other value after the variable declaration.
 <<complete test>>=
 <<declaration>>
-  //r0 = d;
+  r0 = d;
 <<initialization>>
-<<main test>>
+<<hot convergence test>>
 <<cleanup and free memory>>
 @ 
 In the following, all the variables are declared and set to their default or user given values.
@@ -915,6 +915,83 @@ if (strcmp(solver,"MINRES")==0) {
     tid.tic();
 
     iSolve.minres_vorst(d__x, &aaCov, cog.d__c, k, d__x);
+
+    <<MVM>>
+
+    tid.toc("WAVEFRONT ESTIMATION");
+
+    HANDLE_ERROR( cudaMemcpy( phase_screen_est, d__phase_est,
+			      sizeof(float)*PS_E_N_PX,
+			      cudaMemcpyDeviceToHost ) );
+    fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
+
+    printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
+    printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+    printf("\n-------------------------------\n");
+
+  }
+	 }
+
+fclose(fid);
+HANDLE_ERROR( cudaFree( d__b ) );
+free(b);
+@ 
+\subsubsection{Hot convergence test}
+\label{sec:hot-convergence-test}
+
+
+The [[hot convergence test]] reconstructs the wavefront with both iterative solver MINRES and CG at each iteration step.
+<<hot convergence test>>=
+atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
+
+wf_rms = phase2nm*S.std(d__src->phase, _N_PIXEL_);
+printf("\n WF RMS: %7.2fnm\n",wf_rms);
+
+float phase_screen[_N_PIXEL_];
+HANDLE_ERROR( cudaMemcpy( phase_screen, d__src->phase,
+			  sizeof(float)*_N_PIXEL_,
+			  cudaMemcpyDeviceToHost ) );
+FILE *fid;
+fid = fopen("phaseScreen.bin","wb");
+fwrite(phase_screen,sizeof(float),_N_PIXEL_,fid);
+fclose(fid);
+
+float *d__phase_screen_low_res;
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*PS_E_N_PX ) );
+atm.get_phase_screen(d__phase_screen_low_res,delta_e,NP,delta_e,NP,d__src,0);
+
+float *phase_screen_low_res;
+phase_screen_low_res = (float*)malloc(sizeof(float)*PS_E_N_PX);
+HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res,
+			  sizeof(float)*PS_E_N_PX,
+			  cudaMemcpyDeviceToHost ) );
+char filename[100];
+sprintf(filename,"CVGCE_phaseScreenLowRes_%03d.bin",N_SIDE_LENSLET);
+fid = fopen(filename,"wb");
+fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid);
+fclose(fid);
+
+<<wavefront sensing>>
+
+<<linear solver (prep.)>>
+<<MVM (prep.)>>
+
+
+sprintf(filename,"CVGCE_%s_phaseEst_200_%03d.bin",solver,N_SIDE_LENSLET);
+
+fid = fopen(filename,"wb");
+phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
+HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
+// MINRES
+if (strcmp(solver,"MINRES")==0) {
+  iSolve.minres_setup(N);
+  for (k=1;k<=200;k++) {
+
+    printf("\n______ ITERATION #: %03d ______\n",k);
+
+    tid.tic();
+
+    iSolve.minres_vorst(d__x, &aaCov, cog.d__c, 1, d__x);
 
     <<MVM>>
 
