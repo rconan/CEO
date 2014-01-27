@@ -587,7 +587,7 @@ __global__ void fill(float *data, int n_data, float value)
 
 // Solving Ax=b
 int main(int argc,char *argv[]) {
-  
+printf("**<>**\n");  
 <<complete test>>
 }
 @
@@ -675,10 +675,13 @@ This is the comprehensive suite of tests.
 There are 3 tests available: [[[main test]]], [[convergence test]] and [[statistics test]].
 $r_0$ is set to 15cm per default but can be override to any other value after the variable declaration.
 <<complete test>>=
+printf("__ VAR. __\n");
 <<declaration>>
   r0 = d;
+printf("__ INIT __\n");
 <<initialization>>
-<<hot convergence test>>
+printf("__ TEST __\n");
+<<convergence test>>
 <<cleanup and free memory>>
 @ 
 In the following, all the variables are declared and set to their default or user given values.
@@ -733,10 +736,19 @@ HANDLE_ERROR( cudaMemcpy( d__src, &src,
 			  cudaMemcpyHostToDevice ) );
         
 // Single layer turbulence profile
+
 float altitude[] = {0},
   xi0[] = {1},
   wind_speed[] = {10},
   wind_direction[] = {0};
+
+/*
+// GMT 7 layers turbulence profile
+float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
+              xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
+              wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
+              wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+*/
 // Atmosphere
 atm.setup(r0,30,altitude,xi0,wind_speed,wind_direction);
 //atm.reset();
@@ -958,40 +970,42 @@ fclose(fid);
 
 float *d__phase_screen_low_res;
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*PS_E_N_PX ) );
-atm.get_phase_screen(d__phase_screen_low_res,delta_e,NP,delta_e,NP,d__src,0);
-
 float *phase_screen_low_res;
 phase_screen_low_res = (float*)malloc(sizeof(float)*PS_E_N_PX);
-HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res,
-			  sizeof(float)*PS_E_N_PX,
-			  cudaMemcpyDeviceToHost ) );
+
 char filename[100];
 sprintf(filename,"CVGCE_phaseScreenLowRes_%03d.bin",N_SIDE_LENSLET);
-fid = fopen(filename,"wb");
-fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid);
-fclose(fid);
-
-<<wavefront sensing>>
+FILE *fid_phaseScreenLowRes;
+fid_phaseScreenLowRes = fopen(filename,"wb");
 
 <<linear solver (prep.)>>
 <<MVM (prep.)>>
 
-
 sprintf(filename,"CVGCE_%s_phaseEst_200_%03d.bin",solver,N_SIDE_LENSLET);
-
 fid = fopen(filename,"wb");
+
 phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
+float tau=0;
 // MINRES
 if (strcmp(solver,"MINRES")==0) {
   iSolve.minres_setup(N);
   for (k=1;k<=200;k++) {
 
     printf("\n______ ITERATION #: %03d ______\n",k);
+    
+    tau = 1e-3*(k-1);
+    atm.get_phase_screen(d__phase_screen_low_res,delta_e,NP,delta_e,NP,d__src,tau);
+    HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res,
+			  sizeof(float)*PS_E_N_PX,
+			  cudaMemcpyDeviceToHost ) );
+    fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid_phaseScreenLowRes);
+
+    atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d,d__src,tau);
 
     tid.tic();
 
-    iSolve.minres_vorst(d__x, &aaCov, cog.d__c, 1, d__x);
+    iSolve.minres_vorst(d__x, &aaCov, cog.d__c, 10, d__x);
 
     <<MVM>>
 
@@ -1009,6 +1023,7 @@ if (strcmp(solver,"MINRES")==0) {
   }
 	 }
 
+fclose(fid_phaseScreenLowRes);
 fclose(fid);
 HANDLE_ERROR( cudaFree( d__b ) );
 free(b);

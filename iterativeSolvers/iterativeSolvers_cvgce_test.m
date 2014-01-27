@@ -52,10 +52,10 @@ unix('make iterativeSolvers.bin')
 % clear ceo_imaging
 % mex -largeArrayDims -I../include -L../lib -lceo -o ceo_imaging imaging.mex.cu
 %%
-% fprintf(' ==>>> CG (N=%d)\n',nLenslet)
-% tic
-%unix(sprintf('./a.out %3.1f CG > CVGCE_CG_%03d_%03d.log',D,nIt,nLenslet));
-%toc
+ fprintf(' ==>>> CG (N=%d)\n',nLenslet)
+ tic
+unix(sprintf('./a.out %3.1f CG > CVGCE_CG_%03d_%03d.log',D,nIt,nLenslet));
+toc
 fprintf(' ==>>> MINRES (N=%d)\n',nLenslet)
 tic
 unix(sprintf('./a.out %3.1f MINRES > CVGCE_MINRES_%03d_%03d.log',D,nIt,nLenslet));
