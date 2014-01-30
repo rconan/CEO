@@ -60,6 +60,14 @@ fprintf(' ==>>> MINRES (N=%d)\n',nLenslet)
 tic
 unix(sprintf('./a.out %3.1f MINRES > CVGCE_MINRES_%03d_%03d.log',D,nIt,nLenslet));
 toc
+
+c = loadBin('centroids',[nLenslet,nLenslet*2]);
+subplot(3,4,[9,12])
+imagesc(c)
+axis equal tight
+colorbar('location','north')
+
+end
 %%
 % ps = loadBin('phaseScreen',[nxy,nxy]);
 ps = phase2nm*loadBin(sprintf('CVGCE_phaseScreenLowRes_%03d',nLenslet),[ne,ne]);
@@ -69,12 +77,6 @@ figure(102)
 % imagesc(ps)
 % axis square
 % xlabel(colorbar('location','northOutside'),'[nm]')
-
-c = loadBin('centroids',[nLenslet,nLenslet*2]);
-subplot(3,4,[9,12])
-imagesc(c)
-axis equal tight
-colorbar('location','north')
 
 %ps_e = phase2nm*loadBin('phaseScreenEst',[ne,ne]);
 %ps_e = phase2nm*loadBin(sprintf('CG_phaseEst_%3d_%2d',nIt,nLenslet),[ne*ne,nIt]);
@@ -95,7 +97,6 @@ axis equal tight
 title(sprintf('wfe=%6.2fnm',rms_ps_err(nIt)))
 xlabel(colorbar('location','southOutside'),'[nm]')
 
-end
 %%
 ps = phase2nm*loadBin(sprintf('CVGCE_phaseScreenLowRes_%03d',nLenslet),[ne,ne]);
 ps = ps - mean(ps(:));
@@ -118,5 +119,29 @@ ylabel('WFE [nm]')
 legend('MINRES','CG',0)
 
 drawnow
+
+end
+
+%% MINRES CONVERGENCE
+figure(101)
+for kRun = 1:length(D_)
+    
+D = D_(kRun);
+nLenslet = nLenslet_(kRun);
+
+logdata    = fileread(sprintf('CVGCE_CG_%03d_%03d.log',nIt,nLenslet));
+logexcerpt = regexp(logdata,'[^\n]*Solver residue norm[^\n]*','match');
+res_cg     = cellfun( @(x) str2double(x(33:end)) , logexcerpt);
+
+logdata    = fileread(sprintf('CVGCE_MINRES_%03d_%03d.log',nIt,nLenslet));
+logexcerpt = regexp(logdata,'[^\n]*Solver residue norm[^\n]*','match');
+res_minres = cellfun( @(x) str2double(x(33:end)) , logexcerpt);
+subplot(2,3,kRun)
+loglog(1:nIt,res_minres,'.-',1:nIt,res_cg,'.-')
+grid
+title(sprintf('N=%d',nLenslet))
+xlabel('Iteration #')
+ylabel('WFE [nm]')
+legend('MINRES','CG',0)
 
 end

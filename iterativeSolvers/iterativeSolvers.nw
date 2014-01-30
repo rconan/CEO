@@ -205,13 +205,13 @@ The MINRES iterative solver method is implemented in the next routine:
     eta, delta, rho1, rho2, rho3;
   int k;
   <<MINRES (Vorst) init>>
-  tid.tic();
+      //  tid.tic();
   for (k=0;k<max_it;k++) {
     //printf("MINRES IT=%d - ",k);
     <<MINRES (Vorst) loop>>
   }   
-  tid.toc(&mean_time_per_iteration);
-  mean_time_per_iteration /= max_it;
+  //  tid.toc(&mean_time_per_iteration);
+  //  mean_time_per_iteration /= max_it;
 }
 <<MINRES (Vorst) with residue>>=
   void iterativeSolvers::minres_vorst(float *x, float *res, BTBT* A, float *b, int max_it, float* x0)
@@ -364,7 +364,7 @@ cublasSaxpy(handle, N, &rho1, w_i, 1, x, 1);
 @ \item $\left\| r_i \right\|_2 = \left| \sigma_{i+1} \right|\left\| r_{i-1} \right\|_2 $
 <<MINRES (Vorst) loop>>=
 rnorm = rnorm*fabs(sigma_i);
-//printf("r norm=%6.2E\n",nrm_r);
+//printf("r norm=%6.2E\n",rnorm);
 @ \item $\eta = \sigma_{i+1}\eta$
 <<MINRES (Vorst) loop>>=
 eta = -sigma_i*eta;
@@ -587,7 +587,6 @@ __global__ void fill(float *data, int n_data, float value)
 
 // Solving Ax=b
 int main(int argc,char *argv[]) {
-printf("**<>**\n");  
 <<complete test>>
 }
 @
@@ -675,13 +674,10 @@ This is the comprehensive suite of tests.
 There are 3 tests available: [[[main test]]], [[convergence test]] and [[statistics test]].
 $r_0$ is set to 15cm per default but can be override to any other value after the variable declaration.
 <<complete test>>=
-printf("__ VAR. __\n");
 <<declaration>>
   r0 = d;
-printf("__ INIT __\n");
 <<initialization>>
-printf("__ TEST __\n");
-<<convergence test>>
+<<hot convergence test>>
 <<cleanup and free memory>>
 @ 
 In the following, all the variables are declared and set to their default or user given values.
@@ -736,19 +732,19 @@ HANDLE_ERROR( cudaMemcpy( d__src, &src,
 			  cudaMemcpyHostToDevice ) );
         
 // Single layer turbulence profile
-
+/*
 float altitude[] = {0},
   xi0[] = {1},
   wind_speed[] = {10},
   wind_direction[] = {0};
+*/
 
-/*
 // GMT 7 layers turbulence profile
 float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
               xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
               wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
               wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
-*/
+
 // Atmosphere
 atm.setup(r0,30,altitude,xi0,wind_speed,wind_direction);
 //atm.reset();
@@ -954,6 +950,8 @@ free(b);
 
 The [[hot convergence test]] reconstructs the wavefront with both iterative solver MINRES and CG at each iteration step.
 <<hot convergence test>>=
+FILE *fid;
+  /*
 atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
 
 wf_rms = phase2nm*S.std(d__src->phase, _N_PIXEL_);
@@ -963,10 +961,10 @@ float phase_screen[_N_PIXEL_];
 HANDLE_ERROR( cudaMemcpy( phase_screen, d__src->phase,
 			  sizeof(float)*_N_PIXEL_,
 			  cudaMemcpyDeviceToHost ) );
-FILE *fid;
 fid = fopen("phaseScreen.bin","wb");
 fwrite(phase_screen,sizeof(float),_N_PIXEL_,fid);
 fclose(fid);
+*/
 
 float *d__phase_screen_low_res;
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*PS_E_N_PX ) );
@@ -987,6 +985,9 @@ fid = fopen(filename,"wb");
 phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
 float tau=0;
+int solv_it;
+solv_it = 60;
+
 // MINRES
 if (strcmp(solver,"MINRES")==0) {
   iSolve.minres_setup(N);
@@ -994,26 +995,28 @@ if (strcmp(solver,"MINRES")==0) {
 
     printf("\n______ ITERATION #: %03d ______\n",k);
     
-    tau = 1e-3*(k-1);
+    tau = 2e-3*(k-1);
     atm.get_phase_screen(d__phase_screen_low_res,delta_e,NP,delta_e,NP,d__src,tau);
     HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res,
-			  sizeof(float)*PS_E_N_PX,
-			  cudaMemcpyDeviceToHost ) );
+    			  sizeof(float)*PS_E_N_PX,
+    			  cudaMemcpyDeviceToHost ) );
     fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid_phaseScreenLowRes);
 
     atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d,d__src,tau);
+    /* if (k>10) */
+    /*   solv_it = 0; */
+    
+       tid.tic();
 
-    tid.tic();
-
-    iSolve.minres_vorst(d__x, &aaCov, cog.d__c, 10, d__x);
+    iSolve.minres_vorst(d__x, &aaCov, cog.d__c, solv_it, d__x);
 
     <<MVM>>
 
-    tid.toc("WAVEFRONT ESTIMATION");
+	  tid.toc("WAVEFRONT ESTIMATION");
 
     HANDLE_ERROR( cudaMemcpy( phase_screen_est, d__phase_est,
-			      sizeof(float)*PS_E_N_PX,
-			      cudaMemcpyDeviceToHost ) );
+    			      sizeof(float)*PS_E_N_PX,
+    			      cudaMemcpyDeviceToHost ) );
     fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
 
     printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
@@ -1021,12 +1024,12 @@ if (strcmp(solver,"MINRES")==0) {
     printf("\n-------------------------------\n");
 
   }
-	 }
+ }
 
 fclose(fid_phaseScreenLowRes);
 fclose(fid);
-HANDLE_ERROR( cudaFree( d__b ) );
-free(b);
+//HANDLE_ERROR( cudaFree( d__b ) );
+//free(b);
 @
 \subsubsection{Statistics test}
 \label{sec:statistics-test}
