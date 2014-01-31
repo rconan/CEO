@@ -8,7 +8,7 @@ nIt = 200;
 %rms_ps_err_minres = zeros(nIt,length(D_));
 %rms_ps_minres     = cell(1,length(D_));
 
-for kRun = 5%1:length(D_)
+for kRun = 1:length(D_)
     
 D = D_(kRun);
 
@@ -65,11 +65,15 @@ unix(sprintf('./a.out %3.1f MINRES > STATS_MINRES_%03d_%03d.log',D,nIt,nLenslet)
 toc
 end
 %%
+pup = tools.piston(ne,'type','logical');
+pup = pup(:);
 ps = phase2nm*loadBin(sprintf('STATS_phaseScreenLowRes_%03d',nLenslet),[ne*ne,nIt]);
-rms_ps_minres{kRun} = std(ps,[],2);
-ps = bsxfun( @minus, ps, mean(ps,1) );
+rms_ps_minres{kRun} = std(ps(pup,:),[],2);
+ps = bsxfun( @minus, ps, mean(ps(pup,:),1) );
+ps = bsxfun( @times, pup, ps);
 ps_e = phase2nm*loadBin(sprintf('STATS_MINRES_phaseEst_%03d_%03d',nIt,nLenslet),[ne*ne,nIt]);
-ps_e = bsxfun( @minus, ps_e, mean(ps_e,1) );
+ps_e = bsxfun( @minus, ps_e, mean(ps_e(pup,:),1) );
+ps_e = bsxfun( @times, pup, ps_e);
 ps_err = ps - ps_e;
 rms_ps_err_minres(:,kRun) = std(ps_err);
 % ps_e = phase2nm*loadBin(sprintf('CG_phaseEst_%03d_%03d',nIt,nLenslet),[ne*ne,nIt]);

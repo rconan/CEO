@@ -42,6 +42,7 @@ struct BTBT {
 <<MVM complex multiplication>>
 
 <<MVM output ordering kernel>>
+<<MVM output ordering kernel (masked)>>
 
 <<setup (test)>>
 
@@ -70,6 +71,7 @@ The matrix is entirely defined with $M$, $N$ and $N_T$ and the $(2N_T+1)^2\times
   NDFT = round_up_to_nhp2(NU2);
   HALF_NDFT = NDFT/2 + 1;
   NU_TOTAL = NU2*M*N;
+  mask = NULL;
 
   ind_size = sizeof(int)*NT2;
   cov_size = sizeof(float2)*NU2*N*M;
@@ -213,6 +215,7 @@ void BTBT::cleanup(void)
 The parameters of the [[BTBT]] structure are:
 <<BTBT parameters>>=
 int M, N, NT, NT2, NU, NU2, NDFT, HALF_NDFT, NU_TOTAL, NF, NF2, ind_size, cov_size;
+char *mask;
 float2 *d__cov, *d__b, *d__c;
 float *d__alpha, *d__beta, n_full, n_comp, b_full, b_comp, cov_eval_et;
 unsigned int *d__mu, *d__xi;
@@ -294,7 +297,12 @@ void BTBT::MVM(float *y, float *x)
   /* free(c); */
 /*   tid.toc("STEP 4"); */
 /* tid.tic(); */
+    if (mask==NULL) {
   <<MVM STEP 5: output ordering>>
+	}
+    else {
+	<<MVM STEP 5: output ordering (masked)>>
+	}
   /* tid.toc("STEP 5"); */
 }
 @
@@ -410,6 +418,23 @@ __global__ void mvm_output_order(float *x_out, int n_x_out,
   k = blockIdx.x * blockDim.x + threadIdx.x;
   if (k<n_x_out) {
       x_out[k] = x_in[ind[k]]/n_x_in;		
+  }
+}
+<<MVM STEP 5: output ordering (masked)>>=
+blockDim = dim3(256,1);
+gridDim  = dim3( 1+NT2/256,1);
+for (k=0;k<M;k++) 
+  mvm_output_order_mask LLL gridDim,blockDim RRR (y + k*NT2, NT2, ((float *)d__c) + k*NDFT, NDFT, d__xi, mask);
+@  using the kernel:
+<<MVM output ordering kernel (masked)>>=
+__global__ void mvm_output_order_mask(float *x_out, int n_x_out, 
+                                float *x_in, int n_x_in, 
+                                unsigned int *ind, char *mask) 
+{
+  int k;
+  k = blockIdx.x * blockDim.x + threadIdx.x;
+  if (k<n_x_out) {
+      x_out[k] = (mask[k]>0) ? x_in[ind[k]]/n_x_in : 0;		
   }
 }
 @ \end{enumerate}

@@ -686,6 +686,7 @@ int N = _N_LENSLET_*2, NP, PS_N_PX, PS_E_N_PX, i, j ,k, osf;
 float *d__x, *d__b, *b, *d__ce, *d__phase_est, *phase_screen_est, *x;
 float D, d, delta, delta_e, wf_rms, phase2nm, slopes2Angle, cxy0, r0=0.15;
 int *idx, *d__idx;
+char *d__mask;
 
 if (argc != 3) {
   printf("Usage: %s D CG or MINRES\n",argv[0]);
@@ -766,6 +767,11 @@ aaCov.setup(2,2,N_SIDE_LENSLET,aa.d__cov);
 pa.setup(N_SIDE_LENSLET,osf,&atm,d);
 paCov.setup(1,2,NP,pa.d__cov);
 
+HANDLE_ERROR( cudaMalloc((void**)&d__mask, sizeof(char)*_N_LENSLET_ ) );
+dim3 blockDim_vl(16,16);
+dim3 gridDim_vl(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
+valid_lenslet LLL gridDim_vl,blockDim_vl RRR (d__mask,N_SIDE_LENSLET*_N_PX_PUPIL_,0.5);
+
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
 @ 
 \subsubsection{Main test}
@@ -841,7 +847,6 @@ free(b);
 \subsubsection{Convergence test}
 \label{sec:convergence-test}
 
-
 The [[convergence test]] reconstructs the wavefront with both iterative solver MINRES and CG at each iteration step.
 <<convergence test>>=
 atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
@@ -873,9 +878,10 @@ fid = fopen(filename,"wb");
 fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid);
 fclose(fid);
 
-<<wavefront sensing>>
+<<wavefront sensing (masked)>>
 
 <<linear solver (prep.)>>
+aaCov.mask = d__mask;
 <<MVM (prep.)>>
 
 
@@ -948,7 +954,7 @@ free(b);
 \label{sec:hot-convergence-test}
 
 
-The [[hot convergence test]] reconstructs the wavefront with both iterative solver MINRES and CG at each iteration step.
+The [[hot convergence test]] reconstructs the wavefront with MINRES re-using the previous estimate as starting point for the next one.
 <<hot convergence test>>=
 FILE *fid;
   /*
@@ -977,6 +983,7 @@ FILE *fid_phaseScreenLowRes;
 fid_phaseScreenLowRes = fopen(filename,"wb");
 
 <<linear solver (prep.)>>
+aaCov.mask = d__mask;
 <<MVM (prep.)>>
 
 sprintf(filename,"CVGCE_%s_phaseEst_200_%03d.bin",solver,N_SIDE_LENSLET);
@@ -1002,7 +1009,7 @@ if (strcmp(solver,"MINRES")==0) {
     			  cudaMemcpyDeviceToHost ) );
     fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid_phaseScreenLowRes);
 
-    atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d,d__src,tau);
+    atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d__mask,d,d__src,tau);
     /* if (k>10) */
     /*   solv_it = 0; */
     
@@ -1046,7 +1053,8 @@ HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res,
 			  cudaMemcpyDeviceToHost ) );
 
 <<linear solver (prep.)>>
-<<MVM (prep.)>>
+aaCov.mask = d__mask;
+<<<<MVM (prep.)>>
 
 FILE *fid0, *fid;
 char filename[100];
@@ -1144,6 +1152,7 @@ HANDLE_ERROR( cudaFree( d__idx ) );
 HANDLE_ERROR( cudaFree( d__ce ) );
 HANDLE_ERROR( cudaFree( d__phase_est ) );
 HANDLE_ERROR( cudaFree( d__phase_screen_low_res ) );
+HANDLE_ERROR( cudaFree( d__mask ) );
 free(phase_screen_low_res);
 free(idx);
 free(phase_screen_est);
@@ -1174,11 +1183,14 @@ HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res,
 			  cudaMemcpyDeviceToHost ) );
 fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid0);
 
-<<wavefront sensing (geometric)>>
+<<wavefront sensing (geometric and masked)>>
 @ 
 The wavefront sensing  model is using either a Fourier optics or geometric optics model.
 <<wavefront sensing>>=
 <<wavefront sensing (geometric)>>
+<<save centroids to file>>
+<<wavefront sensing (masked)>>=
+<<wavefront sensing (geometric and masked)>>
 <<save centroids to file>>
 @ 
 <<wavefront sensing (Fourier)>>=
@@ -1188,6 +1200,8 @@ cog.get_data(lenslet_array.d__frame, cxy0, cxy0, slopes2Angle);
 @ 
 <<wavefront sensing (geometric)>>=
 atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d,d__src,0);
+<<wavefront sensing (geometric and masked)>>=
+atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d__mask,d,d__src,0);
 @ 
 <<save centroids to file>>=
 HANDLE_ERROR( cudaMalloc((void**)&d__b, sizeof(float)*N ) );
