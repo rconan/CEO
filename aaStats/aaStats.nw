@@ -34,7 +34,7 @@ struct aaStats {
 
   void MVM(float *y, float *x);
 
-  float variance(float lenslet_pitch, atmosphere* atm, float kappa, float NV);
+  float variance(void);
 
 };
 @  and
@@ -146,7 +146,7 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
   N2 = N*N;
   NU = 2*N-1;
   NU2 = NU*NU;
-  NF = 2048;
+  NF = 4096;
   NF2 = NF*NF;
   kappa = 4;
 
@@ -195,7 +195,7 @@ void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch)
   N2 = N*N;
   NU = 2*N-1;
   NU2 = NU*NU;
-  NF = 2048;
+  NF = 4096;
   NF2 = NF*NF;
   kappa = 4;
 
@@ -422,19 +422,10 @@ aaPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2*3, NF, lenslet_pitch,
 }
 @ From the power spectrum, once can derive the variance:
 <<aaStats variance>>=
-  float aaStats::variance(float lenslet_pitch, atmosphere *atm, float kappa, float NV) {
-dim3 blockDim(16,16);
-dim3 gridDim( 1+NV/16 , 1+NV/16 );
-int NV2 = NV*NV;
-aaPowerSpectrum LLL gridDim,blockDim RRR (d__psd, NV, lenslet_pitch, 
-					atm->wavelength, atm->r0, atm->turbulence.L0,
-					d__alpha, d__alpha, kappa);
-float res;
-cublasHandle_t handle;
-cublasCreate(&handle);
-cublasScasum(handle, NV2, d__psd, 1, &res);
-cublasDestroy(handle);
- return res;
+float aaStats::variance(void) {
+  float res;
+  HANDLE_ERROR( cudaMemcpy( &res, d__cov + (N-1)*(NU+1), sizeof(float), cudaMemcpyDeviceToHost) );
+  return res;
 }
 
 <<paStats power spectrum>>=

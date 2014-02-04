@@ -47,6 +47,8 @@ int round_up_to_nhp2(int n);
 <<tic-toc>>
 
 <<statistics definition>>
+__global__ void circular_pupil(int *pupil, int N);
+__global__ void valid_lenslet(char *mask, int N_pupil, float threshold);
 #endif  // __CEO_H__
 @
 <<ceo.cu>>=
@@ -118,7 +120,12 @@ __global__ void centroiding(float *cx, float *cy, float *flux, const float *fram
       }
   }
 }
-@ 
+<<circular pupil>>
+<<valid lenslet>>
+@
+\subsection{Mapping to lenslet array}
+\label{sec:mapp-lensl-array}
+
 When dealing with lenslet arrays, a thread in a given thread block correspond to a pixel coordinate $[i,j]$ in a given lenslet $[i_l,j_L]$.
 The following function computes the coordinates $[i,j]$ and $[i_l,j_L]$ based on the thread and block index, the block size and the number of pixel per lenslet [[n_px_lenslet]].
 <<threads2lenslet>>=
@@ -256,7 +263,10 @@ where $N_s$ is the number of sources.
   \label{fig:3}
 \end{figure}
 
-In the following, a structure to  chunk of CUDA code is defined:
+\subsection{Stopwatch}
+\label{sec:stopwatch}
+
+In the following, a structure to time a chunk of CUDA code is defined:
 <<tic-toc>>=
 struct stopwatch{
   cudaEvent_t     start, stop;
@@ -303,7 +313,11 @@ struct stopwatch{
     HANDLE_ERROR( cudaEventDestroy( stop ) );
   }
 };
-@ Statistical moment are computed with the structure [[stats]]
+@
+\subsection{Statistics definitions}
+\label{sec:stat-defin}
+
+Statistical moment are computed with the structure [[stats]]
 <<statistics definition>>=
 struct stats {
   cublasHandle_t handle;
@@ -370,3 +384,63 @@ void CUBLAS_ERROR(cublasStatus_t status) {
   else if (status==CUBLAS_STATUS_EXECUTION_FAILED)
     printf("the function failed to launch on the GPU\n");
 }
+
+@ 
+\subsection{Pupil definition}
+\label{sec:pup-def}
+
+In the following, a circular pupil is computed:
+<<circular pupil>>=
+__global__ void circular_pupil(int *pupil, int N)
+{
+  int i, j, k;
+  float h,x,y,r;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = i*N + j;
+  if ( (i<N) && (j<N) ) {
+    h = (float) (N-1)/2;
+    x = i - h;
+    y = j - h;
+    r = x*x + y*y;
+    pupil[k] = (r>N*N/4) ? 0 : 1;
+  }
+}
+@ 
+Next we compute the mask of lenslets mapping the pupil:
+<<valid lenslet>>=
+__global__ void valid_lenslet(char *mask, int N_pupil, float threshold)
+{
+  int i, j, k, n, iL, jL, sum, ai, bi, aj, bj, kL;
+  float h,x,y,r,R;
+  // pixel per lenslet
+  n = N_pupil/N_SIDE_LENSLET;
+  // lenslet index
+  iL = blockIdx.x * blockDim.x + threadIdx.x;
+  jL = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (iL<N_SIDE_LENSLET) & (jL<N_SIDE_LENSLET)) {
+
+    sum = 0;
+    ai = iL*n;
+    bi = (iL+1)*n;
+    aj = jL*n;
+    bj = (jL+1)*n;
+    h = (float) (N_pupil-1)/2;
+    R = N_pupil*N_pupil/4;
+
+    for (i=ai;i<bi;i++) {
+      for (j=aj;j<bj;j++) {
+	x = i - h;
+	y = j - h;
+	r = x*x + y*y;
+    	sum += (r>R) ? 0 : 1;
+      }
+    }
+ 
+    kL = iL*N_SIDE_LENSLET + jL;
+    threshold *= n*n;
+    mask[kL] = (sum>threshold) ? 1 : 0;
+
+  }
+}
+

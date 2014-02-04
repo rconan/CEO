@@ -34,6 +34,7 @@ struct iterativeSolvers {
 
 
   void minres_vorst(float *x, BTBT* A, float *b, int max_it, float* x0);
+  void minres_vorst(float *x, float *res, BTBT* A, float *b, int max_it, float* x0);
 
   void minres_choi(float *x, BTBT* A, float *b, int max_it, float* x0);
 
@@ -57,13 +58,13 @@ struct iterativeSolvers {
 <<Lanczos step>>
 
 <<MINRES (Vorst)>>
-
+<<MINRES (Vorst) with residue>>
 <<MINRES (Choi)>>
 @
 The iterativeSolvers structure gather several routines implementing iterative methods to solve the linear system: $Ax=b$.
 The setup method is allocated the required memory depending of the iterative method type:
-\begin{description}
-\item[CG] 
+\begin{itemize}
+\item
 <<CG setup>>=
 void iterativeSolvers::cg_setup(int n_vector)
 {
@@ -76,7 +77,7 @@ void iterativeSolvers::cg_setup(int n_vector)
   p = d__vectors + 3*N;
   cublasCreate(&handle);
 }
-@  \item[minres] 
+@  \item
 <<MINRES setup>>=
 void iterativeSolvers::minres_setup(int n_vector)
 {
@@ -91,7 +92,7 @@ void iterativeSolvers::minres_setup(int n_vector)
   w_im2  = d__vectors + 5*N;
   cublasCreate(&handle);
 }
-@ \end{description}
+@ \end{itemize}
 @ 
 The structure parameters are
 <<parameters>>=
@@ -114,6 +115,10 @@ void iterativeSolvers::cleanup(void)
   cublasDestroy(handle);
 }
 @ 
+
+\subsection{Conjugate gradient}
+\label{sec:conjugate-gradient}
+
 The next routine implements the conjugate gradient iterative method:
 <<conjugate gradient>>=
   void iterativeSolvers::cg(float *x, BTBT* A, float *b, int max_it, float* x0)
@@ -186,6 +191,12 @@ cublasSaxpy(handle, N, &alpha, r, 1, p, 1);
 @  \end{enumerate}
  \end{itemize}
 
+ \subsection{MINRES}
+ \label{sec:minres}
+
+\subsubsection{Vorst implementation}
+\label{sec:vorst-implementation}
+
 The MINRES iterative solver method is implemented in the next routine:
 <<MINRES (Vorst)>>=
   void iterativeSolvers::minres_vorst(float *x, BTBT* A, float *b, int max_it, float* x0)
@@ -194,13 +205,39 @@ The MINRES iterative solver method is implemented in the next routine:
     eta, delta, rho1, rho2, rho3;
   int k;
   <<MINRES (Vorst) init>>
-  tid.tic();
+      //  tid.tic();
   for (k=0;k<max_it;k++) {
     //printf("MINRES IT=%d - ",k);
     <<MINRES (Vorst) loop>>
   }   
+  //  tid.toc(&mean_time_per_iteration);
+  //  mean_time_per_iteration /= max_it;
+}
+<<MINRES (Vorst) with residue>>=
+  void iterativeSolvers::minres_vorst(float *x, float *res, BTBT* A, float *b, int max_it, float* x0)
+{
+  float alpha, beta, gamma_i, gamma_im1, sigma_i, sigma_im1,
+    eta, delta, rho1, rho2, rho3, res_cst, result;
+  int k;
+  float *residual;
+  HANDLE_ERROR( cudaMalloc( (void**)&residual, sizeof(float)*N ) );
+  <<MINRES (Vorst) init>>
+  tid.tic();
+  for (k=0;k<max_it;k++) {
+    //printf("MINRES IT=%d - ",k);
+    <<MINRES (Vorst) loop>>
+    A->MVM(residual , x);
+    res_cst = -1;
+    cublasSscal(handle, N, &res_cst, residual, 1);
+    res_cst = 1;
+    cublasSaxpy(handle, N, &res_cst, b, 1, residual, 1);
+    cublasSnrm2(handle, N, residual, 1, &result);
+    res[k] = result;
+    printf("(%3d): Residue norm: %.2E\n",k,result);
+  }   
   tid.toc(&mean_time_per_iteration);
   mean_time_per_iteration /= max_it;
+  HANDLE_ERROR( cudaFree( residual) );
 }
 @ 
 The MINRES algorithm is written:
@@ -216,13 +253,15 @@ beta = -1;
 cublasSscal(handle, N, &beta, nu_i, 1);
 alpha = 1;
 cublasSaxpy(handle, N, &alpha, b, 1, nu_i, 1);
-cublasSnrm2(handle, N, b, 1, &beta);
 #ifdef MINRES_DEBUG
+cublasSnrm2(handle, N, b, 1, &beta);
 printf("beta=%.2E\n",beta);
 #endif
 @ \item $\beta_1=\left\| \nu_1 \right\|_2=\left\| r \right\|_2$
 <<MINRES (Vorst) init>>=
-cublasSnrm2(handle, N, nu_i, 1, &beta);
+  //cublasSnrm2(handle, N, nu_i, 1, &beta);
+cublasSdot(handle, N, nu_i, 1, nu_i, 1, &beta);
+beta = sqrtf(beta);
 rnorm = beta;
 #ifdef MINRES_DEBUG
 printf("beta=%.2E\n",beta);
@@ -281,7 +320,9 @@ printf("rho3=%.2E\n",rho3);
 #endif
 @ \item $\beta_{i+1}=\left\| \nu_{i+1} \right\|_2$
 <<MINRES (Vorst) loop>>=
-cublasSnrm2(handle, N, nu_ip1, 1, &beta);
+  //cublasSnrm2(handle, N, nu_ip1, 1, &beta);
+cublasSdot(handle, N, nu_ip1, 1, nu_ip1, 1, &beta);
+beta = sqrtf(beta);
 #ifdef MINRES_DEBUG
 printf("beta=%.2E\n",beta);
 #endif
@@ -323,7 +364,7 @@ cublasSaxpy(handle, N, &rho1, w_i, 1, x, 1);
 @ \item $\left\| r_i \right\|_2 = \left| \sigma_{i+1} \right|\left\| r_{i-1} \right\|_2 $
 <<MINRES (Vorst) loop>>=
 rnorm = rnorm*fabs(sigma_i);
-//printf("r norm=%6.2E\n",nrm_r);
+//printf("r norm=%6.2E\n",rnorm);
 @ \item $\eta = \sigma_{i+1}\eta$
 <<MINRES (Vorst) loop>>=
 eta = -sigma_i*eta;
@@ -347,7 +388,9 @@ if (beta==0) break;
 @  \end{enumerate}
  \end{itemize}
 
-The MINRES iterative solver method is implemented in the next routine:
+ \subsubsection{Choi implementation}
+ \label{sec:choi-implementation}
+
 <<MINRES (Choi)>>=
   void iterativeSolvers::minres_choi(float *x, BTBT* A, float *b, int max_it, float* x0)
 {
@@ -500,8 +543,14 @@ void iterativeSolvers::lanczos_step(float *alpha, float *beta, float *nu_kp1,
 }
 
 @
+\subsection{Tests}
+\label{sec:tests}
+
 The test routine is:
 <<iterativeSolvers.bin>>=
+
+#include "cuda_profiler_api.h"
+
 #ifndef __CEO_H__
 #include "ceo.h"
 #endif
@@ -537,9 +586,7 @@ __global__ void fill(float *data, int n_data, float value)
 }
 
 // Solving Ax=b
-int main( void) {
-
-  
+int main(int argc,char *argv[]) {
 <<complete test>>
 }
 @
@@ -620,14 +667,36 @@ HANDLE_ERROR( cudaFree( d__x ) );
 HANDLE_ERROR( cudaFree( d__b ) );
 free(x);
 @ 
-A more complete test:
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% TEST ZONE
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+This is the comprehensive suite of tests.
+There are 3 tests available: [[[main test]]], [[convergence test]] and [[statistics test]].
+$r_0$ is set to 15cm per default but can be override to any other value after the variable declaration.
 <<complete test>>=
+<<declaration>>
+  r0 = d;
+<<initialization>>
+<<hot convergence test>>
+<<cleanup and free memory>>
+@ 
+In the following, all the variables are declared and set to their default or user given values.
+<<declaration>>=
 int N = _N_LENSLET_*2, NP, PS_N_PX, PS_E_N_PX, i, j ,k, osf;
 float *d__x, *d__b, *b, *d__ce, *d__phase_est, *phase_screen_est, *x;
-float D, d, delta, delta_e, wf_rms, phase2nm, slopes2Angle, cxy0;
+float D, d, delta, delta_e, wf_rms, phase2nm, slopes2Angle, cxy0, r0=0.15;
 int *idx, *d__idx;
+char *d__mask;
 
-D = 8;
+if (argc != 3) {
+  printf("Usage: %s D CG or MINRES\n",argv[0]);
+  return 1;
+ }
+char solver[10];
+sprintf(solver,"%s",argv[2]);
+printf("\n___ SOLVER: %s ___\n",solver);
+
+D = atof(argv[1]);
 d = D/N_SIDE_LENSLET;
 delta = d/_N_PX_PUPIL_;
 osf = 2;
@@ -654,7 +723,9 @@ iterativeSolvers iSolve;
 stats S;
 S.setup();
 stopwatch tid;
-
+@ 
+Then all the components are initialized and the dynamic arrays are allocated.
+<<initialization>>=
 src.setup(ARCSEC(0) , 0, INFINITY);
 HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source)*_N_SOURCE_ ) );
 HANDLE_ERROR( cudaMemcpy( d__src, &src,
@@ -662,12 +733,21 @@ HANDLE_ERROR( cudaMemcpy( d__src, &src,
 			  cudaMemcpyHostToDevice ) );
         
 // Single layer turbulence profile
+/*
 float altitude[] = {0},
   xi0[] = {1},
   wind_speed[] = {10},
   wind_direction[] = {0};
+*/
+
+// GMT 7 layers turbulence profile
+float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
+              xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
+              wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
+              wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+
 // Atmosphere
-atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
+atm.setup(r0,30,altitude,xi0,wind_speed,wind_direction);
 //atm.reset();
 
 phase2nm = 1E9*atm.wavelength/2/PI;
@@ -681,15 +761,24 @@ cog.setup();
 
 // covariances
 aa.setup(N_SIDE_LENSLET,&atm,d);
+printf("\n AA variance [rd^2]: %.3E\n",aa.variance());
 aaCov.setup(2,2,N_SIDE_LENSLET,aa.d__cov);
 
 pa.setup(N_SIDE_LENSLET,osf,&atm,d);
 paCov.setup(1,2,NP,pa.d__cov);
 
-// CG
-//iSolve.cg_setup(N);
-iSolve.minres_setup(N);
+HANDLE_ERROR( cudaMalloc((void**)&d__mask, sizeof(char)*_N_LENSLET_ ) );
+dim3 blockDim_vl(16,16);
+dim3 gridDim_vl(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
+valid_lenslet LLL gridDim_vl,blockDim_vl RRR (d__mask,N_SIDE_LENSLET*_N_PX_PUPIL_,0.5);
 
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
+@ 
+\subsubsection{Main test}
+\label{sec:main-test}
+
+The [[main test]] is simply a wavefront reconstruction routine.
+<<main test>>=
 atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
 
 wf_rms = phase2nm*S.std(d__src->phase, _N_PIXEL_);
@@ -718,26 +807,29 @@ fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid);
 fclose(fid);
 
 <<wavefront sensing>>
+  //atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d,d__src,0);
+
+// Iterative solver
+  //iSolve.cg_setup(N);
+iSolve.minres_setup(N);
 
 <<linear solver (prep.)>>
 <<MVM (prep.)>>
 
 char filename[100];
 /* for (k=1;k<6;k++) { */
-k = 20;
+k = 400;
+
 sprintf(filename,"MINRES_phaseEst_%d.bin",k);
+//sprintf(filename,"CG_phaseEst_%d.bin",k);
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
 
 tid.tic();
 
+//cudaProfilerStart();
 iSolve.minres_vorst(d__x, &aaCov, cog.d__c, k, d__x);
-
-/*
-HANDLE_ERROR( cudaMemcpy( x, d__x, sizeof(float)*N, cudaMemcpyDeviceToHost ) );
-printf("\nx=\n");
-for (int kk=0;kk<N;kk++)
-  printf(" (%2d) %+.2E\n",kk,x[kk]);
-*/
+//iSolve.cg(d__x, &aaCov, cog.d__c, k, d__x);
+//cudaProfilerStop();
 
 <<MVM>>
 
@@ -749,7 +841,302 @@ printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
 printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
 
 /* } */
+HANDLE_ERROR( cudaFree( d__b ) );
+free(b);
+@ 
+\subsubsection{Convergence test}
+\label{sec:convergence-test}
 
+The [[convergence test]] reconstructs the wavefront with both iterative solver MINRES and CG at each iteration step.
+<<convergence test>>=
+atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
+
+wf_rms = phase2nm*S.std(d__src->phase, _N_PIXEL_);
+printf("\n WF RMS: %7.2fnm\n",wf_rms);
+
+float phase_screen[_N_PIXEL_];
+HANDLE_ERROR( cudaMemcpy( phase_screen, d__src->phase,
+			  sizeof(float)*_N_PIXEL_,
+			  cudaMemcpyDeviceToHost ) );
+FILE *fid;
+fid = fopen("phaseScreen.bin","wb");
+fwrite(phase_screen,sizeof(float),_N_PIXEL_,fid);
+fclose(fid);
+
+float *d__phase_screen_low_res;
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*PS_E_N_PX ) );
+atm.get_phase_screen(d__phase_screen_low_res,delta_e,NP,delta_e,NP,d__src,0);
+
+float *phase_screen_low_res;
+phase_screen_low_res = (float*)malloc(sizeof(float)*PS_E_N_PX);
+HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res,
+			  sizeof(float)*PS_E_N_PX,
+			  cudaMemcpyDeviceToHost ) );
+char filename[100];
+sprintf(filename,"CVGCE_phaseScreenLowRes_%03d.bin",N_SIDE_LENSLET);
+fid = fopen(filename,"wb");
+fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid);
+fclose(fid);
+
+<<wavefront sensing (masked)>>
+
+<<linear solver (prep.)>>
+aaCov.mask = d__mask;
+<<MVM (prep.)>>
+
+
+sprintf(filename,"CVGCE_%s_phaseEst_200_%03d.bin",solver,N_SIDE_LENSLET);
+
+fid = fopen(filename,"wb");
+phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
+// CG
+if (strcmp(solver,"CG")==0) {
+  iSolve.cg_setup(N);
+  for (k=1;k<=200;k++) {
+
+    printf("\n______ ITERATION #: %03d ______\n",k);
+
+    HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
+
+    tid.tic();
+
+    iSolve.cg(d__x, &aaCov, cog.d__c, k, d__x);
+    
+    <<MVM>>
+
+    tid.toc("WAVEFRONT ESTIMATION");
+
+    HANDLE_ERROR( cudaMemcpy( phase_screen_est, d__phase_est,
+			      sizeof(float)*PS_E_N_PX,
+			      cudaMemcpyDeviceToHost ) );
+    fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
+
+    printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
+    printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+    printf("\n-------------------------------\n");
+
+  }
+	 }
+// MINRES
+if (strcmp(solver,"MINRES")==0) {
+  iSolve.minres_setup(N);
+  for (k=1;k<=200;k++) {
+
+    printf("\n______ ITERATION #: %03d ______\n",k);
+
+    HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
+
+    tid.tic();
+
+    iSolve.minres_vorst(d__x, &aaCov, cog.d__c, k, d__x);
+
+    <<MVM>>
+
+    tid.toc("WAVEFRONT ESTIMATION");
+
+    HANDLE_ERROR( cudaMemcpy( phase_screen_est, d__phase_est,
+			      sizeof(float)*PS_E_N_PX,
+			      cudaMemcpyDeviceToHost ) );
+    fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
+
+    printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
+    printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+    printf("\n-------------------------------\n");
+
+  }
+	 }
+
+fclose(fid);
+HANDLE_ERROR( cudaFree( d__b ) );
+free(b);
+@ 
+\subsubsection{Hot convergence test}
+\label{sec:hot-convergence-test}
+
+
+The [[hot convergence test]] reconstructs the wavefront with MINRES re-using the previous estimate as starting point for the next one.
+<<hot convergence test>>=
+FILE *fid;
+  /*
+atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
+
+wf_rms = phase2nm*S.std(d__src->phase, _N_PIXEL_);
+printf("\n WF RMS: %7.2fnm\n",wf_rms);
+
+float phase_screen[_N_PIXEL_];
+HANDLE_ERROR( cudaMemcpy( phase_screen, d__src->phase,
+			  sizeof(float)*_N_PIXEL_,
+			  cudaMemcpyDeviceToHost ) );
+fid = fopen("phaseScreen.bin","wb");
+fwrite(phase_screen,sizeof(float),_N_PIXEL_,fid);
+fclose(fid);
+*/
+
+float *d__phase_screen_low_res;
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*PS_E_N_PX ) );
+float *phase_screen_low_res;
+phase_screen_low_res = (float*)malloc(sizeof(float)*PS_E_N_PX);
+
+char filename[100];
+sprintf(filename,"CVGCE_phaseScreenLowRes_%03d.bin",N_SIDE_LENSLET);
+FILE *fid_phaseScreenLowRes;
+fid_phaseScreenLowRes = fopen(filename,"wb");
+
+<<linear solver (prep.)>>
+aaCov.mask = d__mask;
+<<MVM (prep.)>>
+
+sprintf(filename,"CVGCE_%s_phaseEst_200_%03d.bin",solver,N_SIDE_LENSLET);
+fid = fopen(filename,"wb");
+
+phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
+HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
+float tau=0;
+int solv_it;
+solv_it = 60;
+
+// MINRES
+if (strcmp(solver,"MINRES")==0) {
+  iSolve.minres_setup(N);
+  for (k=1;k<=200;k++) {
+
+    printf("\n______ ITERATION #: %03d ______\n",k);
+    
+    tau = 2e-3*(k-1);
+    atm.get_phase_screen(d__phase_screen_low_res,delta_e,NP,delta_e,NP,d__src,tau);
+    HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res,
+    			  sizeof(float)*PS_E_N_PX,
+    			  cudaMemcpyDeviceToHost ) );
+    fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid_phaseScreenLowRes);
+
+    atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d__mask,d,d__src,tau);
+    /* if (k>10) */
+    /*   solv_it = 0; */
+    
+       tid.tic();
+
+    iSolve.minres_vorst(d__x, &aaCov, cog.d__c, solv_it, d__x);
+
+    <<MVM>>
+
+	  tid.toc("WAVEFRONT ESTIMATION");
+
+    HANDLE_ERROR( cudaMemcpy( phase_screen_est, d__phase_est,
+    			      sizeof(float)*PS_E_N_PX,
+    			      cudaMemcpyDeviceToHost ) );
+    fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
+
+    printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
+    printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+    printf("\n-------------------------------\n");
+
+  }
+ }
+
+fclose(fid_phaseScreenLowRes);
+fclose(fid);
+//HANDLE_ERROR( cudaFree( d__b ) );
+//free(b);
+@
+\subsubsection{Statistics test}
+\label{sec:statistics-test}
+
+The [[statistics test]] reconstructs the wavefront n times, each time a new statistically independent phase screen is generated.
+<<statistics test>>=
+float *d__phase_screen_low_res;
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*PS_E_N_PX ) );
+
+float *phase_screen_low_res;
+phase_screen_low_res = (float*)malloc(sizeof(float)*PS_E_N_PX);
+HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res,
+			  sizeof(float)*PS_E_N_PX,
+			  cudaMemcpyDeviceToHost ) );
+
+<<linear solver (prep.)>>
+aaCov.mask = d__mask;
+<<<<MVM (prep.)>>
+
+FILE *fid0, *fid;
+char filename[100];
+sprintf(filename,"STATS_phaseScreenLowRes_%03d.bin",N_SIDE_LENSLET);
+fid0 = fopen(filename,"wb");
+
+int nSample = 200, nIt = 200;
+sprintf(filename,"STATS_%s_phaseEst_%03d_%03d.bin",solver,nSample,N_SIDE_LENSLET);
+fid = fopen(filename,"wb");
+
+phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
+// CG
+if (strcmp(solver,"CG")==0) {
+  iSolve.cg_setup(N);
+  for (k=1;k<=nSample;k++) {
+
+    printf("\n______ ITERATION #: %03d ______\n",k);
+
+    <<atmosphere propagation and wavefront sensing>>
+
+    HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
+
+    tid.tic();
+
+    iSolve.cg(d__x, &aaCov, cog.d__c, nIt, d__x);
+    
+    <<MVM>>
+
+    tid.toc("WAVEFRONT ESTIMATION");
+
+    HANDLE_ERROR( cudaMemcpy( phase_screen_est, d__phase_est,
+    			      sizeof(float)*PS_E_N_PX,
+    			      cudaMemcpyDeviceToHost ) );
+    fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
+
+    printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
+    printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+    printf("\n-------------------------------\n");
+
+    atm.reset();
+  }
+	 }
+// MINRES
+if (strcmp(solver,"MINRES")==0) {
+  iSolve.minres_setup(N);
+  for (k=1;k<=nSample;k++) {
+
+    printf("\n______ ITERATION #: %03d ______\n",k);
+
+    <<atmosphere propagation and wavefront sensing>>
+
+    HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
+
+    tid.tic();
+
+    iSolve.minres_vorst(d__x, &aaCov, cog.d__c, nIt, d__x);
+
+    <<MVM>>
+
+    tid.toc("WAVEFRONT ESTIMATION");
+
+    HANDLE_ERROR( cudaMemcpy( phase_screen_est, d__phase_est,
+			      sizeof(float)*PS_E_N_PX,
+			      cudaMemcpyDeviceToHost ) );
+    HANDLE_ERROR( cudaThreadSynchronize() );
+    fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
+    printf("\n Data saved to file!\n");
+
+    printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
+    printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+    printf("\n-------------------------------\n");
+
+    atm.reset();
+  }
+	 }
+
+fclose(fid0);
+fclose(fid);
+@ 
+This is the place where we terminate the test elegantly.
+<<cleanup and free memory>>=
 HANDLE_ERROR( cudaFree( d__src) );
 atm.cleanup();
 lenslet_array.cleanup();
@@ -761,13 +1148,12 @@ paCov.cleanup();
 iSolve.cleanup();
 S.cleanup();
 HANDLE_ERROR( cudaFree( d__x ) );
-HANDLE_ERROR( cudaFree( d__b ) );
 HANDLE_ERROR( cudaFree( d__idx ) );
 HANDLE_ERROR( cudaFree( d__ce ) );
 HANDLE_ERROR( cudaFree( d__phase_est ) );
 HANDLE_ERROR( cudaFree( d__phase_screen_low_res ) );
+HANDLE_ERROR( cudaFree( d__mask ) );
 free(phase_screen_low_res);
-free(b);
 free(idx);
 free(phase_screen_est);
 free(x);
@@ -784,27 +1170,52 @@ __global__ void set_pa_input(float *pa_c, float *aa_c, int *idx, int N)
   }
 }
 @ 
+This is a chunk of code for the [[statistics]] test routine:
+<<atmosphere propagation and wavefront sensing>>=
+/* atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0); */
+/* wf_rms = phase2nm*S.std(d__src->phase, _N_PIXEL_); */
+/* printf("\n WF RMS: %7.2fnm\n",wf_rms); */
+
+atm.get_phase_screen(d__phase_screen_low_res,delta_e,NP,delta_e,NP,d__src,0);
+
+HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res,
+			  sizeof(float)*PS_E_N_PX,
+			  cudaMemcpyDeviceToHost ) );
+fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid0);
+
+<<wavefront sensing (geometric and masked)>>
+@ 
+The wavefront sensing  model is using either a Fourier optics or geometric optics model.
 <<wavefront sensing>>=
+<<wavefront sensing (geometric)>>
+<<save centroids to file>>
+<<wavefront sensing (masked)>>=
+<<wavefront sensing (geometric and masked)>>
+<<save centroids to file>>
+@ 
+<<wavefront sensing (Fourier)>>=
 lenslet_array.propagate(d__src);
 cxy0 = (_N_PX_PUPIL_ - 1)/2.0;
 cog.get_data(lenslet_array.d__frame, cxy0, cxy0, slopes2Angle);
+@ 
+<<wavefront sensing (geometric)>>=
+atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d,d__src,0);
+<<wavefront sensing (geometric and masked)>>=
+atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d__mask,d,d__src,0);
+@ 
+<<save centroids to file>>=
 HANDLE_ERROR( cudaMalloc((void**)&d__b, sizeof(float)*N ) );
-HANDLE_ERROR( cudaMemcpy( d__b              , cog.d__cx,  
-			  _N_LENSLET_*sizeof(float), cudaMemcpyDeviceToDevice) );
-HANDLE_ERROR( cudaMemcpy( d__b + _N_LENSLET_, cog.d__cy,  
-			  _N_LENSLET_*sizeof(float), cudaMemcpyDeviceToDevice) );
+HANDLE_ERROR( cudaMemcpy( d__b              , cog.d__c,  
+			  N*sizeof(float), cudaMemcpyDeviceToDevice) );
 b = (float *)malloc(sizeof(float)*N);
 HANDLE_ERROR( cudaMemcpy( b, d__b,
 			  sizeof(float)*N,
 			  cudaMemcpyDeviceToHost ) );
-/* printf("\n   Cx       Cy\n"); */
-/* for (k=0;k<_N_LENSLET_;k++) { */
-/*   printf("%+6.4E  %+6.4E\n",b[k],b[k+_N_LENSLET_]); */
-/* } */
 fid = fopen("centroids.bin","wb");
 fwrite(b,sizeof(float),N,fid);
 fclose(fid);
 @ 
+The index of the WFS slopes in the augmented input vector of the MVM operation are computed next:
 <<linear solver (prep.)>>=
 idx = (int *)malloc(sizeof(int)*_N_LENSLET_);
 k = -1;
@@ -823,24 +1234,28 @@ HANDLE_ERROR( cudaMemcpy( d__idx, idx,
 HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
 x = (float*)malloc(sizeof(float)*N);
 @ 
+CG iterative solver call:
 <<linear solver (conjugate gradient)>>=
 iSolve.cg(d__x, &aaCov, d__b, 5, d__x);
 @ 
+MINRES iterative solver call:
 <<linear solver (MINRES)>>=
 iSolve.minres(d__x, &aaCov, d__b, 5, d__x);
 @ 
+Allocation of the input vector for the MVM:
 <<MVM (prep.)>>=
 HANDLE_ERROR( cudaMalloc((void**)&d__ce, sizeof(float)*PS_E_N_PX*2 ) );
 HANDLE_ERROR( cudaMemset(d__ce, 0, sizeof(float)*PS_E_N_PX*2 ) );
-HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
 dim3 blockDim(16,16);
 dim3 gridDim(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
 @ 
+Writing the input of the iterative solver into the output of the MVM:
 <<MVM>>=
 set_pa_input LLL gridDim,blockDim RRR (d__ce, d__x, d__idx, N_SIDE_LENSLET);
 set_pa_input LLL gridDim,blockDim RRR (d__ce + PS_E_N_PX, d__x + _N_LENSLET_, d__idx, N_SIDE_LENSLET);
 paCov.MVM(d__phase_est,d__ce);
 @ 
+Saving the MVM wavefront estimate to a file:
 <<MVM (wrap.)>>=
 phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
 HANDLE_ERROR( cudaMemcpy( phase_screen_est, d__phase_est,
@@ -850,3 +1265,4 @@ fid = fopen(filename,"wb");
 //fid = fopen("phaseScreenEst.bin","wb");
 fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
 fclose(fid);
+@ 

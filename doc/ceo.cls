@@ -4,12 +4,8 @@
 
 \RequirePackage{ifthen}
 \RequirePackage[dvips]{graphicx}
-\RequirePackage{color}
-\usepackage{amsmath,amssymb}
-\usepackage{lastpage}
-\usepackage{booktabs}
-\usepackage{xspace}
-\usepackage{tikz}
+\RequirePackage{color,amsmath,amssymb,lastpage,booktabs,xspace}
+\RequirePackage{tikz}
 \DeclareOption*{\PassOptionsToClass{\CurrentOption}{article}}
 \ProcessOptions
 \LoadClass[twoside,a4paper,10pt]{article}
@@ -77,11 +73,11 @@
 %   \end{tabular}
 % }
 
-\addtolength{\hoffset}{-0.5cm} 
-\addtolength{\textwidth}{3cm}
-\addtolength{\headheight}{5mm}
-\addtolength{\evensidemargin}{-2cm}
-\addtolength{\oddsidemargin}{-1cm}
+% \addtolength{\hoffset}{-0.5cm} 
+% \addtolength{\textwidth}{3cm}
+% \addtolength{\headheight}{5mm}
+% \addtolength{\evensidemargin}{-2cm}
+% \addtolength{\oddsidemargin}{-1cm}
 
  % \renewcommand\maketitle{%
 % % 
