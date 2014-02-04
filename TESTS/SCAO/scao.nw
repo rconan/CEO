@@ -1,0 +1,238 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+
+\section{Single Conjugated Adaptive Optics System}
+\label{sec:single-conj-adapt}
+
+This is a collection of programs dealing with NGS and LGS single--conjugated AO systems. 
+All programs must include the following headers which also contains the headers for all the CEO library modules.
+<<main header>>=
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+#ifndef __SOURCE_H__
+#include "source.h"
+#endif
+#ifndef __ATMOSPHERE_H__
+#include "atmosphere.h"
+#endif
+#ifndef __IMAGING_H__
+#include "imaging.h"
+#endif
+#ifndef __CENTROIDING_H__
+#include "centroiding.h"
+#endif
+#ifndef __AASTATS_H__
+#include "aaStats.h"
+#endif
+#ifndef __BTBT_H__
+#include "BTBT.h"
+#endif
+#include "iterativeSolvers.h"
+@
+And the main function of each program is:
+<<scao.bin>>=
+<<PA input>>
+<<main header>>
+int main(int argc,char *argv[]) {
+<<setup>>
+<<wavefront>>
+<<wavefront reconstruction>>
+<<saving to files>>
+<<cleanup>>
+}
+
+@
+\subsection{Setting--up}
+\label{sec:setting-up}
+
+Lets define the source first:
+<<setup>>=
+source src, *d__src;
+src.setup(ARCSEC(0) , 0, INFINITY);
+HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source)*_N_SOURCE_ ) );
+HANDLE_ERROR( cudaMemcpy( d__src, &src,
+			  sizeof(source)*_N_SOURCE_ ,
+			  cudaMemcpyHostToDevice ) );
+@ and then one de--allocated the source on the device:
+<<cleanup>>=
+HANDLE_ERROR( cudaFree( d__src) );
+@ The atmosphere is now defined:
+<<setup>>=
+atmosphere atm;
+float altitude[] = {10e3},
+  xi0[] = {1},
+  wind_speed[] = {10},
+  wind_direction[] = {0};
+atm.setup(20e-2,30,altitude,xi0,wind_speed,wind_direction);
+@ cleared:
+<<cleanup>>=
+atm.cleanup();
+@ The wavefront sensor centroid container is defined:
+<<setup>>=
+centroiding cog;
+cog.setup();
+<<cleanup>>=
+cog.cleanup();
+@ The diameter of the telescope is set to:
+<<setup>>=
+float D = 8; // telescope diameter in meter
+@ leading to a lenslet size of:
+<<setup>>=
+float d = D/N_SIDE_LENSLET;
+@ The covariances are computed next:
+\begin{itemize}
+\item the slopes covariance
+<<setup>>=
+aaStats aa;
+aa.setup(N_SIDE_LENSLET,&atm,d);
+printf("\n AA variance [rd^2]: %.3E\n",aa.variance());
+<<cleanup>>=
+aa.cleanup();
+@ \item the phase and slope covariance
+<<setup>>=
+paStats pa;
+pa.setup(N_SIDE_LENSLET,2,&atm,d);
+<<cleanup>>=
+pa.cleanup();
+@ \end{itemize}
+From the covariance, the block matrix with recursive Toeplitx block are created:
+\begin{itemize}
+\item the slopes covariance matrix
+<<setup>>=
+BTBT aaCov;
+aaCov.setup(2,2,N_SIDE_LENSLET,aa.d__cov);
+<<cleanup>>=
+aaCov.cleanup();
+@ \item the phase and slope covariance matrix
+<<setup>>=
+BTBT paCov;
+int NP = 2*N_SIDE_LENSLET+1;
+paCov.setup(1,2,NP,pa.d__cov);
+<<cleanup>>=
+paCov.cleanup();
+@ \end{itemize}
+The iterative solver is called:
+<<setup>>=
+iterativeSolvers iSolve;
+<<cleanup>>=
+  //iSolve.cleanup();
+@  Finally we setup the statistical tool:
+<<setup>>=
+stats S;
+S.setup();
+<<cleanup>>=
+S.cleanup();
+@
+\subsection{Turbulence wavefront}
+\label{sec:turbulence-wavefront}
+
+Lets compute the wavefront propagated through the atmosphere from [[src]]
+<<wavefront>>=
+float *d__phase_screen_low_res;
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*NP*NP ) );
+float delta_e = d/2;
+atm.get_phase_screen(d__phase_screen_low_res,delta_e,NP,delta_e,NP,d__src,0);
+float phase2nm = 1E9*atm.wavelength/2/PI;
+float wf_rms = phase2nm*S.std(d__phase_screen_low_res, _N_PIXEL_);
+printf("\n WF RMS: %7.2fnm\n",wf_rms);
+<<cleanup>>=
+cudaFree(d__phase_screen_low_res);
+@  We also compute the wavefront gradient:
+<<wavefront>>=
+atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d,d__src,0);
+@ The wavefront is written to the disk
+<<saving to files>>=
+float *phase_screen_low_res;
+phase_screen_low_res = (float*)malloc(sizeof(float)*NP*NP);
+HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res,
+			  sizeof(float)*NP*NP,
+			  cudaMemcpyDeviceToHost ) );
+FILE *fid;
+fid = fopen("phaseScreenLowRes.bin","wb");
+fwrite(phase_screen_low_res,sizeof(float),NP*NP,fid);
+fclose(fid);
+<<cleanup>>=
+free(phase_screen_low_res);
+@
+\subsection{Wavefront reconstruction}
+\label{sec:wavefr-reconstr}
+
+<<wavefront reconstruction>>=
+<<linear solver (prep.)>>
+<<MVM (prep.)>>
+float  *d__phase_est;
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*NP*NP ) );
+
+
+HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*_N_LENSLET_*2 ) );
+iSolve.minres_setup(_N_LENSLET_*2);
+iSolve.minres_vorst(d__x, &aaCov, cog.d__c, 100, d__x);
+
+set_pa_input LLL gridDim,blockDim RRR (d__ce, d__x, d__idx, N_SIDE_LENSLET);
+set_pa_input LLL gridDim,blockDim RRR (d__ce + NP*NP , d__x + _N_LENSLET_, d__idx, N_SIDE_LENSLET);
+paCov.MVM(d__phase_est,d__ce);
+wf_rms = phase2nm*S.std(d__phase_est, _N_PIXEL_);
+printf("\n WF RMS: %7.2fnm\n",wf_rms);
+
+<<saving to files>>=
+HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_est,
+			  sizeof(float)*NP*NP,
+			  cudaMemcpyDeviceToHost ) );
+fid = fopen("phaseEst.bin","wb");
+fwrite(phase_screen_low_res,sizeof(float),NP*NP,fid);
+fclose(fid);
+
+<<cleanup>>=
+cudaFree(d__phase_est);
+
+<<linear solver (prep.)>>=
+int *idx;
+idx = (int *)malloc(sizeof(int)*_N_LENSLET_);
+int k = -1;
+//printf("\n k   idx\n");
+for (int i=1;i<2*N_SIDE_LENSLET;i+=2) {
+  for (int j=1;j<2*N_SIDE_LENSLET;j+=2) {
+    idx[++k] = i*(2*N_SIDE_LENSLET + 1) + j;
+    //printf("(%2d) %2d\n",k,idx[k]);
+  }
+ }
+int *d__idx;
+HANDLE_ERROR( cudaMalloc( (void**)&d__idx, sizeof(int)*_N_LENSLET_ ) );
+HANDLE_ERROR( cudaMemcpy( d__idx, idx,
+			  sizeof(int)*_N_LENSLET_,
+			  cudaMemcpyHostToDevice ) );
+
+float *d__x;
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*_N_LENSLET_*2 ) );
+//x = (float*)malloc(sizeof(float)*N);
+<<cleanup>>=
+free(idx);
+cudaFree(d__idx);
+cudaFree(d__x);
+
+<<MVM (prep.)>>=
+float *d__ce;
+HANDLE_ERROR( cudaMalloc((void**)&d__ce, sizeof(float)*NP*NP*2 ) );
+HANDLE_ERROR( cudaMemset(d__ce, 0, sizeof(float)*NP*NP*2 ) );
+dim3 blockDim(16,16);
+dim3 gridDim(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
+<<cleanup>>=
+cudaFree(d__ce);
+
+<<PA input>>=
+__global__ void set_pa_input(float *pa_c, float *aa_c, int *idx, int N) 
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<N) && (j<N) ) {
+    k = i*N + j;
+    pa_c[idx[k]] = aa_c[k];
+  }
+}
+@ Wavefront reconstruction using LMMSE structure
+<<wavefront reconstruction with LMMSE>>=
+LMMSE lmmse;
+lmmse.setup(&atm,d,_N_LENSLET_*2,"MINRES");
+  lmmse.estimation(cog.d__c, 100, d__x);
+lmmse.cleanup();
