@@ -30,13 +30,16 @@ struct LMMSE {
 
   void cleanup(void);
 
-  void estimation(float* d__c, int nMaxIteration, float *d__x);
+  void estimation(float* d__c, int nMaxIteration, float *d__x0);
+  void estimation(float* d__c, int nMaxIteration);
 
 };
 #endif // __LMMSE_H__
 @ The routines are expanded in the source:
 <<LMMSE.cu>>=
+#ifndef __LMMSE_H__
 #include "LMMSE.h"
+#endif
 
 <<PA input>>
 
@@ -44,10 +47,11 @@ struct LMMSE {
 
 <<cleanup>>
 
-<<wavefront estimation>>
+  <<wavefront estimation (I)>>
+  <<wavefront estimation (II)>>
 
 @
-The LMMSE structure gather several routines implementing iterative methods to reconstruct the wavefront from Shack--Hartmann wavefront senor data.
+The LMMSE structure gather several routines implementing iterative methods to reconstruct the wavefront from Shack--Hartmann wavefront sensor data.
 The setup method is initializing the required structures:
 <<setup>>=
   void LMMSE::setup(atmosphere *atm,float sampling,int N, char *solver_id)
@@ -67,12 +71,14 @@ The setup method is initializing the required structures:
     iSolve.minres_setup(N);
 <<linear solver (prep.)>>
 <<MVM (prep.)>>
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* _N_LENSLET_*2 ) );
+HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* _N_LENSLET_*2 ) );
 }
 @ 
 The structure parameters are
 <<parameters>>=
 int *d__idx, PS_E_N_PX;
-float *d__ce, *d__phase_est;
+float *d__ce, *d__phase_est, *d__x;
 aaStats aa;
 BTBT aaCov;
 paStats pa;
@@ -93,6 +99,7 @@ void LMMSE::cleanup(void)
   HANDLE_ERROR( cudaFree( d__idx ) );
   HANDLE_ERROR( cudaFree( d__ce ) );
   HANDLE_ERROR( cudaFree( d__phase_est ) );
+  HANDLE_ERROR( cudaFree(d__x) );
 }
 @ 
 <<PA input>>=
@@ -107,8 +114,24 @@ __global__ void set_pa_input(float *pa_c, float *aa_c, int *idx, int N)
   }
 }
 @ 
-<<wavefront estimation>>=
-  void LMMSE::estimation(float* d__c, int nMaxIteration, float *d__x)
+<<wavefront estimation (I)>>=
+  void LMMSE::estimation(float* d__c, int nMaxIteration, float *d__x0)
+{
+
+tid.tic();
+
+iSolve.minres_vorst(d__x, &aaCov, d__c, nMaxIteration, d__x0);
+
+<<MVM>>
+
+tid.toc("WAVEFRONT ESTIMATION");
+
+
+printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
+printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+}
+<<wavefront estimation (II)>>=
+  void LMMSE::estimation(float* d__c, int nMaxIteration)
 {
 
 tid.tic();
