@@ -49,10 +49,15 @@ int round_up_to_nhp2(int n);
 <<statistics definition>>
 __global__ void circular_pupil(int *pupil, int N);
 __global__ void valid_lenslet(char *mask, int N_pupil, float threshold);
+
+void dev2file(char* filename, float* d__data, int n_data);
+
 #endif  // __CEO_H__
 @
 <<ceo.cu>>=
+#ifndef __CEO_H__
 #include "ceo.h"
+#endif
 
 int round_up_to_nhp2(int n) {
   int v; // compute the next highest power of 2 of 32-bit v
@@ -122,6 +127,7 @@ __global__ void centroiding(float *cx, float *cy, float *flux, const float *fram
 }
 <<circular pupil>>
 <<valid lenslet>>
+<<device to file>>
 @
 \subsection{Mapping to lenslet array}
 \label{sec:mapp-lensl-array}
@@ -411,7 +417,7 @@ Next we compute the mask of lenslets mapping the pupil:
 <<valid lenslet>>=
 __global__ void valid_lenslet(char *mask, int N_pupil, float threshold)
 {
-  int i, j, k, n, iL, jL, sum, ai, bi, aj, bj, kL;
+  int i, j, n, iL, jL, sum, ai, bi, aj, bj, kL;
   float h,x,y,r,R;
   // pixel per lenslet
   n = N_pupil/N_SIDE_LENSLET;
@@ -444,3 +450,22 @@ __global__ void valid_lenslet(char *mask, int N_pupil, float threshold)
   }
 }
 
+
+@
+\subsection{Input/Output}
+\label{sec:inputoutput}
+
+The next routine write data on the device into a file
+<<device to file>>=
+void dev2file(char* filename, float* d__data, int n_data) {
+  float *data;
+  data = (float*)malloc(sizeof(float)*n_data);
+  HANDLE_ERROR( cudaMemcpy( data, d__data,
+			  sizeof(float)*n_data,
+			  cudaMemcpyDeviceToHost ) );
+  FILE *fid;
+  fid = fopen(filename,"wb");
+  fwrite(data,sizeof(float),n_data,fid);
+  fclose(fid);
+  free(data);
+}

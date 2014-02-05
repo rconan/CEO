@@ -49,7 +49,9 @@ int main(int argc,char *argv[]) {
 \subsection{Setting--up}
 \label{sec:setting-up}
 
-Lets define the source first:
+Lets define the sources first:
+\begin{itemize}
+\item the science source,
 <<setup>>=
 source src, *d__src;
 src.setup(ARCSEC(0) , 0, INFINITY);
@@ -57,9 +59,21 @@ HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source)*_N_SOURCE_ ) );
 HANDLE_ERROR( cudaMemcpy( d__src, &src,
 			  sizeof(source)*_N_SOURCE_ ,
 			  cudaMemcpyHostToDevice ) );
-@ and then one de--allocates the source on the device:
 <<cleanup>>=
 HANDLE_ERROR( cudaFree( d__src) );
+@ The atmosphere is now defined:
+@ \item the wavefront sensor source
+<<setup>>=
+source wfs_src, *d__wfs_src;
+wfs_src.setup(ARCSEC(0) , 0, INFINITY);
+HANDLE_ERROR( cudaMalloc( (void**)&d__wfs_src, sizeof(source)*_N_SOURCE_ ) );
+HANDLE_ERROR( cudaMemcpy( d__wfs_src, &wfs_src,
+			  sizeof(source)*_N_SOURCE_ ,
+			  cudaMemcpyHostToDevice ) );
+<<cleanup>>=
+HANDLE_ERROR( cudaFree( d__wfs_src) );
+@ \end{itemize}
+
 @ The atmosphere is now defined:
 <<setup>>=
 atmosphere atm;
@@ -68,7 +82,7 @@ float altitude[] = {10e3},
   wind_speed[] = {10},
   wind_direction[] = {0};
 atm.setup(20e-2,30,altitude,xi0,wind_speed,wind_direction);
-@ cleared:
+@ and cleared:
 <<cleanup>>=
 atm.cleanup();
 @ The wavefront sensor centroid container is defined:
@@ -83,7 +97,7 @@ float D = 8; // telescope diameter in meter
 @ leading to a lenslet size of:
 <<setup>>=
 float d = D/N_SIDE_LENSLET;
-@  The linear minimum mean square error wavefront reconstructor is initialized and destroyed with
+@  The linear minimum mean square error wavefront reconstructor is initialized with the atmosphere, the lenslet array pitch, the number of slopes and the iterative solver type and destroyed with
 <<setup>>=
 LMMSE lmmse;
 lmmse.setup(&atm,d,_N_LENSLET_*2,"MINRES");
@@ -101,34 +115,20 @@ S.cleanup();
 
 Lets compute the wavefront propagated through the atmosphere from [[src]]
 <<wavefront>>=
-float *d__phase_screen_low_res;
 int NP, NP2;
 NP = 2*N_SIDE_LENSLET+1;
 NP2 = NP*NP;
-HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*NP2 ) );
 float delta_e = d/2;
-atm.get_phase_screen(d__phase_screen_low_res,delta_e,NP,delta_e,NP,d__src,0);
+atm.get_phase_screen(d__src->phase,delta_e,NP,delta_e,NP,d__src,0);
 float phase2nm = 1E9*atm.wavelength/2/PI;
-float wf_rms = phase2nm*S.std(d__phase_screen_low_res, NP2);
+float wf_rms = phase2nm*S.std(d__src->phase, NP2);
 printf("\n WF RMS: %7.2fnm\n",wf_rms);
-<<cleanup>>=
-cudaFree(d__phase_screen_low_res);
 @  We also compute the wavefront gradient:
 <<wavefront>>=
-atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d,d__src,0);
+atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d,d__wfs_src,0);
 @ The wavefront is written to the disk
 <<saving to files>>=
-float *phase_screen_low_res;
-phase_screen_low_res = (float*)malloc(sizeof(float)*NP2);
-HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res,
-			  sizeof(float)*NP2,
-			  cudaMemcpyDeviceToHost ) );
-FILE *fid;
-fid = fopen("phaseScreenLowRes.bin","wb");
-fwrite(phase_screen_low_res,sizeof(float),NP2,fid);
-fclose(fid);
-<<cleanup>>=
-free(phase_screen_low_res);
+dev2file("phaseScreenLowRes.bin", d__src->phase, NP2);
 @
 \subsection{Wavefront reconstruction}
 \label{sec:wavefr-reconstr}
@@ -138,9 +138,4 @@ lmmse.estimation(cog.d__c, 100);
 wf_rms = phase2nm*S.std(lmmse.d__phase_est, NP2);
 printf("\n WF RMS: %7.2fnm\n",wf_rms);
 <<saving to files>>=
-HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, lmmse.d__phase_est,
-			  sizeof(float)*NP2,
-			  cudaMemcpyDeviceToHost ) );
-fid = fopen("phaseEst.bin","wb");
-fwrite(phase_screen_low_res,sizeof(float),NP2,fid);
-fclose(fid);
+dev2file("phaseEst.bin", lmmse.d__phase_est, NP2);
