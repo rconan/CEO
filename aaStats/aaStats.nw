@@ -27,6 +27,7 @@ struct aaStats {
   <<aaStats parameters>>
 
   void setup(int N, atmosphere *atm, float lenslet_pitch);
+  void setup(int N, atmosphere *atm, float lenslet_pitch, float source_height);
 
   void cleanup(void);
 
@@ -44,6 +45,7 @@ struct paStats {
   <<paStats parameters>>
 
   void setup(int N, int osf, atmosphere *atm, float lenslet_pitch);
+  void setup(int N, int osf, atmosphere *atm, float lenslet_pitch, float source_height);
 
   void cleanup(void);
 
@@ -67,12 +69,16 @@ struct paStats {
 <<phase power spectrum>>
 
 <<aaStats power spectrum kernel>>
+<<aaStats power spectrum kernel with source height>>
 <<paStats power spectrum kernel>>
+<<paStats power spectrum kernel with source height>>
 
 <<covariance extraction>>
 
 <<aaStats setup>>
+<<aaStats setup with source height>>
 <<paStats setup>>
+<<paStats setup with source height>>
 
 <<aaStats cleanup>>
 <<paStats cleanup>>
@@ -141,100 +147,122 @@ The covariance is computed when the setup function is called with the size of a 
 <<aaStats setup>>=
 void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
 {
-  float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
-  N = N_;
-  N2 = N*N;
-  NU = 2*N-1;
-  NU2 = NU*NU;
-  NF = 4096;
-  NF2 = NF*NF;
-  kappa = 4;
-
-  psd_size = sizeof(float2)*NF2*4;
-  cov_size = sizeof(float)*NU2*4;
-  ind_size = sizeof(int)*N2;
-  HANDLE_ERROR( cudaMalloc((void**)&d__psd, psd_size ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__alpha, 2*sizeof(float) ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__beta,  2*sizeof(float) ) );
-  HANDLE_ERROR( cudaMemcpy( d__alpha, alpha, 2*sizeof(float), cudaMemcpyHostToDevice) );
-  HANDLE_ERROR( cudaMemcpy( d__beta, beta, 2*sizeof(float), cudaMemcpyHostToDevice) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__cov, cov_size ) );
-
-  printf("\n@(CEO)>imaging: Creating 2D covariance FFT plan\n");
-  int n_DFT[2] = {NF, NF};
-  int iodist = NF2;
-  int BATCH = 4;
-  /* Create a 2D FFT plan. */
-  if (cufftPlanMany(&plan, 2, n_DFT,
-		    NULL, 1, iodist,
-		    NULL, 1, iodist,
-		    CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
-    fprintf(stderr,
-	    "CUFFT Error: Unable to create plan\n");
-    return;
-  }
-  if (cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
-    fprintf(stderr,
-	    "CUFFT Error: Unable to set compatibility mode to native\n");
-    return;
-  }
-
-  info(kappa, lenslet_pitch);  
-
+  <<aaStats setup declarations>>
   stopwatch tid;
   tid.tic();
   <<aaStats evaluate covariance>>
   tid.toc(&cov_eval_et,"Covariance evaluation");
 }
+<<aaStats setup with source height>>=
+void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch, float source_height)
+{
+  <<aaStats setup declarations>>
+  stopwatch tid;
+  tid.tic();
+  <<aaStats evaluate covariance with source height>>
+  tid.toc(&cov_eval_et,"Covariance evaluation");
+}
+<<aaStats setup declarations>>=
+float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
+N = N_;
+N2 = N*N;
+NU = 2*N-1;
+NU2 = NU*NU;
+NF = 4096;
+NF2 = NF*NF;
+kappa = 4;
+
+psd_size = sizeof(float2)*NF2*4;
+cov_size = sizeof(float)*NU2*4;
+ind_size = sizeof(int)*N2;
+HANDLE_ERROR( cudaMalloc((void**)&d__psd, psd_size ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__alpha, 2*sizeof(float) ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__beta,  2*sizeof(float) ) );
+HANDLE_ERROR( cudaMemcpy( d__alpha, alpha, 2*sizeof(float), cudaMemcpyHostToDevice) );
+HANDLE_ERROR( cudaMemcpy( d__beta, beta, 2*sizeof(float), cudaMemcpyHostToDevice) );
+HANDLE_ERROR( cudaMalloc((void**)&d__cov, cov_size ) );
+
+printf("\n@(CEO)>imaging: Creating 2D covariance FFT plan\n");
+int n_DFT[2] = {NF, NF};
+int iodist = NF2;
+int BATCH = 4;
+/* Create a 2D FFT plan. */
+if (cufftPlanMany(&plan, 2, n_DFT,
+		  NULL, 1, iodist,
+		  NULL, 1, iodist,
+		  CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
+  fprintf(stderr,
+	  "CUFFT Error: Unable to create plan\n");
+  return;
+ }
+if (cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
+  fprintf(stderr,
+	  "CUFFT Error: Unable to set compatibility mode to native\n");
+  return;
+ }
+
+info(kappa, lenslet_pitch);  
+
 <<paStats setup>>=
 void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch)
 {
-  float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
-  osf = osf_;
-  N = osf*N_+1;
-  N2 = N*N;
-  NU = 2*N-1;
-  NU2 = NU*NU;
-  NF = 4096;
-  NF2 = NF*NF;
-  kappa = 4;
-
-  psd_size = sizeof(float2)*NF2*2;
-  cov_size = sizeof(float)*NU2*2;
-  ind_size = sizeof(int)*N2;
-  HANDLE_ERROR( cudaMalloc((void**)&d__psd, psd_size ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__alpha, 2*sizeof(float) ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__beta,  2*sizeof(float) ) );
-  HANDLE_ERROR( cudaMemcpy( d__alpha, alpha, 2*sizeof(float), cudaMemcpyHostToDevice) );
-  HANDLE_ERROR( cudaMemcpy( d__beta, beta, 2*sizeof(float), cudaMemcpyHostToDevice) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__cov, cov_size ) );
-
-  printf("\n@(CEO)>imaging: Creating 2D covariance FFT plan\n");
-  int n_DFT[2] = {NF, NF};
-  int iodist = NF2;
-  int BATCH = 2;
-  /* Create a 2D FFT plan. */
-  if (cufftPlanMany(&plan, 2, n_DFT,
-		    NULL, 1, iodist,
-		    NULL, 1, iodist,
-		    CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
-    fprintf(stderr,
-	    "CUFFT Error: Unable to create plan\n");
-    return;
-  }
-  if (cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
-    fprintf(stderr,
-	    "CUFFT Error: Unable to set compatibility mode to native\n");
-    return;
-  }
-
-  info(kappa,lenslet_pitch);  
-
+  <<paStats setup declarations>>
   stopwatch tid;
   tid.tic();
   <<paStats evaluate covariance>>
   tid.toc(&cov_eval_et,"Covariance evaluation");
 }
+<<paStats setup with source height>>=
+void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch, float source_height)
+{
+  <<paStats setup declarations>>
+  stopwatch tid;
+  tid.tic();
+  <<paStats evaluate covariance with source height>>
+  tid.toc(&cov_eval_et,"Covariance evaluation");
+}
+<<paStats setup declarations>>=
+float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
+osf = osf_;
+N = osf*N_+1;
+N2 = N*N;
+NU = 2*N-1;
+NU2 = NU*NU;
+NF = 4096;
+NF2 = NF*NF;
+kappa = 4;
+
+psd_size = sizeof(float2)*NF2*2;
+cov_size = sizeof(float)*NU2*2;
+ind_size = sizeof(int)*N2;
+HANDLE_ERROR( cudaMalloc((void**)&d__psd, psd_size ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__alpha, 2*sizeof(float) ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__beta,  2*sizeof(float) ) );
+HANDLE_ERROR( cudaMemcpy( d__alpha, alpha, 2*sizeof(float), cudaMemcpyHostToDevice) );
+HANDLE_ERROR( cudaMemcpy( d__beta, beta, 2*sizeof(float), cudaMemcpyHostToDevice) );
+HANDLE_ERROR( cudaMalloc((void**)&d__cov, cov_size ) );
+
+printf("\n@(CEO)>imaging: Creating 2D covariance FFT plan\n");
+int n_DFT[2] = {NF, NF};
+int iodist = NF2;
+int BATCH = 2;
+/* Create a 2D FFT plan. */
+if (cufftPlanMany(&plan, 2, n_DFT,
+NULL, 1, iodist,
+NULL, 1, iodist,
+CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
+  fprintf(stderr,
+  "CUFFT Error: Unable to create plan\n");
+  return;
+}
+if (cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
+  fprintf(stderr,
+  "CUFFT Error: Unable to set compatibility mode to native\n");
+  return;
+}
+
+info(kappa,lenslet_pitch);  
+
 @
 The covariance is computed with
 <<aaStats evaluate covariance>>=
@@ -269,6 +297,9 @@ for (int i=0;i<NU;i++) {
   printf("|\n");
 }
 #endif
+<<aaStats evaluate covariance with source height>>=
+<<aaStats power spectrum with source height>>
+<<aaStats covariance>>
 
 <<paStats evaluate covariance>>=
 <<paStats power spectrum>>
@@ -302,6 +333,10 @@ for (int i=0;i<MIN(NU,10);i++) {
   printf("|\n");
 }
 #endif
+<<paStats evaluate covariance with source height>>=
+<<paStats power spectrum with source height>>
+<<paStats covariance>>
+
 @ The main parameters of [[aaStats]] are displayed with the [[info]] routine:
 <<aaStats info>>=
 void aaStats::info(int kappa, float d)
@@ -387,6 +422,25 @@ aaPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2*2, NF, lenslet_pitch,
 aaPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2*3, NF, lenslet_pitch,
 					atm->wavelength, atm->r0, atm->turbulence.L0,
 					d__beta, d__beta, kappa);
+<<aaStats power spectrum with source height>>=
+dim3 blockDim(16,16);
+dim3 gridDim( 1+NF/16 , 1+NF/16 );
+aaPowerSpectrum LLL gridDim,blockDim RRR (d__psd, NF, lenslet_pitch, 
+					atm->wavelength, atm->r0, atm->turbulence.L0,
+                                        atm->d__turbulence, source_height,
+					d__alpha, d__alpha, kappa);
+aaPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2, NF, lenslet_pitch,
+					atm->wavelength, atm->r0, atm->turbulence.L0,
+                                        atm->d__turbulence, source_height,
+					d__alpha, d__beta, kappa);
+aaPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2*2, NF, lenslet_pitch,
+					atm->wavelength, atm->r0, atm->turbulence.L0,
+                                        atm->d__turbulence, source_height,
+					d__beta, d__alpha, kappa);
+aaPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2*3, NF, lenslet_pitch,
+					atm->wavelength, atm->r0, atm->turbulence.L0,
+                                        atm->d__turbulence, source_height,
+					d__beta, d__beta, kappa);
 @ The power spectrum is computed with the following kernel:
 <<aaStats power spectrum kernel>>=
   __global__ void aaPowerSpectrum(float2 *d__psd, int NF, float d,
@@ -420,6 +474,44 @@ aaPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2*3, NF, lenslet_pitch,
     d__psd[k].y = 0;
   }
 }
+@ 
+<<aaStats power spectrum kernel with source height>>=
+__global__ void aaPowerSpectrum(float2 *d__psd, int NF, float d,
+				float wavelength, float r0, float L0,
+                                profile *turb, float source_height,
+				float *alpha, float *beta, float kappa)
+{
+  int i, j, k;
+  float fx, fy, f_square, fs, dl;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = i*NF + j;
+  if ( (i<NF) && (j<(NF)) ) {
+    fx = (float) i;
+    fy = (float) j;
+    if (i>=(NF/2))
+      fx = fx - NF;
+    if (j>=(NF/2))
+      fy = fy - NF;
+    k = i*NF + j;
+    wavelength *= wavelength;
+    d__psd[k].x = 0;
+    for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
+      dl = d*(1-turb->altitude[k_LAYER]/source_height);
+      fs = (2.0/NF)*(kappa/(2*dl));
+      fx *= fs;
+      fy *= fs;
+      f_square = fx*fx + fy*fy;
+      fs *= fs;
+      d__psd[k].x += (k==0) ? 0 : turb->xi0[k_LAYER]*
+	fs*wavelength*(fx*alpha[0] + fy*alpha[1])*(fx*beta[0] + fy*beta[1])*
+	powf(r0,-5.0/3.0)*
+	phasePowerSpectrum(f_square, 1.0/L0)*
+	gatePSF(fx*dl,fy*dl);
+    }
+    d__psd[k].y = 0;
+  }
+}
 @ From the power spectrum, once can derive the variance:
 <<aaStats variance>>=
 float aaStats::variance(void) {
@@ -436,6 +528,17 @@ paPowerSpectrum LLL gridDim,blockDim RRR (d__psd, NF, osf, lenslet_pitch,
 					d__alpha, kappa);
 paPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2, NF, osf, lenslet_pitch,
 					atm->wavelength, atm->r0, atm->turbulence.L0,
+					d__beta, kappa);
+<<paStats power spectrum with source height>>=
+dim3 blockDim(16,16);
+dim3 gridDim( 1+NF/16 , 1+NF/16 );
+paPowerSpectrum LLL gridDim,blockDim RRR (d__psd, NF, osf, lenslet_pitch, 
+					atm->wavelength, atm->r0, atm->turbulence.L0,
+                                        atm->d__turbulence, source_height,
+					d__alpha, kappa);
+paPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2, NF, osf, lenslet_pitch,
+					atm->wavelength, atm->r0, atm->turbulence.L0,
+                                        atm->d__turbulence, source_height,
 					d__beta, kappa);
 @ The power spectrum is computed with the following kernel:
 <<paStats power spectrum kernel>>=
@@ -465,6 +568,41 @@ paPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2, NF, osf, lenslet_pitch,
       powf(r0,-5.0/3.0)*
       phasePowerSpectrum(f_square, 1.0/L0)*
       gateAmp(fx*d,fy*d);
+    d__psd[k].x = 0;
+  }
+}
+<<paStats power spectrum kernel with source height>>=
+  __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
+				float wavelength, float r0, float L0,
+                                profile *turb, float source_height,
+				float *alpha, float kappa)
+{
+  int i, j, k;
+  float fx, fy, f_square, fs, dl;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = i*NF + j;
+  if ( (i<NF) && (j<(NF)) ) {
+    fx = (float) i;
+    fy = (float) j;
+    if (i>=(NF/2))
+      fx = fx - NF;
+    if (j>=(NF/2))
+      fy = fy - NF;
+    k = i*NF + j;
+    d__psd[k].y = 0;
+    for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
+      dl = d*(1-turb->altitude[k_LAYER]/source_height);
+      fs = osf*(2.0/NF)*(kappa/(2*dl));
+      fx *= fs;
+      fy *= fs;
+      f_square = fx*fx + fy*fy;
+      fs *= fs;
+      d__psd[k].y += -turb->xi0[k_LAYER]*fs*wavelength*(fx*alpha[0] + fy*alpha[1])*
+      powf(r0,-5.0/3.0)*
+      phasePowerSpectrum(f_square, 1.0/L0)*
+      gateAmp(fx*dl,fy*dl);
+    }
     d__psd[k].x = 0;
   }
 }

@@ -65,7 +65,7 @@ HANDLE_ERROR( cudaFree( d__src) );
 @ \item the wavefront sensor source
 <<setup>>=
 source wfs_src, *d__wfs_src;
-wfs_src.setup(ARCSEC(0) , 0, INFINITY);
+wfs_src.setup(ARCSEC(0) , 0, 90e3);
 HANDLE_ERROR( cudaMalloc( (void**)&d__wfs_src, sizeof(source)*_N_SOURCE_ ) );
 HANDLE_ERROR( cudaMemcpy( d__wfs_src, &wfs_src,
 			  sizeof(source)*_N_SOURCE_ ,
@@ -100,7 +100,7 @@ float d = D/N_SIDE_LENSLET;
 @  The linear minimum mean square error wavefront reconstructor is initialized with the atmosphere, the lenslet array pitch, the number of slopes and the iterative solver type and destroyed with
 <<setup>>=
 LMMSE lmmse;
-lmmse.setup(&atm,d,_N_LENSLET_*2,"MINRES");
+lmmse.setup(&atm,wfs_src.height,d,_N_LENSLET_*2,"MINRES");
 <<cleanup>>=
 lmmse.cleanup();
 @  Finally we setup the statistical tool:
@@ -114,10 +114,11 @@ S.cleanup();
 \label{sec:turbulence-wavefront}
 
 Lets compute the wavefront propagated through the atmosphere from [[src]]
-<<wavefront>>=
+<<setup>>=
 int NP, NP2;
 NP = 2*N_SIDE_LENSLET+1;
 NP2 = NP*NP;
+<<wavefront>>=
 float delta_e = d/2;
 atm.get_phase_screen(d__src->phase,delta_e,NP,delta_e,NP,d__src,0);
 float phase2nm = 1E9*atm.wavelength/2/PI;
@@ -133,9 +134,31 @@ dev2file("phaseScreenLowRes.bin", d__src->phase, NP2);
 \subsection{Wavefront reconstruction}
 \label{sec:wavefr-reconstr}
 
+In the following, the wavefront is reconstructed from the centroids:
 <<wavefront reconstruction>>=
 lmmse.estimation(cog.d__c, 100);
 wf_rms = phase2nm*S.std(lmmse.d__phase_est, NP2);
 printf("\n WF RMS: %7.2fnm\n",wf_rms);
+<<wavefront error>>
 <<saving to files>>=
 dev2file("phaseEst.bin", lmmse.d__phase_est, NP2);
+
+@ The wavefront error is computed with
+<<setup>>=
+cublasHandle_t handle;
+cublasCreate(&handle);
+float *d__wavefront_error;
+HANDLE_ERROR( cudaMalloc((void**)&d__wavefront_error, sizeof(float)* NP2) );
+
+<<cleanup>>=
+cublasDestroy(handle);
+HANDLE_ERROR( cudaFree(d__wavefront_error) );
+
+<<wavefront error>>=
+CUBLAS_ERROR( cublasScopy(handle, NP2, d__src->phase, 1, d__wavefront_error, 1) );
+float alpha = -1;
+CUBLAS_ERROR( cublasSaxpy(handle, NP2, &alpha, lmmse.d__phase_est, 1, d__wavefront_error, 1) );
+wf_rms = phase2nm*S.std(d__wavefront_error, NP2);
+printf("\n WFE RMS: %8.3fnm\n",wf_rms);
+
+

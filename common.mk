@@ -30,7 +30,7 @@ libsrc = lib/libceo.a
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
 	sed -i -e "s/label{eq:/label{$*.eq:/g" -e "s/ref{eq:/ref{$*.eq:/g" $@
 .nw.h:
-	$(TANGLE) -R$@ $< > $@
+	$(TANGLE) -R$@ $< > $@  
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
 	mv $@ ../include/
 .nw.cu: 

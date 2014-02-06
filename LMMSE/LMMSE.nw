@@ -27,6 +27,7 @@ struct LMMSE {
   <<parameters>>
 
   void setup(atmosphere *atm,float sampling, int N, char *solver_id);
+  void setup(atmosphere *atm, float source_height,float sampling, int N, char *solver_id);
 
   void cleanup(void);
 
@@ -44,6 +45,7 @@ struct LMMSE {
 <<PA input>>
 
 <<setup>>
+<<setup with source height>>
 
 <<cleanup>>
 
@@ -54,7 +56,7 @@ struct LMMSE {
 The LMMSE structure gather several routines implementing iterative methods to reconstruct the wavefront from Shack--Hartmann wavefront sensor data.
 The setup method is initializing the required structures:
 <<setup>>=
-  void LMMSE::setup(atmosphere *atm,float sampling,int N, char *solver_id)
+void LMMSE::setup(atmosphere *atm,float sampling,int N, char *solver_id)
 {
   int NP, osf;
   aa.setup(N_SIDE_LENSLET,atm,sampling);
@@ -64,6 +66,27 @@ The setup method is initializing the required structures:
   PS_E_N_PX = NP;
   PS_E_N_PX *= PS_E_N_PX;
   pa.setup(N_SIDE_LENSLET,osf,atm,sampling);
+  paCov.setup(1,2,NP,pa.d__cov);
+  if (strcmp(solver_id,"CG")==0)
+    iSolve.cg_setup(N);
+  if (strcmp(solver_id,"MINRES")==0)
+    iSolve.minres_setup(N);
+<<linear solver (prep.)>>
+<<MVM (prep.)>>
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* _N_LENSLET_*2 ) );
+HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* _N_LENSLET_*2 ) );
+}
+<<setup with source height>>=
+void LMMSE::setup(atmosphere *atm, float source_height,float sampling,int N, char *solver_id)
+{
+  int NP, osf;
+  aa.setup(N_SIDE_LENSLET,atm,sampling,source_height);
+  aaCov.setup(2,2,N_SIDE_LENSLET,aa.d__cov);
+  osf = 2;
+  NP = osf*N_SIDE_LENSLET+1;
+  PS_E_N_PX = NP;
+  PS_E_N_PX *= PS_E_N_PX;
+  pa.setup(N_SIDE_LENSLET,osf,atm,sampling,source_height);
   paCov.setup(1,2,NP,pa.d__cov);
   if (strcmp(solver_id,"CG")==0)
     iSolve.cg_setup(N);
