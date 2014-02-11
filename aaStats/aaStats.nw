@@ -33,8 +33,6 @@ struct aaStats {
 
   void info(int kappa, float d);
 
-  void MVM(float *y, float *x);
-
   float variance(void);
 
 };
@@ -51,7 +49,11 @@ struct paStats {
 
   void info(int kappa, float d);
 
-  void MVM(float *y, float *x);
+  void MVM(float *in_vector, float *out_vector, 
+	   float d1, float g1, int N1, 
+	   float d2, float g2, int N2);
+
+  void toFile(char *filename);
 
   void variance(void);
 
@@ -79,12 +81,18 @@ struct paStats {
 <<aaStats setup with source height>>
 <<paStats setup>>
 <<paStats setup with source height>>
+<<save covariance to file>>
 
 <<aaStats cleanup>>
 <<paStats cleanup>>
 
 <<aaStats info>>
 <<paStats info>>
+
+<<2D interpolation>>
+<<2D interpolation kernel>>
+<<matrix-to-vector product kernel>>
+<<matrix-to-vector product>>
 
 <<aaStats variance>>
 @
@@ -171,6 +179,7 @@ NU2 = NU*NU;
 NF = 4096;
 NF2 = NF*NF;
 kappa = 4;
+sampling = lenslet_pitch;
 
 psd_size = sizeof(float2)*NF2*4;
 cov_size = sizeof(float)*NU2*4;
@@ -201,7 +210,7 @@ if (cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS)
   return;
  }
 
-info(kappa, lenslet_pitch);  
+info(kappa, sampling);
 
 <<paStats setup>>=
 void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch)
@@ -231,6 +240,7 @@ NU2 = NU*NU;
 NF = 4096;
 NF2 = NF*NF;
 kappa = 4;
+sampling = lenslet_pitch/osf;
 
 psd_size = sizeof(float2)*NF2*2;
 cov_size = sizeof(float)*NU2*2;
@@ -261,8 +271,14 @@ if (cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS)
   return;
 }
 
-info(kappa,lenslet_pitch);  
+info(kappa,sampling);
 
+@ The covariance can be written to a file with:
+<<save covariance to file>>=
+void paStats::toFile(char *filename)
+{
+dev2file(filename, d__cov, NU2*2);
+}
 @
 The covariance is computed with
 <<aaStats evaluate covariance>>=
@@ -354,10 +370,11 @@ void paStats::info(int kappa, float d)
   printf("----------------------------------------------------\x1B[0m\n");
 }
 <<info content>>=
-  printf(" . lenslet pitch                  : %.2f\n",d);
-  printf(" . spectrum resolution            : %d\n",NF);
-  printf(" . covariance oversampling factor : %d\n",kappa);
-  printf(" . spectrum highest frequency     : %4.2E\n",(2.0/NF)*(kappa/(2*d)));
+printf(" . sampling [m]                   : %.2f\n",d);
+printf(" . size of covariance matrix block: %dX%d\n",NU,NU);
+printf(" . spectrum resolution            : %d\n",NF);
+printf(" . covariance oversampling factor : %d\n",kappa);
+printf(" . spectrum highest frequency     : %4.2E\n",(2.0/NF)*(kappa/(2*d)));
 @ 
 <<aaStats cleanup>>=
 void aaStats::cleanup(void)
@@ -386,7 +403,7 @@ The parameters of the [[aaStats]] structure are:
 <<aaStats parameters>>=
 int N, N2, NU, NU2, NF, NF2, psd_size, cov_size, ind_size;
 float2 *d__psd;
-float *d__cov, *d__alpha, *d__beta, n_full, n_comp, b_full, b_comp, cov_eval_et;
+float *d__cov, *d__alpha, *d__beta, n_full, n_comp, b_full, b_comp, cov_eval_et, sampling;
 cufftHandle plan;
 #if defined(AASTATS_DEBUG) || defined(PASTATS_DEBUG)
 float2 *psd, *cov;
@@ -482,23 +499,23 @@ __global__ void aaPowerSpectrum(float2 *d__psd, int NF, float d,
 				float *alpha, float *beta, float kappa)
 {
   int i, j, k;
-  float fx, fy, f_square, fs, dl;
+  float fx, fy, f_square, fs, gl;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = i*NF + j;
   if ( (i<NF) && (j<(NF)) ) {
-    fx = (float) i;
-    fy = (float) j;
-    if (i>=(NF/2))
-      fx = fx - NF;
-    if (j>=(NF/2))
-      fy = fy - NF;
     k = i*NF + j;
     wavelength *= wavelength;
     d__psd[k].x = 0;
     for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
-      dl = d*(1-turb->altitude[k_LAYER]/source_height);
-      fs = (2.0/NF)*(kappa/(2*dl));
+      gl = (1-turb->altitude[k_LAYER]/source_height);
+      fs = (2.0/NF)*(kappa/(2*d*gl));
+      fx = (float) i;
+      fy = (float) j;
+      if (i>=(NF/2))
+	fx = fx - NF;
+      if (j>=(NF/2))
+      fy = fy - NF;
       fx *= fs;
       fy *= fs;
       f_square = fx*fx + fy*fy;
@@ -507,7 +524,7 @@ __global__ void aaPowerSpectrum(float2 *d__psd, int NF, float d,
 	fs*wavelength*(fx*alpha[0] + fy*alpha[1])*(fx*beta[0] + fy*beta[1])*
 	powf(r0,-5.0/3.0)*
 	phasePowerSpectrum(f_square, 1.0/L0)*
-	gatePSF(fx*dl,fy*dl);
+	gatePSF(gl*fx*d,gl*fy*d)/(gl*gl);
     }
     d__psd[k].y = 0;
   }
@@ -578,22 +595,22 @@ paPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2, NF, osf, lenslet_pitch,
 				float *alpha, float kappa)
 {
   int i, j, k;
-  float fx, fy, f_square, fs, dl;
+  float fx, fy, f_square, fs, gl;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = i*NF + j;
   if ( (i<NF) && (j<(NF)) ) {
-    fx = (float) i;
-    fy = (float) j;
-    if (i>=(NF/2))
-      fx = fx - NF;
-    if (j>=(NF/2))
-      fy = fy - NF;
     k = i*NF + j;
     d__psd[k].y = 0;
     for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
-      dl = d*(1-turb->altitude[k_LAYER]/source_height);
-      fs = osf*(2.0/NF)*(kappa/(2*dl));
+      gl = (1-turb->altitude[k_LAYER]/source_height);
+      fs = osf*(2.0/NF)*(kappa/(2*d*gl));
+      fx = (float) i;
+      fy = (float) j;
+      if (i>=(NF/2))
+	fx = fx - NF;
+      if (j>=(NF/2))
+	fy = fy - NF;
       fx *= fs;
       fy *= fs;
       f_square = fx*fx + fy*fy;
@@ -601,7 +618,7 @@ paPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2, NF, osf, lenslet_pitch,
       d__psd[k].y += -turb->xi0[k_LAYER]*fs*wavelength*(fx*alpha[0] + fy*alpha[1])*
       powf(r0,-5.0/3.0)*
       phasePowerSpectrum(f_square, 1.0/L0)*
-      gateAmp(fx*dl,fy*dl);
+      gateAmp(gl*fx*d,gl*fy*d)/(gl*gl);
     }
     d__psd[k].x = 0;
   }
@@ -712,7 +729,108 @@ __global__ void covariance_extraction(float *cov_out, int NC_out,
     cov_out[k_out] = cov_in[k_in].x;
   }
 }
-@ 
+
+@ The product between the covariance matrix and a vector is done by interpolating the matrix values into [[d__cov]] and multiplying and summing the interpolated covariance values with the vector values.
+[[d__cov]] is a $[[NU]]\times[[NU]]$ array sampled at the coordinates: $$x,y = \left[ -{[[NU]]-1\over 2},\dots,{[[NU]]-1\over 2}  \right]\times [[sampling]]$$ covering a $\left([[NU]]-1\right)\times [[sampling]]$ area.
+The covariance matrix is defined between the coordinate grids $(x_1,y_1)$ and $(x_2,y_2)$.
+The slopes are sampled on the grid $(x_2,y_2)$ with $(x,y)_2 =d_2\left((i,j) + (1 - N_2)/2 \right)$ and $i,j=0,\dots,N_2-1$
+ and the phase values are sampled on the grid $(x_1,y_1)$ with $(x,y)_1 =d_1\left(i + (1 - N_1)/2 \right)$ and $i,j=0,\dots,N_1-1$.
+The covariance matrix size is then $N_1^2\times N_2^2$.
+<<matrix-to-vector product>>=
+void paStats::MVM(float *out_vector, float *in_vector, 
+		  float d1, float g1, int N1, 
+		  float d2, float g2, int N2) 
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim( 1 + N1/16 , 1 + N1/16 );
+  stopwatch tid;
+  tid.tic();
+  MVM_kernel LLL gridDim,blockDim RRR (out_vector, in_vector, 
+				       sampling, NU, d__cov,
+				       d1, g1, N1,
+				       d2, g2, N2);
+  tid.toc("Product phase/slope covariance");
+}
+@ with the kernel
+<<matrix-to-vector product kernel>>=
+__global__ void MVM_kernel(float *out_vector, float *in_vector, 
+			   float sampling, int NU, float *cov,
+			   float d1, float g1, int N1, 
+			   float d2, float g2, int N2) 
+{
+  int col ,row, i1, j1, i2, j2;
+  float xi, yi, x1, y1, covi;
+  i1 = blockIdx.x * blockDim.x + threadIdx.x;
+  j1 = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i1<N1) & (j1<N1) ) {
+    row = j1 + i1*N1;
+    out_vector[row] = 0;
+    <<coordinates 1>>
+    for (i2=0;i2<N2;i2++) {
+      for (j2=0;j2<N2;j2++) {
+        col = j2 + i2*N2;
+	<<coordinates 2>>
+        <<MAC>>
+      }
+    }
+  }
+}
+<<2D interpolation>>=
+__device__ float interpolate(float xi, float yi, 
+	   float *z, float sampling, int NU)
+{
+int ndx;
+float s, t, fs, ft, onemt;
+<<bilinear interpolation>>
+<<bilinear interpolation end>>
+}
+<<2D interpolation kernel>>=
+__global__ void interpolate(float *zi, float xi, float yi, 
+	   float *z, float sampling, int NU)
+{
+int ndx;
+float s, t, fs, ft, onemt;
+<<bilinear interpolation>>
+onemt = 1 - t;
+*zi = ( z[ndx]*onemt + z[ndx+1]*t )*(1-s) + 
+        ( z[ndx+NU]*onemt + z[ndx+NU+1]*t )*s;
+}
+@  $x_1$ and $y_1$ coordinates:
+<<coordinates 1>>=
+x1 = g1*d1*(i1 + (1-N1)*0.5);
+y1 = g1*d1*(j1 + (1-N1)*0.5);
+@  $x_2$ and $y_2$ coordinates:
+<<coordinates 2>>=
+xi = g2*d2*(i2 + (1-N2)*0.5) - x1;
+yi = g2*d2*(j2 + (1-N2)*0.5) - y1;
+@ The interpolation starts with normalizing the coordinates to the pixel size i.e.
+<<bilinear interpolation>>=
+s = (NU-1)*( xi/(sampling*(NU-1)) + 0.5 );
+t = (NU-1)*( yi/(sampling*(NU-1)) + 0.5 );
+@  and taking the floor integer part to locate the bottom--left coordinate of the pixels surrounding [[xi]] and [[yi]]
+<<bilinear interpolation>>=
+fs  = floorf(s);
+ft  = floorf(t);
+ndx = __float2int_rd( ft + fs*NU );
+@ Next, one checks if the edges of the array have been reached
+<<bilinear interpolation>>=
+if (s==(NU-1)) { s += 1 - fs; ndx -= NU; } else { s -= fs; }    
+if (t==(NU-1)) { t += 1 - ft; ndx -= 1; }   else { t -= ft; }
+@ and finally the interpolation is computed as
+<<bilinear interpolation end>>=	 
+onemt = 1 - t;
+return ( ( z[ndx]*onemt + z[ndx+1]*t )*(1-s) + 
+        ( z[ndx+NU]*onemt + z[ndx+NU+1]*t )*s );
+@ matrix--to--vector product
+<<MAC>>=
+covi = interpolate(xi,yi,cov,sampling,NU);
+out_vector[row] += covi*in_vector[col];
+covi = interpolate(xi,yi,cov+NU*NU,sampling,NU);
+out_vector[row] += covi*in_vector[col+N2*N2];
+@
+\subsection{Tests}
+\label{sec:tests}
+
 The test routine is written:
 <<aaStats.bin>>=
 
@@ -920,3 +1038,25 @@ int main( void) {
   aa_fid.close();
   pa_fid.close();
 }
+
+@  The following is the Matlab script to test  the [[MVM_kernel]]:
+<<MVM_kernel test>>=
+kern = parallel.gpu.CUDAKernel('aaStats.ptx','aaStats.cu','MVM_kernel');
+kern.ThreadBlockSize = [16,16];
+kern.GridSize = [2,2];
+d1 = 2/3;
+d2 = 2/3;
+NU = 7;
+N1 = 4;
+N2 = 4;
+g1 = 1;
+g2 = 1;
+[x,y] = meshgrid( linspace(-1,1,4) );
+z = x(:) + 1i*y(:);
+c = abs( bsxfun( @minus, z , z.') );
+idx = [13 9 5 1 2 3 4];
+cs = mat2cell( c , ones(1,4)*4,ones(1,4)*4);
+cov = cell2mat(cellfun( @(x) x(idx)', cs(idx) , 'UniformOutput', false));
+vout = gpuArray.zeros(16^2,1,'single');
+vin = gpuArray.ones(16^2,1,'single');
+sampling = 2/3;
