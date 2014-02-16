@@ -8,11 +8,20 @@ The source structure is written in the header:
 #include "ceo.h"
 #endif
 
+struct complex_amplitude {
+
+  <<complex_amplitude parameters>>
+
+  void setup(int n_pixel);
+  void cleanup(void);
+};
+
 struct source {
 
   <<source parameters>>
 
   void setup(float zenith, float azimuth, float height);
+  void cleanup(void);
 
   void info(void);
 
@@ -27,7 +36,11 @@ struct source {
 
 <<square geometry>>
 
+<<complex_amplitude setup>>
+<<complex_amplitude cleanup>>
+
 <<setup>>
+<<cleanup>>
 
 <<info>>
 
@@ -35,13 +48,22 @@ struct source {
    
 <<number of photons>>
 @
+The wavefront descibes the wave complex amplitude of the light source.
+The complex amplitude consists of the amplitude and the phase of the wave:
+<<complex_amplitude parameters>>=
+int N_PX;
+float *amplitude, *phase;
+@ The physical extent of the amplitude is set by the pupil mask:
+<<complex_amplitude parameters>>=
+char *pupil_mask;
+
+@
 The source specify a celestial object by its coordinates:
 <<source parameters>>=
 float zenith, azimuth, height;
 @  and magnitude at a given photometric band.
 <<source parameters>>=
-char *photometric_band;
-float magnitude;
+char *photometric_band;float magnitude;
 @ 
 The main parameters of the  atmosphere are displayed with the [[info]] routine:
 <<info>>=
@@ -109,6 +131,9 @@ float amplitude[_SOURCE_N_PX_], phase[_SOURCE_N_PX_];
 The direction  towards the source from the origin of coordinates is given by the components $\theta_x,\theta_y$ of the direction vector:
 <<source parameters>>=
 float theta_x, theta_y;
+@ The wavefront is finally added to the source
+<<source parameters>>=
+complex_amplitude wavefront;
 @ This components are computed with the setup function
 <<setup>>=
 void source::setup(float _zenith, float _azimuth, float _height) {
@@ -117,16 +142,31 @@ void source::setup(float _zenith, float _azimuth, float _height) {
   height  = _height;
   theta_x = tanf(zenith)*cosf(azimuth);
   theta_y = tanf(zenith)*sinf(azimuth);
+  wavefront.setup(_SOURCE_N_PX_);
   info();
   for (int k=0;k<_SOURCE_N_PX_;k++) {
     amplitude[k] = 1.0;
     phase[k]     = 0.0;    
   }
 }
+<<complex_amplitude setup>>=
+void complex_amplitude::setup(int n_pixel) {
+  N_PX = n_pixel;
+  HANDLE_ERROR( cudaMalloc( (void**)&amplitude,  sizeof(float)*N_PX ) );
+  HANDLE_ERROR( cudaMalloc( (void**)&phase,      sizeof(float)*N_PX ) );
+  HANDLE_ERROR( cudaMalloc( (void**)&pupil_mask, sizeof(char)*N_PX ) );
+}
+<<complex_amplitude cleanup>>=
+void complex_amplitude::cleanup(void) {
+  HANDLE_ERROR( cudaFree( amplitude ) );
+  HANDLE_ERROR( cudaFree( phase ) );
+  HANDLE_ERROR( cudaFree( pupil_mask ) );
+}
 @ Allocated variable are freed with the [[cleanup]] routine
 <<cleanup>>=
 void source::cleanup(void) {
   printf("\n@(CEO)>source: freeing memory!\n");
+  wavefront.cleanup();
 }
 @ 
 The amplitude and phase are initialized to respectively 1 and 0:

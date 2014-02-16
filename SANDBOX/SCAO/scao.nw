@@ -42,6 +42,7 @@ int main(int argc,char *argv[]) {
 <<wavefront>>
 <<NGS wavefront>>
 <<wavefront reconstruction from NGS>>
+<<LGS uplink wavefront>>
 <<LGS wavefront>>
 <<wavefront reconstruction from LGS>>
 <<paStats MVM alternative>>
@@ -55,16 +56,22 @@ int main(int argc,char *argv[]) {
 
 Lets define the sources first:
 \begin{itemize}
-\item the science source,
+\item the science sources,
 <<setup>>=
-source src, *d__src;
+source src, *d__src, near_src, *d__near_src;
 src.setup(ARCSEC(0) , 0, INFINITY);
-HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source)*_N_SOURCE_ ) );
+HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source) ) );
 HANDLE_ERROR( cudaMemcpy( d__src, &src,
-			  sizeof(source)*_N_SOURCE_ ,
+			  sizeof(source) ,
+			  cudaMemcpyHostToDevice ) );
+near_src.setup(ARCSEC(0) , 0, 90e3);
+HANDLE_ERROR( cudaMalloc( (void**)&d__near_src, sizeof(source) ) );
+HANDLE_ERROR( cudaMemcpy( d__near_src, &near_src,
+			  sizeof(source) ,
 			  cudaMemcpyHostToDevice ) );
 <<cleanup>>=
 HANDLE_ERROR( cudaFree( d__src) );
+HANDLE_ERROR( cudaFree( d__near_src) );
 @ \item the NGS
 <<setup>>=
 source ngs, *d__ngs;
@@ -91,8 +98,14 @@ HANDLE_ERROR( cudaFree( d__lgs) );
 <<setup>>=
 atmosphere atm;
 atm.setup(20e-2,30,10e3,10,0);
-//atm.gmt_setup();
-//atm.reset();
+//atm.gmt_setup(20e-2,30);
+/*
+float altitude[] = {0, 10e3},
+xi0[] = {0.5, 0.5},
+wind_speed[] = {10, 10},
+wind_direction[] = {0, 0};
+atm.setup(20e-2,30,altitude, xi0, wind_speed, wind_direction);
+*/
 @ and cleared:
 <<cleanup>>=
 atm.cleanup();
@@ -112,8 +125,9 @@ float d = D/N_SIDE_LENSLET;
 <<setup>>=
 LMMSE lmmse, ngs_lmmse;
 ngs_lmmse.setup(&atm,d,_N_LENSLET_*2,"MINRES");
+ngs_lmmse.pa.toFile("ngs_paCovariance.bin");
 lmmse.setup(&atm,lgs.height,d,_N_LENSLET_*2,"MINRES");
-//lmmse.pa.toFile("paCovariance.bin");
+lmmse.pa.toFile("paCovariance.bin");
 <<cleanup>>=
 ngs_lmmse.cleanup();
 lmmse.cleanup();
@@ -134,17 +148,25 @@ NP = 2*N_SIDE_LENSLET+1;
 NP2 = NP*NP;
 <<wavefront>>=
 float delta_e = d/2;
-atm.get_phase_screen(d__src->phase,delta_e,NP,delta_e,NP,d__src,0);
 float phase2nm = 1E9*atm.wavelength/2/PI;
-float wf_rms = phase2nm*S.std(d__src->phase, NP2);
+float wf_rms;
+atm.get_phase_screen(d__src->phase,delta_e,NP,delta_e,NP,d__src,0);
+wf_rms = phase2nm*S.std(d__src->phase, NP2);
 printf("\n WF RMS: %7.2fnm\n",wf_rms);
+atm.get_phase_screen(d__near_src->phase,delta_e,NP,delta_e,NP,d__near_src,0);
+wf_rms = phase2nm*S.std(d__near_src->phase, NP2);
+printf("\n WF(near source) RMS: %7.2fnm\n",wf_rms);
 @  We also compute the wavefront gradient:
 <<NGS wavefront>>=
 atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d,d__ngs,0);
+<<LGS uplink wavefront>>=
+float lgs_theta_x, lgs_theta_y;
+atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy, 1,d,d__lgs,0);
 <<LGS wavefront>>=
 atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d,d__lgs,0);
 @ The wavefront is written to the disk
 <<saving to files>>=
+dev2file("phaseScreenLowResNearField.bin", d__near_src->phase, NP2);
 dev2file("phaseScreenLowRes.bin", d__src->phase, NP2);
 @
 \subsection{Wavefront reconstruction}
@@ -164,15 +186,13 @@ lmmse.estimation(cog.d__c, 100);
 //wf_rms = phase2nm*S.std(lmmse.d__phase_est, NP2);
 //printf("\n WF RMS: %7.2fnm\n",wf_rms);
 phase_est = lmmse.d__phase_est;
+<<wavefront error near source>>
 <<wavefront error>>
 dev2file("phaseEst.bin", lmmse.d__phase_est, NP2);
 printf("------------------------------\n");
 
 <<paStats MVM alternative>>=
 printf("\n___ LGS WAVEFRONT ESTIMATE (cylindric/conic geom.) ___\n");
-paStats pa;
-pa.setup(N_SIDE_LENSLET,2,&atm,d,d__src,d__lgs);
-pa.toFile("paCovariance.bin");
 pa.MVM(lmmse.d__phase_est,lmmse.d__ce,
 	     delta_e, 1, NP,
 	     delta_e, NP,
@@ -182,6 +202,10 @@ pa.MVM(lmmse.d__phase_est,lmmse.d__ce,
 <<wavefront error>>
 dev2file("phaseEstAlt.bin", lmmse.d__phase_est, NP2);
 printf("------------------------------\n");
+<<setup>>=
+paStats pa;
+pa.setup(N_SIDE_LENSLET,2,&atm,d,d__src,d__lgs);
+pa.toFile("paCovariance.bin");
 
 @ The wavefront error is computed with
 <<setup>>=
@@ -190,7 +214,8 @@ cublasCreate(&handle);
 float *d__wavefront_error, *phase_est;
 HANDLE_ERROR( cudaMalloc((void**)&d__wavefront_error, sizeof(float)* NP2) );
 float alpha = -1;
-
+<<cleanup>>=
+pa.cleanup();
 <<cleanup>>=
 cublasDestroy(handle);
 HANDLE_ERROR( cudaFree(d__wavefront_error) );
@@ -201,4 +226,9 @@ CUBLAS_ERROR( cublasSaxpy(handle, NP2, &alpha, phase_est, 1, d__wavefront_error,
 wf_rms = phase2nm*S.std(d__wavefront_error, NP2);
 printf("\n WFE RMS: %8.3fnm\n",wf_rms);
 
+<<wavefront error near source>>=
+CUBLAS_ERROR( cublasScopy(handle, NP2, d__near_src->phase, 1, d__wavefront_error, 1) );
+CUBLAS_ERROR( cublasSaxpy(handle, NP2, &alpha, phase_est, 1, d__wavefront_error, 1) );
+wf_rms = phase2nm*S.std(d__wavefront_error, NP2);
+printf("\n WFE (near source) RMS: %8.3fnm\n",wf_rms);
 
