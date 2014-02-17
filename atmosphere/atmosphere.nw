@@ -21,6 +21,10 @@ The atmosphere structure is written:
 #include "source.h"
 #endif
 
+#ifndef __CENTROIDING_H__
+#include "centroiding.h"
+#endif
+
 #define RAND_SEED 2013
 
 struct profile {
@@ -64,9 +68,13 @@ struct atmosphere {
   void get_phase_screen(float *phase_screen,
 			float const delta_x, int N_x, float const delta_y, int N_y, 
 			source *src, float time);
+  void get_phase_screen(source *src,
+			float const delta_x, int N_x, float const delta_y, int N_y, 
+			float time);
 
   void get_phase_screen_gradient(float *sx, float *sy, int NL, float const d, source *src, float time);
   void get_phase_screen_gradient(float *sx, float *sy, int NL, char *valid_lenslet, float const d, source *src, float time);
+  void get_phase_screen_gradient(centroiding *cog, int NL, float const d, source *src, float time);
 
 };
 
@@ -105,8 +113,10 @@ struct atmosphere {
 <<phase screen II>>
 <<phase screen III>>
 <<phase screen IV>>
+<<phase screen V>>
 
-<<phase screen gradient>>
+<<phase screen gradient I>>
+<<phase screen gradient II>>
 <<phase screen gradient (masked)>>
 @
 The atmosphere parameters are
@@ -572,6 +582,19 @@ void atmosphere::get_phase_screen(float *phase_screen,
 				   zeta1, eta1, zeta2, eta2,
 				   src, time);
 }
+<<phase screen V>>=
+void atmosphere::get_phase_screen(source *src,
+                       float const delta_x, int N_x, float const delta_y, int N_y, 
+		       float time)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim( 1+N_x/16 , 1+N_y/16);
+  square_plps LLL gridDim , blockDim RRR (src->wavefront.phase,
+				   delta_x, N_x, delta_y, N_y, 
+				   d__turbulence, r0,
+				   zeta1, eta1, zeta2, eta2,
+				   src->dev_ptr, time);
+}
 @ and computed with the kernel
 <<phase screen kernel (square)>>=
   __global__ void square_plps(float *phase_screen,
@@ -650,7 +673,7 @@ y_{L,l} &=& \gamma_l^\ast (y_L-v_yt) + h_l\theta_{\ast y} \\
 \bky &=& \bk \sin \phi_j 
 \end{eqnarray}
 The phase screen gradient are computed on a $N_L\times N_L$ array with a resolution $d$
-<<phase screen gradient>>=
+<<phase screen gradient I>>=
 void atmosphere::get_phase_screen_gradient(float *sx, float *sy, int NL, float const d, source *src, float time)
 {
   dim3 blockDim(16,16);
@@ -659,6 +682,16 @@ void atmosphere::get_phase_screen_gradient(float *sx, float *sy, int NL, float c
 					    d__turbulence, wavelength, r0,
 				   zeta1, eta1, zeta2, eta2,
 				   src, time);
+}
+<<phase screen gradient II>>=
+void atmosphere::get_phase_screen_gradient(centroiding *cog, int NL, float const d, source *src, float time)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim( 1+NL/16 , 1+NL/16);
+  plps_gradient LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy, NL, d,
+					    d__turbulence, wavelength, r0,
+				   zeta1, eta1, zeta2, eta2,
+				   src->dev_ptr, time);
 }
 @ with the kernel
 <<phase screen gradient kernel>>=

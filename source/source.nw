@@ -134,6 +134,7 @@ float theta_x, theta_y;
 @ The wavefront is finally added to the source
 <<source parameters>>=
 complex_amplitude wavefront;
+source *dev_ptr;
 @ This components are computed with the setup function
 <<setup>>=
 void source::setup(float _zenith, float _azimuth, float _height) {
@@ -142,12 +143,24 @@ void source::setup(float _zenith, float _azimuth, float _height) {
   height  = _height;
   theta_x = tanf(zenith)*cosf(azimuth);
   theta_y = tanf(zenith)*sinf(azimuth);
-  wavefront.setup(_SOURCE_N_PX_);
   info();
+  /*
   for (int k=0;k<_SOURCE_N_PX_;k++) {
     amplitude[k] = 1.0;
     phase[k]     = 0.0;    
   }
+  */
+  source __src;
+  __src.zenith  = zenith;
+  __src.azimuth = azimuth;
+  __src.height  = height;
+  __src.theta_x = theta_x;
+  __src.theta_y = theta_y;
+  HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source) ) );
+  HANDLE_ERROR( cudaMemcpy( dev_ptr, &__src,
+			    sizeof(source) ,
+			    cudaMemcpyHostToDevice ) );
+  wavefront.setup(_SOURCE_N_PX_);
 }
 <<complex_amplitude setup>>=
 void complex_amplitude::setup(int n_pixel) {
@@ -166,6 +179,7 @@ void complex_amplitude::cleanup(void) {
 <<cleanup>>=
 void source::cleanup(void) {
   printf("\n@(CEO)>source: freeing memory!\n");
+  HANDLE_ERROR( cudaFree( dev_ptr) );
   wavefront.cleanup();
 }
 @ 

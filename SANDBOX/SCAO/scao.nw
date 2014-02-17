@@ -58,40 +58,24 @@ Lets define the sources first:
 \begin{itemize}
 \item the science sources,
 <<setup>>=
-source src, *d__src, near_src, *d__near_src;
+source src, near_src;
 src.setup(ARCSEC(0) , 0, INFINITY);
-HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source) ) );
-HANDLE_ERROR( cudaMemcpy( d__src, &src,
-			  sizeof(source) ,
-			  cudaMemcpyHostToDevice ) );
 near_src.setup(ARCSEC(0) , 0, 90e3);
-HANDLE_ERROR( cudaMalloc( (void**)&d__near_src, sizeof(source) ) );
-HANDLE_ERROR( cudaMemcpy( d__near_src, &near_src,
-			  sizeof(source) ,
-			  cudaMemcpyHostToDevice ) );
 <<cleanup>>=
-HANDLE_ERROR( cudaFree( d__src) );
-HANDLE_ERROR( cudaFree( d__near_src) );
+src.cleanup();
+near_src.cleanup();
 @ \item the NGS
 <<setup>>=
-source ngs, *d__ngs;
+source ngs;
 ngs.setup(ARCSEC(0) , 0, INFINITY);
-HANDLE_ERROR( cudaMalloc( (void**)&d__ngs, sizeof(source)*_N_SOURCE_ ) );
-HANDLE_ERROR( cudaMemcpy( d__ngs, &ngs,
-			  sizeof(source)*_N_SOURCE_ ,
-			  cudaMemcpyHostToDevice ) );
 <<cleanup>>=
-HANDLE_ERROR( cudaFree( d__ngs) );
+ngs.cleanup();
 @ \item the LGS
 <<setup>>=
-source lgs, *d__lgs;
+source lgs;
 lgs.setup(ARCSEC(0) , 0, 90e3);
-HANDLE_ERROR( cudaMalloc( (void**)&d__lgs, sizeof(source)*_N_SOURCE_ ) );
-HANDLE_ERROR( cudaMemcpy( d__lgs, &lgs,
-			  sizeof(source)*_N_SOURCE_ ,
-			  cudaMemcpyHostToDevice ) );
 <<cleanup>>=
-HANDLE_ERROR( cudaFree( d__lgs) );
+lgs.cleanup();
 @ \end{itemize}
 
 @ The atmosphere is now defined:
@@ -150,24 +134,24 @@ NP2 = NP*NP;
 float delta_e = d/2;
 float phase2nm = 1E9*atm.wavelength/2/PI;
 float wf_rms;
-atm.get_phase_screen(d__src->phase,delta_e,NP,delta_e,NP,d__src,0);
-wf_rms = phase2nm*S.std(d__src->phase, NP2);
+atm.get_phase_screen(&src,delta_e,NP,delta_e,NP,0);
+wf_rms = phase2nm*S.std(src.wavefront.phase, NP2);
 printf("\n WF RMS: %7.2fnm\n",wf_rms);
-atm.get_phase_screen(d__near_src->phase,delta_e,NP,delta_e,NP,d__near_src,0);
-wf_rms = phase2nm*S.std(d__near_src->phase, NP2);
+atm.get_phase_screen(&near_src,delta_e,NP,delta_e,NP,0);
+wf_rms = phase2nm*S.std(near_src.wavefront.phase, NP2);
 printf("\n WF(near source) RMS: %7.2fnm\n",wf_rms);
 @  We also compute the wavefront gradient:
 <<NGS wavefront>>=
-atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d,d__ngs,0);
+atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&ngs,0);
 <<LGS uplink wavefront>>=
 float lgs_theta_x, lgs_theta_y;
-atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy, 1,d,d__lgs,0);
+atm.get_phase_screen_gradient(&cog, 1,d,&lgs,0);
 <<LGS wavefront>>=
-atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d,d__lgs,0);
+atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&lgs,0);
 @ The wavefront is written to the disk
 <<saving to files>>=
-dev2file("phaseScreenLowResNearField.bin", d__near_src->phase, NP2);
-dev2file("phaseScreenLowRes.bin", d__src->phase, NP2);
+dev2file("phaseScreenLowResNearField.bin", near_src.wavefront.phase, NP2);
+dev2file("phaseScreenLowRes.bin", src.wavefront.phase, NP2);
 @
 \subsection{Wavefront reconstruction}
 \label{sec:wavefr-reconstr}
@@ -196,7 +180,7 @@ printf("\n___ LGS WAVEFRONT ESTIMATE (cylindric/conic geom.) ___\n");
 pa.MVM(lmmse.d__phase_est,lmmse.d__ce,
 	     delta_e, 1, NP,
 	     delta_e, NP,
-	     &atm, d__lgs);
+	     &atm, &lgs);
 //wf_rms = phase2nm*S.std(lmmse.d__phase_est, NP2);
 //printf("\n WF RMS: %7.2fnm\n",wf_rms);
 <<wavefront error>>
@@ -204,7 +188,7 @@ dev2file("phaseEstAlt.bin", lmmse.d__phase_est, NP2);
 printf("------------------------------\n");
 <<setup>>=
 paStats pa;
-pa.setup(N_SIDE_LENSLET,2,&atm,d,d__src,d__lgs);
+pa.setup(N_SIDE_LENSLET,2,&atm,d,&src,&lgs);
 pa.toFile("paCovariance.bin");
 
 @ The wavefront error is computed with
@@ -221,13 +205,13 @@ cublasDestroy(handle);
 HANDLE_ERROR( cudaFree(d__wavefront_error) );
 
 <<wavefront error>>=
-CUBLAS_ERROR( cublasScopy(handle, NP2, d__src->phase, 1, d__wavefront_error, 1) );
+CUBLAS_ERROR( cublasScopy(handle, NP2, src.wavefront.phase, 1, d__wavefront_error, 1) );
 CUBLAS_ERROR( cublasSaxpy(handle, NP2, &alpha, phase_est, 1, d__wavefront_error, 1) );
 wf_rms = phase2nm*S.std(d__wavefront_error, NP2);
 printf("\n WFE RMS: %8.3fnm\n",wf_rms);
 
 <<wavefront error near source>>=
-CUBLAS_ERROR( cublasScopy(handle, NP2, d__near_src->phase, 1, d__wavefront_error, 1) );
+CUBLAS_ERROR( cublasScopy(handle, NP2, near_src.wavefront.phase, 1, d__wavefront_error, 1) );
 CUBLAS_ERROR( cublasSaxpy(handle, NP2, &alpha, phase_est, 1, d__wavefront_error, 1) );
 wf_rms = phase2nm*S.std(d__wavefront_error, NP2);
 printf("\n WFE (near source) RMS: %8.3fnm\n",wf_rms);
