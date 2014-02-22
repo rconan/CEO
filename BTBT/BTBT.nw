@@ -87,7 +87,7 @@ The matrix is entirely defined with $M$, $N$ and $N_T$ and the $(2N_T+1)^2\times
     HANDLE_ERROR( cudaMemcpy( ((float *)d__cov) + k*NDFT, d__cov_ + k*NU2, NU2*sizeof(float), cudaMemcpyDeviceToDevice) );
 
   int BATCH = M*N;
-  printf("\n@(CEO)>imaging: Creating a 1D covariance FFT plan\n");
+  fprintf(stderr,"\n@(CEO)>BTBT: Creating a 1D covariance FFT plan\n");
   if (cufftPlan1d(&raster_plan, NDFT,
 		    CUFFT_R2C,BATCH) != CUFFT_SUCCESS) {
     fprintf(stderr,
@@ -100,7 +100,7 @@ The matrix is entirely defined with $M$, $N$ and $N_T$ and the $(2N_T+1)^2\times
     return;
   }
 
-  printf("\n@(CEO)>imaging: Creating a 1D MVM input FFT plan\n");
+  fprintf(stderr,"\n@(CEO)>BTBT: Creating a 1D MVM input FFT plan\n");
   BATCH = N;
   if (cufftPlan1d(&MVM_input_plan, NDFT,
 		    CUFFT_R2C,BATCH) != CUFFT_SUCCESS) {
@@ -114,7 +114,7 @@ The matrix is entirely defined with $M$, $N$ and $N_T$ and the $(2N_T+1)^2\times
     return;
   }
 
-  printf("\n@(CEO)>imaging: Creating a 1D MVM output FFT plan\n");
+  fprintf(stderr,"\n@(CEO)>BTBT: Creating a 1D MVM output FFT plan\n");
   BATCH = M;
   if (cufftPlan1d(&MVM_output_plan, NDFT,
 		    CUFFT_C2R,BATCH) != CUFFT_SUCCESS) {
@@ -138,9 +138,9 @@ The matrix is entirely defined with $M$, $N$ and $N_T$ and the $(2N_T+1)^2\times
   HANDLE_ERROR( cudaMemcpy( mu, d__mu, ind_size, cudaMemcpyDeviceToHost) );
   xi = (unsigned int *)malloc( ind_size );
   HANDLE_ERROR( cudaMemcpy( xi, d__xi, ind_size, cudaMemcpyDeviceToHost) );
-  printf("\n|( i) mu xi|\n");
+  fprintf(stderr,"\n|( i) mu xi|\n");
   for (int i=0;i<NT2;i++) 
-    printf("|(%2d) %2d %2d|\n",i,mu[i],xi[i]);
+    fprintf(stderr,"|(%2d) %2d %2d|\n",i,mu[i],xi[i]);
 #endif
 
   stopwatch tid;
@@ -155,50 +155,50 @@ The covariance is computed with
 #ifdef BTBT_DEBUG
 cov = (float2*)malloc(cov_size);
 HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
-printf("\n@(CEO)>BTBT: raster covariance\n");
+fprintf(stderr,"\n@(CEO)>BTBT: raster covariance\n");
 for (int k=0;k<NDFT;k++) {
-  printf("%2d: ", k);
+  fprintf(stderr,"%2d: ", k);
   for (int l=0;l<N*M;l++) {
-    printf("%+4.2E %+4.2E.I||", cov[k+l*NDFT].x,cov[k+l*NDFT].y);
+    fprintf(stderr,"%+4.2E %+4.2E.I||", cov[k+l*NDFT].x,cov[k+l*NDFT].y);
   }
-  printf("\b\b\n");
+  fprintf(stderr,"\b\b\n");
  }
 #endif
 @ The main parameters of [[BTBT]] are displayed with the [[info]] routine:
 <<info>>=
 void BTBT::info(void)
 {
-  printf("\n\x1B[1;42m@(CEO)>BTBT:\x1B[;42m\n");
+  fprintf(stderr,"\n\x1B[1;42m@(CEO)>BTBT:\x1B[;42m\n");
   <<info content>>
-  printf("----------------------------------------------------\x1B[0m\n");
+  fprintf(stderr,"----------------------------------------------------\x1B[0m\n");
 }
 <<info content>>=
-  printf(" . number of outermost blocks    : %dX%d\n",M,N);
-  printf(" . size of outermost blocks      : %dX%d\n",NT,NT);
-  printf(" . size of innermost blocks      : %dX%d\n",NT,NT);
+  fprintf(stderr," . number of outermost blocks    : %dX%d\n",M,N);
+  fprintf(stderr," . size of outermost blocks      : %dX%d\n",NT,NT);
+  fprintf(stderr," . size of innermost blocks      : %dX%d\n",NT,NT);
   n_full = powf(NT,4)*M*N;
-  printf(" . DFT length                    : %d\n",NDFT);
-  printf(" . full matrix elements #        : %.3E\n",n_full);
+  fprintf(stderr," . DFT length                    : %d\n",NDFT);
+  fprintf(stderr," . full matrix elements #        : %.3E\n",n_full);
   n_comp = M*N*NU2;
-  printf(" . compressed matrix elements #  : %.3E\n",n_comp);
-  printf(" . compression factor            : %4.0f \n",n_full/n_comp);
+  fprintf(stderr," . compressed matrix elements #  : %.3E\n",n_comp);
+  fprintf(stderr," . compression factor            : %4.0f \n",n_full/n_comp);
   float mb = powf(2,20);
   b_full = n_full*sizeof(float);
   if (b_full>mb)
-    printf(" . full matrix storage [MB]      : %6.1f\n",b_full/mb);
+    fprintf(stderr," . full matrix storage [MB]      : %6.1f\n",b_full/mb);
   else
-    printf(" . full matrix storage [KB]      : %6.1f\n",b_full/1024.0);
+    fprintf(stderr," . full matrix storage [KB]      : %6.1f\n",b_full/1024.0);
 b_comp = n_comp*sizeof(float2);
   if (b_comp>mb)
-    printf(" . compressed matrix storage [MB]: %6.1f\n",b_comp/mb);
+    fprintf(stderr," . compressed matrix storage [MB]: %6.1f\n",b_comp/mb);
   else
-    printf(" . compressed matrix storage [KB]: %6.1f\n",b_comp/1024.0);
-  printf(" . compression factor            : %4.0f \n",b_full/b_comp);
+    fprintf(stderr," . compressed matrix storage [KB]: %6.1f\n",b_comp/1024.0);
+  fprintf(stderr," . compression factor            : %4.0f \n",b_full/b_comp);
 @ 
 <<cleanup>>=
 void BTBT::cleanup(void)
 {
-  printf("\n@(CEO)>BTBT: freeing memory!\n");
+  fprintf(stderr,"@(CEO)>BTBT: freeing memory!\n");
   cufftDestroy(raster_plan);
   cufftDestroy(MVM_input_plan);
   cufftDestroy(MVM_output_plan);

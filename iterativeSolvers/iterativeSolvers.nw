@@ -68,7 +68,7 @@ The setup method is allocated the required memory depending of the iterative met
 <<CG setup>>=
 void iterativeSolvers::cg_setup(int n_vector)
 {
-  printf("\n@(CEO)>iterativeSolvers: CONJUGATE GRADIENT\n");
+  fprintf(stderr,"@(CEO)>iterativeSolvers: CONJUGATE GRADIENT\n");
   N = n_vector;
   HANDLE_ERROR( cudaMalloc((void**)&d__vectors, sizeof(float)*N*4 ) );
   q = d__vectors;
@@ -81,7 +81,7 @@ void iterativeSolvers::cg_setup(int n_vector)
 <<MINRES setup>>=
 void iterativeSolvers::minres_setup(int n_vector)
 {
-  printf("\n@(CEO)>iterativeSolvers: MINRES\n");
+  fprintf(stderr,"@(CEO)>iterativeSolvers: MINRES\n");
   N = n_vector;
   HANDLE_ERROR( cudaMalloc((void**)&d__vectors, sizeof(float)*N*6 ) );
   nu_i   = d__vectors;
@@ -91,6 +91,7 @@ void iterativeSolvers::minres_setup(int n_vector)
   w_im1  = d__vectors + 4*N;
   w_im2  = d__vectors + 5*N;
   cublasCreate(&handle);
+  VERBOSE = 0;
 }
 @ \end{itemize}
 @ 
@@ -105,12 +106,13 @@ int N;
 stopwatch tid;
 cublasHandle_t handle;
 cublasStatus_t status;
+char VERBOSE;
 @
 Memory is freed with
 <<cleanup>>= 
 void iterativeSolvers::cleanup(void)
 {
-  printf("\n@(CEO)>iterativeSolvers: freeing memory!\n");
+  fprintf(stderr,"@(CEO)>iterativeSolvers: freeing memory!\n");
   HANDLE_ERROR( cudaFree( d__vectors ) );
   cublasDestroy(handle);
 }
@@ -202,7 +204,7 @@ The MINRES iterative solver method is implemented in the next routine:
   void iterativeSolvers::minres_vorst(float *x, BTBT* A, float *b, int max_it, float* x0)
 {
   float alpha, beta, gamma_i, gamma_im1, sigma_i, sigma_im1,
-    eta, delta, rho1, rho2, rho3;
+    eta, delta, rho1, rho2, rho3, rnorm0;
   int k;
   <<MINRES (Vorst) init>>
       //  tid.tic();
@@ -217,7 +219,7 @@ The MINRES iterative solver method is implemented in the next routine:
   void iterativeSolvers::minres_vorst(float *x, float *res, BTBT* A, float *b, int max_it, float* x0)
 {
   float alpha, beta, gamma_i, gamma_im1, sigma_i, sigma_im1,
-    eta, delta, rho1, rho2, rho3, res_cst, result;
+    eta, delta, rho1, rho2, rho3, res_cst, result, rnorm0;
   int k;
   float *residual;
   HANDLE_ERROR( cudaMalloc( (void**)&residual, sizeof(float)*N ) );
@@ -233,7 +235,7 @@ The MINRES iterative solver method is implemented in the next routine:
     cublasSaxpy(handle, N, &res_cst, b, 1, residual, 1);
     cublasSnrm2(handle, N, residual, 1, &result);
     res[k] = result;
-    printf("(%3d): Residue norm: %.2E\n",k,result);
+    fprintf(stderr,"(%3d): Residue norm: %.2E\n",k,result);
   }   
   tid.toc(&mean_time_per_iteration);
   mean_time_per_iteration /= max_it;
@@ -255,7 +257,7 @@ alpha = 1;
 cublasSaxpy(handle, N, &alpha, b, 1, nu_i, 1);
 #ifdef MINRES_DEBUG
 cublasSnrm2(handle, N, b, 1, &beta);
-printf("beta=%.2E\n",beta);
+fprintf(stderr,"beta=%.2E\n",beta);
 #endif
 @ \item $\beta_1=\left\| \nu_1 \right\|_2=\left\| r \right\|_2$
 <<MINRES (Vorst) init>>=
@@ -263,8 +265,9 @@ printf("beta=%.2E\n",beta);
 cublasSdot(handle, N, nu_i, 1, nu_i, 1, &beta);
 beta = sqrtf(beta);
 rnorm = beta;
+rnorm0 = rnorm;
 #ifdef MINRES_DEBUG
-printf("beta=%.2E\n",beta);
+fprintf(stderr,"beta=%.2E\n",beta);
 #endif
 @ \item $\eta=beta_1$, $\gamma_1=\gamma_0=1$, $\sigma_1=\sigma_0=0$, $\nu_0=0$
 <<MINRES (Vorst) init>>=
@@ -290,7 +293,7 @@ A->MVM(nu_ip1 , nu_i);
 <<MINRES (Vorst) loop>>=
 cublasSdot(handle, N, nu_i, 1, nu_ip1, 1, &alpha);
 #ifdef MINRES_DEBUG
-printf("alpha=%.2E\n",alpha);
+fprintf(stderr,"alpha=%.2E\n",alpha);
 #endif
 @ \item $\nu_{i+1} = \nu_{i+1} - \alpha_i\nu_i - \beta_i\nu_{i-1}$
 <<MINRES (Vorst) loop>>=
@@ -304,19 +307,19 @@ beta  = -beta;
 <<MINRES (Vorst) loop>>=
 delta = gamma_i*alpha - gamma_im1*sigma_i*beta;
 #ifdef MINRES_DEBUG
-printf("delta=%.2E\n",delta);
+fprintf(stderr,"delta=%.2E\n",delta);
 #endif
 @ \item $\rho_2 = \sigma_i\alpha_i + \gamma_{i-1}\gamma_i\beta_i$
 <<MINRES (Vorst) loop>>=
 rho2 = sigma_i*alpha + gamma_im1*gamma_i*beta;
 #ifdef MINRES_DEBUG
-printf("rho2=%.2E\n",rho2);
+fprintf(stderr,"rho2=%.2E\n",rho2);
 #endif
 @ \item $\rho_3 = \sigma_{i-1}\beta_i$
 <<MINRES (Vorst) loop>>=
 rho3 = sigma_im1*beta;
 #ifdef MINRES_DEBUG
-printf("rho3=%.2E\n",rho3);
+fprintf(stderr,"rho3=%.2E\n",rho3);
 #endif
 @ \item $\beta_{i+1}=\left\| \nu_{i+1} \right\|_2$
 <<MINRES (Vorst) loop>>=
@@ -324,29 +327,29 @@ printf("rho3=%.2E\n",rho3);
 cublasSdot(handle, N, nu_ip1, 1, nu_ip1, 1, &beta);
 beta = sqrtf(beta);
 #ifdef MINRES_DEBUG
-printf("beta=%.2E\n",beta);
+fprintf(stderr,"beta=%.2E\n",beta);
 #endif
 @ \item $\rho_1 = \sqrt{\delta^2+\beta_{i+1}^2}$
 <<MINRES (Vorst) loop>>=
 rho1 = hypotf(delta,beta);
 #ifdef MINRES_DEBUG
-printf("rho1=%.2E\n",rho1);
+fprintf(stderr,"rho1=%.2E\n",rho1);
 #endif
 @ \item $\gamma_{i+1} = \delta / \rho_1$
 <<MINRES (Vorst) loop>>=
 gamma_im1 = gamma_i;
 gamma_i = delta/rho1;
 #ifdef MINRES_DEBUG
-printf("gamma_im1=%.2E\n",gamma_im1);
-printf("gamma_i=%.2E\n",gamma_i);
+fprintf(stderr,"gamma_im1=%.2E\n",gamma_im1);
+fprintf(stderr,"gamma_i=%.2E\n",gamma_i);
 #endif
 @ \item $\sigma_{i+1} = \beta_{i+1} / \rho_1$
 <<MINRES (Vorst) loop>>=
 sigma_im1 = sigma_i;
 sigma_i = beta/rho1;
 #ifdef MINRES_DEBUG
-printf("sigma_im1=%.2E\n",sigma_im1);
-printf("sigma_i=%.2E\n",sigma_i);
+fprintf(stderr,"sigma_im1=%.2E\n",sigma_im1);
+fprintf(stderr,"sigma_i=%.2E\n",sigma_i);
 #endif
 @ \item $w_i = (\nu_i-\rho_3w_{i-2}-\rho_2w_{i-1})/\rho_1$
 <<MINRES (Vorst) loop>>=
@@ -364,12 +367,13 @@ cublasSaxpy(handle, N, &rho1, w_i, 1, x, 1);
 @ \item $\left\| r_i \right\|_2 = \left| \sigma_{i+1} \right|\left\| r_{i-1} \right\|_2 $
 <<MINRES (Vorst) loop>>=
 rnorm = rnorm*fabs(sigma_i);
-//printf("r norm=%6.2E\n",rnorm);
+if (VERBOSE)
+  fprintf(stderr,"#%3d: r norm=%6.2E - rel. tol.=%6.2E\n",k,rnorm,rnorm/rnorm0);
 @ \item $\eta = \sigma_{i+1}\eta$
 <<MINRES (Vorst) loop>>=
 eta = -sigma_i*eta;
 #ifdef MINRES_DEBUG
-printf("eta=%.2E\n",eta);
+fprintf(stderr,"eta=%.2E\n",eta);
 #endif
 @ \item
 \begin{eqnarray}
@@ -399,7 +403,7 @@ if (beta==0) break;
   <<MINRES (Choi) init>>
   tid.tic();
   for (k=0;k<max_it;k++) {
-    //printf("MINRES IT=%d - ",k);
+    //fprintf(stderr,"MINRES IT=%d - ",k);
     <<MINRES (Choi) loop>>
   }    
   tid.toc(&mean_time_per_iteration);
@@ -459,7 +463,7 @@ tau = c*phi;
 @ \item $\phi_k = s_k\phi_{k-1}$
 <<MINRES (Choi) loop>>=
 phi = s*phi;
-//printf("r norm=%6.2E\n",phi);
+//fprintf(stderr,"r norm=%6.2E\n",phi);
 @ \item $\left\| r \right\|_2 = \phi_k$
 <<MINRES (Choi) loop>>=
 rnorm = phi;

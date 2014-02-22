@@ -10,10 +10,13 @@ The source structure is written in the header:
 
 struct complex_amplitude {
 
-  <<complex_amplitude parameters>>
+  <<complex amplitude parameters>>
 
   void setup(int n_pixel);
   void cleanup(void);
+
+  void phase2file(char *filename);
+
 };
 
 struct source {
@@ -21,6 +24,7 @@ struct source {
   <<source parameters>>
 
   void setup(float zenith, float azimuth, float height);
+  void setup(float *_zenith, float *_azimuth, float _height, int _N_SRC);
   void cleanup(void);
 
   void info(void);
@@ -36,10 +40,12 @@ struct source {
 
 <<square geometry>>
 
-<<complex_amplitude setup>>
-<<complex_amplitude cleanup>>
+<<complex amplitude setup>>
+<<complex amplitude cleanup>>
+<<phase to file>>
 
 <<setup>>
+<<setup for multiple sources>>
 <<cleanup>>
 
 <<info>>
@@ -50,17 +56,19 @@ struct source {
 @
 The wavefront descibes the wave complex amplitude of the light source.
 The complex amplitude consists of the amplitude and the phase of the wave:
-<<complex_amplitude parameters>>=
+<<complex amplitude parameters>>=
 int N_PX;
 float *amplitude, *phase;
 @ The physical extent of the amplitude is set by the pupil mask:
-<<complex_amplitude parameters>>=
+<<complex amplitude parameters>>=
 char *pupil_mask;
 
 @
+The source structure can contains several source which number is given by [[N_SRC]]
 The source specify a celestial object by its coordinates:
 <<source parameters>>=
 float zenith, azimuth, height;
+int N_SRC;
 @  and magnitude at a given photometric band.
 <<source parameters>>=
 char *photometric_band;float magnitude;
@@ -73,7 +81,7 @@ printf("\n\x1B[1;42m@(CEO)>source\x1B[;42m\n");
 printf(" zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
 printf(" %5.2f      %6.2f    %8.2f\n",
                         zenith*RADIAN2ARCSEC,
-                        azimuth*180/PI,height);
+                        azimuth*180.0/PI,height);
 printf("----------------------------------------------------\x1B[0m\n");
 }
 
@@ -162,14 +170,38 @@ void source::setup(float _zenith, float _azimuth, float _height) {
 			    cudaMemcpyHostToDevice ) );
   wavefront.setup(_SOURCE_N_PX_);
 }
-<<complex_amplitude setup>>=
+<<setup for multiple sources>>=
+void source::setup(float *_zenith, float *_azimuth, float _height, int _N_SRC) {
+  N_SRC = _N_SRC;
+  height = _height;
+  source __src;
+  HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
+  printf("\n\x1B[1;42m@(CEO)>source\x1B[;42m\n");
+  printf(" zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
+    __src.zenith  = _zenith[i_SRC];
+    __src.azimuth = _azimuth[i_SRC];
+    __src.height  = _height;
+    __src.theta_x = tanf(_zenith[i_SRC])*cosf(_azimuth[i_SRC]);
+    __src.theta_y = tanf(_zenith[i_SRC])*sinf(_azimuth[i_SRC]);
+    HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
+			      sizeof(source) ,
+			      cudaMemcpyHostToDevice ) );
+    printf(" %5.2f      %6.2f    %8.2f\n",
+                        _zenith[i_SRC]*RADIAN2ARCSEC,
+                        _azimuth[i_SRC]*180/PI,_height);
+  }
+  printf("----------------------------------------------------\x1B[0m\n");
+  wavefront.setup(_SOURCE_N_PX_*N_SRC);
+}
+<<complex amplitude setup>>=
 void complex_amplitude::setup(int n_pixel) {
   N_PX = n_pixel;
   HANDLE_ERROR( cudaMalloc( (void**)&amplitude,  sizeof(float)*N_PX ) );
   HANDLE_ERROR( cudaMalloc( (void**)&phase,      sizeof(float)*N_PX ) );
   HANDLE_ERROR( cudaMalloc( (void**)&pupil_mask, sizeof(char)*N_PX ) );
 }
-<<complex_amplitude cleanup>>=
+<<complex amplitude cleanup>>=
 void complex_amplitude::cleanup(void) {
   HANDLE_ERROR( cudaFree( amplitude ) );
   HANDLE_ERROR( cudaFree( phase ) );
@@ -178,7 +210,7 @@ void complex_amplitude::cleanup(void) {
 @ Allocated variable are freed with the [[cleanup]] routine
 <<cleanup>>=
 void source::cleanup(void) {
-  printf("\n@(CEO)>source: freeing memory!\n");
+  fprintf(stderr,"@(CEO)>source: freeing memory!\n");
   HANDLE_ERROR( cudaFree( dev_ptr) );
   wavefront.cleanup();
 }
@@ -192,4 +224,9 @@ __global__ void squarePupil(float* amplitude, float *phase) {
     amplitude[id] = 1.0;
     phase[id]     = 0.0;
   }
+}
+@ The wavefront phase is save to a file with
+<<phase to file>>=
+void complex_amplitude::phase2file(char *filename) {
+  dev2file(filename,phase,N_PX);
 }

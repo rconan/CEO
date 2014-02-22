@@ -11,8 +11,10 @@ The centroiding header and source are written
 struct centroiding {
 
   float *d__c, *d__cx, *d__cy, *d__mass;
+  int n_data;
 
   void setup(void);
+  void setup(int n_data, int N_SRC);
 
   void cleanup(void);
    
@@ -29,6 +31,7 @@ struct centroiding {
 <<centroiding>>
 
 <<setup>>
+<<setup with data length>>
 
 <<cleanup>>
    
@@ -43,10 +46,20 @@ void centroiding::setup(void) {
   d__cy = d__c + _N_LENSLET_*_N_SOURCE_;
   HANDLE_ERROR( cudaMalloc( (void**)&d__mass , sizeof(float) *_N_LENSLET_*_N_SOURCE_ ) );     
 }
+@ The total number of lenslet [[n_data]] can also be specified
+<<setup with data length>>=
+void centroiding::setup(int n_data_,int N_SRC) {
+  n_data = n_data_;
+  printf("\n@(CEO)>allocating: allocating memory!\n");
+  HANDLE_ERROR( cudaMalloc( (void**)&d__c   , sizeof(float) *n_data*2*N_SRC ) );
+  d__cx = d__c;
+  d__cy = d__c + n_data;
+  HANDLE_ERROR( cudaMalloc( (void**)&d__mass , sizeof(float) *n_data*N_SRC ) );     
+}
 @ and de--allocated with the [[cleanup]] routine
 <<cleanup>>=
 void centroiding::cleanup(void) {
-  printf("\n@(CEO)>centroiding: freeing memory!\n");
+  fprintf(stderr,"@(CEO)>centroiding: freeing memory!\n");
   HANDLE_ERROR( cudaFree( d__c ) );
   HANDLE_ERROR( cudaFree( d__mass ) );
 }

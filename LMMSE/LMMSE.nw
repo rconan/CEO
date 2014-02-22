@@ -28,6 +28,8 @@ struct LMMSE {
 
   void setup(atmosphere *atm,float sampling, int N, char *solver_id);
   void setup(atmosphere *atm, float source_height,float sampling, int N, char *solver_id);
+  void setup(atmosphere *atm, source *guide_star, int N_guide_star, source *mmse_star, int N_mmse_star,
+	     float sampling, int N, char *solver_id);
 
   void cleanup(void);
 
@@ -46,6 +48,7 @@ struct LMMSE {
 
 <<setup>>
 <<setup with source height>>
+<<setup with sources>>
 
 <<cleanup>>
 
@@ -59,6 +62,7 @@ The setup method is initializing the required structures:
 void LMMSE::setup(atmosphere *atm,float sampling,int N, char *solver_id)
 {
   int NP, osf;
+  N_guide_star = 1;
   aa.setup(N_SIDE_LENSLET,atm,sampling);
   aaCov.setup(2,2,N_SIDE_LENSLET,aa.d__cov);
   osf = 2;
@@ -76,10 +80,34 @@ void LMMSE::setup(atmosphere *atm,float sampling,int N, char *solver_id)
 HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* _N_LENSLET_*2 ) );
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* _N_LENSLET_*2 ) );
 }
+<<setup with sources>>=
+void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star, source *mmse_star, int N_mmse_star,
+		  float sampling,int N, char *solver_id)
+{
+  int NP, osf;
+  N_guide_star = _N_guide_star;
+  aa.setup(N_SIDE_LENSLET,atm,sampling,guide_star, N_guide_star);
+  aaCov.setup(2*N_guide_star,2*N_guide_star,N_SIDE_LENSLET,aa.d__cov);
+  osf = 2;
+  NP = osf*N_SIDE_LENSLET+1;
+  PS_E_N_PX = NP;
+  PS_E_N_PX *= PS_E_N_PX;
+  pa.setup(N_SIDE_LENSLET,osf,atm,sampling,mmse_star, N_mmse_star, guide_star, N_guide_star);
+  paCov.setup(N_mmse_star,2*N_guide_star,NP,pa.d__cov);
+  if (strcmp(solver_id,"CG")==0)
+    iSolve.cg_setup(N*N_guide_star);
+  if (strcmp(solver_id,"MINRES")==0)
+    iSolve.minres_setup(N*N_guide_star);
+<<linear solver (prep.)>>
+<<MVM (prep.)>>
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
+HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
+}
 <<setup with source height>>=
 void LMMSE::setup(atmosphere *atm, float source_height,float sampling,int N, char *solver_id)
 {
   int NP, osf;
+  N_guide_star = 1;
   aa.setup(N_SIDE_LENSLET,atm,sampling,source_height);
   aaCov.setup(2,2,N_SIDE_LENSLET,aa.d__cov);
   osf = 2;
@@ -100,7 +128,7 @@ HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* _N_LENSLET_*2 ) );
 @ 
 The structure parameters are
 <<parameters>>=
-int *d__idx, PS_E_N_PX;
+  int *d__idx, PS_E_N_PX, N_guide_star;
 float *d__ce, *d__phase_est, *d__x;
 aaStats aa;
 BTBT aaCov;
@@ -113,7 +141,7 @@ Memory is freed with
 <<cleanup>>= 
 void LMMSE::cleanup(void)
 {
-  printf("\n@(CEO)>LMMSE: freeing memory!\n");
+  fprintf(stderr,"@(CEO)>LMMSE: freeing memory!\n");
   aa.cleanup();
   pa.cleanup();
   aaCov.cleanup();
@@ -184,17 +212,35 @@ HANDLE_ERROR( cudaMemcpy( d__idx, idx,
 			  sizeof(int)*_N_LENSLET_,
 			  cudaMemcpyHostToDevice ) );
 free(idx);
-<<MVM (prep.)>>=
+
+<<MVM (prep.) (old)>>=
 HANDLE_ERROR( cudaMalloc((void**)&d__ce, sizeof(float)*PS_E_N_PX*2 ) );
 HANDLE_ERROR( cudaMemset(d__ce, 0, sizeof(float)*PS_E_N_PX*2 ) );
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
-@ 
-<<MVM>>=
+
+<<MVM (prep.)>>=
+HANDLE_ERROR( cudaMalloc((void**)&d__ce, sizeof(float)*PS_E_N_PX*2*N_guide_star ) );
+HANDLE_ERROR( cudaMemset(d__ce, 0, sizeof(float)*PS_E_N_PX*2*N_guide_star ) );
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
+
+<<MVM (old)>>=
 dim3 blockDim(16,16);
 dim3 gridDim(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
 set_pa_input LLL gridDim,blockDim RRR (d__ce, d__x, d__idx, N_SIDE_LENSLET);
 set_pa_input LLL gridDim,blockDim RRR (d__ce + PS_E_N_PX, d__x + _N_LENSLET_, d__idx, N_SIDE_LENSLET);
 paCov.MVM(d__phase_est,d__ce);
+
+<<MVM>>=
+dim3 blockDim(16,16);
+dim3 gridDim(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
+for (int k_guide_star=0;k_guide_star<N_guide_star;k_guide_star++) {
+  set_pa_input LLL gridDim,blockDim RRR (d__ce + 2*k_guide_star*PS_E_N_PX,
+					 d__x + 2*k_guide_star*_N_LENSLET_,     d__idx, N_SIDE_LENSLET);
+  set_pa_input LLL gridDim,blockDim RRR (d__ce + (2*k_guide_star+1)*PS_E_N_PX,
+					 d__x + (2*k_guide_star+1)*_N_LENSLET_, d__idx, N_SIDE_LENSLET);
+ }
+paCov.MVM(d__phase_est,d__ce);
+
 @
 The test routine is:
 <<LMMSE.bin>>=

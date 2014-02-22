@@ -71,10 +71,14 @@ struct atmosphere {
   void get_phase_screen(source *src,
 			float const delta_x, int N_x, float const delta_y, int N_y, 
 			float time);
+  void get_phase_screen(source *src, int N_SRC,
+			float const delta_x, int N_x, float const delta_y, int N_y, 
+			float time);
 
   void get_phase_screen_gradient(float *sx, float *sy, int NL, float const d, source *src, float time);
   void get_phase_screen_gradient(float *sx, float *sy, int NL, char *valid_lenslet, float const d, source *src, float time);
   void get_phase_screen_gradient(centroiding *cog, int NL, float const d, source *src, float time);
+  void get_phase_screen_gradient(centroiding *cog, int NL, float const d, source *src, int N_SRC, float time);
 
 };
 
@@ -114,9 +118,11 @@ struct atmosphere {
 <<phase screen III>>
 <<phase screen IV>>
 <<phase screen V>>
+<<phase screen VI>>
 
 <<phase screen gradient I>>
 <<phase screen gradient II>>
+<<phase screen gradient III>>
 <<phase screen gradient (masked)>>
 @
 The atmosphere parameters are
@@ -424,7 +430,7 @@ void atmosphere::reset(void)
 @ The dynamically allocated variables are freed in the cleanup routine:
 <<cleanup>>=
 void atmosphere::cleanup(void) {
-  printf("\n@(CEO)>atmosphere: freeing memory!\n");
+  fprintf(stderr,"@(CEO)>atmosphere: freeing memory!\n");
   HANDLE_ERROR( cudaFree( devStates ) );
   HANDLE_ERROR( cudaFree( zeta1  ));
   HANDLE_ERROR( cudaFree( eta1 ) );
@@ -498,7 +504,7 @@ void atmosphere::get_phase_screen(float const *x, float const *y, int N_xy,
 @ 
 The kernel starts with some declarations:
 <<declarations (common)>>=
-  int i, j, l, ij, ijl, kl;
+  int i, j, l, ij, ijl, kl, i_source;
 float freq_mag0, delta_freq_mag0, f_red0, f_red, 
   freq_L0_square, x_kl, y_kl, x_kl0, y_kl0, gl,
   freq_mag, delta_freq_mag, sqrt_spectrum_kernel,
@@ -511,7 +517,8 @@ Each thread is computing one value of the phase screen at the coordinate [[x_kl 
 <<thread to coordinate index>>=
 i = blockIdx.x * blockDim.x + threadIdx.x;
 j = blockIdx.y * blockDim.y + threadIdx.y;
-kl = j * gridDim.x * blockDim.x + i;
+i_source = blockIdx.z;
+kl = j * gridDim.x * blockDim.x + i + i_source*N_xy;
 x_kl0 = x[kl];
 y_kl0 = y[kl];
 @ 
@@ -545,11 +552,11 @@ The inner loop is the sum over the frequency angle. It computes $\varphi_j$, $\s
 The innest loop is the sum over the layer.
 <<layer sum>>=
   ijl = ij + l*turb->N_a*turb->N_k;
-gl = 1 - turb->altitude[l]/src->height;
+gl = 1 - turb->altitude[l]/src[i_source].height;
 x_kl = x_kl0 - turb->vx[l]*time;
 y_kl = y_kl0 - turb->vy[l]*time;
-x_kl = gl*x_kl + turb->altitude[l]*src->theta_x;
-y_kl = gl*y_kl + turb->altitude[l]*src->theta_y;
+x_kl = gl*x_kl + turb->altitude[l]*src[i_source].theta_x;
+y_kl = gl*y_kl + turb->altitude[l]*src[i_source].theta_y;
 sum_l += sqrt(turb->xi0[l])*
    ( zeta1[ijl]*cosf( eta1[ijl] +
 		     freq_mag*( x_kl*cos_freq_ang + y_kl*sin_freq_ang ) ) +
@@ -595,6 +602,19 @@ void atmosphere::get_phase_screen(source *src,
 				   zeta1, eta1, zeta2, eta2,
 				   src->dev_ptr, time);
 }
+<<phase screen VI>>=
+void atmosphere::get_phase_screen(source *src, int N_SRC,
+                       float const delta_x, int N_x, float const delta_y, int N_y, 
+		       float time)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim( 1+N_x/16 , 1+N_y/16, N_SRC);
+  square_plps LLL gridDim , blockDim RRR (src->wavefront.phase,
+				   delta_x, N_x, delta_y, N_y, 
+				   d__turbulence, r0,
+				   zeta1, eta1, zeta2, eta2,
+				   src->dev_ptr, time);
+}
 @ and computed with the kernel
 <<phase screen kernel (square)>>=
   __global__ void square_plps(float *phase_screen,
@@ -634,7 +654,8 @@ Each thread is computing one value of the phase screen at the coordinate [[x_kl 
 <<thread to coordinate index (square)>>=
 i = blockIdx.x * blockDim.x + threadIdx.x;
 j = blockIdx.y * blockDim.y + threadIdx.y;
-kl = i * N_x + j;
+i_source = blockIdx.z;
+kl = i * N_x + j + i_source*N_x*N_y;
 x_kl0 = i*delta_x - (N_x-1)*delta_x*0.5;
 y_kl0 = j*delta_y - (N_y-1)*delta_y*0.5;
 @
@@ -692,6 +713,16 @@ void atmosphere::get_phase_screen_gradient(centroiding *cog, int NL, float const
 					    d__turbulence, wavelength, r0,
 				   zeta1, eta1, zeta2, eta2,
 				   src->dev_ptr, time);
+}
+<<phase screen gradient III>>=
+void atmosphere::get_phase_screen_gradient(centroiding *cog, int NL, float const d, source *src, int N_SRC, float time)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim( 1+NL/16 , 1+NL/16, N_SRC);
+  plps_gradient LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy, NL, d,
+					    d__turbulence, wavelength, r0,
+				            zeta1, eta1, zeta2, eta2,
+				            src->dev_ptr, time);
 }
 @ with the kernel
 <<phase screen gradient kernel>>=
@@ -796,18 +827,19 @@ Each thread is computing one value of the phase screen gradient at the coordinat
 <<thread to lenslet coordinate>>=
 i = blockIdx.x * blockDim.x + threadIdx.x;
 j = blockIdx.y * blockDim.y + threadIdx.y;
-kl = i * NL + j;
+i_source = blockIdx.z;
+kl = i * NL + j + 2*i_source*NL*NL;
 x_kl0 = (i+0.5)*d - NL*d*0.5;
 y_kl0 = (j+0.5)*d - NL*d*0.5;
 @ 
 The innest loop is the sum over the layer.
 <<layer sum (gradient)>>=
   ijl = ij + l*turb->N_a*turb->N_k;
-gl = 1 - turb->altitude[l]/src->height;
+gl = 1 - turb->altitude[l]/src[i_source].height;
 x_kl = x_kl0 - turb->vx[l]*time;
 y_kl = y_kl0 - turb->vy[l]*time;
-x_kl = gl*x_kl + turb->altitude[l]*src->theta_x;
-y_kl = gl*y_kl + turb->altitude[l]*src->theta_y;
+x_kl = gl*x_kl + turb->altitude[l]*src[i_source].theta_x;
+y_kl = gl*y_kl + turb->altitude[l]*src[i_source].theta_y;
 red0 = sqrt(turb->xi0[l])*
   sinc_atm(0.5*gl*cos_freq_ang*d)*sinc_atm(0.5*gl*sin_freq_ang*d);
 red1 = zeta1[ijl]*sin( eta1[ijl] + cos_freq_ang*x_kl + sin_freq_ang*y_kl );

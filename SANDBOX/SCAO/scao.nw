@@ -42,11 +42,13 @@ int main(int argc,char *argv[]) {
 <<wavefront>>
 <<NGS wavefront>>
 <<wavefront reconstruction from NGS>>
-<<LGS uplink wavefront>>
 <<LGS wavefront>>
 <<wavefront reconstruction from LGS>>
 <<paStats MVM alternative>>
 <<saving to files>>
+<<LTAO wavefronts and wavefront gradients>>
+<<LTAO wavefront estimation>>
+<<paStats MVM tomography>>
 <<cleanup>>
 }
 
@@ -81,8 +83,8 @@ lgs.cleanup();
 @ The atmosphere is now defined:
 <<setup>>=
 atmosphere atm;
-atm.setup(20e-2,30,10e3,10,0);
-//atm.gmt_setup(20e-2,30);
+//atm.setup(20e-2,30,10e3,10,0);
+atm.gmt_setup(15e-2,60);
 /*
 float altitude[] = {0, 10e3},
 xi0[] = {0.5, 0.5},
@@ -101,17 +103,19 @@ cog.setup();
 cog.cleanup();
 @ The diameter of the telescope is set to:
 <<setup>>=
-float D = 8; // telescope diameter in meter
+float D = 25; // telescope diameter in meter
 @ leading to a lenslet size of:
 <<setup>>=
 float d = D/N_SIDE_LENSLET;
 @  The linear minimum mean square error wavefront reconstructor is initialized with the atmosphere, the lenslet array pitch, the number of slopes and the iterative solver type and destroyed with
 <<setup>>=
 LMMSE lmmse, ngs_lmmse;
-ngs_lmmse.setup(&atm,d,_N_LENSLET_*2,"MINRES");
-ngs_lmmse.pa.toFile("ngs_paCovariance.bin");
-lmmse.setup(&atm,lgs.height,d,_N_LENSLET_*2,"MINRES");
-lmmse.pa.toFile("paCovariance.bin");
+//ngs_lmmse.setup(&atm,d,_N_LENSLET_*2,"MINRES");
+ngs_lmmse.setup(&atm,&ngs,1,&ngs,1,d,_N_LENSLET_*2,"MINRES");
+//ngs_lmmse.aa.toFile("ngs_aaCovariance.bin");
+//ngs_lmmse.pa.toFile("ngs_paCovariance.bin");
+lmmse.setup(&atm,&lgs,1,&near_src,1,d,_N_LENSLET_*2,"MINRES");
+//lmmse.pa.toFile("paCovariance.bin");
 <<cleanup>>=
 ngs_lmmse.cleanup();
 lmmse.cleanup();
@@ -143,6 +147,7 @@ printf("\n WF(near source) RMS: %7.2fnm\n",wf_rms);
 @  We also compute the wavefront gradient:
 <<NGS wavefront>>=
 atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&ngs,0);
+//dev2file("ngs_cog.bin",cog.d__c,2*_N_LENSLET_);
 <<LGS uplink wavefront>>=
 float lgs_theta_x, lgs_theta_y;
 atm.get_phase_screen_gradient(&cog, 1,d,&lgs,0);
@@ -178,9 +183,9 @@ printf("------------------------------\n");
 <<paStats MVM alternative>>=
 printf("\n___ LGS WAVEFRONT ESTIMATE (cylindric/conic geom.) ___\n");
 pa.MVM(lmmse.d__phase_est,lmmse.d__ce,
-	     delta_e, 1, NP,
-	     delta_e, NP,
-	     &atm, &lgs);
+       delta_e, 1, NP,
+       delta_e, NP,
+       &atm, &src, 1, &lgs, 1);
 //wf_rms = phase2nm*S.std(lmmse.d__phase_est, NP2);
 //printf("\n WF RMS: %7.2fnm\n",wf_rms);
 <<wavefront error>>
@@ -188,8 +193,10 @@ dev2file("phaseEstAlt.bin", lmmse.d__phase_est, NP2);
 printf("------------------------------\n");
 <<setup>>=
 paStats pa;
-pa.setup(N_SIDE_LENSLET,2,&atm,d,&src,&lgs);
-pa.toFile("paCovariance.bin");
+pa.setup(N_SIDE_LENSLET,2,&atm,d,&src,1,&lgs,1);
+//pa.toFile("paCovariance.bin");
+<<cleanup>>=
+pa.cleanup();
 
 @ The wavefront error is computed with
 <<setup>>=
@@ -198,8 +205,6 @@ cublasCreate(&handle);
 float *d__wavefront_error, *phase_est;
 HANDLE_ERROR( cudaMalloc((void**)&d__wavefront_error, sizeof(float)* NP2) );
 float alpha = -1;
-<<cleanup>>=
-pa.cleanup();
 <<cleanup>>=
 cublasDestroy(handle);
 HANDLE_ERROR( cudaFree(d__wavefront_error) );
@@ -216,3 +221,67 @@ CUBLAS_ERROR( cublasSaxpy(handle, NP2, &alpha, phase_est, 1, d__wavefront_error,
 wf_rms = phase2nm*S.std(d__wavefront_error, NP2);
 printf("\n WFE (near source) RMS: %8.3fnm\n",wf_rms);
 
+@ 
+\section{LTAO}
+\label{sec:ltao}
+
+For the LTAO wavefront estimation, the LGS constellation is defined first.
+We will use 3 LGSs on a 15 arcsec radius ring.
+<<setup>>=
+int N_GS = 6;
+float zenith[] = {ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30)},
+  azimuth[] = {0,2.*PI/6.,4.*PI/6.,6.*PI/6.,8.*PI/6.,10.*PI/6.,12.*PI/6.};
+source gs_ast;
+gs_ast.setup(zenith,azimuth,90e3,N_GS);
+<<cleanup>>=
+gs_ast.cleanup();
+
+@ The wavefront sensor of the LGS asterism are setup next
+<<setup>>=
+centroiding gs_ast_cog;
+gs_ast_cog.setup(_N_LENSLET_,N_GS);
+<<cleanup>>=
+gs_ast_cog.cleanup();
+
+@ The 3 source are propagated through the atmosphere to the wavefront sensor.
+<<LTAO wavefronts and wavefront gradients>>=
+atm.get_phase_screen(&gs_ast,N_GS,delta_e,NP,delta_e,NP,0);
+gs_ast.wavefront.phase2file("ngsAstWavefronts.bin");
+atm.get_phase_screen_gradient(&gs_ast_cog,N_SIDE_LENSLET,d,&gs_ast,N_GS,0);
+//dev2file("gs_ast_cog.bin",gs_ast_cog.d__c,2*_N_LENSLET_*N_GS);
+
+@ We solve:
+<<LTAO wavefront estimation>>=
+printf("\n___ NGS WAVEFRONT ESTIMATE ___\n");
+//gs_ast_lmmse.iSolve.VERBOSE = 1;
+gs_ast_lmmse.estimation(gs_ast_cog.d__c, 100);
+phase_est = gs_ast_lmmse.d__phase_est;
+<<wavefront error>>
+printf("------------------------------\n");
+dev2file("phaseEstNtao.bin", gs_ast_lmmse.d__phase_est, NP2);
+
+<<setup>>=
+LMMSE gs_ast_lmmse;
+gs_ast_lmmse.setup(&atm,&gs_ast,N_GS,&lgs,1,d,_N_LENSLET_*2,"MINRES");
+//gs_ast_lmmse.aa.toFile("gs_ast_aaCovariance.bin");
+//gs_ast_lmmse.pa.toFile("gs_ast_paCovariance.bin");
+<<cleanup>>=
+gs_ast_lmmse.cleanup();
+
+<<paStats MVM tomography>>=
+printf("\n___ LGS WAVEFRONT ESTIMATE (cylindric/conic geom.) ___\n");
+paTomo.MVM(gs_ast_lmmse.d__phase_est,gs_ast_lmmse.d__ce,
+       delta_e, 1, NP,
+       delta_e, NP,
+       &atm, &src, 1, &gs_ast, N_GS);
+//wf_rms = phase2nm*S.std(lmmse.d__phase_est, NP2);
+//printf("\n WF RMS: %7.2fnm\n",wf_rms);
+<<wavefront error>>
+dev2file("phaseEstAltTomo.bin", gs_ast_lmmse.d__phase_est, NP2);
+printf("------------------------------\n");
+<<setup>>=
+paStats paTomo;
+paTomo.setup(N_SIDE_LENSLET,2,&atm,d,&src,1,&gs_ast,N_GS);
+paTomo.toFile("paTomoCovariance.bin");
+<<cleanup>>=
+paTomo.cleanup();

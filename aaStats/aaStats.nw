@@ -28,6 +28,7 @@ struct aaStats {
 
   void setup(int N, atmosphere *atm, float lenslet_pitch);
   void setup(int N, atmosphere *atm, float lenslet_pitch, float source_height);
+  void setup(int N, atmosphere *atm, float lenslet_pitch, source *src, int N_SRC);
 
   void cleanup(void);
 
@@ -35,6 +36,7 @@ struct aaStats {
 
   float variance(void);
 
+  void toFile(char *filename);
 };
 @  and
 <<paStats stucture>>=
@@ -44,7 +46,8 @@ struct paStats {
 
   void setup(int N, int osf, atmosphere *atm, float lenslet_pitch);
   void setup(int N, int osf, atmosphere *atm, float lenslet_pitch, float source_height);
-  void setup(int N, int osf, atmosphere *atm, float lenslet_pitch, source *phase_src, source *slopes_src);
+  void setup(int N, int osf, atmosphere *atm, float lenslet_pitch, 
+	     source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC);
 
   void cleanup(void);
 
@@ -58,7 +61,9 @@ struct paStats {
   void MVM(float *out_vector, float *in_vector, 
 	   float d1, float g1, int N1, 
 	   float d2, int N2,
-	   atmosphere *atm, source *slopes_src) ;
+	   atmosphere *atm,
+	   source *phase_src, int N_P_SRC,
+	   source *slopes_src, int N_S_SRC) ;
 
   void toFile(char *filename);
 
@@ -79,6 +84,9 @@ struct paStats {
 
 <<aaStats power spectrum kernel>>
 <<aaStats power spectrum kernel with source height>>
+<<aaStats power spectrum kernel with sources>>
+<<paStats power spectrum kernel with sources (same heights)>>
+
 <<paStats power spectrum kernel>>
 <<paStats power spectrum kernel with source height>>
 <<paStats power spectrum kernel with sources>>
@@ -87,10 +95,14 @@ struct paStats {
 
 <<aaStats setup>>
 <<aaStats setup with source height>>
+<<aaStats setup with sources>>
+
 <<paStats setup>>
 <<paStats setup with source height>>
 <<paStats setup with sources>>
-<<save covariance to file>>
+
+<<save aa covariance to file>>
+<<save pa covariance to file>>
 
 <<aaStats cleanup>>
 <<paStats cleanup>>
@@ -164,7 +176,10 @@ The covariance is computed when the setup function is called with the size of a 
 <<aaStats setup>>=
 void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
 {
+  N_SRC2 = 1;
+  int BATCH = 4;
   <<aaStats setup declarations>>
+  <<aaStats setup allocations>>
   stopwatch tid;
   tid.tic();
   <<aaStats evaluate covariance>>
@@ -173,10 +188,27 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch)
 <<aaStats setup with source height>>=
 void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch, float source_height)
 {
+  N_SRC2 = 1;
+  int BATCH = 4;
   <<aaStats setup declarations>>
+  <<aaStats setup allocations>>
   stopwatch tid;
   tid.tic();
   <<aaStats evaluate covariance with source height>>
+  tid.toc(&cov_eval_et,"Covariance evaluation");
+}
+@ The generic setup routine compute the covariance matrix for $[[N_SRC]]\times[[N_SRC]]$ sources
+<<aaStats setup with sources>>=
+void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch, source *src, int N_SRC)
+{
+  N_SRC2 = N_SRC*N_SRC;
+  int BATCH = 1;
+  <<aaStats setup declarations>>
+  psd_size = sizeof(float2)*NF2;
+  <<aaStats setup allocations>>
+  stopwatch tid;
+  tid.tic();
+  <<aaStats evaluate covariance with sources>>
   tid.toc(&cov_eval_et,"Covariance evaluation");
 }
 <<aaStats setup declarations>>=
@@ -191,8 +223,10 @@ kappa = 4;
 sampling = lenslet_pitch;
 
 psd_size = sizeof(float2)*NF2*4;
-cov_size = sizeof(float)*NU2*4;
+cov_size = sizeof(float)*NU2*4*N_SRC2;
 ind_size = sizeof(int)*N2;
+
+<<aaStats setup allocations>>=
 HANDLE_ERROR( cudaMalloc((void**)&d__psd, psd_size ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__alpha, 2*sizeof(float) ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__beta,  2*sizeof(float) ) );
@@ -200,10 +234,9 @@ HANDLE_ERROR( cudaMemcpy( d__alpha, alpha, 2*sizeof(float), cudaMemcpyHostToDevi
 HANDLE_ERROR( cudaMemcpy( d__beta, beta, 2*sizeof(float), cudaMemcpyHostToDevice) );
 HANDLE_ERROR( cudaMalloc((void**)&d__cov, cov_size ) );
 
-printf("\n@(CEO)>imaging: Creating 2D covariance FFT plan\n");
+fprintf(stderr,"@(CEO)>aaStats: Creating 2D covariance FFT plan\n");
 int n_DFT[2] = {NF, NF};
 int iodist = NF2;
-int BATCH = 4;
 /* Create a 2D FFT plan. */
 if (cufftPlanMany(&plan, 2, n_DFT,
 		  NULL, 1, iodist,
@@ -224,6 +257,7 @@ info(kappa, sampling);
 <<paStats setup>>=
 void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch)
 {
+  N_SRC2 = 1;
   <<paStats setup declarations>>
   stopwatch tid;
   tid.tic();
@@ -233,15 +267,20 @@ void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch)
 <<paStats setup with source height>>=
 void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch, float source_height)
 {
+  N_SRC2 = 1;
   <<paStats setup declarations>>
   stopwatch tid;
   tid.tic();
   <<paStats evaluate covariance with source height>>
   tid.toc(&cov_eval_et,"Covariance evaluation");
+
+info(kappa,sampling);
 }
 <<paStats setup with sources>>=
-  void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch, source *phase_src, source *slopes_src)
+void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch, 
+		      source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC)
 {
+  N_SRC2 = N_P_SRC*N_S_SRC;
   float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
   osf = osf_;
   N = osf*N_+1;
@@ -253,16 +292,35 @@ void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch, floa
   kappa = 4;
   sampling = lenslet_pitch/osf;
 
-  psd_size = sizeof(float2)*NF2*2*_N_LAYER_;
-  cov_size = sizeof(float)*NU2*2*_N_LAYER_;
-  ind_size = sizeof(int)*N2;
+  
+  if (phase_src->height==slopes_src->height) {
+    psd_size = sizeof(float2)*NF2;
+    cov_size = sizeof(float)*NU2*2*N_SRC2;
+    ind_size = sizeof(int)*N2;
+    int BATCH = 1;
 
-  <<paStats setup allocation>>
+    <<paStats setup allocation>>
+    stopwatch tid;
+    tid.tic();
+    <<paStats evaluate covariance with sources (same heights)>>
+    tid.toc(&cov_eval_et,"Covariance evaluation");
+  }
+  else {
+    psd_size = sizeof(float2)*NF2;
+    cov_size = sizeof(float)*NU2*2*_N_LAYER_*N_SRC2;
+    ind_size = sizeof(int)*N2;
+    int BATCH = 1;
 
-  stopwatch tid;
-  tid.tic();
- <<paStats evaluate covariance with sources>>
-  tid.toc(&cov_eval_et,"Covariance evaluation");
+    <<paStats setup allocation>>
+
+    stopwatch tid;
+    tid.tic();
+    <<paStats evaluate covariance with sources (different heights)>>
+    tid.toc(&cov_eval_et,"Covariance evaluation");
+  }
+
+info(kappa,sampling);
+
 }
 <<paStats setup declarations>>=
 <<paStats setup variables>>
@@ -282,6 +340,8 @@ sampling = lenslet_pitch/osf;
 psd_size = sizeof(float2)*NF2*2;
 cov_size = sizeof(float)*NU2*2;
 ind_size = sizeof(int)*N2;
+int BATCH = 2;
+
 <<paStats setup allocation>>=
 HANDLE_ERROR( cudaMalloc((void**)&d__psd, psd_size ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__alpha, 2*sizeof(float) ) );
@@ -290,32 +350,34 @@ HANDLE_ERROR( cudaMemcpy( d__alpha, alpha, 2*sizeof(float), cudaMemcpyHostToDevi
 HANDLE_ERROR( cudaMemcpy( d__beta, beta, 2*sizeof(float), cudaMemcpyHostToDevice) );
 HANDLE_ERROR( cudaMalloc((void**)&d__cov, cov_size ) );
 
-printf("\n@(CEO)>imaging: Creating 2D covariance FFT plan\n");
+fprintf(stderr,"\n@(CEO)>paStats: Creating 2D covariance FFT plan\n");
 int n_DFT[2] = {NF, NF};
 int iodist = NF2;
-int BATCH = 2;
 /* Create a 2D FFT plan. */
 if (cufftPlanMany(&plan, 2, n_DFT,
-NULL, 1, iodist,
-NULL, 1, iodist,
-CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
+		  NULL, 1, iodist,
+		  NULL, 1, iodist,
+		  CUFFT_C2C,BATCH) != CUFFT_SUCCESS) {
   fprintf(stderr,
-  "CUFFT Error: Unable to create plan\n");
+	  "CUFFT Error: Unable to create plan\n");
   return;
-}
+ }
 if (cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS) {
   fprintf(stderr,
-  "CUFFT Error: Unable to set compatibility mode to native\n");
+	  "CUFFT Error: Unable to set compatibility mode to native\n");
   return;
-}
-
-info(kappa,sampling);
+ }
 
 @ The covariance can be written to a file with:
-<<save covariance to file>>=
+<<save aa covariance to file>>=
+void aaStats::toFile(char *filename)
+{
+  dev2file(filename, d__cov, cov_size/sizeof(float));
+}
+<<save pa covariance to file>>=
 void paStats::toFile(char *filename)
 {
-dev2file(filename, d__cov, NU2*2);
+  dev2file(filename, d__cov, cov_size/sizeof(float));
 }
 @
 The covariance is computed with
@@ -326,14 +388,14 @@ HANDLE_ERROR( cudaDeviceSynchronize() );
 psd = (float2 *)malloc( psd_size );
 HANDLE_ERROR( cudaMemcpy( psd, d__psd, psd_size, cudaMemcpyDeviceToHost) );
 int k;
-printf("\n@(CEO)>aaStats: power spectrum\n");
+fprintf(stderr,"\n@(CEO)>aaStats: power spectrum\n");
 for (int i=0;i<NF;i++) {
-  printf("|");
+  fprintf(stderr,"|");
   for (int j=0;j<NF;j++) {
     k = i*NF + j;
-    printf("|(%d,%d)%+4.2E;%+4.2E|",i,j,psd[k].x,psd[k].y);
+    fprintf(stderr,"|(%d,%d)%+4.2E;%+4.2E|",i,j,psd[k].x,psd[k].y);
   }
-  printf("|\n");
+  fprintf(stderr,"|\n");
 }
 #endif
 
@@ -341,19 +403,23 @@ for (int i=0;i<NF;i++) {
 #ifdef AASTATS_DEBUG
 cov = (float2 *)malloc( cov_size );
 HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
-printf("\n@(CEO)>aaStats: covariance\n");
+fprintf(stderr,"\n@(CEO)>aaStats: covariance\n");
 for (int i=0;i<NU;i++) {
-  printf("|");
+  fprintf(stderr,"|");
   for (int j=0;j<NU;j++) {
     k = i*(NU) + j;
-    printf("|(%d,%d)%+4.2E|",i,j,cov[k].x);
+    fprintf(stderr,"|(%d,%d)%+4.2E|",i,j,cov[k].x);
   }
-  printf("|\n");
+  fprintf(stderr,"|\n");
 }
 #endif
+
 <<aaStats evaluate covariance with source height>>=
 <<aaStats power spectrum with source height>>
 <<aaStats covariance>>
+
+<<aaStats evaluate covariance with sources>>=
+<<aaStats power spectrum with sources>>
 
 <<paStats evaluate covariance>>=
 <<paStats power spectrum>>
@@ -362,14 +428,14 @@ HANDLE_ERROR( cudaDeviceSynchronize() );
 psd = (float2 *)malloc( psd_size );
 HANDLE_ERROR( cudaMemcpy( psd, d__psd, psd_size, cudaMemcpyDeviceToHost) );
 int k;
-printf("\n@(CEO)>paStats: power spectrum\n");
+fprintf(stderr,"\n@(CEO)>paStats: power spectrum\n");
 for (int i=0;i<MIN(NF,5);i++) {
-  printf("|");
+  fprintf(stderr,"|");
   for (int j=0;j<MIN(NF,5);j++) {
     k = i*NF + j;
-    printf("|(%d,%d)%+6.4E;%+6.4E|",i,j,psd[k].x,psd[k].y);
+    fprintf(stderr,"|(%d,%d)%+6.4E;%+6.4E|",i,j,psd[k].x,psd[k].y);
   }
-  printf("|\n");
+  fprintf(stderr,"|\n");
 }
 #endif
 
@@ -377,56 +443,60 @@ for (int i=0;i<MIN(NF,5);i++) {
 #ifdef PASTATS_DEBUG
 cov = (float2 *)malloc( cov_size );
 HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
-printf("\n@(CEO)>paStats: covariance\n");
+fprintf(stderr,"\n@(CEO)>paStats: covariance\n");
 for (int i=0;i<MIN(NU,10);i++) {
-  printf("|");
+  fprintf(stderr,"|");
   for (int j=0;j<MIN(NU,10);j++) {
     k = i*(NU) + j;
-    printf("|(%d,%d)%+6.4E|",i,j,cov[k].x);
+    fprintf(stderr,"|(%d,%d)%+6.4E|",i,j,cov[k].x);
   }
-  printf("|\n");
+  fprintf(stderr,"|\n");
 }
 #endif
+
 <<paStats evaluate covariance with source height>>=
 <<paStats power spectrum with source height>>
 <<paStats covariance>>
-<<paStats evaluate covariance with sources>>=
-<<paStats power spectrum with sources>>
-<<paStats covariance with sources>>
+
+<<paStats evaluate covariance with sources (different heights)>>=
+<<paStats power spectrum with sources (different heights)>>
+
+<<paStats evaluate covariance with sources (same heights)>>=
+<<paStats power spectrum with sources (same heights)>>
 
 @ The main parameters of [[aaStats]] are displayed with the [[info]] routine:
 <<aaStats info>>=
 void aaStats::info(int kappa, float d)
 {
-  printf("\n\x1B[1;42m@(CEO)>aaStats:\x1B[;42m\n");
+  fprintf(stderr,"\n\x1B[1;42m@(CEO)>aaStats:\x1B[;42m\n");
   <<info content>>
-  printf("----------------------------------------------------\x1B[0m\n");
+  fprintf(stderr,"----------------------------------------------------\x1B[0m\n");
 }
 <<paStats info>>=
 void paStats::info(int kappa, float d)
 {
-  printf("\n\x1B[1;42m@(CEO)>paStats:\x1B[;42m\n");
+  fprintf(stderr,"\n\x1B[1;42m@(CEO)>paStats:\x1B[;42m\n");
   <<info content>>
-  printf(" . phase oversampling factor      : %d\n",osf);
-  printf("----------------------------------------------------\x1B[0m\n");
+  fprintf(stderr," . phase oversampling factor      : %d\n",osf);
+  fprintf(stderr,"----------------------------------------------------\x1B[0m\n");
 }
 <<info content>>=
-printf(" . sampling [m]                   : %.2f\n",d);
-printf(" . size of covariance matrix block: %dX%d\n",NU,NU);
-printf(" . spectrum resolution            : %d\n",NF);
-printf(" . covariance oversampling factor : %d\n",kappa);
-printf(" . spectrum highest frequency     : %4.2E\n",(2.0/NF)*(kappa/(2*d)));
+fprintf(stderr," . sampling [m]                   : %.2f\n",d);
+fprintf(stderr," . size of covariance matrix block: %dX%d\n",NU,NU);
+fprintf(stderr," . spectrum resolution            : %d\n",NF);
+fprintf(stderr," . covariance oversampling factor : %d\n",kappa);
+fprintf(stderr," . spectrum highest frequency     : %4.2E\n",(2.0/NF)*(kappa/(2*d)));
 @ 
 <<aaStats cleanup>>=
 void aaStats::cleanup(void)
 {
-printf("\n@(CEO)>aaStats: freeing memory!\n");
+fprintf(stderr,"@(CEO)>aaStats: freeing memory!\n");
 <<cleanup contents>>
 }
 <<paStats cleanup>>=
 void paStats::cleanup(void)
 {
-printf("\n@(CEO)>paStats: freeing memory!\n");
+fprintf(stderr,"@(CEO)>paStats: freeing memory!\n");
 <<cleanup contents>>
 }
 <<cleanup contents>>=
@@ -449,6 +519,7 @@ cufftHandle plan;
 #if defined(AASTATS_DEBUG) || defined(PASTATS_DEBUG)
 float2 *psd, *cov;
 #endif
+int N_SRC2;
 @ 
 The parameters of the [[paStats]] structure are:
 <<paStats parameters>>=
@@ -499,6 +570,74 @@ aaPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2*3, NF, lenslet_pitch,
 					atm->wavelength, atm->r0, atm->turbulence.L0,
                                         atm->d__turbulence, source_height,
 					d__beta, d__beta, kappa);
+<<aaStats power spectrum with sources>>=
+dim3 blockDimPsd(16,16);
+dim3 gridDimPsd( 1+NF/16 , 1+NF/16 );
+dim3 blockDimCov(16,16);
+dim3 gridDimCov( 1+NU/16 , 1+NU/16 );
+
+int i_SRC, j_SRC, offset0, offset;
+fprintf(stderr,"Covariance 4x4 block:\n");
+for (i_SRC=0;i_SRC<N_SRC;i_SRC++) {
+
+  offset0 = 4*N_SRC*i_SRC;
+
+  for (j_SRC=0;j_SRC<N_SRC;j_SRC++) {
+
+    fprintf(stderr," [%d,%d]",i_SRC,j_SRC);
+
+    offset = offset0 + 2*j_SRC;
+    fprintf(stderr,"(%2d",offset);
+    aaPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, lenslet_pitch, 
+						    atm->wavelength, atm->r0, atm->turbulence.L0,
+						    atm->d__turbulence, (src->dev_ptr) + i_SRC, (src->dev_ptr) + j_SRC,
+						    d__alpha, d__alpha, kappa);
+    <<AA covariance with Wiener-Khinchin>>
+    <<AA covariance reduction>>
+
+    offset = offset0 + (2*j_SRC+1);
+    fprintf(stderr,",%2d",offset);
+    aaPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, lenslet_pitch, 
+						    atm->wavelength, atm->r0, atm->turbulence.L0,
+						    atm->d__turbulence, (src->dev_ptr) + i_SRC, (src->dev_ptr) + j_SRC,
+						    d__alpha, d__beta, kappa);
+    <<AA covariance with Wiener-Khinchin>>
+    <<AA covariance reduction>>
+
+    offset = offset0 + 2*(N_SRC+j_SRC);
+    fprintf(stderr,",%2d",offset);
+    aaPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, lenslet_pitch, 
+						    atm->wavelength, atm->r0, atm->turbulence.L0,
+						    atm->d__turbulence, (src->dev_ptr) + i_SRC, (src->dev_ptr) + j_SRC,
+						    d__beta, d__alpha, kappa);
+    <<AA covariance with Wiener-Khinchin>>
+    <<AA covariance reduction>>
+
+    offset = offset0 + (2*(N_SRC+j_SRC)+1);
+    fprintf(stderr,",%2d)",offset);
+    aaPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, lenslet_pitch, 
+						    atm->wavelength, atm->r0, atm->turbulence.L0,
+						    atm->d__turbulence, (src->dev_ptr) + i_SRC, (src->dev_ptr) + j_SRC,
+						    d__beta, d__beta, kappa);
+    <<AA covariance with Wiener-Khinchin>>
+    <<AA covariance reduction>>
+	}
+  fprintf(stderr,"\n");
+ }
+
+<<AA covariance with Wiener-Khinchin>>=
+if (cufftExecC2C(plan, d__psd, d__psd, CUFFT_FORWARD) 
+    != CUFFT_SUCCESS){
+  fprintf(stderr,"CUFFT Error: Unable to execute plan\n");
+ }
+if (cudaThreadSynchronize() != cudaSuccess){
+  fprintf(stderr, "Cuda error: Failed to synchronize\n");
+ }
+
+<<AA covariance reduction>>=
+covariance_extraction LLL gridDimCov,blockDimCov RRR( d__cov + offset*NU2, NU,
+						      d__psd, NF, kappa);
+
 @ The power spectrum is computed with the following kernel:
 <<aaStats power spectrum kernel>>=
   __global__ void aaPowerSpectrum(float2 *d__psd, int NF, float d,
@@ -570,6 +709,48 @@ __global__ void aaPowerSpectrum(float2 *d__psd, int NF, float d,
     d__psd[k].y = 0;
   }
 }
+<<aaStats power spectrum kernel with sources>>=
+__global__ void aaPowerSpectrum(float2 *d__psd, int NF, float d,
+				float wavelength, float r0, float L0,
+                                profile *turb, source *src1, source *src2,
+				float *alpha, float *beta, float kappa)
+{
+  int i, j, k;
+  float fx, fy, f_square, fs, gl, red, c_red, s_red;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = i*NF + j;
+  if ( (i<NF) && (j<(NF)) ) {
+    k = i*NF + j;
+    wavelength *= wavelength;
+    d__psd[k].x = 0;
+    d__psd[k].y = 0;
+    for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
+      gl = (1-turb->altitude[k_LAYER]/src1->height);
+      red = 2*PI*turb->altitude[k_LAYER];
+      fs = (2.0/NF)*(kappa/(2*d*gl));
+      fx = (float) i;
+      fy = (float) j;
+      if (i>=(NF/2))
+	fx = fx - NF;
+      if (j>=(NF/2))
+      fy = fy - NF;
+      fx *= fs;
+      fy *= fs;
+      f_square = fx*fx + fy*fy;
+      fs *= fs;
+      red *= fx*(src2->theta_x - src1->theta_x) + fy*(src2->theta_y - src1->theta_y);
+      sincosf( red, &s_red, &c_red);
+      red = (k==0) ? 0 : turb->xi0[k_LAYER]*
+	fs*wavelength*(fx*alpha[0] + fy*alpha[1])*(fx*beta[0] + fy*beta[1])*
+	powf(r0,-5.0/3.0)*
+	phasePowerSpectrum(f_square, 1.0/L0)*
+	gatePSF(gl*fx*d,gl*fy*d);
+      d__psd[k].x += red*c_red;
+      d__psd[k].y += red*s_red;
+    }
+  }
+}
 @ From the power spectrum, once can derive the variance:
 <<aaStats variance>>=
 float aaStats::variance(void) {
@@ -587,6 +768,7 @@ paPowerSpectrum LLL gridDim,blockDim RRR (d__psd, NF, osf, lenslet_pitch,
 paPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2, NF, osf, lenslet_pitch,
 					atm->wavelength, atm->r0, atm->turbulence.L0,
 					d__beta, kappa);
+
 <<paStats power spectrum with source height>>=
 dim3 blockDim(16,16);
 dim3 gridDim( 1+NF/16 , 1+NF/16 );
@@ -598,22 +780,88 @@ paPowerSpectrum LLL gridDim,blockDim RRR (d__psd + NF2, NF, osf, lenslet_pitch,
 					atm->wavelength, atm->r0, atm->turbulence.L0,
                                         atm->d__turbulence, source_height,
 					d__beta, kappa);
-<<paStats power spectrum with sources>>=
-dim3 blockDim(16,16);
-dim3 gridDim( 1+NF/16 , 1+NF/16 );
-for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
 
-  paPowerSpectrum LLL gridDim,blockDim RRR (d__psd + 2*k_LAYER*NF2,     NF, osf, lenslet_pitch, 
-					    atm->wavelength, atm->r0, atm->turbulence.L0,
-					    atm->d__turbulence, k_LAYER, 
-					    slopes_src->dev_ptr,
-					    d__alpha, kappa);
-  paPowerSpectrum LLL gridDim,blockDim RRR (d__psd + (2*k_LAYER+1)*NF2, NF, osf, lenslet_pitch,
-					    atm->wavelength, atm->r0, atm->turbulence.L0,
-					    atm->d__turbulence, k_LAYER, 
-					    slopes_src->dev_ptr,
-					    d__beta, kappa);
+<<paStats power spectrum with sources (different heights)>>=
+dim3 blockDimPsd(16,16);
+dim3 gridDimPsd( 1+NF/16 , 1+NF/16 );
+dim3 blockDimCov(16,16);
+dim3 gridDimCov( 1+NU/16 , 1+NU/16 );
+
+int i_P_SRC, j_S_SRC, offset_i, offset_j, offset, k_LAYER;
+fprintf(stderr,"PA covariance 1x2 block:\n");
+for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
+
+  offset_i = 2*N_S_SRC*i_P_SRC*_N_LAYER_;
+
+  for (j_S_SRC=0;j_S_SRC<N_S_SRC;j_S_SRC++) {
+
+    fprintf(stderr," [%d,%d]",i_P_SRC,j_S_SRC);
+    offset_j = offset_i + 2*j_S_SRC*_N_LAYER_;
+
+    for (k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
+
+      offset = offset_j + 2*k_LAYER;
+      fprintf(stderr,"(%2d",offset);
+      paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch, 
+						      atm->wavelength, atm->r0, atm->turbulence.L0, 
+						      atm->d__turbulence, k_LAYER,
+						      (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
+						      d__alpha, kappa);
+      <<AA covariance with Wiener-Khinchin>>
+      <<AA covariance reduction>>
+
+      offset = offset_j + (2*k_LAYER+1);
+      fprintf(stderr,",%2d)",offset);
+      paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch,
+						      atm->wavelength, atm->r0, atm->turbulence.L0, 
+						      atm->d__turbulence, k_LAYER,
+						      (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
+						      d__beta, kappa);
+      <<AA covariance with Wiener-Khinchin>>
+      <<AA covariance reduction>>
+
+	  }
+  }
+  fprintf(stderr,"\n");
+ }
+
+<<paStats power spectrum with sources (same heights)>>=
+dim3 blockDimPsd(16,16);
+dim3 gridDimPsd( 1+NF/16 , 1+NF/16 );
+dim3 blockDimCov(16,16);
+dim3 gridDimCov( 1+NU/16 , 1+NU/16 );
+
+int i_P_SRC, j_S_SRC, offset0, offset;
+fprintf(stderr,"Covariance 1x2 block:\n");
+for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
+
+  offset0 = 2*N_S_SRC*i_P_SRC;
+
+  for (j_S_SRC=0;j_S_SRC<N_S_SRC;j_S_SRC++) {
+
+    fprintf(stderr," [%d,%d]",i_P_SRC,j_S_SRC);
+
+    offset = offset0 + 2*j_S_SRC;
+    fprintf(stderr,"(%2d",offset);
+    paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch, 
+						    atm->wavelength, atm->r0, atm->turbulence.L0, atm->d__turbulence,
+						    (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
+						    d__alpha, kappa);
+    <<AA covariance with Wiener-Khinchin>>
+    <<AA covariance reduction>>
+
+    offset = offset0 + (2*j_S_SRC+1);
+    fprintf(stderr,",%2d)",offset);
+    paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch,
+						    atm->wavelength, atm->r0, atm->turbulence.L0, atm->d__turbulence,
+						    (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
+						    d__beta, kappa);
+    <<AA covariance with Wiener-Khinchin>>
+    <<AA covariance reduction>>
 }
+fprintf(stderr,"\n");
+}
+
 @ The power spectrum is computed with the following kernel:
 <<paStats power spectrum kernel>>=
   __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
@@ -684,18 +932,20 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
 __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
 				float wavelength, float r0, float L0,
                                 profile *turb, int k_LAYER,
-				source *src,
+				source *src1, source *src2,
 				float *alpha, float kappa)
 {
   int i, j, k;
-  float fx, fy, f_square, fs, gl;
+  float fx, fy, f_square, fs, gl, red, c_red, s_red;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = i*NF + j;
   if ( (i<NF) && (j<(NF)) ) {
     k = i*NF + j;
+    d__psd[k].x = 0;
     d__psd[k].y = 0;
-    gl = 1.0-turb->altitude[k_LAYER]/src->height;
+    gl = 1.0-turb->altitude[k_LAYER]/src2->height;
+    red = 2*PI*turb->altitude[k_LAYER];
     fs = osf*(2.0/NF)*(kappa/(2*d));
     fx = (float) i;
     fy = (float) j;
@@ -707,11 +957,54 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
     fy *= fs;
     f_square = fx*fx + fy*fy;
     fs *= fs;
-    d__psd[k].y = -turb->xi0[k_LAYER]*fs*wavelength*(fx*alpha[0] + fy*alpha[1])*
-    powf(r0,-5.0/3.0)*
-    phasePowerSpectrum(f_square, 1.0/L0)*
-    gateAmp(gl*fx*d,gl*fy*d);
+    red *= fx*(src2->theta_x - src1->theta_x) + fy*(src2->theta_y - src1->theta_y);
+    sincosf( red, &s_red, &c_red);
+    red = -turb->xi0[k_LAYER]*fs*wavelength*(fx*alpha[0] + fy*alpha[1])*
+      powf(r0,-5.0/3.0)*
+      phasePowerSpectrum(f_square, 1.0/L0)*
+      gateAmp(gl*fx*d,gl*fy*d);
+    d__psd[k].x += -red*s_red;
+    d__psd[k].y +=  red*c_red;
+  }
+}
+<<paStats power spectrum kernel with sources (same heights)>>=
+__global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
+				float wavelength, float r0, float L0,
+                                profile *turb, source *src1, source *src2,
+				float *alpha, float kappa)
+{
+  int i, j, k;
+  float fx, fy, f_square, fs, gl, red, c_red, s_red;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = i*NF + j;
+  if ( (i<NF) && (j<(NF)) ) {
+    k = i*NF + j;
     d__psd[k].x = 0;
+    d__psd[k].y = 0;
+    for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
+      gl = (1-turb->altitude[k_LAYER]/src1->height);
+      red = 2*PI*turb->altitude[k_LAYER];
+      fs = osf*(2.0/NF)*(kappa/(2*d*gl));
+      fx = (float) i;
+      fy = (float) j;
+      if (i>=(NF/2))
+	fx = fx - NF;
+      if (j>=(NF/2))
+	fy = fy - NF;
+      fx *= fs;
+      fy *= fs;
+      f_square = fx*fx + fy*fy;
+      fs *= fs;
+      red *= fx*(src2->theta_x - src1->theta_x) + fy*(src2->theta_y - src1->theta_y);
+      sincosf( red, &s_red, &c_red);
+      red = -turb->xi0[k_LAYER]*fs*wavelength*(fx*alpha[0] + fy*alpha[1])*
+      powf(r0,-5.0/3.0)*
+      phasePowerSpectrum(f_square, 1.0/L0)*
+	gateAmp(gl*fx*d,gl*fy*d);
+      d__psd[k].x += -red*s_red;
+      d__psd[k].y +=  red*c_red;
+    }
   }
 }
 @ 
@@ -772,19 +1065,29 @@ The lenslet--array--slope--covariance is shifted such as the baseline coordinate
   (i,j) \leftarrow \left[ (i,j) + (2[[N]]-2)/2 \right] \mod ( 2[[N]]-1 )
 \end{equation}
 <<aaStats covariance>>=
-if (cufftExecC2C(plan, d__psd, d__psd, CUFFT_FORWARD) 
-    != CUFFT_SUCCESS){
-  fprintf(stderr,"CUFFT Error: Unable to execute plan\n");
- }
-if (cudaThreadSynchronize() != cudaSuccess){
-  fprintf(stderr, "Cuda error: Failed to synchronize\n");
- }
-blockDim = dim3(16,16);
-gridDim = dim3( 1+NU/16 , 1+NU/16 );
-covariance_extraction LLL gridDim,blockDim RRR( d__cov, NU, d__psd, NF, kappa);
-covariance_extraction LLL gridDim,blockDim RRR( d__cov + NU2, NU, d__psd + NF2, NF, kappa);
-covariance_extraction LLL gridDim,blockDim RRR( d__cov + 2*NU2, NU, d__psd + 2*NF2, NF, kappa);
-covariance_extraction LLL gridDim,blockDim RRR( d__cov + 3*NU2, NU, d__psd + 3*NF2, NF, kappa);
+fprintf(stderr,"Covariance block: ");
+for (int k=0;k<N_SRC2;k++) {
+  fprintf(stderr,"#%d, ",k);
+  if (cufftExecC2C(plan, d__psd + 4*k*NF2, d__psd + 4*k*NF2, CUFFT_FORWARD) 
+      != CUFFT_SUCCESS){
+    fprintf(stderr,"CUFFT Error: Unable to execute plan\n");
+  }
+  if (cudaThreadSynchronize() != cudaSuccess){
+    fprintf(stderr, "Cuda error: Failed to synchronize\n");
+  }
+  dim3 blockDim(16,16);
+  dim3 gridDim( 1+NU/16 , 1+NU/16 );
+  covariance_extraction LLL gridDim,blockDim RRR( d__cov + 4*k*NU2    , NU,
+						  d__psd + 4*k*NF2, NF, kappa);
+  covariance_extraction LLL gridDim,blockDim RRR( d__cov + (4*k+1)*NU2, NU,
+						  d__psd + (4*k+1)*NF2, NF, kappa);
+  covariance_extraction LLL gridDim,blockDim RRR( d__cov + (4*k+2)*NU2, NU,
+						  d__psd + (4*k+2)*NF2, NF, kappa);
+  covariance_extraction LLL gridDim,blockDim RRR( d__cov + (4*k+3)*NU2, NU,
+						  d__psd + (4*k+3)*NF2, NF, kappa);
+}
+fprintf(stderr,"\b\b\n");
+
 <<paStats covariance>>=
 if (cufftExecC2C(plan, d__psd, d__psd, CUFFT_FORWARD) 
     != CUFFT_SUCCESS){
@@ -797,7 +1100,8 @@ blockDim = dim3(16,16);
 gridDim = dim3( 1+NU/16 , 1+NU/16 );
 covariance_extraction LLL gridDim,blockDim RRR( d__cov, NU, d__psd, NF, kappa);
 covariance_extraction LLL gridDim,blockDim RRR( d__cov + NU2, NU, d__psd + NF2, NF, kappa);
-<<paStats covariance with sources>>=
+
+<<paStats covariance with sources (different heights)>>=
 blockDim = dim3(16,16);
 gridDim = dim3( 1+NU/16 , 1+NU/16 );
 for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
@@ -811,6 +1115,7 @@ for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
   covariance_extraction LLL gridDim,blockDim RRR( d__cov + 2*k_LAYER*NU2,     NU, d__psd + 2*k_LAYER*NF2,     NF, kappa);
   covariance_extraction LLL gridDim,blockDim RRR( d__cov + (2*k_LAYER+1)*NU2, NU, d__psd + (2*k_LAYER+1)*NF2, NF, kappa);
 }
+
 @ The extraction of the covariance is done with the kernel:
 <<covariance extraction>>=
 __global__ void covariance_extraction(float *cov_out, int NC_out, 
@@ -845,70 +1150,56 @@ The covariance matrix size is then $N_1^2\times N_2^2$.
 void paStats::MVM(float *out_vector, float *in_vector, 
 		  float d1, float g1, int N1, 
 		  float d2, int N2,
-		  atmosphere *atm, source *slopes_src) 
+		  atmosphere *atm, 
+		  source *phase_src, int N_P_SRC,
+		  source *slopes_src, int N_S_SRC) 
 {
   dim3 blockDim(16,16);
-  dim3 gridDim( 1 + N1/16 , 1 + N1/16 );
+  dim3 gridDim( 1 + N1/16 , 1 + N1/16 , N_P_SRC);
   stopwatch tid;
   tid.tic();
   MVM_kernel LLL gridDim,blockDim RRR (out_vector, in_vector, 
 				       sampling, NU, d__cov,
 				       d1, g1, N1,
 				       d2, N2,
-				       atm->d__turbulence,slopes_src->dev_ptr);
+				       atm->d__turbulence,
+				       phase_src->dev_ptr,
+				       slopes_src->dev_ptr, N_S_SRC);
   tid.toc("Product phase/slope covariance");
 }
 @ with the kernel
-<<matrix-to-vector product kernel (old version)>>=
-__global__ void MVM_kernel(float *out_vector, float *in_vector, 
-			   float sampling, int NU, float *cov,
-			   float d1, float g1, int N1, 
-			   float d2, float g2, int N2) 
-{
-  int col ,row, i1, j1, i2, j2;
-  float xi, yi, x1, y1, covi;
-  i1 = blockIdx.x * blockDim.x + threadIdx.x;
-  j1 = blockIdx.y * blockDim.y + threadIdx.y;
-  if ( (i1<N1) & (j1<N1) ) {
-    row = j1 + i1*N1;
-    out_vector[row] = 0;
-    <<coordinates 1>>
-    for (i2=0;i2<N2;i2++) {
-      for (j2=0;j2<N2;j2++) {
-        col = j2 + i2*N2;
-	<<coordinates 2>>
-        <<MAC>>
-      }
-    }
-  }
-}
 <<matrix-to-vector product kernel>>=
 __global__ void MVM_kernel(float *out_vector, float *in_vector, 
 			   float sampling, int NU, float *cov,
 			   float d1, float g1, int N1, 
 			   float d2, int N2,
-			   profile *turb, source *src) 
+			   profile *turb, 
+			   source *src1, source *src2, int N_SRC2) 
 {
-  int col ,row, i1, j1, i2, j2, k;
+  int col ,row, i1, j1, i2, j2, k, i_P_SRC, j_S_SRC, offset;
   float xi, yi, x1, y1, covi_x, covi_y, g2;
   i1 = blockIdx.x * blockDim.x + threadIdx.x;
   j1 = blockIdx.y * blockDim.y + threadIdx.y;
+  i_P_SRC = blockIdx.z;
   if ( (i1<N1) & (j1<N1) ) {
-    row = j1 + i1*N1;
+    row = j1 + i1*N1 + i_P_SRC*N1*N1;
     out_vector[row] = 0;
-    <<coordinates 1>>
-    for (i2=0;i2<N2;i2++) {
-      for (j2=0;j2<N2;j2++) {
-        col = j2 + i2*N2;
-	covi_x = covi_y = 0;
-	for (k=0;k<_N_LAYER_;k++) {
-	  g2 = 1.0 - turb->altitude[k]/src->height;
-	  <<coordinates 2>>
-	  covi_x += interpolate(xi,yi,cov + 2*k*NU*NU,sampling,NU);
-	  covi_y += interpolate(xi,yi,cov+(2*k+1)*NU*NU,sampling,NU);
-	}
-	out_vector[row] += covi_x*in_vector[col];
-	out_vector[row] += covi_y*in_vector[col+N2*N2];
+    covi_x = covi_y = 0;
+    for (j_S_SRC=0;j_S_SRC<N_SRC2;j_S_SRC++) {
+      offset = j_S_SRC*2*_N_LAYER_;
+      for (k=0;k<_N_LAYER_;k++) {
+	g2 = 1.0 - turb->altitude[k]/src2[j_S_SRC].height;
+	<<coordinates 1>>
+	    for (i2=0;i2<N2;i2++) {
+	      for (j2=0;j2<N2;j2++) {
+		col = j2 + i2*N2;
+		<<coordinates 2>>
+		    covi_x = interpolate(xi,yi,cov + (2*k+offset)*NU*NU,sampling,NU);
+		covi_y = interpolate(xi,yi,cov+(2*k+1+offset)*NU*NU,sampling,NU);
+		out_vector[row] += covi_x*in_vector[col + 2*j_S_SRC*N2*N2];
+		out_vector[row] += covi_y*in_vector[col + (2*j_S_SRC+1)*N2*N2];
+	      }
+	    }
       }
     }
   }
