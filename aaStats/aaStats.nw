@@ -1,6 +1,11 @@
 % -*- mode: Noweb; noweb-code-mode: c-mode -*-
+@
 [[aaStats]] contains a structure and the routines to compute the covariance matrix of the angle--of--arrival.
-The aaStats structure is written in the header:
+
+\subsection{The files}
+
+\subsubsection{Header}
+
 <<aaStats.h>>=
 #ifndef __AASTATS_H__
 #define __AASTATS_H__
@@ -71,7 +76,9 @@ struct paStats {
 
 };
 #endif // __AASTATS_H__
-@ The routines are expanded in the source file:
+@ 
+\subsubsection{Source}
+
 <<aaStats.cu>>=
 #include "aaStats.h"
 
@@ -117,6 +124,8 @@ struct paStats {
 
 <<aaStats variance>>
 @
+\subsubsection{The theory}
+
 Shack--Hartmann WFS centroids are a measure of the spatial derivatives of the wavefront averaged on each subaperture.
 These derivatives are often referred as angle of arrivals $\vec \alpha=(\alpha_x\alpha_y,)$:
 \begin{eqnarray}
@@ -1178,6 +1187,8 @@ __global__ void MVM_kernel(float *out_vector, float *in_vector,
 {
   int col ,row, i1, j1, i2, j2, k, i_P_SRC, j_S_SRC, offset;
   float xi, yi, x1, y1, covi_x, covi_y, g2;
+  int ndx;
+  float s, t, fs, ft, onemt, *z;
   i1 = blockIdx.x * blockDim.x + threadIdx.x;
   j1 = blockIdx.y * blockDim.y + threadIdx.y;
   i_P_SRC = blockIdx.z;
@@ -1194,9 +1205,17 @@ __global__ void MVM_kernel(float *out_vector, float *in_vector,
 	      for (j2=0;j2<N2;j2++) {
 		col = j2 + i2*N2;
 		<<coordinates 2>>
-		    covi_x = interpolate(xi,yi,cov + (2*k+offset)*NU*NU,sampling,NU);
-		covi_y = interpolate(xi,yi,cov+(2*k+1+offset)*NU*NU,sampling,NU);
+		    //    covi_x = interpolate(xi,yi, cov + (2*k+offset)*NU*NU,sampling,NU);
+		    //covi_y = interpolate(xi,yi, cov+(2*k+1+offset)*NU*NU,sampling,NU);
+		<<bilinear interpolation>>
+		onemt = 1 - t;
+		z = cov + (2*k+offset)*NU*NU;
+		covi_x =  ( ( z[ndx]*onemt + z[ndx+1]*t )*(1-s) + 
+			 ( z[ndx+NU]*onemt + z[ndx+NU+1]*t )*s );
 		out_vector[row] += covi_x*in_vector[col + 2*j_S_SRC*N2*N2];
+		z = cov + (2*k+1+offset)*NU*NU;
+		covi_y =  ( ( z[ndx]*onemt + z[ndx+1]*t )*(1-s) + 
+			 ( z[ndx+NU]*onemt + z[ndx+NU+1]*t )*s );
 		out_vector[row] += covi_y*in_vector[col + (2*j_S_SRC+1)*N2*N2];
 	      }
 	    }
