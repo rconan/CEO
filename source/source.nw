@@ -15,16 +15,7 @@ The source structure contains all the data associated with a remote optical emit
 #include "ceo.h"
 #endif
 
-struct complex_amplitude {
-
-  <<complex amplitude parameters>>
-
-  void setup(int n_pixel);
-  void cleanup(void);
-
-  void phase2file(char *filename);
-
-};
+<<complex amplitude structure>>
 
 struct source {
 
@@ -66,25 +57,52 @@ struct source {
 \subsection{Parameters}
 \label{sec:params}
 
-The wavefront descibes the wave complex amplitude of the light source.
-The complex amplitude consists of the amplitude and the phase of the wave:
+The source structure is a collection of [[N_SRC]] light sources.
+<<source parameters>>=
+int N_SRC;
+@ 
+The source locations are given by their [[zenith]] and [[azimuth]] angles, all the sources share the same height.
+<<source parameters>>=
+float zenith, azimuth, height, theta_x, theta_y;
+@ The coordinates of the unit vector pointing towards the sources are given by [[theta_x]] and [[theta_y]].
+The wavefront is the complex amplitude of the light beam.
+It is given by its amplitude and phase, both are arrays of [[N_PX]] values.
+The complex amplitude is defined in a new structure:
+<<complex amplitude structure>>=
+struct complex_amplitude {
+
+  <<complex amplitude parameters>>
+
+  void setup(int n_pixel);
+  void cleanup(void);
+
+  void phase2file(char *filename);
+
+};
+@ with the parameters: 
 <<complex amplitude parameters>>=
 int N_PX;
 float *amplitude, *phase;
 @ The physical extent of the amplitude is set by the pupil mask:
 <<complex amplitude parameters>>=
 char *pupil_mask;
-
-@
-The source structure can contains several source which number is given by [[N_SRC]]
-The source specify a celestial object by its coordinates:
-<<source parameters>>=
-float zenith, azimuth, height;
-int N_SRC;
-@  and magnitude at a given photometric band.
+@ The magnitude at a given photometric band are set with:
 <<source parameters>>=
 char *photometric_band;float magnitude;
+@ If the source is resolved by the  optical system, one must define its normalized irradiance map
+<<source parameters>>=
+float *irradiance, *irradiance_ft;
+@ The irradiance is normalized such as is sum is equal to 1. The Fourier transform of the irradiance map must be given too.
+The wavefront is added to the source
+<<source parameters>>=
+complex_amplitude wavefront;
+@ Source structures will be allocated on the device:
+<<source parameters>>=
+source *dev_ptr;
 @ 
+\subsection{Functions}
+\label{sec:functions}
+
 The main parameters of the  atmosphere are displayed with the [[info]] routine:
 <<info>>=
 void source::info(void)
@@ -140,24 +158,12 @@ float source::n_photon(void) {
     zero_point =3.3e12 ;
   return zero_point*powf(10 , -0.4*magnitude );
 }
-@ If the source is resolved by the  optical system, one must define its normalized irradiance map
-<<source parameters>>=
-float *irradiance, *irradiance_ft;
-@ The irradiance is normalized such as is sum is equal to 1. The Fourier transform of the irradiance map must be given too.
- The last parameter is the complex amplitude of the wavefront associated with the source,
-<<source parameters>>=
-float amplitude[_SOURCE_N_PX_], phase[_SOURCE_N_PX_];
-@ that is given as amplitude and phase.
-The direction  towards the source from the origin of coordinates is given by the components $\theta_x,\theta_y$ of the direction vector:
-<<source parameters>>=
-float theta_x, theta_y;
-@ The wavefront is finally added to the source
-<<source parameters>>=
-complex_amplitude wavefront;
-source *dev_ptr;
-@ This components are computed with the setup function
+@ Sources are initialized with the setup function:
+\begin{itemize}
+\item for a single source:
 <<setup>>=
 void source::setup(float _zenith, float _azimuth, float _height) {
+  N_SRC   = 1;
   zenith  = _zenith;
   azimuth = _azimuth;
   height  = _height;
@@ -182,6 +188,7 @@ void source::setup(float _zenith, float _azimuth, float _height) {
 			    cudaMemcpyHostToDevice ) );
   wavefront.setup(_SOURCE_N_PX_);
 }
+@ \item for multiple sources:
 <<setup for multiple sources>>=
 void source::setup(float *_zenith, float *_azimuth, float _height, int _N_SRC) {
   N_SRC = _N_SRC;
@@ -206,6 +213,8 @@ void source::setup(float *_zenith, float *_azimuth, float _height, int _N_SRC) {
   printf("----------------------------------------------------\x1B[0m\n");
   wavefront.setup(_SOURCE_N_PX_*N_SRC);
 }
+@ \end{itemize}
+The complex amplitude structure is initialized with
 <<complex amplitude setup>>=
 void complex_amplitude::setup(int n_pixel) {
   N_PX = n_pixel;
@@ -213,6 +222,7 @@ void complex_amplitude::setup(int n_pixel) {
   HANDLE_ERROR( cudaMalloc( (void**)&phase,      sizeof(float)*N_PX ) );
   HANDLE_ERROR( cudaMalloc( (void**)&pupil_mask, sizeof(char)*N_PX ) );
 }
+@ and memory is de--allocated with:
 <<complex amplitude cleanup>>=
 void complex_amplitude::cleanup(void) {
   HANDLE_ERROR( cudaFree( amplitude ) );
