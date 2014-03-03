@@ -45,6 +45,7 @@ int main(int argc,char *argv[]) {
 <<LGS wavefront>>
 <<wavefront reconstruction from LGS>>
 <<paStats MVM alternative>>
+<<LMMSE MVM alternative>>
 <<saving to files>>
 <<LTAO wavefronts and wavefront gradients>>
 <<LTAO wavefront estimation>>
@@ -109,16 +110,18 @@ float D = 8; // telescope diameter in meter
 float d = D/N_SIDE_LENSLET;
 @  The linear minimum mean square error wavefront reconstructor is initialized with the atmosphere, the lenslet array pitch, the number of slopes and the iterative solver type and destroyed with
 <<setup>>=
-LMMSE lmmse, ngs_lmmse;
+LMMSE lmmse, ngs_lmmse, alt_lmmse;
 //ngs_lmmse.setup(&atm,d,_N_LENSLET_*2,"MINRES");
 ngs_lmmse.setup(&atm,&ngs,1,&ngs,1,d,_N_LENSLET_*2,"MINRES");
 //ngs_lmmse.aa.toFile("ngs_aaCovariance.bin");
 //ngs_lmmse.pa.toFile("ngs_paCovariance.bin");
 lmmse.setup(&atm,&lgs,1,&near_src,1,d,_N_LENSLET_*2,"MINRES");
 //lmmse.pa.toFile("paCovariance.bin");
+alt_lmmse.new_setup(&atm,&lgs,1,&near_src,1,d,_N_LENSLET_*2,"MINRES");
 <<cleanup>>=
 ngs_lmmse.cleanup();
 lmmse.cleanup();
+alt_lmmse.cleanup();
 @  Finally we setup the statistical tool:
 <<setup>>=
 stats S;
@@ -182,7 +185,7 @@ dev2file("phaseEst.bin", lmmse.d__phase_est, NP2);
 printf("------------------------------\n");
 
 <<paStats MVM alternative>>=
-printf("\n___ LGS WAVEFRONT ESTIMATE (cylindric/conic geom.) ___\n");
+printf("\n___ LGS WAVEFRONT ESTIMATE (cylindric/conic geom. I) ___\n");
 pa.MVM(lmmse.d__phase_est,lmmse.d__ce,
        delta_e, 1, NP,
        delta_e, NP,
@@ -199,6 +202,12 @@ pa.setup(N_SIDE_LENSLET,2,&atm,d,&src,1,&lgs,1);
 <<cleanup>>=
 pa.cleanup();
 
+<<LMMSE MVM alternative>>=
+printf("\n___ LGS WAVEFRONT ESTIMATE (cylindric/conic geom. II) ___\n");
+alt_lmmse.new_estimation(cog.d__c,100);
+dev2file("phaseEstAltLmmse.bin", alt_lmmse.d__phase_est, alt_lmmse.PS_E_N_PX);
+printf("------------------------------\n");
+
 @ The wavefront error is computed with
 <<setup>>=
 cublasHandle_t handle;
@@ -212,7 +221,7 @@ HANDLE_ERROR( cudaFree(d__wavefront_error) );
 
 <<wavefront error>>=
 CUBLAS_ERROR( cublasScopy(handle, NP2, src.wavefront.phase, 1, d__wavefront_error, 1) );
-alpha = -phase2nm;
+alpha = -1;//phase2nm;
 CUBLAS_ERROR( cublasSaxpy(handle, NP2, &alpha, phase_est, 1, d__wavefront_error, 1) );
 wf_rms = 1E9*S.std(d__wavefront_error, NP2);
 printf("\n WFE RMS: %8.3fnm\n",wf_rms);

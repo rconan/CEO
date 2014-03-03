@@ -30,15 +30,16 @@ struct LMMSE {
 
   <<parameters>>
 
-  void setup(atmosphere *atm,float sampling, int N, char *solver_id);
-  void setup(atmosphere *atm, float source_height,float sampling, int N, char *solver_id);
   void setup(atmosphere *atm, source *guide_star, int N_guide_star, source *mmse_star, int N_mmse_star,
+	     float sampling, int N, char *solver_id);
+  void new_setup(atmosphere *atm, source *guide_star, int N_guide_star, source *mmse_star, int N_mmse_star,
 	     float sampling, int N, char *solver_id);
 
   void cleanup(void);
 
   void estimation(float* d__c, int nMaxIteration, float *d__x0);
   void estimation(float* d__c, int nMaxIteration);
+  void new_estimation(float* d__c, int nMaxIteration);
 
 };
 #endif // __LMMSE_H__
@@ -51,42 +52,279 @@ struct LMMSE {
 #endif
 
 <<PA input>>
+<<PA input with sizes>>
 
 <<setup>>
-<<setup with source height>>
-<<setup with sources>>
+<<setup (new)>>
 
 <<cleanup>>
 
-  <<wavefront estimation (I)>>
-  <<wavefront estimation (II)>>
-
+<<wavefront estimation (I)>>
+<<wavefront estimation (II)>>
+<<wavefront estimation (III)>>
 @
-The LMMSE structure gather several routines implementing iterative methods to reconstruct the wavefront from Shack--Hartmann wavefront sensor data.
+
+\subsection{Functions}
+\label{sec:functions}
+
+\def\vo{\ensuremath{\bm \theta}\xspace}
+\def\voe{\ensuremath{\hat{\bm \theta}}\xspace}
+\def\vx{\ensuremath{\bm x}\xspace}
+\def\vn{\ensuremath{\bm n}\xspace}
+\def\vs{\ensuremath{\bm s}\xspace}
+\def\wf{\ensuremath{\bm \varphi}\xspace}
+\def\wfe{\ensuremath{\hat{\bm \varphi}}\xspace}
+\def\vz{\ensuremath{\bm \zeta}\space}
+
+\def\Ca{\ensuremath{\Theta}\xspace}
+\def\Cax{\ensuremath{\Theta_{xx}}\xspace}
+\def\Cay{\ensuremath{\Theta_{yy}}\xspace}
+\def\Caxy{\ensuremath{\Theta_{xy}}\xspace}
+\def\Cayx{\ensuremath{\Theta_{yx}}\xspace}
+\def\Cpa{\ensuremath{\Xi}\xspace}
+\def\Cpax{\ensuremath{\Xi_x}\xspace}
+\def\Cpay{\ensuremath{\Xi_y}\xspace}
+\newcommand{\mean}[1]{\left\langle #1 \right\rangle}
+
+The LMMSE structure is used to compute the wavefront estimate $\hat \varphi$ used a vector of wavefront gradient $s$ assuming a linear relationship between both i.e.
+\begin{equation}
+  \label{eq:1}
+  \hat \varphi = M s.
+\end{equation}
+$M$ is chosen such as it minimizes the Bayesian mean--square error~\cite{Kay10} (MSE):
+\begin{equation}
+  \label{eq:2}
+  b_{MSE} = \left\langle (\varphi-\hat \varphi)^2 \right\rangle
+\end{equation}
+$\hat \varphi$ is the Linear--Minimum--Mean--Square--Error (LMMSE) estimator of $\varphi$ and $M$ is given by
+\begin{equation}
+  \label{eq:3}
+  M = C_{\varphi s}C_{ss}^{-1}.
+\end{equation}
+$C_{ss}\equiv\Ca$ is the slope covariance and $C_{\varphi s}=\equiv\Cpa$ is the cross--correlation between the wavefront and the slopes.
+Eq.~(\ref{eq:1}) is then rewritten 
+\begin{equation}
+  \label{eq:4}
+  \varphi = \Cpa \zeta
+\end{equation}
+with $\zeta$ solution of
+\begin{equation}
+  \label{eq:5}
+  \Ca \zeta = s.
+\end{equation}
+
+The covariances are expanded into
+\begin{equation}
+  \label{eq:6}
+  \Ca = \mean{ ss^T } = \left[
+  \begin{array}{cc}
+    \mean{s_xs_x^T} & \mean{s_xs_y^T} \\
+    \mean{s_ys_x^T} & \mean{s_ys_y^T} 
+  \end{array}
+  \right] = \left[
+  \begin{array}{cc}
+    \Cax & \Caxy \\
+    \Cayx & \Cay
+  \end{array}
+  \right]  
+\end{equation}
+and
+\begin{equation}
+  \label{eq:7}
+  \Cpa = \mean{ \wf s^T } = \left[
+  \begin{array}{cc}
+    \mean{ \wf s_x^T } & \mean{ \wf s_y^T }
+  \end{array}
+  \right] = \left[
+    \begin{array}{cc}
+      \Cpax & \Cpay
+    \end{array}
+    \right]  
+\end{equation}
+
+
+For a square $N\times N$ lenslet array, each covariance matrix \Cax, \Caxy, \Cayx and \Cay is a $N^2\times N^2$ 2--level recursive block Toeplitz matrix (2RBT) as shown in Fig.~\ref{fig:1}.
+Eq.~(\ref{eq:5}) is then solved iteratively using the method in \cite{Lee86} to perform the matrix--to--vector product (MVP).
+% COVARIANCE
+\newcounter{idx}
+\begin{figure*}[htbp]
+  \centering
+ \begin{tikzpicture}[scale=0.75]
+ \draw[help lines,xstep=4cm,ystep=4cm,xshift=0.5cm,yshift=0.5cm] (0,0) grid (16,16);
+\foreach \i/\xi/\yi in {1/0/0,2/0/1,3/0/2,4/0/3,5/1/0,6/1/1,7/1/2,8/1/3,9/2/0,10/2/1,11/2/2,12/2/3,13/3/0,14/3/1,15/3/2,16/3/3} {
+\foreach \j/\xj/\yj in {1/0/0,2/0/1,3/0/2,4/0/3,5/1/0,6/1/1,7/1/2,8/1/3,9/2/0,10/2/1,11/2/2,12/2/3,13/3/0,14/3/1,15/3/2,16/3/3} {
+\draw[->,>=stealth'] (\i,\j) -- +($0.175*( $($(\xj,\yj)-(1.5,1.5)$) - ($1*($(\xi,\yi)-(1.5,1.5)$) $) $ )$);
+}}
+\foreach \i in {1,...,16} {
+ \node at (0,\i) {\scriptsize \i};
+ \node at (\i,0) {\scriptsize \i};
+}
+\draw[red,dashed,thick,rounded corners] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,3) -- ++(-1,0) -- cycle;
+\foreach \x in {1,...,3} {
+\draw[red,dashed,thick,rounded corners,xshift=\x*4cm] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,3) -- ++(-1,0) -- cycle;
+\draw[red,dashed,thick,rounded corners,yshift=\x*4cm] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,3) -- ++(-1,0) -- cycle;
+}
+\setcounter{idx}{0}
+\foreach \x/\y in {0/0,0/-3,0/-6,0/-9,3/-9,6/-9,9/-9} {
+\foreach \i/\j in {1/16,1/15,1/14,1/13,2/13,3/13,4/13} {
+  \stepcounter{idx}
+  \node[inner sep=0,xshift=\x cm,,yshift=\y cm] at (\i,\j) {\emph{\scriptsize\arabic{idx}}};
+}
+}
+\end{tikzpicture}
+  \caption{WFS vectors of measurement pairs.}
+  \label{fig:1}
+\end{figure*}
+% CROSS-OVARIANCE
+\begin{figure*}[htbp]
+  \centering
+ \begin{tikzpicture}
+ \draw[help lines,xstep=4cm,ystep=5cm,xshift=0.5cm,yshift=0.5cm] (0,0) grid (16,25);
+\foreach \i/\xi/\yi in {1/0/0,2/0/1,3/0/2,4/0/3,5/1/0,6/1/1,7/1/2,8/1/3,9/2/0,10/2/1,11/2/2,12/2/3,13/3/0,14/3/1,15/3/2,16/3/3} {
+\foreach \j/\xj/\yj in {1/0/0,2/0/1,3/0/2,4/0/3,5/0/4,6/1/0,7/1/1,8/1/2,9/1/3,10/1/4,11/2/0,12/2/1,13/2/2,14/2/3,15/2/4,16/3/0,17/3/1,18/3/2,19/3/3,20/3/4,21/4/0,22/4/1,23/4/2,24/4/3,25/4/4}{
+\draw[->,>=stealth'] (\i,\j) -- +($0.175*( $($(\xj,\yj)-(1.5,1.5)$) - ($1*($(\xi,\yi)-(1.5,1.5)$) $) $ )$);
+}}
+\foreach \i in {1,...,16} {
+ \node at (\i,0) {\scriptsize \i};
+}
+\foreach \i in {1,...,25} {
+ \node at (0,\i) {\scriptsize \i};
+}
+\draw[red,dashed,thick,rounded corners] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,4) -- ++(-1,0) -- cycle;
+\foreach \x in {1,...,3} {
+\draw[red,dashed,thick,rounded corners,xshift=\x*4cm] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,4) -- ++(-1,0) -- cycle;
+\draw[red,dashed,thick,rounded corners,yshift=\x*5cm] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,4) -- ++(-1,0) -- cycle;
+}
+\draw[red,dashed,thick,rounded corners,yshift=20cm] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,4) -- ++(-1,0) -- cycle;
+\setcounter{idx}{0}
+\foreach \x/\y in {0/0,0/-5,0/-10,0/-15,0/-20,4/-20,8/-20,12/-20} {
+\foreach \i/\j in {1/25,1/24,1/23,1/22,1/21,2/21,3/21,4/21} {
+  \stepcounter{idx}
+  \node[inner sep=0,xshift=\x cm,yshift=\y cm] at (\i,\j) {\emph{\scriptsize\arabic{idx}}};
+}
+}
+\end{tikzpicture}
+  \caption{vectors of WFS and measurement pairs.}
+  \label{fig:1}
+\end{figure*}
+
+For a system in the Fried geometry (Fig.~\ref{fig:2}, left side), the cross--covariance matrix \Cpax and \Cpay are not square 2RBT matrices.
+So the geometry shown on the right of Fig.~\ref{fig:2} is used instead where the black circles are the wavefront samples, the red circles correspond to the measured slopes and the blue circles are the ``fake'' zero--valued measurements.
+In the new geometry, \Cpax and \Cpay are square 2RBT matrices.
+
+% WAVEFRONT NGS SAMPLING
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}
+    \begin{scope}[xshift=-2.25cm]
+    \draw[help lines] (-2,-2) grid (2,2);
+\foreach \x in {0,1,...,4}
+\foreach \y in {0,1,...,4}
+{
+\fill ($(\x,\y)-(2,2)$) circle (0.8mm);
+}
+\foreach \x in {0,1,...,3}
+\foreach \y in {0,1,...,3}
+{
+\draw[red,thick] ($(\x,\y)-(1.5,1.5)$) circle (1.2mm);
+}
+    \end{scope}
+    \begin{scope}[xshift=2.25cm]
+    \draw[help lines] (-2,-2) grid (2,2);
+\foreach \x in {0,0.5,...,4}
+\foreach \y in {0,0.5,...,4}
+{
+\fill ($(\x,\y)-(2,2)$) circle (0.8mm);
+\draw[blue,thick] ($(\x,\y)-(2,2)$) circle (1.2mm);
+}
+\foreach \x in {0,1,...,3}
+\foreach \y in {0,1,...,3}
+{
+\draw[red,thick] ($(\x,\y)-(1.5,1.5)$) circle (1.2mm);
+}
+    \end{scope}
+  \end{tikzpicture}
+  \caption{Wavefront and NGS measurement sampling with a $4\times4$ lenslet array. The Fried geometry is on the left and the 2RBT geometry is on the right.}
+  \label{fig:2-exp}
+\end{figure}
+
+Fig.~\ref{fig:2} is valid for a NGS based AO system but this geometry is altered in the case of a LGS AO system.
+The geometry resulting from the finite distance of the LGS is show in the left hand side of Fig.~\ref{fig:3}.
+The geometry depicted in the right hand side of Fig.~\ref{fig:3} is used instead.
+With this geometry, the wavefront sample locations are computed om the grid of filled blue circles and the slope measurements are augmented of zero--valued slopes on the same grid.
+Wavefront and slopes are now defined on the same grid, their covariance is again a 2RBT matrix.
+The wavefront samples on the grid made of the filled black circles is obtained with a bi--linear interpolation within the blue circles.
+This sequence of operations need to be performed for each layer and the results from each layer are summed.
+For a $N_{atm}$ layer atmospheric profile, Eq.~(\ref{eq:4}) becomes
+\begin{equation}
+  \label{eq:8}
+  \varphi = \left[
+    \begin{array}{c}
+      H_1 \cdots H_{N_{atm}}
+    \end{array}
+\right]
+\left[
+    \begin{array}{cc}
+      \Xi_{x1} & \Xi_{x1} \\
+      \vdots  & \vdots \\ 
+      \Xi_{xN_{atm}} & \Xi_{xN_{atm}} \\
+    \end{array}
+    \right] \left[
+      \begin{array}{c}
+        s_x \\
+        s_y
+      \end{array}
+      \right]
+\end{equation}
+where $H_i$ is the sparse bi--linear interpolation matrix.
+
+% WAVEFRONT LGS SAMPLING
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}
+    \begin{scope}[xshift=-2.35cm]
+    \draw[help lines] (-2,-2) grid (2,2);
+\foreach \x in {0,1,...,4}
+\foreach \y in {0,1,...,4}
+{
+\fill ($(\x,\y)-(2,2)$) circle (0.8mm);
+}
+\foreach \x in {0,1,...,3}
+\foreach \y in {0,1,...,3}
+{
+\draw[red,thick] ($0.9*($(\x,\y)-(1.5,1.5)$)$) circle (1.2mm);
+}
+    \end{scope}
+    \begin{scope}[xshift=2.35cm]
+    \draw[help lines] (-2,-2) grid (2,2);
+\foreach \x in {0,0.5,...,4}
+\foreach \y in {0,0.5,...,4}
+{
+\fill ($(\x,\y)-(2,2)$) circle (0.8mm);
+}
+\foreach \x in {-1,-0.5,...,4}
+\foreach \y in {-1,-0.5,...,4}
+{
+\fill[blue] ($0.9*($(\x,\y)-(1.5,1.5)$)$) circle (0.8mm);
+\draw[blue,thick] ($0.9*($(\x,\y)-(1.5,1.5)$)$) circle (1.2mm);
+}
+\foreach \x in {0,1,...,3}
+\foreach \y in {0,1,...,3}
+{
+\draw[red,thick] ($0.9*($(\x,\y)-(1.5,1.5)$)$) circle (1.2mm);
+}
+    \end{scope}
+  \end{tikzpicture}
+  \caption{Wavefront and LGS measurement sampling with a $4\times4$ lenslet array. The Fried geometry is on the left and the 2RBT geometry is on the right.}
+  \label{fig:3}
+\end{figure}
+
+
+\subsubsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
 The setup method is initializing the required structures:
 <<setup>>=
-void LMMSE::setup(atmosphere *atm,float sampling,int N, char *solver_id)
-{
-  int NP, osf;
-  N_guide_star = 1;
-  aa.setup(N_SIDE_LENSLET,atm,sampling);
-  aaCov.setup(2,2,N_SIDE_LENSLET,aa.d__cov);
-  osf = 2;
-  NP = osf*N_SIDE_LENSLET+1;
-  PS_E_N_PX = NP;
-  PS_E_N_PX *= PS_E_N_PX;
-  pa.setup(N_SIDE_LENSLET,osf,atm,sampling);
-  paCov.setup(1,2,NP,pa.d__cov);
-  if (strcmp(solver_id,"CG")==0)
-    iSolve.cg_setup(N);
-  if (strcmp(solver_id,"MINRES")==0)
-    iSolve.minres_setup(N);
-<<linear solver (prep.)>>
-<<MVM (prep.)>>
-HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* _N_LENSLET_*2 ) );
-HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* _N_LENSLET_*2 ) );
-}
-<<setup with sources>>=
 void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star, source *mmse_star, int N_mmse_star,
 		  float sampling,int N, char *solver_id)
 {
@@ -109,32 +347,47 @@ void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star, source
 HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
 }
-<<setup with source height>>=
-void LMMSE::setup(atmosphere *atm, float source_height,float sampling,int N, char *solver_id)
+
+<<setup (new)>>=
+void LMMSE::new_setup(atmosphere *atm, source *guide_star, int _N_guide_star, source *mmse_star, int N_mmse_star,
+		  float sampling,int N, char *solver_id)
 {
   int NP, osf;
-  N_guide_star = 1;
-  aa.setup(N_SIDE_LENSLET,atm,sampling,source_height);
-  aaCov.setup(2,2,N_SIDE_LENSLET,aa.d__cov);
+  N_guide_star = _N_guide_star;
+
+  aa.setup(N_SIDE_LENSLET,atm,sampling,guide_star, N_guide_star);
+  aaCov.setup(2*N_guide_star,2*N_guide_star,N_SIDE_LENSLET,aa.d__cov);
+
   osf = 2;
   NP = osf*N_SIDE_LENSLET+1;
+  offset = (int) ceilf( osf*N_SIDE_LENSLET*atm->turbulence.altitude[0]*0.5/guide_star[0].height );
+  NP += offset*2;
+  printf(" ==>> offset=%d - NP=%d\n",offset,NP);
   PS_E_N_PX = NP;
   PS_E_N_PX *= PS_E_N_PX;
-  pa.setup(N_SIDE_LENSLET,osf,atm,sampling,source_height);
-  paCov.setup(1,2,NP,pa.d__cov);
+
+  float mmse_star_height = mmse_star[0].height;
+  mmse_star[0].height = guide_star[0].height;
+
+  pa.setup(NP,1,atm,sampling/osf,mmse_star, N_mmse_star, guide_star, N_guide_star);
+  paCov.setup(N_mmse_star,2*N_guide_star,NP,pa.d__cov);
+
+  mmse_star[0].height = mmse_star_height;
+
   if (strcmp(solver_id,"CG")==0)
-    iSolve.cg_setup(N);
+    iSolve.cg_setup(N*N_guide_star);
   if (strcmp(solver_id,"MINRES")==0)
-    iSolve.minres_setup(N);
-<<linear solver (prep.)>>
-<<MVM (prep.)>>
-HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* _N_LENSLET_*2 ) );
-HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* _N_LENSLET_*2 ) );
+    iSolve.minres_setup(N*N_guide_star);
+
+  <<linear solver (prep.)>>
+  <<MVM (prep.)>>
+  HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
+  HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
 }
-@ 
+@
 The structure parameters are
 <<parameters>>=
-  int *d__idx, PS_E_N_PX, N_guide_star;
+int *d__idx, PS_E_N_PX, N_guide_star, offset;
 float *d__ce, *d__phase_est, *d__x;
 aaStats aa;
 BTBT aaCov;
@@ -170,6 +423,20 @@ __global__ void set_pa_input(float *pa_c, float *aa_c, int *idx, int N)
     pa_c[idx[k]] = aa_c[k];
   }
 }
+<<PA input with sizes>>=
+__global__ void set_pa_input(float *pa_c, float *aa_c, int N, int offset) 
+{
+  int i, j, k, ii, jj, idx;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<N) && (j<N) ) {
+    ii  = 2*i + 1 + offset;
+    jj  = 2*j + 1 + offset;
+    idx = ii*(2*N + 1 + 2*offset) + jj;
+    k   = i*N + j;
+    pa_c[idx] = aa_c[k];
+  }
+}
 @ 
 <<wavefront estimation (I)>>=
   void LMMSE::estimation(float* d__c, int nMaxIteration, float *d__x0)
@@ -187,6 +454,7 @@ tid.toc("WAVEFRONT ESTIMATION");
 printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
 printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
 }
+
 <<wavefront estimation (II)>>=
   void LMMSE::estimation(float* d__c, int nMaxIteration)
 {
@@ -195,13 +463,51 @@ tid.tic();
 
 iSolve.minres_vorst(d__x, &aaCov, d__c, nMaxIteration, d__x);
 
+tid.toc("WAVEFRONT ESTIMATION (MINRES)");
+
+tid.tic();
+
 <<MVM>>
 
-tid.toc("WAVEFRONT ESTIMATION");
+tid.toc("WAVEFRONT ESTIMATION (PA MVM)");
 
 
 printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
-printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+//printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+}
+
+<<wavefront estimation (III)>>=
+void LMMSE::new_estimation(float* d__c, int nMaxIteration)
+{
+
+tid.tic();
+
+iSolve.minres_vorst(d__x, &aaCov, d__c, nMaxIteration, d__x);
+
+dim3 blockDim(16,16);
+dim3 gridDim(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
+for (int k_guide_star=0;k_guide_star<N_guide_star;k_guide_star++) {
+  set_pa_input LLL gridDim,blockDim RRR (d__ce + 2*k_guide_star*PS_E_N_PX,
+					 d__x + 2*k_guide_star*_N_LENSLET_,    
+                                          N_SIDE_LENSLET, offset);
+  set_pa_input LLL gridDim,blockDim RRR (d__ce + (2*k_guide_star+1)*PS_E_N_PX,
+					 d__x + (2*k_guide_star+1)*_N_LENSLET_,
+                                         N_SIDE_LENSLET, offset);
+ }
+
+tid.toc("WAVEFRONT ESTIMATION (MINRES)");
+
+dev2file("ce.bin",d__ce,PS_E_N_PX*2);
+pa.toFile("paCovarianceAltLmmse.bin");
+
+tid.tic();
+
+paCov.MVM(d__phase_est,d__ce);
+
+tid.toc("WAVEFRONT ESTIMATION (PA MVM)");
+
+printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
+//printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
 }
 @ 
 <<linear solver (prep.)>>=
@@ -219,22 +525,10 @@ HANDLE_ERROR( cudaMemcpy( d__idx, idx,
 			  cudaMemcpyHostToDevice ) );
 free(idx);
 
-<<MVM (prep.) (old)>>=
-HANDLE_ERROR( cudaMalloc((void**)&d__ce, sizeof(float)*PS_E_N_PX*2 ) );
-HANDLE_ERROR( cudaMemset(d__ce, 0, sizeof(float)*PS_E_N_PX*2 ) );
-HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
-
 <<MVM (prep.)>>=
 HANDLE_ERROR( cudaMalloc((void**)&d__ce, sizeof(float)*PS_E_N_PX*2*N_guide_star ) );
 HANDLE_ERROR( cudaMemset(d__ce, 0, sizeof(float)*PS_E_N_PX*2*N_guide_star ) );
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
-
-<<MVM (old)>>=
-dim3 blockDim(16,16);
-dim3 gridDim(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
-set_pa_input LLL gridDim,blockDim RRR (d__ce, d__x, d__idx, N_SIDE_LENSLET);
-set_pa_input LLL gridDim,blockDim RRR (d__ce + PS_E_N_PX, d__x + _N_LENSLET_, d__idx, N_SIDE_LENSLET);
-paCov.MVM(d__phase_est,d__ce);
 
 <<MVM>>=
 dim3 blockDim(16,16);
@@ -247,7 +541,17 @@ for (int k_guide_star=0;k_guide_star<N_guide_star;k_guide_star++) {
  }
 paCov.MVM(d__phase_est,d__ce);
 
+@ 
+
+\subsubsection{Sparse bi--linear interpolation}
+\label{sec:sparse-bi-linear}
+
+
 @
+\subsubsection{Tests}
+\label{sec:tests}
+
+
 The test routine is:
 <<LMMSE.bin>>=
 #ifndef __CEO_H__
