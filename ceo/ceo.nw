@@ -82,6 +82,7 @@ __global__ void circular_pupil(int *pupil, int N);
 __global__ void valid_lenslet(char *mask, int N_pupil, float threshold);
 
 void dev2file(const char* filename, float* d__data, int n_data);
+void dev2file(const char* filename, int* d__data, int n_data);
 
 #endif  // __CEO_H__
 
@@ -502,6 +503,19 @@ void dev2file(const char* filename, float* d__data, int n_data) {
   FILE *fid;
   fid = fopen(filename,"wb");
   fwrite(data,sizeof(float),n_data,fid);
+  fclose(fid);
+  free(data);
+  fprintf(stderr,"@(CEO)>ceo: Data saved to %s!\n",filename);
+}
+void dev2file(const char* filename, int* d__data, int n_data) {
+  int *data;
+  data = (int*)malloc(sizeof(int)*n_data);
+  HANDLE_ERROR( cudaMemcpy( data, d__data,
+			  sizeof(int)*n_data,
+			  cudaMemcpyDeviceToHost ) );
+  FILE *fid;
+  fid = fopen(filename,"wb");
+  fwrite(data,sizeof(int),n_data,fid);
   fclose(fid);
   free(data);
   fprintf(stderr,"@(CEO)>ceo: Data saved to %s!\n",filename);

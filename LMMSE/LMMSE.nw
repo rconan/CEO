@@ -328,7 +328,7 @@ where $H_i$ is the sparse bi--linear interpolation matrix.
 
 The parameters are defined in
 <<parameters>>=
-int *d__idx, PS_E_N_PX, N_guide_star, offset;
+int *d__idx, PS_E_N_PX, N_guide_star, offset, NP, osf;
 float *d__ce, *d__phase_est, *d__phase_est_i, *d__x;
 aaStats aa;
 BTBT aaCov;
@@ -346,7 +346,6 @@ The setup method is initializing the required structures:
 void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star, source *mmse_star, int N_mmse_star,
 		  float sampling,int N, char *solver_id)
 {
-  int NP, osf;
   N_guide_star = _N_guide_star;
   aa.setup(N_SIDE_LENSLET,atm,sampling,guide_star, N_guide_star);
   aaCov.setup(2*N_guide_star,2*N_guide_star,N_SIDE_LENSLET,aa.d__cov);
@@ -370,7 +369,6 @@ HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
 void LMMSE::new_setup(atmosphere *atm, source *guide_star, int _N_guide_star, source *mmse_star, int N_mmse_star,
 		  float sampling,int N, char *solver_id)
 {
-  int NP, osf;
   N_guide_star = _N_guide_star;
 
   aa.setup(N_SIDE_LENSLET,atm,sampling,guide_star, N_guide_star);
@@ -378,7 +376,7 @@ void LMMSE::new_setup(atmosphere *atm, source *guide_star, int _N_guide_star, so
 
   osf = 2;
   NP = osf*N_SIDE_LENSLET+1;
-  N = NP;
+  NI = NP;
   offset = (int) ceilf( osf*N_SIDE_LENSLET*
 			atm->turbulence.altitude[0]*0.5/guide_star[0].height );
   NP += offset*2;
@@ -530,12 +528,24 @@ for (int k_guide_star=0;k_guide_star<N_guide_star;k_guide_star++) {
 
 tid.toc("WAVEFRONT ESTIMATION (MINRES)");
 
+/*
 dev2file("ce.bin",d__ce,PS_E_N_PX*2);
 pa.toFile("paCovarianceAltLmmse.bin");
+*/
+
+float alpha, beta;
+alpha = 1;
+beta  = 0;
 
 tid.tic();
 
 paCov.MVM(d__phase_est,d__ce);
+
+HANDLE_ERROR_CUSPARSE( cusparseScsrmv(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+				      NI*NI, NP*NP, nnz, &alpha,
+				      descr, csrValH, csrRowPtrH, csrColIndH,
+				      d__phase_est, &beta, d__phase_est_i),
+		       "Sparse to vector product failed!");
 
 tid.toc("WAVEFRONT ESTIMATION (PA MVM)");
 
@@ -615,8 +625,8 @@ and the samples of $\varphi_{bli}$ are located at
 @ The interpolation starts with normalizing the coordinates $(x_i,y_j)$ with respect to the coordinates $(x_{i_p},y_{j_p})$
 <<bilinear interpolation>>=
 scale = delta/(delta_p*(NP-1));
-s = (scale*(i + (1-N)/2) + 0.5)*(NP-1);
-t = (scale*(j + (1-N)/2) + 0.5)*(NP-1);
+s = (scale*(i + (1-NI)/2) + 0.5)*(NP-1);
+t = (scale*(j + (1-NI)/2) + 0.5)*(NP-1);
 @  and taking the floor integer part to locate the bottom--left coordinate of the pixels surrounding [[xi]] and [[yi]]
 <<bilinear interpolation>>=
 fs  = floorf(s);
@@ -628,7 +638,8 @@ if (s==(NP-1)) { s += 1 - fs; ndx -= NP; } else { s -= fs; }
 if (t==(NP-1)) { t += 1 - ft; ndx -= 1; }   else { t -= ft; }
 @ and finally the interpolation is computed as
 <<bilinear interpolation>>=	 
-idx = 4*(i + N*j) - 1;
+k = i*NI + j;
+idx = 4*k - 1;
 onems = 1 - s;
 onemt = 1 - t;
 csrValH[++idx]  = onems*onemt;
@@ -636,27 +647,27 @@ csrColIndH[idx] = ndx;
 csrValH[++idx]  = onems*t;
 csrColIndH[idx] = ndx + 1;
 csrValH[++idx]  = s*onemt;
-csrColIndH[idx] = ndx + N;
+csrColIndH[idx] = ndx + NP;
 csrValH[++idx]  = s*t;
-csrColIndH[idx] = ndx + N + 1;
-csrRowPtrH[idx+1] = csrRowPtrH[idx]+4;
+csrColIndH[idx] = ndx + NP + 1;
+csrRowPtrH[k+1] = 4*(k+1);
 
 @ The sparse matrix is stored in the compressed sparse row format and it is computed with the kernel
 <<sparse matrix kernel>>=
 __global__ void bilinearSparseOperator(float *csrValH, int *csrColIndH, int *csrRowPtrH,
-				  float delta_p, int NP, float delta, int N)
+				  float delta_p, int NP, float delta, int NI)
 {
-  int i, j, idx, ndx;
+  int i, j, k, idx, ndx;
   float scale, s, t, fs, ft, onemt, onems;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
-  if ( (i<N) && (j<(N)) ) {
+  if ( (i<NI) && (j<(NI)) ) {
     <<bilinear interpolation>>
   }
 }
 @ Lets define new parameters for the sparse matrix:
 <<parameters>>=
-int nnz, N;
+int nnz, NI;
 float *csrValH;
 int *csrColIndH, *csrRowPtrH;
 cudaError_t cudaStat;
@@ -673,21 +684,35 @@ HANDLE_ERROR_CUSPARSE( cusparseCreateMatDescr(&descr),
 cusparseSetMatType(descr,CUSPARSE_MATRIX_TYPE_GENERAL);
 cusparseSetMatIndexBase(descr,CUSPARSE_INDEX_BASE_ZERO);
 
-nnz = 4*N*N;
+nnz = 4*NI*NI;
 HANDLE_ERROR( cudaMalloc((void**)&csrValH,    sizeof(float)*nnz ) );
 HANDLE_ERROR( cudaMalloc((void**)&csrColIndH, sizeof(int)*nnz ) );
-HANDLE_ERROR( cudaMalloc((void**)&csrRowPtrH, sizeof(int)*(N*N+1) ) );
-HANDLE_ERROR( cudaMemset(csrRowPtrH, 0, sizeof(int)*(N*N+1) ) );
+HANDLE_ERROR( cudaMalloc((void**)&csrRowPtrH, sizeof(int)*(NI*NI+1) ) );
+HANDLE_ERROR( cudaMemset(csrRowPtrH, 0, sizeof(int)*(NI*NI+1) ) );
 
 dim3 blockDim(16,16);
-dim3 gridDim(N/16+1,N/16+1);
+dim3 gridDim(NI/16+1,NI/16+1);
 float gl = 1 - atm->turbulence.altitude[0]/guide_star[0].height;
 bilinearSparseOperator LLL gridDim,blockDim RRR 
-  (csrValH, csrColIndH, csrRowPtrH, gl, NP, 1, N);
+  (csrValH, csrColIndH, csrRowPtrH, gl, NP, 1, NI);
 
+// For debugging purposes:
+/* 
 dev2file("csrValH.bin",csrValH,nnz);
+dev2file("csrColIndH.bin",csrColIndH,nnz);
+dev2file("csrRowPtrH.bin",csrRowPtrH,NI*NI+1);
 
-HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est_i, sizeof(float)*N*N ) );
+float *H;
+HANDLE_ERROR( cudaMalloc( (void**)&H, sizeof(float)*NI*NI*NP*NP ) );
+HANDLE_ERROR_CUSPARSE(cusparseScsr2dense(handle, NI*NI, NP*NP, descr, 
+					 csrValH, csrRowPtrH, csrColIndH,
+					 H, NI*NI),
+		      "Sparse to dense conversion failed!");
+dev2file("H.bin",H,NI*NI*NP*NP);
+HANDLE_ERROR( cudaFree( H ) );
+*/
+
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est_i, sizeof(float)*NI*NI ) );
 
 @ and then cleanup with:
 <<sparse cleanup>>=
