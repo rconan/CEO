@@ -16,6 +16,7 @@
 #include <curand_kernel.h>
 #include <cufft.h>
 #include "cublas_v2.h"
+#include "cusparse_v2.h"
 
 #include "definitions.h"
 
@@ -28,24 +29,37 @@
 static void HandleError( cudaError_t err,
                          const char *file,
                          int line ) {
-  if ( (err != cudaSuccess) )  {
+  if (err != cudaSuccess)  {
     fprintf(stderr,"\n\x1B[31m@(CEO)>ERROR: %s in %s at line %d\x1B[0m\n", 
 	    cudaGetErrorString( err ), file, line );
     exit( EXIT_FAILURE );
   }
 }
 #define HANDLE_ERROR( err ) (HandleError( err, __FILE__, __LINE__ ))
+
 static void HandleErrorCUFFT( cufftResult_t err,
 			      const char *msg,
 			      const char *file,
 			      int line ) {
-  if ( (err != CUFFT_SUCCESS))  {
+  if (err != CUFFT_SUCCESS)  {
     fprintf(stderr,"\n\x1B[31m@(CEO)>CUFFT ERROR: %s in %s at line %d\x1B[0m\n", 
 	    msg, file, line );
     exit( EXIT_FAILURE );
   }
 }
 #define HANDLE_ERROR_CUFFT( err, msg ) (HandleErrorCUFFT( err, msg, __FILE__, __LINE__ ))
+
+static void HandleErrorCUSPARSE( cusparseStatus_t err,
+			      const char *msg,
+			      const char *file,
+			      int line ) {
+  if (err != CUSPARSE_STATUS_SUCCESS)  {
+    fprintf(stderr,"\n\x1B[31m@(CEO)>CUSPARSE ERROR: %s in %s at line %d\x1B[0m\n", 
+	    msg, file, line );
+    exit( EXIT_FAILURE );
+  }
+}
+#define HANDLE_ERROR_CUSPARSE( err, msg ) (HandleErrorCUSPARSE( err, msg, __FILE__, __LINE__ ))
 
 inline float sign(float x) {
   return (float) ( (x > 0) - (x < 0) );

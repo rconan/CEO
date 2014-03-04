@@ -36,6 +36,7 @@ struct LMMSE {
 	     float sampling, int N, char *solver_id);
 
   void cleanup(void);
+  void new_cleanup(void);
 
   void estimation(float* d__c, int nMaxIteration, float *d__x0);
   void estimation(float* d__c, int nMaxIteration);
@@ -54,10 +55,13 @@ struct LMMSE {
 <<PA input>>
 <<PA input with sizes>>
 
+<<sparse matrix kernel>>
+
 <<setup>>
 <<setup (new)>>
 
 <<cleanup>>
+<<cleanup (new)>>
 
 <<wavefront estimation (I)>>
 <<wavefront estimation (II)>>
@@ -175,7 +179,7 @@ Eq.~(\ref{eq:5}) is then solved iteratively using the method in \cite{Lee86} to 
   \caption{WFS vectors of measurement pairs.}
   \label{fig:1}
 \end{figure*}
-% CROSS-OVARIANCE
+% CROSS-COVARIANCE
 \begin{figure*}[htbp]
   \centering
  \begin{tikzpicture}
@@ -319,7 +323,21 @@ where $H_i$ is the sparse bi--linear interpolation matrix.
   \label{fig:3}
 \end{figure}
 
+\subsubsection{Parameters}
+\label{sec:parameters}
 
+The parameters are defined in
+<<parameters>>=
+int *d__idx, PS_E_N_PX, N_guide_star, offset;
+float *d__ce, *d__phase_est, *d__phase_est_i, *d__x;
+aaStats aa;
+BTBT aaCov;
+paStats pa;
+BTBT paCov;
+iterativeSolvers iSolve;
+stopwatch tid;
+
+@
 \subsubsection{Setup \& Cleanup}
 \label{sec:setup--cleanup}
 
@@ -360,7 +378,9 @@ void LMMSE::new_setup(atmosphere *atm, source *guide_star, int _N_guide_star, so
 
   osf = 2;
   NP = osf*N_SIDE_LENSLET+1;
-  offset = (int) ceilf( osf*N_SIDE_LENSLET*atm->turbulence.altitude[0]*0.5/guide_star[0].height );
+  N = NP;
+  offset = (int) ceilf( osf*N_SIDE_LENSLET*
+			atm->turbulence.altitude[0]*0.5/guide_star[0].height );
   NP += offset*2;
   printf(" ==>> offset=%d - NP=%d\n",offset,NP);
   PS_E_N_PX = NP;
@@ -383,35 +403,48 @@ void LMMSE::new_setup(atmosphere *atm, source *guide_star, int _N_guide_star, so
   <<MVM (prep.)>>
   HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
   HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
+
+  <<sparse setup>>
 }
-@
-The structure parameters are
-<<parameters>>=
-int *d__idx, PS_E_N_PX, N_guide_star, offset;
-float *d__ce, *d__phase_est, *d__x;
-aaStats aa;
-BTBT aaCov;
-paStats pa;
-BTBT paCov;
-iterativeSolvers iSolve;
-stopwatch tid;
 @
 Memory is freed with
 <<cleanup>>= 
 void LMMSE::cleanup(void)
 {
   fprintf(stderr,"@(CEO)>LMMSE: freeing memory!\n");
+
   aa.cleanup();
   pa.cleanup();
   aaCov.cleanup();
   paCov.cleanup();
   iSolve.cleanup();
+
   HANDLE_ERROR( cudaFree( d__idx ) );
   HANDLE_ERROR( cudaFree( d__ce ) );
   HANDLE_ERROR( cudaFree( d__phase_est ) );
   HANDLE_ERROR( cudaFree(d__x) );
 }
-@ 
+<<cleanup (new)>>= 
+void LMMSE::new_cleanup(void)
+{
+  fprintf(stderr,"@(CEO)>LMMSE: freeing memory!\n");
+
+  aa.cleanup();
+  pa.cleanup();
+  aaCov.cleanup();
+  paCov.cleanup();
+  iSolve.cleanup();
+
+  HANDLE_ERROR( cudaFree( d__idx ) );
+  HANDLE_ERROR( cudaFree( d__ce ) );
+  HANDLE_ERROR( cudaFree( d__phase_est ) );
+  HANDLE_ERROR( cudaFree(d__x) );
+
+  <<sparse cleanup>>
+}
+@
+\subsubsection{Wavefront estimation}
+
 <<PA input>>=
 __global__ void set_pa_input(float *pa_c, float *aa_c, int *idx, int N) 
 {
@@ -546,7 +579,126 @@ paCov.MVM(d__phase_est,d__ce);
 \subsubsection{Sparse bi--linear interpolation}
 \label{sec:sparse-bi-linear}
 
+A wavefront $\hat\varphi$ is sampled on a $N_p\times N_p$ square grid with sampling step $\delta_p$.
+The wavefront $\varphi_{bli}$, sampled on a square grid $N\times N$ with sampling step $\delta$ is derived from a bi--linear interpolation of $\hat\varphi$.
+The coordinates of $\hat\varphi$ samples are given by
+\begin{equation}
+  \label{eq:9}
+  \left(
+    \begin{array}{c}
+      x_{i_p} \\
+      y_{j_p}
+    \end{array}
+  \right) = \delta_p \left[ \left(
+    \begin{array}{c}
+      i_p \\
+      j_p
+    \end{array}
+    \right) + {1-N_p \over 2} \right], \forall i,j \in [0,\dots,N_p-1]
+\end{equation}
+and the samples of $\varphi_{bli}$ are located at
+\begin{equation}
+  \label{eq:10}
+  \left(
+    \begin{array}{c}
+      x_i \\
+      y_j
+    \end{array}
+  \right) = \delta \left[ \left(
+    \begin{array}{c}
+      i \\
+      j
+    \end{array}
+    \right) + {1-N \over 2} \right], \forall i,j \in [0,\dots,N-1]  
+\end{equation}
 
+@ The interpolation starts with normalizing the coordinates $(x_i,y_j)$ with respect to the coordinates $(x_{i_p},y_{j_p})$
+<<bilinear interpolation>>=
+scale = delta/(delta_p*(NP-1));
+s = (scale*(i + (1-N)/2) + 0.5)*(NP-1);
+t = (scale*(j + (1-N)/2) + 0.5)*(NP-1);
+@  and taking the floor integer part to locate the bottom--left coordinate of the pixels surrounding [[xi]] and [[yi]]
+<<bilinear interpolation>>=
+fs  = floorf(s);
+ft  = floorf(t);
+ndx = __float2int_rd( ft + fs*NP );
+@ Next, one checks if the edges of the array have been reached
+<<bilinear interpolation>>=
+if (s==(NP-1)) { s += 1 - fs; ndx -= NP; } else { s -= fs; }    
+if (t==(NP-1)) { t += 1 - ft; ndx -= 1; }   else { t -= ft; }
+@ and finally the interpolation is computed as
+<<bilinear interpolation>>=	 
+idx = 4*(i + N*j) - 1;
+onems = 1 - s;
+onemt = 1 - t;
+csrValH[++idx]  = onems*onemt;
+csrColIndH[idx] = ndx;
+csrValH[++idx]  = onems*t;
+csrColIndH[idx] = ndx + 1;
+csrValH[++idx]  = s*onemt;
+csrColIndH[idx] = ndx + N;
+csrValH[++idx]  = s*t;
+csrColIndH[idx] = ndx + N + 1;
+csrRowPtrH[idx+1] = csrRowPtrH[idx]+4;
+
+@ The sparse matrix is stored in the compressed sparse row format and it is computed with the kernel
+<<sparse matrix kernel>>=
+__global__ void bilinearSparseOperator(float *csrValH, int *csrColIndH, int *csrRowPtrH,
+				  float delta_p, int NP, float delta, int N)
+{
+  int i, j, idx, ndx;
+  float scale, s, t, fs, ft, onemt, onems;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<N) && (j<(N)) ) {
+    <<bilinear interpolation>>
+  }
+}
+@ Lets define new parameters for the sparse matrix:
+<<parameters>>=
+int nnz, N;
+float *csrValH;
+int *csrColIndH, *csrRowPtrH;
+cudaError_t cudaStat;
+cusparseStatus_t status;
+cusparseHandle_t handle;
+cusparseMatDescr_t descr;
+@ and they are setup with:
+<<sparse setup>>=
+HANDLE_ERROR_CUSPARSE( cusparseCreate(&handle), 
+		       "CUSPARSE Library initialization failed!");
+HANDLE_ERROR_CUSPARSE( cusparseCreateMatDescr(&descr), 
+		       "Matrix descriptor initialization failed!");
+
+cusparseSetMatType(descr,CUSPARSE_MATRIX_TYPE_GENERAL);
+cusparseSetMatIndexBase(descr,CUSPARSE_INDEX_BASE_ZERO);
+
+nnz = 4*N*N;
+HANDLE_ERROR( cudaMalloc((void**)&csrValH,    sizeof(float)*nnz ) );
+HANDLE_ERROR( cudaMalloc((void**)&csrColIndH, sizeof(int)*nnz ) );
+HANDLE_ERROR( cudaMalloc((void**)&csrRowPtrH, sizeof(int)*(N*N+1) ) );
+HANDLE_ERROR( cudaMemset(csrRowPtrH, 0, sizeof(int)*(N*N+1) ) );
+
+dim3 blockDim(16,16);
+dim3 gridDim(N/16+1,N/16+1);
+float gl = 1 - atm->turbulence.altitude[0]/guide_star[0].height;
+bilinearSparseOperator LLL gridDim,blockDim RRR 
+  (csrValH, csrColIndH, csrRowPtrH, gl, NP, 1, N);
+
+dev2file("csrValH.bin",csrValH,nnz);
+
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est_i, sizeof(float)*N*N ) );
+
+@ and then cleanup with:
+<<sparse cleanup>>=
+HANDLE_ERROR_CUSPARSE( cusparseDestroyMatDescr(descr),
+		       "Matrix descriptor destruction failed!");
+HANDLE_ERROR_CUSPARSE( cusparseDestroy(handle),
+		       "CUSPARSE Library release of resources failed!");
+HANDLE_ERROR( cudaFree( csrValH ) );
+HANDLE_ERROR( cudaFree( csrColIndH ) );
+HANDLE_ERROR( cudaFree( csrRowPtrH ) );
+HANDLE_ERROR( cudaFree( d__phase_est_i ) );
 @
 \subsubsection{Tests}
 \label{sec:tests}
