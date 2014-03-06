@@ -8,8 +8,10 @@ classdef toeplitzBlockToeplitz
        elements;
        bytes;
        elementsFT;
+       lambda;
        mu;
        xi;
+       na;
 	   tag = 'Toeplitz-Block-Toeplitz';
     end
 
@@ -24,15 +26,19 @@ classdef toeplitzBlockToeplitz
             
             a = obj.elements;
             a = a(:);
-            na = length(a);
-            na = pow2(nextpow2(na));
-            obj.elementsFT = fft(a,na);
+            obj.na = length(a);
+            obj.na = pow2(nextpow2(obj.na));
+            obj.elementsFT = fft(a,obj.na);
             
-            n = obj.nRow;
+            n = obj.nCol;
+            m = obj.nRow;
+            [i1,i2] = ndgrid ( 1-m:n-1 ,1-m:n-1 );
+            obj.lambda = ( (m + i1 - 1)*(m+n-1) + (m + i2 -1) )';
             [j1,j2] = ndgrid ( 1:n );
-            mu_ = 2*n*(n-1)-(j1-1)*(2*n-1)-(j2-1);
+            mu_ = (m+n)*(n-1)-(j1-1)*(m+n-1)-(j2-1);
             obj.mu = mu_'+1;
-            xi_ = 2*n*(2*n-1) - j1*(2*n-1) - j2;
+            [j1,j2] = ndgrid ( 1:m );
+            xi_ = (m+n)*(m+n-1) - j1*(m+n-1) - j2;
             obj.xi = xi_'+1;
 
             display(obj)
@@ -94,11 +100,11 @@ classdef toeplitzBlockToeplitz
         end
         
         function out = mtimes(obj,b)
-            na = (obj.nBlockRow+obj.nBlockCol-1)*(obj.nRow+obj.nCol-1);
-            U = zeros(na,1);
+            obj.na = (obj.nBlockRow+obj.nBlockCol-1)*(obj.nRow+obj.nCol-1);
+            U = zeros(obj.na,1);
             U(obj.mu(:)) = b;
-            na = pow2(nextpow2(na));
-            P = ifft(obj.elementsFT.*fft(U,na));
+            obj.na = pow2(nextpow2(obj.na));
+            P = ifft(obj.elementsFT.*fft(U,obj.na));
             out = P(obj.xi(:));
         end
         
