@@ -77,7 +77,7 @@ The matrix is entirely defined with $M$, $N$, $M_T$ and $N_T$ and the $(M_T+N_T-
 
 The parameters of the [[BTBT]] structure are:
 <<BTBT parameters>>=
-int M, N, MT, NT, NT2, NU, NU2, NDFT, HALF_NDFT, NU_TOTAL, NF, NF2, ind_size, cov_size;
+int M, N, MT, MT2, NT, NT2, NU, NU2, NDFT, HALF_NDFT, NU_TOTAL, NF, NF2, ind_size, cov_size;
 char *mask;
 float2 *d__cov, *d__b, *d__c;
 float *d__alpha, *d__beta, n_full, n_comp, b_full, b_comp, cov_eval_et;
@@ -99,8 +99,9 @@ A [[BTBT]] structure is initialized with the number of blocks $[[M]]\times[[N]]$
   M = M_;
   N = N_;
   MT = MT_;
+  MT2 = MT*MT;
   NT = NT_;
-  NT2 = MT*NT;
+  NT2 = NT*NT;
   NU = MT+NT-1;
   NU2 = NU*NU;
   NDFT = round_up_to_nhp2(NU2);
@@ -117,7 +118,7 @@ A [[BTBT]] structure is initialized with the number of blocks $[[M]]\times[[N]]$
   stopwatch tid;
   tid.tic();
   <<evaluate covariance>>
-  tid.toc(&cov_eval_et,"Covariance evaluation");
+  tid.toc(&cov_eval_et,"Covariance raster DFT");
 }
 @ For square blocks, [[BTBT]] is initialized with: 
 <<setup (square blocks)>>=
@@ -126,7 +127,7 @@ A [[BTBT]] structure is initialized with the number of blocks $[[M]]\times[[N]]$
   M = M_;
   N = N_;
   MT = NT = NT_;
-  NT2 = NT*NT;
+  MT2 = NT2 = NT*NT;
   NU = 2*NT-1;
   NU2 = NU*NU;
   NDFT = round_up_to_nhp2(NU2);
@@ -143,7 +144,7 @@ A [[BTBT]] structure is initialized with the number of blocks $[[M]]\times[[N]]$
   stopwatch tid;
   tid.tic();
   <<evaluate covariance>>
-  tid.toc(&cov_eval_et,"Covariance evaluation");
+  tid.toc(&cov_eval_et,"Covariance raster DFT");
 }
 @ The memory is allocated with:
 <<allocation>>=
@@ -319,14 +320,14 @@ void BTBT::MVM(float *y, float *x)
  /* tid.tic(); */
   <<MVM STEP 3: Fourier domain multiplication>>
   /* tid.toc("STEP 3"); */
-  /*  HANDLE_ERROR( cudaThreadSynchronize() ); */
-  /* float2 *b; */
-  /* b = (float2*)malloc(M*sizeof(float2)*NDFT); */
-  /* HANDLE_ERROR( cudaMemcpy( b, d__c, M*sizeof(float2)*NDFT, cudaMemcpyDeviceToHost) ); */
-  /* for (int i=0;i<(NDFT);i++) { */
-  /*   printf("|(%3d) [%+6.4E;%+6.4E]\n",i,b[i].x,b[i].y); */
-  /* } */
-  /* free(b); */
+   /*  HANDLE_ERROR( cudaThreadSynchronize() );  */
+   /* float2 *b;  */
+   /* b = (float2*)malloc(M*sizeof(float2)*NDFT);  */
+   /* HANDLE_ERROR( cudaMemcpy( b, d__c, M*sizeof(float2)*NDFT, cudaMemcpyDeviceToHost) );  */
+   /* for (int i=0;i<(10);i++) {  */
+   /*   fprintf(stderr,"|(%3d) [%+6.4E;%+6.4E]\n",i,b[i].x,b[i].y);  */
+   /* }  */
+   /* free(b);  */
   /* tid.tic(); */
   <<MVM STEP 4: output FT>>
   /* float2 *c; */
@@ -375,7 +376,7 @@ The matrix--to--vector multiplication $y=C_{\vec\alpha\cdot\vec\beta}s$ is deriv
 <<MVM STEP 1: input ordering>>=
 dim3 blockDim(256,1);
 dim3 gridDim( 1+NT2/256,N);
-mvm_input_order LLL gridDim,blockDim RRR ( ((float*)d__b), NDFT, x, NT*NT, d__mu);
+mvm_input_order LLL gridDim,blockDim RRR ( ((float*)d__b), NDFT, x, NT2, d__mu);
 @  using the kernel:
 <<MVM input ordering kernel>>=
 __global__ void mvm_input_order(float *x_out, int n_x_out, 
@@ -444,8 +445,8 @@ HANDLE_ERROR( cudaThreadSynchronize() );
 \item the real part of $c$ is affected into vector $y$ according to the ordering in vector $\xi$ i.e. $y=c[\xi].x$.
 <<MVM STEP 5: output ordering>>=
 blockDim = dim3(256,1);
-gridDim  = dim3( 1+NT2/256,M);
-mvm_output_order LLL gridDim,blockDim RRR (y, MT*MT, ((float *)d__c), NDFT, d__xi);
+gridDim  = dim3( 1+MT2/256,M);
+mvm_output_order LLL gridDim,blockDim RRR (y, MT2, ((float *)d__c), NDFT, d__xi);
 @  using the kernel:
 <<MVM output ordering kernel>>=
 __global__ void mvm_output_order(float *x_out, int n_x_out, 

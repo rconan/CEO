@@ -34,6 +34,8 @@ struct LMMSE {
 	     float sampling, int N, char *solver_id);
   void new_setup(atmosphere *atm, source *guide_star, int N_guide_star, source *mmse_star, int N_mmse_star,
 	     float sampling, int N, char *solver_id);
+  void fried_setup(atmosphere *atm, source *guide_star, int N_guide_star, source *mmse_star, int N_mmse_star,
+	     float sampling, int N, char *solver_id);
 
   void cleanup(void);
   void new_cleanup(void);
@@ -41,6 +43,8 @@ struct LMMSE {
   void estimation(float* d__c, int nMaxIteration, float *d__x0);
   void estimation(float* d__c, int nMaxIteration);
   void new_estimation(float* d__c, int nMaxIteration);
+  void fried_estimation(float* d__c, int nMaxIteration);
+  void fried_sparse_estimation(float* d__c, int nMaxIteration);
 
 };
 #endif // __LMMSE_H__
@@ -59,6 +63,7 @@ struct LMMSE {
 
 <<setup>>
 <<setup (new)>>
+<<setup (rect)>>
 
 <<cleanup>>
 <<cleanup (new)>>
@@ -66,6 +71,8 @@ struct LMMSE {
 <<wavefront estimation (I)>>
 <<wavefront estimation (II)>>
 <<wavefront estimation (III)>>
+<<wavefront estimation (IV)>>
+<<wavefront estimation (V)>>
 @
 
 \subsection{Functions}
@@ -417,6 +424,66 @@ void LMMSE::new_setup(atmosphere *atm, source *guide_star, int _N_guide_star, so
 
   <<sparse setup>>
 }
+<<setup (rect)>>=
+void LMMSE::fried_setup(atmosphere *atm, source *guide_star, int _N_guide_star, source *mmse_star, int N_mmse_star,
+		  float sampling,int N, char *solver_id)
+{
+  N_guide_star = _N_guide_star;
+  aa.setup(N_SIDE_LENSLET,atm,sampling,guide_star, N_guide_star);
+  aaCov.setup(2*N_guide_star,2*N_guide_star,N_SIDE_LENSLET,aa.d__cov);
+
+  osf = 1;
+  NP = osf*N_SIDE_LENSLET+1;
+  NI = NP;
+
+   if (mmse_star[0].height==guide_star[0].height) {
+
+  offset = 1;
+  printf(" ==>> offset=%d - NP=%d\n",offset,NP);
+  PS_E_N_PX = NP;
+  PS_E_N_PX *= PS_E_N_PX;
+
+  float mmse_star_height = mmse_star[0].height;
+  mmse_star[0].height = guide_star[0].height;
+
+  pa.setup(NP,N_SIDE_LENSLET,osf,atm,sampling,mmse_star, N_mmse_star, guide_star, N_guide_star);
+  paCov.setup(N_mmse_star,2*N_guide_star,NP,N_SIDE_LENSLET,pa.d__cov);
+
+  mmse_star[0].height = mmse_star_height;
+ 
+} else {
+
+  offset = (int) ceilf( osf*N_SIDE_LENSLET*
+			atm->turbulence.altitude[0]*0.5/guide_star[0].height );
+  NP += offset*2;
+
+  offset += 1;
+  printf(" ==>> offset=%d - NP=%d\n",offset,NP);
+  PS_E_N_PX = NP;
+  PS_E_N_PX *= PS_E_N_PX;
+
+  source clone_mmse_star;
+  clone_mmse_star.setup(mmse_star[0].zenith,mmse_star[0].azimuth,guide_star[0].height);
+
+  pa.setup(NP,N_SIDE_LENSLET,osf,atm,sampling,&clone_mmse_star, N_mmse_star, guide_star, N_guide_star);
+
+  clone_mmse_star.cleanup();
+
+  paCov.setup(N_mmse_star,2*N_guide_star,NP,N_SIDE_LENSLET,pa.d__cov);
+
+  <<sparse setup>>
+}
+
+  if (strcmp(solver_id,"CG")==0)
+    iSolve.cg_setup(N*N_guide_star);
+  if (strcmp(solver_id,"MINRES")==0)
+    iSolve.minres_setup(N*N_guide_star);
+
+<<linear solver (prep.)>>
+<<MVM (prep.)>>
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
+HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
+}
 @
 Memory is freed with
 <<cleanup>>= 
@@ -553,6 +620,66 @@ beta  = 0;
 tid.tic();
 
 paCov.MVM(d__phase_est,d__ce);
+
+HANDLE_ERROR_CUSPARSE( cusparseScsrmv(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+				      NI*NI, NP*NP, nnz, &alpha,
+				      descr, csrValH, csrRowPtrH, csrColIndH,
+				      d__phase_est, &beta, d__phase_est_i),
+		       "Sparse to vector product failed!");
+
+tid.toc("WAVEFRONT ESTIMATION (PA MVM)");
+
+printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
+//printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+}
+
+<<wavefront estimation (IV)>>=
+void LMMSE::fried_estimation(float* d__c, int nMaxIteration)
+{
+
+tid.tic();
+
+iSolve.minres_vorst(d__x, &aaCov, d__c, nMaxIteration, d__x);
+
+tid.toc("WAVEFRONT ESTIMATION (MINRES)");
+
+/*
+dev2file("ce.bin",d__ce,PS_E_N_PX*2);
+pa.toFile("paCovarianceAltLmmse.bin");
+*/
+
+tid.tic();
+
+paCov.MVM(d__phase_est,d__x);
+
+tid.toc("WAVEFRONT ESTIMATION (PA MVM)");
+
+printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
+//printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+}
+
+<<wavefront estimation (V)>>=
+void LMMSE::fried_sparse_estimation(float* d__c, int nMaxIteration)
+{
+
+tid.tic();
+
+iSolve.minres_vorst(d__x, &aaCov, d__c, nMaxIteration, d__x);
+
+tid.toc("WAVEFRONT ESTIMATION (MINRES)");
+
+float alpha, beta;
+alpha = 1;
+beta  = 0;
+
+/*
+dev2file("ce.bin",d__ce,PS_E_N_PX*2);
+pa.toFile("paCovarianceAltLmmse.bin");
+*/
+
+tid.tic();
+
+paCov.MVM(d__phase_est,d__x);
 
 HANDLE_ERROR_CUSPARSE( cusparseScsrmv(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
 				      NI*NI, NP*NP, nnz, &alpha,

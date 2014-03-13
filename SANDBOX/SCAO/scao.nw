@@ -35,7 +35,7 @@ All programs must include the following headers which also contains the headers 
 #endif
 @
 And the main function of each program is:
-<<scao.bin>>=
+<<stash_scao.bin>>=
 <<main header>>
 int main(int argc,char *argv[]) {
 <<setup>>
@@ -52,6 +52,25 @@ int main(int argc,char *argv[]) {
 <<paStats MVM tomography>>
 <<cleanup>>
 }
+<<scao.bin>>=
+<<main header>>
+int main(int argc,char *argv[]) {
+<<setup>>
+<<wavefront>>
+<<NGS wavefront>>
+<<wavefront reconstruction from NGS>>
+<<LGS wavefront>>
+<<wavefront reconstruction from LGS>>
+<<paStats MVM alternative>>
+<<LMMSE MVM alternative>>
+<<LMMSE MVM alternative Fried>>
+<<saving to files>>
+<<LTAO wavefronts and wavefront gradients>>
+<<LTAO wavefront estimation>>
+<<paStats MVM tomography>>
+<<LTAO wavefront estimation Fried>>
+<<cleanup>>
+}
 
 @
 \subsection{Setting--up}
@@ -61,12 +80,16 @@ Lets define the sources first:
 \begin{itemize}
 \item the science sources,
 <<setup>>=
-source src, near_src;
+source src, src_fried, near_src, near_src_fried;
 src.setup(ARCSEC(0) , 0, INFINITY);
+src_fried.setup(ARCSEC(0) , 0, INFINITY,(N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1));
 near_src.setup(ARCSEC(0) , 0, 90e3);
+near_src_fried.setup(ARCSEC(0) , 0, 90e3,(N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1));
 <<cleanup>>=
 src.cleanup();
+src_fried.cleanup();
 near_src.cleanup();
+near_src_fried.cleanup();
 @ \item the NGS
 <<setup>>=
 source ngs;
@@ -111,17 +134,7 @@ float d = D/N_SIDE_LENSLET;
 @  The linear minimum mean square error wavefront reconstructor is initialized with the atmosphere, the lenslet array pitch, the number of slopes and the iterative solver type and destroyed with
 <<setup>>=
 LMMSE lmmse, ngs_lmmse, alt_lmmse;
-//ngs_lmmse.setup(&atm,d,_N_LENSLET_*2,"MINRES");
-ngs_lmmse.setup(&atm,&ngs,1,&ngs,1,d,_N_LENSLET_*2,"MINRES");
-//ngs_lmmse.aa.toFile("ngs_aaCovariance.bin");
-//ngs_lmmse.pa.toFile("ngs_paCovariance.bin");
-lmmse.setup(&atm,&lgs,1,&near_src,1,d,_N_LENSLET_*2,"MINRES");
-//lmmse.pa.toFile("paCovariance.bin");
-alt_lmmse.new_setup(&atm,&lgs,1,&near_src,1,d,_N_LENSLET_*2,"MINRES");
-<<cleanup>>=
-ngs_lmmse.cleanup();
-lmmse.cleanup();
-alt_lmmse.new_cleanup();
+
 @  Finally we setup the statistical tool:
 <<setup>>=
 stats S;
@@ -134,20 +147,32 @@ S.cleanup();
 
 Lets compute the wavefront propagated through the atmosphere from [[src]]
 <<setup>>=
-int NP, NP2;
+int NP, NP2, NP_fried, NP2_fried;
 NP = 2*N_SIDE_LENSLET+1;
 NP2 = NP*NP;
+NP_fried = N_SIDE_LENSLET+1;
+NP2_fried = NP_fried*NP_fried;
 <<wavefront>>=
 float delta_e = d/2;
 float phase2nm;
 phase2nm = atm.wavelength/2/PI;
 float wf_rms;
+// NGS
 atm.get_phase_screen(&src,delta_e,NP,delta_e,NP,0);
 wf_rms = 1E9*S.std(src.wavefront.phase, NP2);
 printf("\n WF RMS: %7.2fnm\n",wf_rms);
+// NGS with Fried geometry
+atm.get_phase_screen(&src_fried,d,NP_fried,d,NP_fried,0);
+wf_rms = 1E9*S.std(src_fried.wavefront.phase, NP2_fried);
+printf("\n WF RMS: %7.2fnm\n",wf_rms);
+// LGS
 atm.get_phase_screen(&near_src,delta_e,NP,delta_e,NP,0);
 wf_rms = 1E9*S.std(near_src.wavefront.phase, NP2);
 printf("\n WF(near source) RMS: %7.2fnm\n",wf_rms);
+// LGS with Fried geometry
+atm.get_phase_screen(&near_src_fried,d,NP_fried,d,NP_fried,0);
+wf_rms = 1E9*S.std(near_src_fried.wavefront.phase, NP2_fried);
+printf("\n WF RMS: %7.2fnm\n",wf_rms);
 @  We also compute the wavefront gradient:
 <<NGS wavefront>>=
 atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&ngs,0);
@@ -161,6 +186,8 @@ atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&lgs,0);
 <<saving to files>>=
 dev2file("phaseScreenLowResNearField.bin", near_src.wavefront.phase, NP2);
 dev2file("phaseScreenLowRes.bin", src.wavefront.phase, NP2);
+dev2file("phaseScreenLowResNearFieldFried.bin", near_src_fried.wavefront.phase, NP2_fried);
+dev2file("phaseScreenLowResFried.bin", src_fried.wavefront.phase, NP2_fried);
 @
 \subsection{Wavefront reconstruction}
 \label{sec:wavefr-reconstr}
@@ -168,13 +195,63 @@ dev2file("phaseScreenLowRes.bin", src.wavefront.phase, NP2);
 In the following, the wavefront is reconstructed from the centroids:
 <<wavefront reconstruction from NGS>>=
 printf("\n___ NGS WAVEFRONT ESTIMATE ___\n");
+ngs_lmmse.setup(&atm,&ngs,1,&ngs,1,d,_N_LENSLET_*2,"MINRES");
 ngs_lmmse.estimation(cog.d__c, 100);
+//ngs_lmmse.aa.toFile("ngs_aa.bin");
+//ngs_lmmse.pa.toFile("ngs_pa.bin");
 phase_est = ngs_lmmse.d__phase_est;
 <<wavefront error>>
+ngs_lmmse.cleanup();
+
+LMMSE ngs_fried_lmmse;
+ngs_fried_lmmse.fried_setup(&atm,&ngs,1,&ngs,1,d,_N_LENSLET_*2,"MINRES");
+ngs_fried_lmmse.fried_estimation(cog.d__c, 100);
+phase_est = ngs_fried_lmmse.d__phase_est;
+ngs_fried_lmmse.aa.toFile("ngs_fried_aa.bin");
+ngs_fried_lmmse.pa.toFile("ngs_fried_pa.bin");
+<<wavefront error Fried>>
+dev2file("phaseEstFried.bin", ngs_fried_lmmse.d__phase_est, (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1));
+ngs_fried_lmmse.cleanup();
 printf("------------------------------\n");
+
+<<Fried wavefront reconstruction (test)>>=
+int NL = 10, NL2, ML, ML2;
+NL2 = NL*NL;
+ML = NL+1;
+ML2 = ML*ML;
+
+paStats pas;
+pas.setup(ML, NL, 1,  &atm, d, &ngs, 1, &ngs, 1);
+pas.toFile("test_pa.bin");
+
+BTBT Cpa;
+Cpa.setup(1,2,ML,NL,pas.d__cov);
+printf("NT2=%d\n",Cpa.NT2);
+//dev2file("test_Cpa.bin",Cpa.d__cov, Cpa.NDFT );
+
+float *data;
+data = (float*)malloc(sizeof(float)*NL2*2); 
+for (int k=0;k<NL2*2;k++)
+  data[k] = k;
+float *d__x;
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*NL2*2 ) );
+HANDLE_ERROR( cudaMemcpy( d__x, data, 2*NL2*sizeof(float), cudaMemcpyHostToDevice ) );
+dev2file("test_x.bin",d__x,NL2*2);
+
+float *d__y;
+HANDLE_ERROR( cudaMalloc((void**)&d__y, sizeof(float)*ML2 ) );
+Cpa.MVM(d__y,d__x);
+dev2file("test_y.bin",d__y,ML2);
+
+pas.cleanup();
+Cpa.cleanup();
+free(data);
+HANDLE_ERROR(cudaFree(d__x));
+HANDLE_ERROR(cudaFree(d__y));
 
 <<wavefront reconstruction from LGS>>=
 printf("\n___ LGS WAVEFRONT ESTIMATE (conic geom.) ___\n");
+lmmse.setup(&atm,&lgs,1,&near_src,1,d,_N_LENSLET_*2,"MINRES");
 lmmse.estimation(cog.d__c, 100);
 //wf_rms = phase2nm*S.std(lmmse.d__phase_est, NP2);
 //printf("\n WF RMS: %7.2fnm\n",wf_rms);
@@ -182,6 +259,25 @@ phase_est = lmmse.d__phase_est;
 <<wavefront error near source>>
 <<wavefront error>>
 dev2file("phaseEst.bin", lmmse.d__phase_est, NP2);
+
+source src1;
+src1.setup(ARCSEC(0) , 0, INFINITY, 47*47);
+float d1;
+d1 = d*(1.-1./9.);
+atm.get_phase_screen(&src1,d1,47,d1,47,0);
+dev2file("phaseScreen47.bin", src1.wavefront.phase, src1.wavefront.N_PX);
+src1.cleanup();
+
+LMMSE lgs_fried_lmmse;
+lgs_fried_lmmse.fried_setup(&atm,&near_src,1,&near_src,1,d,_N_LENSLET_*2,"MINRES");
+lgs_fried_lmmse.fried_estimation(cog.d__c, 100);
+lgs_fried_lmmse.aa.toFile("lgs_fried_aa.bin");
+lgs_fried_lmmse.pa.toFile("lgs_fried_pa.bin");
+phase_est = lgs_fried_lmmse.d__phase_est;
+<<wavefront error near source Fried>>
+<<wavefront error Fried>>
+dev2file("phaseEstLgsFried.bin", lgs_fried_lmmse.d__phase_est, (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1));
+lgs_fried_lmmse.cleanup();
 printf("------------------------------\n");
 
 <<paStats MVM alternative>>=
@@ -194,6 +290,7 @@ pa.MVM(lmmse.d__phase_est,lmmse.d__ce,
 //printf("\n WF RMS: %7.2fnm\n",wf_rms);
 <<wavefront error>>
 dev2file("phaseEstAlt.bin", lmmse.d__phase_est, NP2);
+lmmse.cleanup();
 printf("------------------------------\n");
 <<setup>>=
 paStats pa;
@@ -204,23 +301,41 @@ pa.cleanup();
 
 <<LMMSE MVM alternative>>=
 printf("\n___ LGS WAVEFRONT ESTIMATE (cylindric/conic geom. II) ___\n");
+alt_lmmse.new_setup(&atm,&lgs,1,&near_src,1,d,_N_LENSLET_*2,"MINRES");
 alt_lmmse.new_estimation(cog.d__c,100);
 phase_est = alt_lmmse.d__phase_est_i;
 <<wavefront error>>
 //dev2file("phaseEstAltLmmse.bin", alt_lmmse.d__phase_est, alt_lmmse.PS_E_N_PX);
 dev2file("phaseEstItpAltLmmse.bin", alt_lmmse.d__phase_est_i, NP2);
+alt_lmmse.new_cleanup();
+printf("------------------------------\n");
+
+<<LMMSE MVM alternative Fried>>=
+printf("\n___ LGS WAVEFRONT ESTIMATE (cylindric/conic Fried geom.) ___\n");
+LMMSE alt_fried_lmmse;
+alt_fried_lmmse.fried_setup(&atm,&lgs,1,&src,1,d,_N_LENSLET_*2,"MINRES");
+alt_fried_lmmse.fried_sparse_estimation(cog.d__c,100);
+alt_fried_lmmse.aa.toFile("ngs-lgs_fried_aa.bin");
+alt_fried_lmmse.pa.toFile("ngs-lgs_fried_pa.bin");
+phase_est = alt_fried_lmmse.d__phase_est_i;
+<<wavefront error Fried>>
+dev2file("phaseEstAltLmmse.bin", alt_fried_lmmse.d__phase_est, alt_fried_lmmse.PS_E_N_PX);
+dev2file("phaseEstAltItpLmmse.bin", alt_fried_lmmse.d__phase_est_i, NP2_fried);
+alt_fried_lmmse.new_cleanup();
 printf("------------------------------\n");
 
 @ The wavefront error is computed with
 <<setup>>=
 cublasHandle_t handle;
 cublasCreate(&handle);
-float *d__wavefront_error, *phase_est;
+float *d__wavefront_error, *d__wavefront_error_fried, *phase_est;
 HANDLE_ERROR( cudaMalloc((void**)&d__wavefront_error, sizeof(float)* NP2) );
+HANDLE_ERROR( cudaMalloc((void**)&d__wavefront_error_fried, sizeof(float)* NP2_fried) );
 float alpha;
 <<cleanup>>=
 cublasDestroy(handle);
 HANDLE_ERROR( cudaFree(d__wavefront_error) );
+HANDLE_ERROR( cudaFree(d__wavefront_error_fried) );
 
 <<wavefront error>>=
 CUBLAS_ERROR( cublasScopy(handle, NP2, src.wavefront.phase, 1, d__wavefront_error, 1) );
@@ -229,11 +344,25 @@ CUBLAS_ERROR( cublasSaxpy(handle, NP2, &alpha, phase_est, 1, d__wavefront_error,
 wf_rms = 1E9*S.std(d__wavefront_error, NP2);
 printf("\n WFE RMS: %8.3fnm\n",wf_rms);
 
+<<wavefront error Fried>>=
+CUBLAS_ERROR( cublasScopy(handle, NP2_fried, src_fried.wavefront.phase, 1, d__wavefront_error_fried, 1) );
+alpha = -1;//phase2nm;
+CUBLAS_ERROR( cublasSaxpy(handle, NP2_fried, &alpha, phase_est, 1, d__wavefront_error_fried, 1) );
+wf_rms = 1E9*S.std(d__wavefront_error_fried, NP2_fried);
+printf("\n WFE RMS (Fried geom.): %8.3fnm\n",wf_rms);
+
 <<wavefront error near source>>=
 CUBLAS_ERROR( cublasScopy(handle, NP2, near_src.wavefront.phase, 1, d__wavefront_error, 1) );
 CUBLAS_ERROR( cublasSaxpy(handle, NP2, &alpha, phase_est, 1, d__wavefront_error, 1) );
 wf_rms = 1E9*S.std(d__wavefront_error, NP2);
 printf("\n WFE (near source) RMS: %8.3fnm\n",wf_rms);
+
+<<wavefront error near source Fried>>=
+CUBLAS_ERROR( cublasScopy(handle, NP2_fried, near_src_fried.wavefront.phase, 1, d__wavefront_error_fried, 1) );
+alpha = -1;//phase2nm;
+CUBLAS_ERROR( cublasSaxpy(handle, NP2_fried, &alpha, phase_est, 1, d__wavefront_error_fried, 1) );
+wf_rms = 1E9*S.std(d__wavefront_error_fried, NP2_fried);
+printf("\n WFE RMS (Fried geom.): %8.3fnm\n",wf_rms);
 
 @ 
 \section{LTAO}
@@ -252,10 +381,12 @@ float zenith[] = {ARCSEC(gs_radius),ARCSEC(gs_radius),ARCSEC(gs_radius)},
 float zenith[] = {ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30)},
   azimuth[] = {0,2.*PI/6.,4.*PI/6.,6.*PI/6.,8.*PI/6.,10.*PI/6.,12.*PI/6.};
 */
-source gs_ast;
+source gs_ast, gs_ast_fried;
 gs_ast.setup(zenith,azimuth,90e3,N_GS);
+gs_ast_fried.setup(zenith,azimuth,90e3,N_GS,NP2_fried);
 <<cleanup>>=
 gs_ast.cleanup();
+gs_ast_fried.cleanup();
 
 @ The wavefront sensor of the LGS asterism are setup next
 <<setup>>=
@@ -268,6 +399,8 @@ gs_ast_cog.cleanup();
 <<LTAO wavefronts and wavefront gradients>>=
 atm.get_phase_screen(&gs_ast,N_GS,delta_e,NP,delta_e,NP,0);
 gs_ast.wavefront.phase2file("ngsAstWavefronts.bin");
+atm.get_phase_screen(&gs_ast_fried,N_GS,d,NP_fried,d,NP_fried,0);
+gs_ast_fried.wavefront.phase2file("ngsAstWavefrontsFried.bin");
 atm.get_phase_screen_gradient(&gs_ast_cog,N_SIDE_LENSLET,d,&gs_ast,N_GS,0);
 //dev2file("gs_ast_cog.bin",gs_ast_cog.d__c,2*_N_LENSLET_*N_GS);
 
@@ -278,7 +411,6 @@ printf("\n___ NGS WAVEFRONT ESTIMATE ___\n");
 gs_ast_lmmse.estimation(gs_ast_cog.d__c, 100);
 phase_est = gs_ast_lmmse.d__phase_est;
 <<wavefront error>>
-printf("------------------------------\n");
 dev2file("phaseEstNtao.bin", gs_ast_lmmse.d__phase_est, NP2);
 
 <<setup>>=
@@ -288,6 +420,19 @@ gs_ast_lmmse.setup(&atm,&gs_ast,N_GS,&lgs,1,d,_N_LENSLET_*2,"MINRES");
 //gs_ast_lmmse.pa.toFile("gs_ast_paCovariance.bin");
 <<cleanup>>=
 gs_ast_lmmse.cleanup();
+
+<<LTAO wavefront estimation Fried>>=
+LMMSE gs_ast_fried_lmmse;
+gs_ast_fried_lmmse.fried_setup(&atm,&gs_ast,N_GS,&src,1,d,_N_LENSLET_*2,"MINRES");
+gs_ast_fried_lmmse.aa.toFile("gs_ast_fried_aaCovariance.bin");
+gs_ast_fried_lmmse.pa.toFile("gs_ast_fried_paCovariance.bin");
+gs_ast_fried_lmmse.fried_sparse_estimation(gs_ast_cog.d__c,100);
+phase_est = gs_ast_fried_lmmse.d__phase_est_i;
+<<wavefront error Fried>>
+dev2file("phaseEstAltTomoLmmse.bin", gs_ast_fried_lmmse.d__phase_est, gs_ast_fried_lmmse.PS_E_N_PX);
+dev2file("phaseEstAltItpTomoLmmse.bin", gs_ast_fried_lmmse.d__phase_est_i, NP2_fried);
+gs_ast_fried_lmmse.cleanup();
+printf("------------------------------\n");
 
 <<paStats MVM tomography>>=
 printf("\n___ LGS WAVEFRONT ESTIMATE (cylindric/conic geom.) ___\n");

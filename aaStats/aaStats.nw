@@ -50,6 +50,9 @@ struct paStats {
   void setup(int N, int osf, atmosphere *atm, float lenslet_pitch, 
 	     source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC);
 
+  void setup(int M_, int N_, int osf_, atmosphere *atm, float lenslet_pitch, 
+	     source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC);
+
   void cleanup(void);
 
   void info(int kappa, float d);
@@ -88,13 +91,16 @@ struct paStats {
 <<aaStats power spectrum kernel>>
 
 <<paStats power spectrum kernel with sources (same heights)>>
+<<paStats power spectrum kernel with sources (same heights,rect.)>>
 <<paStats power spectrum kernel with sources>>
 
 <<covariance extraction>>
+<<PA covariance extraction>>
 
 <<aaStats setup>>
 
-<<paStats setup>>
+<<paStats setup I>>
+<<paStats setup II>>
 
 <<save aa covariance to file>>
 <<save pa covariance to file>>
@@ -225,7 +231,7 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch,
   stopwatch tid;
   tid.tic();
   <<aaStats evaluate covariance>>
-  tid.toc(&cov_eval_et,"Covariance evaluation");
+  tid.toc(&cov_eval_et,"AA covariance evaluation");
   info(kappa, sampling);
 }
 @
@@ -587,7 +593,7 @@ Finally the Toeplitz compressed version of the matrix $\Xi$ is written:
   \cdots t_\Xi^{{\phi_[[N_P_SRC]]}{x_1}} t_\Xi^{{\phi_[[N_P_SRC]]}{y_1}} \cdots t_\Xi^{{\phi_[[N_P_SRC]]}{x_[[N_S_SRC]]}} t_\Xi^{{\phi_[[N_P_SRC]]}{y_[[N_S_SRC]]}} \right].
 \end{equation}
 
-<<paStats setup>>=
+<<paStats setup I>>=
 void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch, 
 		      source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC)
 {
@@ -615,7 +621,7 @@ void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch,
     stopwatch tid;
     tid.tic();
     <<paStats power spectrum with sources (same heights)>>
-    tid.toc(&cov_eval_et,"Covariance evaluation");
+    tid.toc(&cov_eval_et,"PA covariance evaluation");
   }
   else {
     psd_size = sizeof(float2)*NF2;
@@ -628,7 +634,56 @@ void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch,
     stopwatch tid;
     tid.tic();
     <<paStats power spectrum with sources (different heights)>>
-    tid.toc(&cov_eval_et,"Covariance evaluation");
+    tid.toc(&cov_eval_et,"PA covariance evaluation");
+  }
+
+  info(kappa,sampling);
+  
+}
+    
+<<paStats setup II>>=
+void paStats::setup(int M_, int N_, int osf_, atmosphere *atm, float lenslet_pitch, 
+		    source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC)
+{
+  N_SRC2 = N_P_SRC*N_S_SRC;
+  float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
+  osf = osf_;
+  N = N_;
+  M = M_;
+  N2 = M*N;
+  NU = M+N-1;
+  NU2 = NU*NU;
+  NF = 4096;
+  NF2 = NF*NF;
+  kappa = 4;
+  sampling = lenslet_pitch/osf;
+
+  
+  if (phase_src->height==slopes_src->height) {
+    psd_size = sizeof(float2)*NF2;
+    cov_size = sizeof(float)*NU2*2*N_SRC2;
+    ind_size = sizeof(int)*N2;
+    int BATCH = 1;
+
+    <<paStats setup allocation>>
+
+    stopwatch tid;
+    tid.tic();
+    <<paStats power spectrum with sources (same heights,rect.)>>
+    tid.toc(&cov_eval_et,"PA covariance evaluation");
+  }
+  else {
+    psd_size = sizeof(float2)*NF2;
+    cov_size = sizeof(float)*NU2*2*_N_LAYER_*N_SRC2;
+    ind_size = sizeof(int)*N2;
+    int BATCH = 1;
+
+    <<paStats setup allocation>>
+
+    stopwatch tid;
+    tid.tic();
+    <<paStats power spectrum with sources (different heights)>>
+    tid.toc(&cov_eval_et,"PA covariance evaluation");
   }
 
 info(kappa,sampling);
@@ -637,7 +692,7 @@ info(kappa,sampling);
 @ 
 The parameters of the [[paStats]] structure are:
 <<paStats parameters>>=
-int osf;
+int osf, M;
 <<aaStats parameters>>
 @ Memory is allocated with:
 <<paStats setup allocation>>=
@@ -759,43 +814,6 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
   fprintf(stderr,"\n");
  }
 
-<<paStats power spectrum with sources (same heights)>>=
-dim3 blockDimPsd(16,16);
-dim3 gridDimPsd( 1+NF/16 , 1+NF/16 );
-dim3 blockDimCov(16,16);
-dim3 gridDimCov( 1+NU/16 , 1+NU/16 );
-
-int i_P_SRC, j_S_SRC, offset0, offset;
-fprintf(stderr,"Covariance 1x2 block:\n");
-for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
-
-  offset0 = 2*N_S_SRC*i_P_SRC;
-
-  for (j_S_SRC=0;j_S_SRC<N_S_SRC;j_S_SRC++) {
-
-    fprintf(stderr," [%d,%d]",i_P_SRC,j_S_SRC);
-
-    offset = offset0 + 2*j_S_SRC;
-    fprintf(stderr,"(%2d",offset);
-    paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch, 
-						    atm->wavelength, atm->r0, atm->turbulence.L0, atm->d__turbulence,
-						    (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
-						    d__alpha, kappa);
-    <<AA covariance with Wiener-Khinchin>>
-    <<AA covariance reduction>>
-
-    offset = offset0 + (2*j_S_SRC+1);
-    fprintf(stderr,",%2d)",offset);
-    paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch,
-						    atm->wavelength, atm->r0, atm->turbulence.L0, atm->d__turbulence,
-						    (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
-						    d__beta, kappa);
-    <<AA covariance with Wiener-Khinchin>>
-    <<AA covariance reduction>>
-}
-fprintf(stderr,"\n");
-}
-
 @ The power spectrum is computed with the following kernels:
 <<paStats power spectrum kernel with sources>>=
 __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
@@ -837,6 +855,43 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
     d__psd[k].y +=  red*c_red;
   }
 }
+
+<<paStats power spectrum with sources (same heights)>>=
+dim3 blockDimPsd(16,16);
+dim3 gridDimPsd( 1+NF/16 , 1+NF/16 );
+dim3 blockDimCov(16,16);
+dim3 gridDimCov( 1+NU/16 , 1+NU/16 );
+
+int i_P_SRC, j_S_SRC, offset0, offset;
+fprintf(stderr,"Covariance 1x2 block:\n");
+for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
+
+  offset0 = 2*N_S_SRC*i_P_SRC;
+
+  for (j_S_SRC=0;j_S_SRC<N_S_SRC;j_S_SRC++) {
+
+    fprintf(stderr," [%d,%d]",i_P_SRC,j_S_SRC);
+
+    offset = offset0 + 2*j_S_SRC;
+    fprintf(stderr,"(%2d",offset);
+    paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch, 
+						    atm->wavelength, atm->r0, atm->turbulence.L0, atm->d__turbulence,
+						    (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
+						    d__alpha, kappa);
+    <<AA covariance with Wiener-Khinchin>>
+    <<AA covariance reduction>>
+
+    offset = offset0 + (2*j_S_SRC+1);
+    fprintf(stderr,",%2d)",offset);
+    paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch,
+						    atm->wavelength, atm->r0, atm->turbulence.L0, atm->d__turbulence,
+						    (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
+						    d__beta, kappa);
+    <<AA covariance with Wiener-Khinchin>>
+    <<AA covariance reduction>>
+}
+fprintf(stderr,"\n");
+}
 <<paStats power spectrum kernel with sources (same heights)>>=
 __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
 				float wavelength, float r0, float L0,
@@ -844,7 +899,7 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
 				float *alpha, float kappa)
 {
   int i, j, k;
-  float fx, fy, f_square, fs, gl, red, c_red, s_red, wavenumber;
+  float fx, fy, f_square, fs, gl, red, c_red, s_red, wavenumber, src_x, src_y;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = i*NF + j;
@@ -853,9 +908,13 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
     k = i*NF + j;
     d__psd[k].x = 0;
     d__psd[k].y = 0;
-    for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
+     for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
       gl = (1-turb->altitude[k_LAYER]/src1->height);
-      red = 2*PI*turb->altitude[k_LAYER];
+      red = 2*PI;
+      src_x = src2->theta_x - src1->theta_x;
+      src_x *= turb->altitude[k_LAYER];
+      src_y = src2->theta_y - src1->theta_y;
+      src_y *= turb->altitude[k_LAYER];
       fs = osf*(2.0/NF)*(kappa/(2*d*gl));
       fx = (float) i;
       fy = (float) j;
@@ -867,7 +926,8 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
       fy *= fs;
       f_square = fx*fx + fy*fy;
       fs *= fs;
-      red *= fx*(src2->theta_x - src1->theta_x) + fy*(src2->theta_y - src1->theta_y);
+      //      red *= fx*(src_x + 0.5*d) + fy*(src_y + 0.5*d);
+      red *= fx*(src_x) + fy*(src_y);
       sincosf( red, &s_red, &c_red);
       red = -wavenumber*turb->xi0[k_LAYER]*fs*wavelength*(fx*alpha[0] + fy*alpha[1])*
       powf(r0,-5.0/3.0)*
@@ -876,6 +936,116 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
       d__psd[k].x += -red*s_red;
       d__psd[k].y +=  red*c_red;
     }
+  }
+}
+@ 
+%% Rectangular 2RBT
+<<paStats power spectrum with sources (same heights,rect.)>>=
+dim3 blockDimPsd(16,16);
+dim3 gridDimPsd( 1+NF/16 , 1+NF/16 );
+dim3 blockDimCov(16,16);
+dim3 gridDimCov( 1+NU/16 , 1+NU/16 );
+
+int i_P_SRC, j_S_SRC, offset0, offset;
+fprintf(stderr,"Covariance 1x2 block:\n");
+for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
+
+  offset0 = 2*N_S_SRC*i_P_SRC;
+
+  for (j_S_SRC=0;j_S_SRC<N_S_SRC;j_S_SRC++) {
+
+    fprintf(stderr," [%d,%d]",i_P_SRC,j_S_SRC);
+
+    offset = offset0 + 2*j_S_SRC;
+    fprintf(stderr,"(%2d",offset);
+    paPowerSpectrumRect LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch, 
+						    atm->wavelength, atm->r0, atm->turbulence.L0, atm->d__turbulence,
+						    (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
+						    d__alpha, kappa);
+    <<AA covariance with Wiener-Khinchin>>
+    <<PA covariance reduction>>
+
+    offset = offset0 + (2*j_S_SRC+1);
+    fprintf(stderr,",%2d)",offset);
+    paPowerSpectrumRect LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch,
+						    atm->wavelength, atm->r0, atm->turbulence.L0, atm->d__turbulence,
+						    (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
+						    d__beta, kappa);
+    <<AA covariance with Wiener-Khinchin>>
+    <<PA covariance reduction>>
+}
+fprintf(stderr,"\n");
+}
+<<paStats power spectrum kernel with sources (same heights,rect.)>>=
+__global__ void paPowerSpectrumRect(float2 *d__psd, int NF, int osf, float d,
+				float wavelength, float r0, float L0,
+                                profile *turb, source *src1, source *src2,
+				float *alpha, float kappa)
+{
+  int i, j, k;
+  float fx, fy, f_square, fs, gl, red, c_red, s_red, wavenumber, src_x, src_y;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = i*NF + j;
+  if ( (i<NF) && (j<(NF)) ) {
+    wavenumber = wavelength*0.5/PI;
+    k = i*NF + j;
+    d__psd[k].x = 0;
+    d__psd[k].y = 0;
+     for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
+      gl = (1-turb->altitude[k_LAYER]/src1->height);
+      red = 2*PI;
+      src_x = src2->theta_x - src1->theta_x;
+      src_x *= turb->altitude[k_LAYER];
+      src_y = src2->theta_y - src1->theta_y;
+      src_y *= turb->altitude[k_LAYER];
+      fs = osf*(2.0/NF)*(kappa/(2*d*gl));
+      fx = (float) i;
+      fy = (float) j;
+      if (i>=(NF/2))
+	fx = fx - NF;
+      if (j>=(NF/2))
+	fy = fy - NF;
+      fx *= fs;
+      fy *= fs;
+      f_square = fx*fx + fy*fy;
+      fs *= fs;
+      red *= fx*(src_x + 0.5*d) + fy*(src_y + 0.5*d);
+      sincosf( red, &s_red, &c_red);
+      red = -wavenumber*turb->xi0[k_LAYER]*fs*wavelength*(fx*alpha[0] + fy*alpha[1])*
+      powf(r0,-5.0/3.0)*
+      phasePowerSpectrum(f_square, 1.0/L0)*
+	gateAmp(gl*fx*d,gl*fy*d);
+      d__psd[k].x += -red*s_red;
+      d__psd[k].y +=  red*c_red;
+    }
+  }
+}
+<<PA covariance reduction>>=
+pa_covariance_extraction LLL gridDimCov,blockDimCov RRR( d__cov + offset*NU2, NU,
+							 d__psd, NF, kappa);
+@ The extraction of the covariance is done with the kernel:
+<<PA covariance extraction>>=
+__global__ void pa_covariance_extraction(float *cov_out, int NC_out, 
+				      float2 *cov_in, int NC_in, float kappa)
+{
+  int i, j, k_out, k_in, h;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<NC_out) && (j<(NC_out)) ) {
+    h = (NC_out-1)/2;
+    k_out = (NC_out - 1 - (i+h)%NC_out)*NC_out + (NC_out - 1 - (j+h)%NC_out);
+    //    k_out = ((i+h)%NC_out)*NC_out + ((j+h)%NC_out);
+    if (i>(NC_out/2))
+      i = kappa*(i - NC_out) + NC_in;
+    else
+      i *= kappa;
+    if (j>(NC_out/2))
+      j = kappa*(j - NC_out) + NC_in;
+    else
+      j *= kappa;
+    k_in = i*NC_in + j;      
+    cov_out[k_out] = cov_in[k_in].x;
   }
 }
 

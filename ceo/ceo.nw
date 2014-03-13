@@ -83,6 +83,7 @@ __global__ void valid_lenslet(char *mask, int N_pupil, float threshold);
 
 void dev2file(const char* filename, float* d__data, int n_data);
 void dev2file(const char* filename, int* d__data, int n_data);
+void dev2file(const char* filename, float2* d__data, int n_data);
 
 #endif  // __CEO_H__
 
@@ -322,7 +323,7 @@ struct stopwatch{
     float   elapsedTime;
     HANDLE_ERROR( cudaEventElapsedTime( &elapsedTime,
                                         start, stop ) );
-    printf("\n\x1B[33mElapsed time: %8.2E ms\x1B[0m\n", elapsedTime );
+    printf("\x1B[33mElapsed time: %8.2E ms\x1B[0m\n", elapsedTime );
     HANDLE_ERROR( cudaEventDestroy( start ) );
     HANDLE_ERROR( cudaEventDestroy( stop ) );
   }
@@ -332,7 +333,7 @@ struct stopwatch{
     float   elapsedTime;
     HANDLE_ERROR( cudaEventElapsedTime( &elapsedTime,
                                         start, stop ) );
-    printf("\n\x1B[33m%s: Elapsed time: %8.2E ms\x1B[0m\n", message, elapsedTime );
+    printf("\x1B[33m%s: Elapsed time: %8.2E ms\x1B[0m\n", message, elapsedTime );
     HANDLE_ERROR( cudaEventDestroy( start ) );
     HANDLE_ERROR( cudaEventDestroy( stop ) );
   }
@@ -341,7 +342,7 @@ struct stopwatch{
     HANDLE_ERROR( cudaEventSynchronize( stop ) );
     HANDLE_ERROR( cudaEventElapsedTime( elapsedTime,
                                         start, stop ) );
-    printf("\n\x1B[33m%s: Elapsed time: %8.2E ms\x1B[0m\n", message, *elapsedTime );
+    printf("\x1B[33m%s: Elapsed time: %8.2E ms\x1B[0m\n", message, *elapsedTime );
     HANDLE_ERROR( cudaEventDestroy( start ) );
     HANDLE_ERROR( cudaEventDestroy( stop ) );
   }
@@ -503,6 +504,19 @@ void dev2file(const char* filename, float* d__data, int n_data) {
   FILE *fid;
   fid = fopen(filename,"wb");
   fwrite(data,sizeof(float),n_data,fid);
+  fclose(fid);
+  free(data);
+  fprintf(stderr,"@(CEO)>ceo: Data saved to %s!\n",filename);
+}
+void dev2file(const char* filename, float2* d__data, int n_data) {
+  float2 *data;
+  data = (float2*)malloc(sizeof(float2)*n_data);
+  HANDLE_ERROR( cudaMemcpy( data, d__data,
+			  sizeof(float2)*n_data,
+			  cudaMemcpyDeviceToHost ) );
+  FILE *fid;
+  fid = fopen(filename,"wb");
+  fwrite(data,sizeof(float2),n_data,fid);
   fclose(fid);
   free(data);
   fprintf(stderr,"@(CEO)>ceo: Data saved to %s!\n",filename);

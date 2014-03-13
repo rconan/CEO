@@ -109,10 +109,11 @@ classdef toeplitzBlockToeplitz
         end
         
         function P = debugGpu(obj,b)
-            na = (obj.nBlockRow+obj.nBlockCol-1)*(obj.nRow+obj.nCol-1);
-            U = zeros(na,1);
+            obj.na = (obj.nBlockRow+obj.nBlockCol-1)*(obj.nRow+obj.nCol-1);
+            U = zeros(obj.na,1);
             U(obj.mu(:)) = b;
-            P = obj.elementsFT.*fft(U,na);
+            obj.na = pow2(nextpow2(obj.na));
+            P = obj.elementsFT.*fft(U,obj.na);
 %             P = ifft(obj.elementsFT.*fft(U,na));
 %             out = P(obj.xi(:));
         end

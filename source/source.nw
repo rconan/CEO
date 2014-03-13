@@ -22,7 +22,9 @@ struct source {
   <<source parameters>>
 
   void setup(float zenith, float azimuth, float height);
+  void setup(float zenith, float azimuth, float height, int resolution);
   void setup(float *_zenith, float *_azimuth, float _height, int _N_SRC);
+  void setup(float *_zenith, float *_azimuth, float _height, int _N_SRC, int resolution);
   void cleanup(void);
 
   void info(void);
@@ -45,7 +47,9 @@ struct source {
 <<phase to file>>
 
 <<setup>>
+<<setup with wavefront resolution>>
 <<setup for multiple sources>>
+<<setup for multiple sources with wavefront resolution>>
 <<cleanup>>
 
 <<info>>
@@ -105,14 +109,15 @@ source *dev_ptr;
 
 The main parameters of the  atmosphere are displayed with the [[info]] routine:
 <<info>>=
-void source::info(void)
+  void source::info(void)
 {
-printf("\n\x1B[1;42m@(CEO)>source\x1B[;42m\n");
-printf(" zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
-printf(" %5.2f      %6.2f    %8.2f\n",
-                        zenith*RADIAN2ARCSEC,
-                        azimuth*180.0/PI,height);
-printf("----------------------------------------------------\x1B[0m\n");
+  printf("\n\x1B[1;42m@(CEO)>source\x1B[;42m\n");
+  printf(" zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  printf(" %5.2f      %6.2f    %8.2f\n",
+	 zenith*RADIAN2ARCSEC,
+	 azimuth*180.0/PI,height);
+  printf(" wavefront pixel sampling: %d\n",wavefront.N_PX);
+  printf("----------------------------------------------------\x1B[0m\n");
 }
 
 @  The [[wavelength]] in \textsl{micron} corresponding to the photometric band is given by
@@ -188,6 +193,34 @@ void source::setup(float _zenith, float _azimuth, float _height) {
 			    cudaMemcpyHostToDevice ) );
   wavefront.setup(_SOURCE_N_PX_);
 }
+@ \item for a single source with wavefront resolution:
+<<setup with wavefront resolution>>=
+void source::setup(float _zenith, float _azimuth, float _height, int resolution) {
+  N_SRC   = 1;
+  zenith  = _zenith;
+  azimuth = _azimuth;
+  height  = _height;
+  theta_x = tanf(zenith)*cosf(azimuth);
+  theta_y = tanf(zenith)*sinf(azimuth);
+  info();
+  /*
+  for (int k=0;k<_SOURCE_N_PX_;k++) {
+    amplitude[k] = 1.0;
+    phase[k]     = 0.0;    
+  }
+  */
+  source __src;
+  __src.zenith  = zenith;
+  __src.azimuth = azimuth;
+  __src.height  = height;
+  __src.theta_x = theta_x;
+  __src.theta_y = theta_y;
+  HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source) ) );
+  HANDLE_ERROR( cudaMemcpy( dev_ptr, &__src,
+			    sizeof(source) ,
+			    cudaMemcpyHostToDevice ) );
+  wavefront.setup(resolution);
+}
 @ \item for multiple sources:
 <<setup for multiple sources>>=
 void source::setup(float *_zenith, float *_azimuth, float _height, int _N_SRC) {
@@ -212,6 +245,31 @@ void source::setup(float *_zenith, float *_azimuth, float _height, int _N_SRC) {
   }
   printf("----------------------------------------------------\x1B[0m\n");
   wavefront.setup(_SOURCE_N_PX_*N_SRC);
+}
+@  \item for multiple sourcese with wavefront resolution:
+<<setup for multiple sources with wavefront resolution>>=
+void source::setup(float *_zenith, float *_azimuth, float _height, int _N_SRC, int resolution) {
+  N_SRC = _N_SRC;
+  height = _height;
+  source __src;
+  HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
+  printf("\n\x1B[1;42m@(CEO)>source\x1B[;42m\n");
+  printf(" zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
+    __src.zenith  = _zenith[i_SRC];
+    __src.azimuth = _azimuth[i_SRC];
+    __src.height  = _height;
+    __src.theta_x = tanf(_zenith[i_SRC])*cosf(_azimuth[i_SRC]);
+    __src.theta_y = tanf(_zenith[i_SRC])*sinf(_azimuth[i_SRC]);
+    HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
+			      sizeof(source) ,
+			      cudaMemcpyHostToDevice ) );
+    printf(" %5.2f      %6.2f    %8.2f\n",
+                        _zenith[i_SRC]*RADIAN2ARCSEC,
+                        _azimuth[i_SRC]*180/PI,_height);
+  }
+  printf("----------------------------------------------------\x1B[0m\n");
+  wavefront.setup(resolution*N_SRC);
 }
 @ \end{itemize}
 The complex amplitude structure is initialized with
