@@ -100,10 +100,9 @@ classdef toeplitzBlockToeplitz
         end
         
         function out = mtimes(obj,b)
-            obj.na = (obj.nBlockRow+obj.nBlockCol-1)*(obj.nRow+obj.nCol-1);
-            U = zeros(obj.na,1);
+            nU = (obj.nBlockRow+obj.nBlockCol-1)*(obj.nRow+obj.nCol-1);
+            U = zeros(nU,1);
             U(obj.mu(:)) = b;
-            obj.na = pow2(nextpow2(obj.na));
             P = ifft(obj.elementsFT.*fft(U,obj.na));
             out = P(obj.xi(:));
         end
