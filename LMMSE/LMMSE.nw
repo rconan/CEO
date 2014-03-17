@@ -425,8 +425,9 @@ void LMMSE::new_setup(atmosphere *atm, source *guide_star, int _N_guide_star, so
   <<sparse setup>>
 }
 <<setup (rect)>>=
-void LMMSE::fried_setup(atmosphere *atm, source *guide_star, int _N_guide_star, source *mmse_star, int N_mmse_star,
-		  float sampling,int N, char *solver_id)
+void LMMSE::fried_setup(atmosphere *atm, source *guide_star, int _N_guide_star, 
+                        source *mmse_star, int N_mmse_star,
+		       float sampling,int N, char *solver_id)
 {
   N_guide_star = _N_guide_star;
   aa.setup(N_SIDE_LENSLET,atm,sampling,guide_star, N_guide_star);
@@ -446,29 +447,31 @@ void LMMSE::fried_setup(atmosphere *atm, source *guide_star, int _N_guide_star, 
   float mmse_star_height = mmse_star[0].height;
   mmse_star[0].height = guide_star[0].height;
 
-  pa.setup(NP,N_SIDE_LENSLET,osf,atm,sampling,mmse_star, N_mmse_star, guide_star, N_guide_star);
+  pa.setup(NP,N_SIDE_LENSLET,osf,atm,sampling,
+           mmse_star, N_mmse_star, guide_star, N_guide_star);
   paCov.setup(N_mmse_star,2*N_guide_star,NP,N_SIDE_LENSLET,pa.d__cov);
 
   mmse_star[0].height = mmse_star_height;
  
 } else {
  
+
   float g;
   g = 1 - atm->turbulence.altitude[0]/guide_star[0].height;
-  /* offset = (int) ceilf( osf*N_SIDE_LENSLET* */
-  /* 			atm->turbulence.altitude[0]*0.5/guide_star[0].height ); */
   offset = (int) ceilf( osf*0.5*N_SIDE_LENSLET*(1-g)/g );
   NP += offset*2;
 
   offset += 1;
-  printf(" ==>> offset=%d - NP=%d\n",offset,NP);
+
+  printf("@(CEO)>LMMSE: offset=%d - NP=%d\n",offset,NP);
   PS_E_N_PX = NP;
   PS_E_N_PX *= PS_E_N_PX;
 
   source clone_mmse_star;
   clone_mmse_star.setup(mmse_star[0].zenith,mmse_star[0].azimuth,guide_star[0].height);
 
-  pa.setup(NP,N_SIDE_LENSLET,osf,atm,sampling,&clone_mmse_star, N_mmse_star, guide_star, N_guide_star);
+  pa.setup(NP,N_SIDE_LENSLET,osf,atm,sampling,
+           &clone_mmse_star, N_mmse_star, guide_star, N_guide_star);
 
   clone_mmse_star.cleanup();
 

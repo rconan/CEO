@@ -28,6 +28,7 @@ struct BTBT {
 
   void setup(int M_, int N_, int NT_, const float *d__cov_);
   void setup(int M_, int N_, int MT_, int NT_, const float *d__cov_);
+  void setup(int M_, int N_, int *MT_, int NT_, const float *d__cov_);
 
   void cleanup(void);
 
@@ -56,6 +57,7 @@ struct BTBT {
 
 <<setup>>
 <<setup (square blocks)>>
+<<setup (multilayers)>>
 
 <<cleanup>>
 
@@ -94,6 +96,35 @@ unsigned int *mu, *xi;
 \label{sec:setup--cleanup}
 
 A [[BTBT]] structure is initialized with the number of blocks $[[M]]\times[[N]]$, the size of each block $[[MT]]\times[[NT]]$ and the covariance.
+<<setup (multilayers)>>=
+void BTBT::setup(int M_, int N_, int *MT_, int NT_, const float *d__cov_)
+{
+  M = M_;
+  N = N_;
+  //  MT = MT_;
+  MT_size = sizeof(int)*M;
+  MT  =  (int *)malloc(MT_size);
+  for (int k=0;k<M;k++)
+    MT[k] = MT_[k];
+  //  MT2 = MT*MT;
+  NT = NT_;
+  NT2 = NT*NT;
+  //  NU = MT+NT-1;
+  //  NU2 = NU*NU;
+  //NDFT = round_up_to_nhp2(NU2);
+  //  NU_TOTAL = NU2*M*N;
+  mask = NULL;
+
+  <<allocation>>
+
+  info();  
+
+  stopwatch tid;
+  tid.tic();
+  <<evaluate covariance>>
+  tid.toc(&cov_eval_et,"Covariance raster DFT");
+}
+@ A [[BTBT]] structure is initialized with the number of blocks $[[M]]\times[[N]]$, the size of each block $[[MT]]\times[[NT]]$ and the covariance.
 <<setup>>=
   void BTBT::setup(int M_, int N_, int MT_, int NT_, const float *d__cov_)
 {
@@ -169,6 +200,7 @@ MT2_TOTAL = 0;
 MAX_MT    = 0;
 int _NDFT;
 NDFT = 0;
+printf("@(CEO)>BTBT\n");
 for (int k=0; k<M; k++) {
   MT2[k] = MT[k]*MT[k];
   NU[k]  = MT[k] + NT - 1;
@@ -185,6 +217,7 @@ printf(" MT2_TOTAL=%d\n",MT2_TOTAL);
 printf(" NDFT=%d\n",NDFT);
 printf(" _NDFT=%d\n",_NDFT);
 printf(" MAX_MT=%d\n",MAX_MT);
+printf("--------------------------------------------");
 CS_MT2[0] = 0;
 for (int k=0; k<M-1; k++) 
   CS_MT2[k+1] = CS_MT2[k] + MT2[k];
@@ -513,14 +546,15 @@ using the kernel:
       for (i=0;i<n_in;i++) {
 	l = k + i*n_x;
 	q = l + n_in*j*n_x;
-	c[p].x += x1[q].x*x2[l].x - x1[q].y*x2[l].y;
-	c[p].y += x1[q].x*x2[l].y + x1[q].y*x2[l].x;
+	c[p].x += x1[q].x*x2[q].x - x1[q].y*x2[q].y;
+	c[p].y += x1[q].x*x2[q].y + x1[q].y*x2[q].x;
+	x2[q].x = x2[q].y = 0;
       }
     }
-    for (i=0;i<n_in;i++) {
-      l = k + i*n_x;
-      x2[l].x = x2[l].y = 0;
-    }
+    /* for (i=0;i<n_in;i++) { */
+    /*   l = k + i*n_x; */
+    /*   x2[l].x = x2[l].y = 0; */
+    /* } */
   }
 }
 @ 
