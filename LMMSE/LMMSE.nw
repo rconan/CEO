@@ -456,6 +456,15 @@ void LMMSE::fried_setup(atmosphere *atm, source *guide_star, int _N_guide_star,
 } else {
  
 
+
+  source clone_mmse_star;
+  clone_mmse_star.setup(mmse_star[0].zenith,mmse_star[0].azimuth,guide_star[0].height);
+
+  pa.setup_multilayers(NP,N_SIDE_LENSLET,osf,atm,sampling,
+           &clone_mmse_star, N_mmse_star, guide_star, N_guide_star);
+
+  clone_mmse_star.cleanup();
+
   float g;
   g = 1 - atm->turbulence.altitude[0]/guide_star[0].height;
   offset = (int) ceilf( osf*0.5*N_SIDE_LENSLET*(1-g)/g );
@@ -464,18 +473,11 @@ void LMMSE::fried_setup(atmosphere *atm, source *guide_star, int _N_guide_star,
   offset += 1;
 
   printf("@(CEO)>LMMSE: offset=%d - NP=%d\n",offset,NP);
-  PS_E_N_PX = NP;
-  PS_E_N_PX *= PS_E_N_PX;
+//  PS_E_N_PX *= PS_E_N_PX;
 
-  source clone_mmse_star;
-  clone_mmse_star.setup(mmse_star[0].zenith,mmse_star[0].azimuth,guide_star[0].height);
+  paCov.setup(N_mmse_star*_N_LAYER_,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET,pa.d__cov);
 
-  pa.setup(NP,N_SIDE_LENSLET,osf,atm,sampling,
-           &clone_mmse_star, N_mmse_star, guide_star, N_guide_star);
-
-  clone_mmse_star.cleanup();
-
-  paCov.setup(N_mmse_star,2*N_guide_star,NP,N_SIDE_LENSLET,pa.d__cov);
+  PS_E_N_PX = paCov.MT2_TOTAL;
 
   <<sparse setup>>
 }
@@ -784,7 +786,7 @@ if (s==(NP-1)) { s += 1 - fs; ndx -= NP; } else { s -= fs; }
 if (t==(NP-1)) { t += 1 - ft; ndx -= 1; }   else { t -= ft; }
 @ and finally the interpolation is computed as
 <<bilinear interpolation>>=	 
-k = i*NI + j;
+k = i*NI + j + k_LAYER*NI*NI;
 idx = 4*k - 1;
 onems = 1 - s;
 onemt = 1 - t;
@@ -801,13 +803,17 @@ csrRowPtrH[k+1] = 4*(k+1);
 @ The sparse matrix is stored in the compressed sparse row format and it is computed with the kernel
 <<sparse matrix kernel>>=
 __global__ void bilinearSparseOperator(float *csrValH, int *csrColIndH, int *csrRowPtrH,
-				  float delta_p, int NP, float delta, int NI)
+				  int* MT, int NI, profile *turb, float z)
 {
-  int i, j, k, idx, ndx;
-  float scale, s, t, fs, ft, onemt, onems;
+  int i, j, k, idx, ndx, NP, k_LAYER;
+  float scale, s, t, fs, ft, onemt, onems, delta, delta_p;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
+  k_LAYER = blockIdx.z;
   if ( (i<NI) && (j<(NI)) ) {
+    delta   = 1.0;
+    delta_p = 1 - turb->altitude[k_LAYER]/z;
+    NP = MT[k_LAYER];
     <<bilinear interpolation>>
   }
 }
@@ -830,17 +836,16 @@ HANDLE_ERROR_CUSPARSE( cusparseCreateMatDescr(&descr),
 cusparseSetMatType(descr,CUSPARSE_MATRIX_TYPE_GENERAL);
 cusparseSetMatIndexBase(descr,CUSPARSE_INDEX_BASE_ZERO);
 
-nnz = 4*NI*NI;
+nnz = 4*NI*NI*_N_LAYER_;
 HANDLE_ERROR( cudaMalloc((void**)&csrValH,    sizeof(float)*nnz ) );
 HANDLE_ERROR( cudaMalloc((void**)&csrColIndH, sizeof(int)*nnz ) );
 HANDLE_ERROR( cudaMalloc((void**)&csrRowPtrH, sizeof(int)*(NI*NI+1) ) );
 HANDLE_ERROR( cudaMemset(csrRowPtrH, 0, sizeof(int)*(NI*NI+1) ) );
 
 dim3 blockDim(16,16);
-dim3 gridDim(NI/16+1,NI/16+1);
-float gl = 1 - atm->turbulence.altitude[0]/guide_star[0].height;
+dim3 gridDim(NI/16+1,NI/16+1,_N_LAYER_);
 bilinearSparseOperator LLL gridDim,blockDim RRR 
-  (csrValH, csrColIndH, csrRowPtrH, gl, NP, 1, NI);
+  (csrValH, csrColIndH, csrRowPtrH, paCov.d__MT, NI, atm->d__turbulence, guide_star[0].height);
 
 // For debugging purposes:
 /* 
