@@ -1,14 +1,14 @@
 % -*- mode: Noweb; noweb-code-mode: c-mode -*-
 @
-[[BTBT]] contains a structure and the routines to implement a block matrix with Toeplitz--Block--Toeplitz blocks.
+[[GBTBT]] contains a structure and the routines to implement a block matrix with Toeplitz--Block--Toeplitz blocks.
 
 \subsection{The files}
 
 \subsubsection{Header}
 
-<<BTBT.h>>=
-#ifndef __BTBT_H__
-#define __BTBT_H__
+<<GBTBT.h>>=
+#ifndef __GBTBT_H__
+#define __GBTBT_H__
 
 #ifndef __CEO_H__
 #include "ceo.h"
@@ -18,16 +18,17 @@
 #include "atmosphere.h"
 #endif
 
-//#define BTBT_DEBUG
+//#define GBTBT_DEBUG
 
-struct BTBT {
+struct GBTBT {
 
-  <<BTBT parameters>>
+  <<GBTBT parameters>>
 
   void setup(int n_x);
 
-  void setup(int M_, int N_, int NT_, float *d__cov_);
-  void setup(int M_, int N_, int MT_, int NT_, float *d__cov_);
+  void setup(int M_, int N_, int NT_, const float *d__cov_);
+  void setup(int M_, int N_, int MT_, int NT_, const float *d__cov_);
+  void setup(int M_, int N_, int *MT_, int NT_, const float *d__cov_);
 
   void cleanup(void);
 
@@ -36,12 +37,12 @@ struct BTBT {
   void MVM(float *y, float *x);
 
 };
-#endif // __BTBT_H__
+#endif // __GBTBT_H__
 @
 \subsubsection{Source}
 
-<<BTBT.cu>>=
-#include "BTBT.h"
+<<GBTBT.cu>>=
+#include "GBTBT.h"
 
 <<ordering indices>>
 
@@ -56,6 +57,7 @@ struct BTBT {
 
 <<setup>>
 <<setup (square blocks)>>
+<<setup (multilayers)>>
 
 <<cleanup>>
 
@@ -66,7 +68,7 @@ struct BTBT {
 \subsection{Functions}
 \label{sec:functions}
 
-A BTBT matrix is a $M\times N$ block matrix with $M$ and $N$ the number of block rows and columns respectively.
+A GBTBT matrix is a $M\times N$ block matrix with $M$ and $N$ the number of block rows and columns respectively.
 Each block is a matrix of type Toeplitz--Block--Toeplitz meaning that each block contains $M_T\times N_T$ blocks of size $M_T\times N_T$.
 Both matrix level are Toeplitz.
 Thanks to the peculiar structure of the matrix, there is a total of $MN(M_T+N_T-1)^2$ unique elements, to compare to the number of elements in the full matrix, $MNM_T^2N_T^2$.
@@ -75,15 +77,16 @@ The matrix is entirely defined with $M$, $N$, $M_T$ and $N_T$ and the $(M_T+N_T-
 \subsubsection{Parameters}
 \label{sec:parameters}
 
-The parameters of the [[BTBT]] structure are:
-<<BTBT parameters>>=
-int M, N, MT, MT2, NT, NT2, NU, NU2, NDFT, HALF_NDFT, NU_TOTAL, NF, NF2, ind_size, cov_size;
+The parameters of the [[GBTBT]] structure are:
+<<GBTBT parameters>>=
+int M, N, NT, NT2, NDFT, HALF_NDFT, NU_TOTAL, NF, NF2, ind_size, cov_size, MT2_TOTAL, MT_size, MAX_MT;
+int *MT, *MT2, *NU, *NU2, *CS_MT2, *d__MT, *d__MT2, *d__NU, *d__NU2, *d__CS_MT2;
 char *mask;
 float2 *d__cov, *d__b, *d__c;
 float *d__alpha, *d__beta, n_full, n_comp, b_full, b_comp, cov_eval_et;
 unsigned int *d__mu, *d__xi;
 cufftHandle raster_plan, MVM_input_plan, MVM_output_plan;
-#ifdef BTBT_DEBUG
+#ifdef GBTBT_DEBUG
 float2 *cov;
 unsigned int *mu, *xi;
 #endif
@@ -92,54 +95,87 @@ unsigned int *mu, *xi;
 \subsubsection{Setup \& Cleanup}
 \label{sec:setup--cleanup}
 
-A [[BTBT]] structure is initialized with the number of blocks $[[M]]\times[[N]]$, the size of each block $[[MT]]\times[[NT]]$ and the covariance.
-<<setup>>=
-  void BTBT::setup(int M_, int N_, int MT_, int NT_, float *d__cov_)
+A [[GBTBT]] structure is initialized with the number of blocks $[[M]]\times[[N]]$, the size of each block $[[MT]]\times[[NT]]$ and the covariance.
+<<setup (multilayers)>>=
+void GBTBT::setup(int M_, int N_, int *MT_, int NT_, const float *d__cov_)
 {
   M = M_;
   N = N_;
-  MT = MT_;
-  MT2 = MT*MT;
+  //  MT = MT_;
+  MT_size = sizeof(int)*M;
+  MT  =  (int *)malloc(MT_size);
+  for (int k=0;k<M;k++)
+    MT[k] = MT_[k];
+  //  MT2 = MT*MT;
   NT = NT_;
   NT2 = NT*NT;
-  NU = MT+NT-1;
-  NU2 = NU*NU;
-  NDFT = round_up_to_nhp2(NU2);
-  HALF_NDFT = NDFT/2 + 1;
-  NU_TOTAL = NU2*M*N;
+  //  NU = MT+NT-1;
+  //  NU2 = NU*NU;
+  //NDFT = round_up_to_nhp2(NU2);
+  //  NU_TOTAL = NU2*M*N;
   mask = NULL;
 
   <<allocation>>
 
   info();  
-
-  <<ordering>>
 
   stopwatch tid;
   tid.tic();
   <<evaluate covariance>>
   tid.toc(&cov_eval_et,"Covariance raster DFT");
 }
-@ For square blocks, [[BTBT]] is initialized with: 
-<<setup (square blocks)>>=
-  void BTBT::setup(int M_, int N_, int NT_, float *d__cov_)
+@ A [[GBTBT]] structure is initialized with the number of blocks $[[M]]\times[[N]]$, the size of each block $[[MT]]\times[[NT]]$ and the covariance.
+<<setup>>=
+  void GBTBT::setup(int M_, int N_, int MT_, int NT_, const float *d__cov_)
 {
   M = M_;
   N = N_;
-  MT = NT = NT_;
-  MT2 = NT2 = NT*NT;
-  NU = 2*NT-1;
-  NU2 = NU*NU;
-  NDFT = round_up_to_nhp2(NU2);
-  HALF_NDFT = NDFT/2 + 1;
-  NU_TOTAL = NU2*M*N;
+  //  MT = MT_;
+  MT_size = sizeof(int)*M;
+  MT  =  (int *)malloc(MT_size);
+  for (int k=0;k<M;k++)
+    MT[k] = MT_;
+  //  MT2 = MT*MT;
+  NT = NT_;
+  NT2 = NT*NT;
+  //  NU = MT+NT-1;
+  //  NU2 = NU*NU;
+  //NDFT = round_up_to_nhp2(NU2);
+  //  NU_TOTAL = NU2*M*N;
   mask = NULL;
 
   <<allocation>>
 
   info();  
 
-  <<ordering>>
+  stopwatch tid;
+  tid.tic();
+  <<evaluate covariance>>
+  tid.toc(&cov_eval_et,"Covariance raster DFT");
+}
+@ For square blocks, [[GBTBT]] is initialized with: 
+<<setup (square blocks)>>=
+  void GBTBT::setup(int M_, int N_, int NT_, const float *d__cov_)
+{
+  M = M_;
+  N = N_;
+  //  MT = NT_;
+  NT = NT_;
+  MT_size = sizeof(int)*M;
+  MT  =  (int *)malloc(MT_size);
+  for (int k=0;k<M;k++)
+    MT[k] = NT;
+  //  MT2 = NT2 = NT*NT;
+  //  NU = 2*NT-1;
+  //  NU2 = NU*NU;
+  //  NDFT = round_up_to_nhp2(NU2);
+  //  HALF_NDFT = NDFT/2 + 1;
+  //  NU_TOTAL = NU2*M*N;
+  mask = NULL;
+
+  <<allocation>>
+
+  info();  
 
   stopwatch tid;
   tid.tic();
@@ -148,35 +184,87 @@ A [[BTBT]] structure is initialized with the number of blocks $[[M]]\times[[N]]$
 }
 @ The memory is allocated with:
 <<allocation>>=
+
+HANDLE_ERROR( cudaMalloc((void**)&d__MT,  MT_size) );
+MT2 = (int *)malloc(MT_size);
+HANDLE_ERROR( cudaMalloc((void**)&d__MT2, MT_size) );
+CS_MT2 = (int *)malloc(MT_size);
+HANDLE_ERROR( cudaMalloc((void**)&d__CS_MT2, MT_size) );
+NU  =  (int *)malloc(MT_size);
+HANDLE_ERROR( cudaMalloc((void**)&d__NU,  MT_size) );
+NU2 =  (int *)malloc(MT_size);
+HANDLE_ERROR( cudaMalloc((void**)&d__NU2,  MT_size) );
+
+NU_TOTAL  = 0;
+MT2_TOTAL = 0;
+MAX_MT    = 0;
+int _NDFT;
+NDFT = 0;
+printf("@(CEO)>GBTBT\n");
+for (int k=0; k<M; k++) {
+  MT2[k] = MT[k]*MT[k];
+  NU[k]  = MT[k] + NT - 1;
+  NU2[k] = NU[k]*NU[k];
+  NU_TOTAL += NU2[k]*N;
+  _NDFT = round_up_to_nhp2(NU2[k]);
+  NDFT   = (_NDFT>NDFT) ? _NDFT : NDFT;
+  MAX_MT = (MAX_MT<MT[k]) ? MT[k] : MAX_MT;
+  MT2_TOTAL += MT2[k];
+  printf(" k=%d: MT=%d ; MT2=%d ; NU=%d ; NU2=%d\n",k,MT[k],MT2[k],NU[k],NU2[k]);
+}
+printf(" NU_TOTAL=%d\n",NU_TOTAL);
+printf(" MT2_TOTAL=%d\n",MT2_TOTAL);
+printf(" NDFT=%d\n",NDFT);
+printf(" _NDFT=%d\n",_NDFT);
+printf(" MAX_MT=%d\n",MAX_MT);
+printf("--------------------------------------------");
+CS_MT2[0] = 0;
+for (int k=0; k<M-1; k++) 
+  CS_MT2[k+1] = CS_MT2[k] + MT2[k];
+HALF_NDFT = NDFT/2 + 1;
+
+HANDLE_ERROR( cudaMemcpy( d__MT , MT , MT_size, cudaMemcpyHostToDevice) ); 
+HANDLE_ERROR( cudaMemcpy( d__MT2, MT2, MT_size, cudaMemcpyHostToDevice) ); 
+HANDLE_ERROR( cudaMemcpy( d__CS_MT2, CS_MT2, MT_size, cudaMemcpyHostToDevice) ); 
+HANDLE_ERROR( cudaMemcpy( d__NU , NU , MT_size, cudaMemcpyHostToDevice) ); 
+HANDLE_ERROR( cudaMemcpy( d__NU2, NU2, MT_size, cudaMemcpyHostToDevice) ); 
+
 ind_size = sizeof(int);
-cov_size = sizeof(float2)*NU2*N*M;
+cov_size = sizeof(float2)*NU_TOTAL;
 HANDLE_ERROR( cudaMalloc((void**)&d__mu, ind_size*NT*NT ) );
-HANDLE_ERROR( cudaMalloc((void**)&d__xi, ind_size*MT*MT ) );
-HANDLE_ERROR( cudaMalloc((void**)&d__b, N*sizeof(float2)*NDFT ) );
-HANDLE_ERROR( cudaMemset(d__b, 0, N*sizeof(float2)*NDFT ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__xi, ind_size*NT*NT ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__b, M*N*sizeof(float2)*NDFT ) );
+HANDLE_ERROR( cudaMemset(d__b, 0, M*N*sizeof(float2)*NDFT ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__c, M*sizeof(float2)*NDFT ) );
 
 HANDLE_ERROR( cudaMalloc((void**)&d__cov, M*N*sizeof(float2)*NDFT ) );
 HANDLE_ERROR( cudaMemset(d__cov, 0, M*N*sizeof(float2)*NDFT ) );  
-for (int k=0;k<(M*N);k++)
-  HANDLE_ERROR( cudaMemcpy( ((float *)d__cov) + k*NDFT, d__cov_ + k*NU2,
-			    NU2*sizeof(float), cudaMemcpyDeviceToDevice) );
+/* for (int k=0;k<(M*N);k++) */
+/*   HANDLE_ERROR( cudaMemcpy( ((float *)d__cov) + k*NDFT, d__cov_ + k*NU2, */
+/* 			    NU2*sizeof(float), cudaMemcpyDeviceToDevice) ); */
+int idx=0;
+for (int i=0;i<M;i++)
+  for (int j=0;j<N;j++) {
+    HANDLE_ERROR( cudaMemcpy( ((float *)d__cov) + (i*N+j)*NDFT, d__cov_ + idx,
+			      NU2[i]*sizeof(float), cudaMemcpyDeviceToDevice) );
+    idx += NU2[i];
+  }
 
 int BATCH = M*N;
-fprintf(stderr,"\n@(CEO)>BTBT: Creating a 1D covariance FFT plan\n");
+fprintf(stderr,"\n@(CEO)>GBTBT: Creating a 1D covariance FFT plan\n");
 HANDLE_ERROR_CUFFT( cufftPlan1d(&raster_plan, NDFT, CUFFT_R2C, BATCH),
 		    "Unable to create plan");
 HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(raster_plan, CUFFT_COMPATIBILITY_NATIVE),
 		    "Unable to set compatibility mode to native");
 
-fprintf(stderr,"\n@(CEO)>BTBT: Creating a 1D MVM input FFT plan\n");
-BATCH = N;
+fprintf(stderr,"\n@(CEO)>GBTBT: Creating a 1D MVM input FFT plan\n");
+BATCH = M*N;
 HANDLE_ERROR_CUFFT( cufftPlan1d(&MVM_input_plan, NDFT, CUFFT_R2C, BATCH),
 		    "Unable to create plan");
 HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(MVM_input_plan, CUFFT_COMPATIBILITY_NATIVE),
 		    "Unable to set compatibility mode to native");
 
-fprintf(stderr,"\n@(CEO)>BTBT: Creating a 1D MVM output FFT plan\n");
+fprintf(stderr,"\n@(CEO)>GBTBT: Creating a 1D MVM output FFT plan\n");
 BATCH = M;
 HANDLE_ERROR_CUFFT( cufftPlan1d(&MVM_output_plan, NDFT, CUFFT_C2R, BATCH),
 		    "Unable to create plan");
@@ -205,7 +293,7 @@ The ordering index are computed next:
 dim3 blockDim(16,16);
 dim3 gridDim( 1+MT/16 , 1+MT/16 );
 ordering LLL gridDim,blockDim RRR(d__mu, d__xi, MT, NT);
-#ifdef BTBT_DEBUG
+#ifdef GBTBT_DEBUG
 mu = (unsigned int *)malloc( ind_size );
 HANDLE_ERROR( cudaMemcpy( mu, d__mu, ind_size, cudaMemcpyDeviceToHost) );
 xi = (unsigned int *)malloc( ind_size );
@@ -216,7 +304,7 @@ fprintf(stderr,"|(%2d) %2d %2d|\n",i,mu[i],xi[i]);
 #endif
 @  with the kernel
 <<ordering indices>>=
-__global__ void ordering(unsigned int *mu, unsigned int *xi, int m, int n)
+__global__ void gordering(unsigned int *mu, unsigned int *xi, int m, int n)
 {
   int j1, j2, k;
   j1 = blockIdx.x * blockDim.x + threadIdx.x;
@@ -234,10 +322,10 @@ __global__ void ordering(unsigned int *mu, unsigned int *xi, int m, int n)
 The 1D Fourier transform is now applied to the raster covariance
 <<evaluate covariance>>=
 <<raster covariance FT>>
-#ifdef BTBT_DEBUG
+#ifdef GBTBT_DEBUG
 cov = (float2*)malloc(cov_size);
 HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
-fprintf(stderr,"\n@(CEO)>BTBT: raster covariance\n");
+fprintf(stderr,"\n@(CEO)>GBTBT: raster covariance\n");
 for (int k=0;k<NDFT;k++) {
   fprintf(stderr,"%2d: ", k);
   for (int l=0;l<N*M;l++) {
@@ -253,17 +341,27 @@ HANDLE_ERROR( cudaThreadSynchronize() );
 
 @ Memory is freed with:
 <<cleanup>>=
-void BTBT::cleanup(void)
+void GBTBT::cleanup(void)
 {
-  fprintf(stderr,"@(CEO)>BTBT: freeing memory!\n");
+  fprintf(stderr,"@(CEO)>GBTBT: freeing memory!\n");
   cufftDestroy(raster_plan);
   cufftDestroy(MVM_input_plan);
   cufftDestroy(MVM_output_plan);
+  free( MT );
+  HANDLE_ERROR( cudaFree( d__MT ) );
+  free( MT2 );
+  HANDLE_ERROR( cudaFree( d__MT2 ) );
+  free( CS_MT2 );
+  HANDLE_ERROR( cudaFree( d__CS_MT2 ) );
+  free( NU );
+  HANDLE_ERROR( cudaFree( d__NU ) );
+  free( NU2 );
+  HANDLE_ERROR( cudaFree( d__NU2 ) );
   HANDLE_ERROR( cudaFree( d__mu ) );
   HANDLE_ERROR( cudaFree( d__xi ) );
   HANDLE_ERROR( cudaFree( d__b ) );
   HANDLE_ERROR( cudaFree( d__c ) );
-#ifdef BTBT_DEBUG
+#ifdef GBTBT_DEBUG
   free(mu);		
   free(xi);
 #endif		
@@ -272,22 +370,22 @@ void BTBT::cleanup(void)
 \subsubsection{Input/Output}
 \label{sec:inputoutput}
 
-The main parameters of [[BTBT]] are displayed with the [[info]] routine:
+The main parameters of [[GBTBT]] are displayed with the [[info]] routine:
 <<info>>=
-void BTBT::info(void)
+void GBTBT::info(void)
 {
-  fprintf(stderr,"\n\x1B[1;42m@(CEO)>BTBT:\x1B[;42m\n");
+  fprintf(stderr,"\n\x1B[1;42m@(CEO)>GBTBT:\x1B[;42m\n");
   <<info content>>
   fprintf(stderr,"----------------------------------------------------\x1B[0m\n");
 }
 <<info content>>=
   fprintf(stderr," . number of outermost blocks    : %dX%d\n",M,N);
-  fprintf(stderr," . size of outermost blocks      : %dX%d\n",MT,NT);
-  fprintf(stderr," . size of innermost blocks      : %dX%d\n",MT,NT);
+  fprintf(stderr," . size of outermost blocks      : %dX%d\n",MT[0],NT);
+  fprintf(stderr," . size of innermost blocks      : %dX%d\n",MT[0],NT);
   n_full = powf(NT,4)*M*N;
   fprintf(stderr," . DFT length                    : %d\n",NDFT);
   fprintf(stderr," . full matrix elements #        : %.3E\n",n_full);
-  n_comp = M*N*NU2;
+  n_comp = NU_TOTAL;
   fprintf(stderr," . compressed matrix elements #  : %.3E\n",n_comp);
   fprintf(stderr," . compression factor            : %4.0f \n",n_full/n_comp);
   float mb = powf(2,20);
@@ -308,7 +406,7 @@ b_comp = n_comp*sizeof(float2);
 
 The MVM routine computes the matrix--to--vector multiplication $y=C_{\vec\alpha\cdot\vec\beta}s$.
 << MVM >>=
-void BTBT::MVM(float *y, float *x)
+void GBTBT::MVM(float *y, float *x)
 {
   /* stopwatch tid; */
   /* tid.tic(); */
@@ -373,13 +471,13 @@ The matrix--to--vector multiplication $y=C_{\vec\alpha\cdot\vec\beta}s$ is deriv
     the complex vector $b_y$ according to the ordering in vector $\mu$
     i.e. $b_y[\mu].x=s_y$,
   \end{itemize}
-<<MVM STEP 1: input ordering>>=
+<<MVM STEP 1: input ordering (old version)>>=
 dim3 blockDim(256,1);
 dim3 gridDim( 1+NT2/256,N);
-mvm_input_order LLL gridDim,blockDim RRR ( ((float*)d__b), NDFT, x, NT2, d__mu);
+gmvm_input_order LLL gridDim,blockDim RRR ( ((float*)d__b), NDFT, x, NT2, d__mu);
 @  using the kernel:
-<<MVM input ordering kernel>>=
-__global__ void mvm_input_order(float *x_out, int n_x_out, 
+<<MVM input ordering kernel (old version)>>=
+__global__ void gmvm_input_order(float *x_out, int n_x_out, 
                                 float *x_in, int n_x_in, 
                                 unsigned int *ind) 
 {
@@ -388,6 +486,29 @@ __global__ void mvm_input_order(float *x_out, int n_x_out,
   n = blockIdx.y;
   if (k<n_x_in) {
     x_out[ind[k] + n*n_x_out] = x_in[k + n*n_x_in];
+  }
+}
+<<MVM STEP 1: input ordering>>=
+dim3 blockDim(16,16);
+dim3 gridDim( 1+NT/16,1+NT/16,N);
+gmvm_input_order LLL gridDim,blockDim RRR ( ((float*)d__b), NDFT, x, NT, d__MT, M, N);
+@  using the kernel:
+<<MVM input ordering kernel>>=
+__global__ void gmvm_input_order(float *x_out, int n_x_out, 
+                                float *x_in, int n_x_in, int *m_in, int N_MT, int N_NT) 
+{
+  int j1, j2, k, col, ind, n, m, l;
+  j1 = blockIdx.x * blockDim.x + threadIdx.x;
+  j2 = blockIdx.y * blockDim.y + threadIdx.y;
+  col  = blockIdx.z;
+  n = n_x_in;
+  if ( (j1<n) && (j2<n) ) {
+    k = j1*n + j2;
+    for (l=0;l<N_MT;l++) {
+      m = m_in[l];
+      ind = (m+n)*(n-1)-j1*(m+n-1)-j2;
+      x_out[ind + (col+l*N_NT)*n_x_out] = x_in[k + col*n*n];      
+    }
   }
 }
 @ 
@@ -409,11 +530,11 @@ $$
 <<MVM STEP 3: Fourier domain multiplication>>=
 blockDim = dim3(256,1);
 gridDim = dim3(ceilf(HALF_NDFT/256.0),1);
-cpx_mult LLL gridDim,blockDim RRR (d__c, d__cov, d__b, HALF_NDFT, M, N);
+gcpx_mult LLL gridDim,blockDim RRR (d__c, d__cov, d__b, HALF_NDFT, M, N);
 @ 
 using the kernel:
 <<MVM complex multiplication>>=
-  __global__ void cpx_mult(float2* c, float2 *x1, float2*x2, 
+  __global__ void gcpx_mult(float2* c, float2 *x1, float2*x2, 
 			   int n_x, int m_in, int n_in) {
   int k, l, i, j, p, q;
   k = blockIdx.x * blockDim.x + threadIdx.x;
@@ -425,14 +546,15 @@ using the kernel:
       for (i=0;i<n_in;i++) {
 	l = k + i*n_x;
 	q = l + n_in*j*n_x;
-	c[p].x += x1[q].x*x2[l].x - x1[q].y*x2[l].y;
-	c[p].y += x1[q].x*x2[l].y + x1[q].y*x2[l].x;
+	c[p].x += x1[q].x*x2[q].x - x1[q].y*x2[q].y;
+	c[p].y += x1[q].x*x2[q].y + x1[q].y*x2[q].x;
+	x2[q].x = x2[q].y = 0;
       }
     }
-    for (i=0;i<n_in;i++) {
-      l = k + i*n_x;
-      x2[l].x = x2[l].y = 0;
-    }
+    /* for (i=0;i<n_in;i++) { */
+    /*   l = k + i*n_x; */
+    /*   x2[l].x = x2[l].y = 0; */
+    /* } */
   }
 }
 @ 
@@ -443,13 +565,13 @@ HANDLE_ERROR_CUFFT( cufftExecC2R(MVM_output_plan, d__c, (cufftReal*)d__c),
 HANDLE_ERROR( cudaThreadSynchronize() );
 @
 \item the real part of $c$ is affected into vector $y$ according to the ordering in vector $\xi$ i.e. $y=c[\xi].x$.
-<<MVM STEP 5: output ordering>>=
+<<MVM STEP 5: output ordering (old version)>>=
 blockDim = dim3(256,1);
 gridDim  = dim3( 1+MT2/256,M);
-mvm_output_order LLL gridDim,blockDim RRR (y, MT2, ((float *)d__c), NDFT, d__xi);
+gmvm_output_order LLL gridDim,blockDim RRR (y, MT2, ((float *)d__c), NDFT, d__xi);
 @  using the kernel:
-<<MVM output ordering kernel>>=
-__global__ void mvm_output_order(float *x_out, int n_x_out, 
+<<MVM output ordering kernel (old version)>>=
+__global__ void gmvm_output_order(float *x_out, int n_x_out, 
                                 float *x_in, int n_x_in, 
                                 unsigned int *ind) 
 {
@@ -460,14 +582,34 @@ __global__ void mvm_output_order(float *x_out, int n_x_out,
       x_out[k + m*n_x_out] = x_in[ind[k] + m*n_x_in]/n_x_in;		
   }
 }
+<<MVM STEP 5: output ordering>>=
+blockDim = dim3(16,16);
+gridDim  = dim3( 1+MAX_MT/16, 1+MAX_MT/16, M);
+gmvm_output_order LLL gridDim,blockDim RRR (y, d__MT, ((float *)d__c), NDFT, NT);
+@  using the kernel:
+<<MVM output ordering kernel>>=
+__global__ void gmvm_output_order(float *x_out, int *m_in, 
+                                float *x_in, int n_x_in, int n) 
+{
+  int j1, j2, k, row, ind, m;
+  j1 = blockIdx.x * blockDim.x + threadIdx.x;
+  j2 = blockIdx.y * blockDim.y + threadIdx.y;
+  row  = blockIdx.z;
+  m = m_in[row];
+  if ( (j1<m) && (j2<m) ) {
+      k = j1*m + j2;
+      ind = (m+n)*(m+n-1) - (j1+1)*(m+n-1) - (j2+1);
+      x_out[k + row*m*m] = x_in[ind + row*n_x_in]/n_x_in;		
+  }
+}
 <<MVM STEP 5: output ordering (masked)>>=
 blockDim = dim3(256,1);
 gridDim  = dim3( 1+NT2/256,1);
 for (int k=0;k<M;k++) 
-  mvm_output_order_mask LLL gridDim,blockDim RRR (y + k*NT2, NT2, ((float *)d__c) + k*NDFT, NDFT, d__xi, mask);
+  gmvm_output_order_mask LLL gridDim,blockDim RRR (y + k*NT2, NT2, ((float *)d__c) + k*NDFT, NDFT, d__xi, mask);
 @  using the kernel:
 <<MVM output ordering kernel (masked)>>=
-__global__ void mvm_output_order_mask(float *x_out, int n_x_out, 
+__global__ void gmvm_output_order_mask(float *x_out, int n_x_out, 
                                 float *x_in, int n_x_in, 
                                 unsigned int *ind, char *mask) 
 {
@@ -482,18 +624,18 @@ __global__ void mvm_output_order_mask(float *x_out, int n_x_out,
 New matrix--to--vector multiplication routines are defined for test purposes.
 The next routine implement the MVM for an identity matrix
 << MVM (Test 1)>>=
-void BTBT::MVM(float *y, float *x)
+void GBTBT::MVM(float *y, float *x)
 {
-  printf("@(CEO)>BTBT: MVM (Test 1)\n");
+  printf("@(CEO)>GBTBT: MVM (Test 1)\n");
   cublasHandle_t handle;
   cublasCreate(&handle);
   cublasScopy(handle, 10, x, 1, y, 1);
   cublasDestroy(handle);
 }
 << MVM (Test 2)>>=
-void BTBT::MVM(float *y, float *x)
+void GBTBT::MVM(float *y, float *x)
 {
-  printf("@(CEO)>BTBT: MVM (Test 2)\n");
+  printf("@(CEO)>GBTBT: MVM (Test 2)\n");
 
   cublasHandle_t handle;
   cublasCreate(&handle);
@@ -504,4 +646,4 @@ void BTBT::MVM(float *y, float *x)
 @
 We also define a void setup routine:
 <<setup (test)>>=
-void BTBT::setup(int n_x) { N = n_x; }
+void GBTBT::setup(int n_x) { N = n_x; }
