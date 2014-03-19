@@ -66,8 +66,14 @@ int main(int argc,char *argv[]) {
 <<wavefront reconstruction from NGS>>
 <<LGS wavefront>>
 <<wavefront reconstruction from LGS>>
+<<paStats MVM alternative>>
+<<LMMSE MVM alternative>>
 <<LMMSE MVM alternative Fried>>
 <<saving to files>>
+<<LTAO wavefronts and wavefront gradients>>
+<<LTAO wavefront estimation>>
+<<paStats MVM tomography>>
+<<LTAO wavefront estimation Fried>>
 <<cleanup>>
 }
 
@@ -106,8 +112,8 @@ lgs.cleanup();
 @ The atmosphere is now defined:
 <<setup>>=
 atmosphere atm;
-atm.setup(20e-2,30,10e3,10,0);
-//atm.gmt_setup(15e-2,60);
+//atm.setup(20e-2,30,10e3,10,0);
+atm.gmt_setup(15e-2,60);
 /*
 float altitude[] = {0, 10e3},
 xi0[] = {0.5, 0.5},
@@ -126,7 +132,7 @@ cog.setup();
 cog.cleanup();
 @ The diameter of the telescope is set to:
 <<setup>>=
-float D = 8; // telescope diameter in meter
+float D = 25; // telescope diameter in meter
 @ leading to a lenslet size of:
 <<setup>>=
 float d = D/N_SIDE_LENSLET;
@@ -287,6 +293,7 @@ pa.MVM(lmmse.d__phase_est,lmmse.d__ce,
        &atm, &src, 1, &lgs, 1);
 //wf_rms = phase2nm*S.std(lmmse.d__phase_est, NP2);
 //printf("\n WF RMS: %7.2fnm\n",wf_rms);
+phase_est = lmmse.d__phase_est;
 <<wavefront error>>
 dev2file("phaseEstAlt.bin", lmmse.d__phase_est, NP2);
 lmmse.cleanup();
@@ -305,7 +312,7 @@ alt_lmmse.new_estimation(cog.d__c,100);
 phase_est = alt_lmmse.d__phase_est_i;
 <<wavefront error>>
 //dev2file("phaseEstAltLmmse.bin", alt_lmmse.d__phase_est, alt_lmmse.PS_E_N_PX);
-dev2file("phaseEstItpAltLmmse.bin", alt_lmmse.d__phase_est_i, NP2);
+  //dev2file("phaseEstItpAltLmmse.bin", alt_lmmse.d__phase_est_i, NP2);
 alt_lmmse.new_cleanup();
 printf("------------------------------\n");
 
@@ -318,9 +325,12 @@ alt_fried_lmmse.aa.toFile("ngs-lgs_fried_aa.bin");
 alt_fried_lmmse.pa.toFile("ngs-lgs_fried_pa.bin");
 phase_est = alt_fried_lmmse.d__phase_est_i;
 <<wavefront error Fried>>
+  //printf("alt_fried_lmmse.PS_E_N_PX=%d\n",alt_fried_lmmse.PS_E_N_PX);
 dev2file("phaseEstAltLmmse.bin", alt_fried_lmmse.d__phase_est, alt_fried_lmmse.PS_E_N_PX);
 dev2file("phaseEstAltItpLmmse.bin", alt_fried_lmmse.d__phase_est_i, NP2_fried);
+fprintf(stderr,"alt_fried_lmmse.new_cleanup() - START\n");
 alt_fried_lmmse.new_cleanup();
+fprintf(stderr,"alt_fried_lmmse.new_cleanup() - END\n");
 printf("------------------------------\n");
 
 @ The wavefront error is computed with
@@ -370,16 +380,17 @@ printf("\n WFE RMS (Fried geom.): %8.3fnm\n",wf_rms);
 For the LTAO wavefront estimation, the LGS constellation is defined first.
 We will use 3 LGSs on a 15 arcsec radius ring.
 <<setup>>=
-int N_GS = 3;
+int N_GS = 6;
 float gs_radius = 15;
 // 3 LGS on a ring
+/*
 float zenith[] = {ARCSEC(gs_radius),ARCSEC(gs_radius),ARCSEC(gs_radius)},
   azimuth[] = {0,2.*PI/3.,4.*PI/3.};
+*/
 // 6 LGS on a ring
-/*
 float zenith[] = {ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30)},
   azimuth[] = {0,2.*PI/6.,4.*PI/6.,6.*PI/6.,8.*PI/6.,10.*PI/6.,12.*PI/6.};
-*/
+
 source gs_ast, gs_ast_fried;
 gs_ast.setup(zenith,azimuth,90e3,N_GS);
 gs_ast_fried.setup(zenith,azimuth,90e3,N_GS,NP2_fried);
@@ -441,6 +452,7 @@ paTomo.MVM(gs_ast_lmmse.d__phase_est,gs_ast_lmmse.d__ce,
        &atm, &src, 1, &gs_ast, N_GS);
 //wf_rms = phase2nm*S.std(lmmse.d__phase_est, NP2);
 //printf("\n WF RMS: %7.2fnm\n",wf_rms);
+phase_est = gs_ast_lmmse.d__phase_est;
 <<wavefront error>>
 dev2file("phaseEstAltTomo.bin", gs_ast_lmmse.d__phase_est, NP2);
 printf("------------------------------\n");
@@ -450,3 +462,5 @@ paTomo.setup(N_SIDE_LENSLET,2,&atm,d,&src,1,&gs_ast,N_GS);
 paTomo.toFile("paTomoCovariance.bin");
 <<cleanup>>=
 paTomo.cleanup();
+<<cleanup>>=
+cudaDeviceReset();

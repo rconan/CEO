@@ -116,7 +116,8 @@ The main parameters of the  atmosphere are displayed with the [[info]] routine:
   printf(" %5.2f      %6.2f    %8.2f\n",
 	 zenith*RADIAN2ARCSEC,
 	 azimuth*180.0/PI,height);
-  printf(" wavefront pixel sampling: %d\n",wavefront.N_PX);
+  if (wavefront.N_PX>0)
+    printf(" wavefront pixel sampling: %d\n",wavefront.N_PX);
   printf("----------------------------------------------------\x1B[0m\n");
 }
 
@@ -202,7 +203,6 @@ void source::setup(float _zenith, float _azimuth, float _height, int resolution)
   height  = _height;
   theta_x = tanf(zenith)*cosf(azimuth);
   theta_y = tanf(zenith)*sinf(azimuth);
-  info();
   /*
   for (int k=0;k<_SOURCE_N_PX_;k++) {
     amplitude[k] = 1.0;
@@ -220,6 +220,7 @@ void source::setup(float _zenith, float _azimuth, float _height, int resolution)
 			    sizeof(source) ,
 			    cudaMemcpyHostToDevice ) );
   wavefront.setup(resolution);
+  info();
 }
 @ \item for multiple sources:
 <<setup for multiple sources>>=
@@ -276,16 +277,20 @@ The complex amplitude structure is initialized with
 <<complex amplitude setup>>=
 void complex_amplitude::setup(int n_pixel) {
   N_PX = n_pixel;
-  HANDLE_ERROR( cudaMalloc( (void**)&amplitude,  sizeof(float)*N_PX ) );
-  HANDLE_ERROR( cudaMalloc( (void**)&phase,      sizeof(float)*N_PX ) );
-  HANDLE_ERROR( cudaMalloc( (void**)&pupil_mask, sizeof(char)*N_PX ) );
+  if (N_PX>0) {
+    HANDLE_ERROR( cudaMalloc( (void**)&amplitude,  sizeof(float)*N_PX ) );
+    HANDLE_ERROR( cudaMalloc( (void**)&phase,      sizeof(float)*N_PX ) );
+    HANDLE_ERROR( cudaMalloc( (void**)&pupil_mask, sizeof(char)*N_PX ) );
+  }
 }
 @ and memory is de--allocated with:
 <<complex amplitude cleanup>>=
 void complex_amplitude::cleanup(void) {
-  HANDLE_ERROR( cudaFree( amplitude ) );
-  HANDLE_ERROR( cudaFree( phase ) );
-  HANDLE_ERROR( cudaFree( pupil_mask ) );
+  if (N_PX>0) {
+    HANDLE_ERROR( cudaFree( amplitude ) );
+    HANDLE_ERROR( cudaFree( phase ) );
+    HANDLE_ERROR( cudaFree( pupil_mask ) );
+  }
 }
 @ Allocated variable are freed with the [[cleanup]] routine
 <<cleanup>>=

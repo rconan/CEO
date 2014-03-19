@@ -130,18 +130,12 @@ void GBTBT::setup(int M_, int N_, int *MT_, int NT_, const float *d__cov_)
 {
   M = M_;
   N = N_;
-  //  MT = MT_;
   MT_size = sizeof(int)*M;
   MT  =  (int *)malloc(MT_size);
   for (int k=0;k<M;k++)
     MT[k] = MT_;
-  //  MT2 = MT*MT;
   NT = NT_;
   NT2 = NT*NT;
-  //  NU = MT+NT-1;
-  //  NU2 = NU*NU;
-  //NDFT = round_up_to_nhp2(NU2);
-  //  NU_TOTAL = NU2*M*N;
   mask = NULL;
 
   <<allocation>>
@@ -159,18 +153,11 @@ void GBTBT::setup(int M_, int N_, int *MT_, int NT_, const float *d__cov_)
 {
   M = M_;
   N = N_;
-  //  MT = NT_;
   NT = NT_;
   MT_size = sizeof(int)*M;
   MT  =  (int *)malloc(MT_size);
   for (int k=0;k<M;k++)
     MT[k] = NT;
-  //  MT2 = NT2 = NT*NT;
-  //  NU = 2*NT-1;
-  //  NU2 = NU*NU;
-  //  NDFT = round_up_to_nhp2(NU2);
-  //  HALF_NDFT = NDFT/2 + 1;
-  //  NU_TOTAL = NU2*M*N;
   mask = NULL;
 
   <<allocation>>
@@ -200,7 +187,7 @@ MT2_TOTAL = 0;
 MAX_MT    = 0;
 int _NDFT;
 NDFT = 0;
-printf("@(CEO)>GBTBT\n");
+//printf("@(CEO)>GBTBT\n");
 for (int k=0; k<M; k++) {
   MT2[k] = MT[k]*MT[k];
   NU[k]  = MT[k] + NT - 1;
@@ -210,14 +197,16 @@ for (int k=0; k<M; k++) {
   NDFT   = (_NDFT>NDFT) ? _NDFT : NDFT;
   MAX_MT = (MAX_MT<MT[k]) ? MT[k] : MAX_MT;
   MT2_TOTAL += MT2[k];
-  printf(" k=%d: MT=%d ; MT2=%d ; NU=%d ; NU2=%d\n",k,MT[k],MT2[k],NU[k],NU2[k]);
+  //  printf(" k=%d: MT=%d ; MT2=%d ; NU=%d ; NU2=%d\n",k,MT[k],MT2[k],NU[k],NU2[k]);
 }
+/*
 printf(" NU_TOTAL=%d\n",NU_TOTAL);
 printf(" MT2_TOTAL=%d\n",MT2_TOTAL);
 printf(" NDFT=%d\n",NDFT);
 printf(" _NDFT=%d\n",_NDFT);
 printf(" MAX_MT=%d\n",MAX_MT);
-printf("--------------------------------------------");
+printf("--------------------------------------------\n");
+*/
 CS_MT2[0] = 0;
 for (int k=0; k<M-1; k++) 
   CS_MT2[k+1] = CS_MT2[k] + MT2[k];
@@ -585,10 +574,10 @@ __global__ void gmvm_output_order(float *x_out, int n_x_out,
 <<MVM STEP 5: output ordering>>=
 blockDim = dim3(16,16);
 gridDim  = dim3( 1+MAX_MT/16, 1+MAX_MT/16, M);
-gmvm_output_order LLL gridDim,blockDim RRR (y, d__MT, ((float *)d__c), NDFT, NT);
+gmvm_output_order LLL gridDim,blockDim RRR (y, d__MT,  d__CS_MT2, ((float *)d__c), NDFT, NT);
 @  using the kernel:
 <<MVM output ordering kernel>>=
-__global__ void gmvm_output_order(float *x_out, int *m_in, 
+__global__ void gmvm_output_order(float *x_out, int *m_in, int*cs_m2_in, 
                                 float *x_in, int n_x_in, int n) 
 {
   int j1, j2, k, row, ind, m;
@@ -599,7 +588,7 @@ __global__ void gmvm_output_order(float *x_out, int *m_in,
   if ( (j1<m) && (j2<m) ) {
       k = j1*m + j2;
       ind = (m+n)*(m+n-1) - (j1+1)*(m+n-1) - (j2+1);
-      x_out[k + row*m*m] = x_in[ind + row*n_x_in]/n_x_in;		
+      x_out[k + cs_m2_in[row]] = x_in[ind + row*n_x_in]/n_x_in;		
   }
 }
 <<MVM STEP 5: output ordering (masked)>>=

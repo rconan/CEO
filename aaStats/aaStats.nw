@@ -615,7 +615,7 @@ void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch,
   NF2 = NF*NF;
   kappa = 4;
   sampling = lenslet_pitch/osf;
-  M_LAYER = (int *)malloc(_N_LAYER_);
+  M_LAYER = (int *)malloc(sizeof(int)*_N_LAYER_);
 
   
   if (phase_src->height==slopes_src->height) {
@@ -665,7 +665,7 @@ void paStats::setup(int M_, int N_, int osf_, atmosphere *atm, float lenslet_pit
   NF2 = NF*NF;
   kappa = 4;
   sampling = lenslet_pitch/osf;
-  M_LAYER = (int *)malloc(_N_LAYER_);
+  M_LAYER = (int *)malloc(sizeof(int)*_N_LAYER_);
 
   
   if (phase_src->height==slopes_src->height) {
@@ -712,7 +712,7 @@ void paStats::setup_multilayers(int M_, int N_, int osf_, atmosphere *atm, float
   NF2 = NF*NF;
   kappa = 4;
   sampling = lenslet_pitch/osf;
-  M_LAYER = (int *)malloc(_N_LAYER_);
+  M_LAYER = (int *)malloc(sizeof(int)*_N_LAYER_);
   
   if (phase_src->height==slopes_src->height) {
 
@@ -725,7 +725,7 @@ void paStats::setup_multilayers(int M_, int N_, int osf_, atmosphere *atm, float
       M_LAYER[k_LAYER] = M + o*2;
       NU = M_LAYER[k_LAYER]+N-1;
       NU2 += NU*NU;     
-      printf("@(CEO)>paStats: layer #%d - NU=%d\n",k_LAYER,NU);
+      //      printf("@(CEO)>paStats: layer #%d - NU=%d\n",k_LAYER,NU);
     }
 
     psd_size = sizeof(float2)*NF2;
@@ -1141,25 +1141,20 @@ dim3 gridDimPsd( 1+NF/16 , 1+NF/16 );
 dim3 blockDimCov(16,16);
 dim3 gridDimCov( 1+NU/16 , 1+NU/16 );
 
-int i_P_SRC, j_S_SRC, offset0, offset, k_LAYER, offset_layer;
-fprintf(stderr,"Covariance 1x2 block:\n");
+int i_P_SRC, j_S_SRC, k_LAYER;
+fprintf(stderr,"Covariance %dx%d block:\n",N_P_SRC*_N_LAYER_,2*N_S_SRC);
+NU2 = 0;
 for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
-
-  offset0 = 2*N_S_SRC*_N_LAYER_*i_P_SRC;
 
   for (k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
 
     NU = M_LAYER[k_LAYER]+N-1;
-    NU2 = NU*NU;      
-
-    offset_layer = offset0 + 2*N_S_SRC*k_LAYER;
 
     for (j_S_SRC=0;j_S_SRC<N_S_SRC;j_S_SRC++) {
 
-      fprintf(stderr," [%d,%d]",i_P_SRC,j_S_SRC);
+      fprintf(stderr," [%d,%d]",i_P_SRC+k_LAYER*N_P_SRC,j_S_SRC);
 
-      offset = offset_layer + 2*j_S_SRC;
-      fprintf(stderr,"(%2d",offset);
+      fprintf(stderr,"(%2d",NU2);
       paPowerSpectrumRectMultilayers LLL gridDimPsd,blockDimPsd RRR (
 			       d__psd, NF, osf, lenslet_pitch, 
 			       atm->wavelength, atm->r0, atm->turbulence.L0, 
@@ -1167,10 +1162,11 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 			       (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
 			       d__alpha, kappa);
       <<AA covariance with Wiener-Khinchin>>
-    <<PA covariance reduction>>
+      pa_covariance_extraction LLL gridDimCov,blockDimCov RRR( d__cov + NU2, NU,
+							       d__psd, NF, kappa);
+      NU2 += NU*NU;      
 
-	  offset = offset0 + (2*j_S_SRC+1);
-      fprintf(stderr,",%2d)",offset);
+      fprintf(stderr,",%2d)",NU2);
       paPowerSpectrumRectMultilayers LLL gridDimPsd,blockDimPsd RRR (
                                d__psd, NF, osf, lenslet_pitch,
 			       atm->wavelength, atm->r0, atm->turbulence.L0, 
@@ -1178,8 +1174,10 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 			       (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
 			       d__beta, kappa);
       <<AA covariance with Wiener-Khinchin>>
-    <<PA covariance reduction>>
-	  }
+      pa_covariance_extraction LLL gridDimCov,blockDimCov RRR( d__cov +  NU2, NU,
+							       d__psd, NF, kappa);
+      NU2 += NU*NU;      
+    }
   }
   fprintf(stderr,"\n");
  }
