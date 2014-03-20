@@ -8,7 +8,7 @@
 #ifndef __CEO_H__
 #define __CEO_H__
 
-
+#include <sys/stat.h>
 #include <stdio.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -82,6 +82,8 @@ __global__ void circular_pupil(int *pupil, int N);
 __global__ void valid_lenslet(char *mask, int N_pupil, float threshold);
 
 void dev2file(const char* filename, float* d__data, int n_data);
+void dev2file(const char* filename, float* d__data, int n_data, int n_data_page, int n_page);
+void dev2file(const char* filename, float* d__data, int n_data, int *n_data_page, int n_page);
 void dev2file(const char* filename, int* d__data, int n_data);
 void dev2file(const char* filename, float2* d__data, int n_data);
 
@@ -369,6 +371,8 @@ struct stats {
   float mean(float *data, int n_data);
   float var(float *data, int n_data);
   float std(float *data, int n_data);
+  float diff_var(float *data_1, float *data_2, int n_data);
+  float diff_std(float *data_1, float *data_2, int n_data);
 };
 <<statistics functions>>=
 void stats::setup(void) {
@@ -379,7 +383,9 @@ void stats::cleanup(void) {
 }
 <<mean>> 
 <<variance>> 
+<<differential variance>> 
 <<standart deviation>>
+<<differential standart deviation>>
 @  
 Computing the mean of a vector [[data]]$=x$, $\bar x = \langle x \rangle$:
 <<mean>>=
@@ -408,6 +414,29 @@ Computing the standart deviation $\sigma_x$ of a vector [[data]]$=x$:
 <<standart deviation>>=
 float stats::std(float *data, int n_data) {
   <<variance algorithm>>
+  return sqrtf(results);
+}
+@  
+Computing the differential variance of 2 vectors [[data1]]$=x_1$ and [[data2]]$=x_2$, $\sigma^2_{x_1-x_2}=\langle (x_1-x_2)^2 \rangle - \langle (x_1-x_2) \rangle^2$:
+<<differential variance>>=
+float stats::diff_var(float *data1, float *data2, int n_data) {
+  <<differential variance algorithm>>
+  return results;
+}
+@ with
+<<differential variance algorithm>>=
+float *data;
+HANDLE_ERROR( cudaMalloc((void**)&data, sizeof(float)*n_data) );
+float alpha = -1;
+CUBLAS_ERROR( cublasScopy(handle, n_data, data1, 1, data, 1) );
+CUBLAS_ERROR( cublasSaxpy(handle, n_data, &alpha, data2, 1, data, 1) );
+<<variance algorithm>>
+HANDLE_ERROR( cudaFree( data ) );
+@  
+Computing the differential standart deviation $\sigma_{x_1-x_2}$ of vector [[data1]]$=x_1$ and [[data2]]$=x_2$:
+<<differential standart deviation>>=
+float stats::diff_std(float *data1, float *data2, int n_data) {
+  <<differential variance algorithm>>
   return sqrtf(results);
 }
 @
@@ -493,44 +522,97 @@ __global__ void valid_lenslet(char *mask, int N_pupil, float threshold)
 \subsection{Input/Output}
 \label{sec:inputoutput}
 
-The next routine write data on the device into a file
+In the following, the routines to write data on the device into a file are described.
+Each file contains first an integer with the number of pages [[n_page]] and for each page the number of elements [[n_data]] and the data [[data]].
 <<device to file>>=
 void dev2file(const char* filename, float* d__data, int n_data) {
+  int n_page=1;
+   <<device to file common start>>
   float *data;
   data = (float*)malloc(sizeof(float)*n_data);
   HANDLE_ERROR( cudaMemcpy( data, d__data,
 			  sizeof(float)*n_data,
 			  cudaMemcpyDeviceToHost ) );
-  FILE *fid;
-  fid = fopen(filename,"wb");
+  fwrite(&n_data,sizeof(int),1,fid);
   fwrite(data,sizeof(float),n_data,fid);
-  fclose(fid);
-  free(data);
-  fprintf(stderr,"@(CEO)>ceo: Data saved to %s!\n",filename);
+  <<device to file common end>>
+}
+void dev2file(const char* filename, float* d__data, int n_data, int n_data_page, int n_page) {
+   <<device to file common start>>
+  float *data;
+  data = (float*)malloc(sizeof(float)*n_data);
+  HANDLE_ERROR( cudaMemcpy( data, d__data,
+			  sizeof(float)*n_data,
+			  cudaMemcpyDeviceToHost ) );
+  int pos=0;
+  for (int k_page=0;k_page<n_page;k_page++) {
+    fwrite(&n_data_page,sizeof(int),1,fid);
+    fwrite(data+pos,sizeof(float),n_data_page,fid);
+    pos += n_data_page;
+  }
+  <<device to file common end>>
+}
+void dev2file(const char* filename, float* d__data, int n_data, int *n_data_page, int n_page) {
+   <<device to file common start>>
+  float *data;
+  data = (float*)malloc(sizeof(float)*n_data);
+  HANDLE_ERROR( cudaMemcpy( data, d__data,
+			  sizeof(float)*n_data,
+			  cudaMemcpyDeviceToHost ) );
+  int pos=0;
+  for (int k_page=0;k_page<n_page;k_page++) {
+    fwrite(n_data_page+k_page,sizeof(int),1,fid);
+    fwrite(data+pos,sizeof(float),n_data_page[k_page],fid);
+    pos += n_data_page[k_page];
+  }
+  <<device to file common end>>
 }
 void dev2file(const char* filename, float2* d__data, int n_data) {
+  int n_page=1;
+   <<device to file common start>>
   float2 *data;
   data = (float2*)malloc(sizeof(float2)*n_data);
   HANDLE_ERROR( cudaMemcpy( data, d__data,
 			  sizeof(float2)*n_data,
 			  cudaMemcpyDeviceToHost ) );
-  FILE *fid;
-  fid = fopen(filename,"wb");
+  fwrite(&n_data,sizeof(int),1,fid);
   fwrite(data,sizeof(float2),n_data,fid);
-  fclose(fid);
-  free(data);
-  fprintf(stderr,"@(CEO)>ceo: Data saved to %s!\n",filename);
+  <<device to file common end>>
 }
 void dev2file(const char* filename, int* d__data, int n_data) {
+  int n_page=1;
+   <<device to file common start>>
   int *data;
   data = (int*)malloc(sizeof(int)*n_data);
   HANDLE_ERROR( cudaMemcpy( data, d__data,
 			  sizeof(int)*n_data,
 			  cudaMemcpyDeviceToHost ) );
-  FILE *fid;
-  fid = fopen(filename,"wb");
+  fwrite(&n_data,sizeof(int),1,fid);
   fwrite(data,sizeof(int),n_data,fid);
-  fclose(fid);
-  free(data);
-  fprintf(stderr,"@(CEO)>ceo: Data saved to %s!\n",filename);
+  <<device to file common end>>
 }
+
+<<device to file common start>>=
+struct stat sb;
+char path[50];
+
+if (stat("bins",&sb)!=0)
+  if (mkdir("bins", S_IRWXU)==0)
+    fprintf(stderr,"@(CEO)>ceo: bins directory created!\n");
+  else {
+    fprintf(stderr,"\n\x1B[31m@(CEO)>ceo: bins mkdir failed!\x1B[0m\n");
+    return;
+  }
+strcpy(path,"bins/");
+strcat(path,filename);
+FILE *fid;
+fid = fopen(path,"wb");
+if (fid==NULL) {
+  fprintf(stderr,"\n\x1B[31m@(CEO)>ceo: Unable to open the file: %s!\x1B[0m\n",path);
+  return;
+ }
+fwrite(&n_page,sizeof(int),1,fid);
+<<device to file common end>>=
+fclose(fid);
+free(data);
+fprintf(stderr,"@(CEO)>ceo: Data saved to %s!\n",filename);
