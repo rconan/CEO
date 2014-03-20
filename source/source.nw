@@ -23,6 +23,8 @@ struct source {
 
   void setup(float zenith, float azimuth, float height);
   void setup(float zenith, float azimuth, float height, int resolution);
+  void setup(float zenith, float azimuth, float height, char *tag_in);
+  void setup(float zenith, float azimuth, float height, int resolution, char *tag_in);
   void setup(float *_zenith, float *_azimuth, float _height, int _N_SRC);
   void setup(float *_zenith, float *_azimuth, float _height, int _N_SRC, int resolution);
   void cleanup(void);
@@ -48,6 +50,8 @@ struct source {
 
 <<setup>>
 <<setup with wavefront resolution>>
+<<setup with tag>>
+<<setup with wavefront resolution and tag>>
 <<setup for multiple sources>>
 <<setup for multiple sources with wavefront resolution>>
 <<cleanup>>
@@ -103,6 +107,9 @@ complex_amplitude wavefront;
 @ Source structures will be allocated on the device:
 <<source parameters>>=
 source *dev_ptr;
+@ An the source can be tagged with
+<<source parameters>>=
+char tag[8];
 @ 
 \subsection{Functions}
 \label{sec:functions}
@@ -111,7 +118,7 @@ The main parameters of the  atmosphere are displayed with the [[info]] routine:
 <<info>>=
   void source::info(void)
 {
-  printf("\n\x1B[1;42m@(CEO)>source\x1B[;42m\n");
+  printf("\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   printf(" zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
   printf(" %5.2f      %6.2f    %8.2f\n",
 	 zenith*RADIAN2ARCSEC,
@@ -169,57 +176,33 @@ float source::n_photon(void) {
 \item for a single source:
 <<setup>>=
 void source::setup(float _zenith, float _azimuth, float _height) {
-  N_SRC   = 1;
-  zenith  = _zenith;
-  azimuth = _azimuth;
-  height  = _height;
-  theta_x = tanf(zenith)*cosf(azimuth);
-  theta_y = tanf(zenith)*sinf(azimuth);
-  info();
-  /*
-  for (int k=0;k<_SOURCE_N_PX_;k++) {
-    amplitude[k] = 1.0;
-    phase[k]     = 0.0;    
-  }
-  */
-  source __src;
-  __src.zenith  = zenith;
-  __src.azimuth = azimuth;
-  __src.height  = height;
-  __src.theta_x = theta_x;
-  __src.theta_y = theta_y;
-  HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source) ) );
-  HANDLE_ERROR( cudaMemcpy( dev_ptr, &__src,
-			    sizeof(source) ,
-			    cudaMemcpyHostToDevice ) );
+  <<setup single source contents>>
   wavefront.setup(_SOURCE_N_PX_);
+  strcpy(tag,"source");
+  info();
 }
 @ \item for a single source with wavefront resolution:
 <<setup with wavefront resolution>>=
 void source::setup(float _zenith, float _azimuth, float _height, int resolution) {
-  N_SRC   = 1;
-  zenith  = _zenith;
-  azimuth = _azimuth;
-  height  = _height;
-  theta_x = tanf(zenith)*cosf(azimuth);
-  theta_y = tanf(zenith)*sinf(azimuth);
-  /*
-  for (int k=0;k<_SOURCE_N_PX_;k++) {
-    amplitude[k] = 1.0;
-    phase[k]     = 0.0;    
-  }
-  */
-  source __src;
-  __src.zenith  = zenith;
-  __src.azimuth = azimuth;
-  __src.height  = height;
-  __src.theta_x = theta_x;
-  __src.theta_y = theta_y;
-  HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source) ) );
-  HANDLE_ERROR( cudaMemcpy( dev_ptr, &__src,
-			    sizeof(source) ,
-			    cudaMemcpyHostToDevice ) );
+  <<setup single source contents>>
   wavefront.setup(resolution);
+  strcpy(tag,"source");
+  info();
+}
+@ \item for a single source with tag:
+<<setup with tag>>=
+void source::setup(float _zenith, float _azimuth, float _height, char *tag_in) {
+  <<setup single source contents>>
+  wavefront.setup(_SOURCE_N_PX_);
+  strcpy(tag,tag_in);
+  info();
+}
+@ \item for a single source with wavefront resolution and tag:
+<<setup with wavefront resolution and tag>>=
+void source::setup(float _zenith, float _azimuth, float _height, int resolution, char *tag_in) {
+  <<setup single source contents>>
+  wavefront.setup(resolution);
+  strcpy(tag,tag_in);
   info();
 }
 @ \item for multiple sources:
@@ -229,7 +212,7 @@ void source::setup(float *_zenith, float *_azimuth, float _height, int _N_SRC) {
   height = _height;
   source __src;
   HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
-  printf("\n\x1B[1;42m@(CEO)>source\x1B[;42m\n");
+  printf("\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   printf(" zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
   for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
     __src.zenith  = _zenith[i_SRC];
@@ -254,7 +237,7 @@ void source::setup(float *_zenith, float *_azimuth, float _height, int _N_SRC, i
   height = _height;
   source __src;
   HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
-  printf("\n\x1B[1;42m@(CEO)>source\x1B[;42m\n");
+  printf("\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   printf(" zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
   for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
     __src.zenith  = _zenith[i_SRC];
@@ -273,6 +256,26 @@ void source::setup(float *_zenith, float *_azimuth, float _height, int _N_SRC, i
   wavefront.setup(resolution*N_SRC);
 }
 @ \end{itemize}
+
+<<setup single source contents>>=
+N_SRC   = 1;
+zenith  = _zenith;
+azimuth = _azimuth;
+height  = _height;
+theta_x = tanf(zenith)*cosf(azimuth);
+theta_y = tanf(zenith)*sinf(azimuth);
+source __src;
+__src.zenith  = zenith;
+__src.azimuth = azimuth;
+__src.height  = height;
+__src.theta_x = theta_x;
+__src.theta_y = theta_y;
+HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source) ) );
+HANDLE_ERROR( cudaMemcpy( dev_ptr, &__src,
+                          sizeof(source) ,
+                          cudaMemcpyHostToDevice ) );
+
+@ 
 The complex amplitude structure is initialized with
 <<complex amplitude setup>>=
 void complex_amplitude::setup(int n_pixel) {
@@ -295,7 +298,7 @@ void complex_amplitude::cleanup(void) {
 @ Allocated variable are freed with the [[cleanup]] routine
 <<cleanup>>=
 void source::cleanup(void) {
-  fprintf(stderr,"@(CEO)>source: freeing memory!\n");
+  fprintf(stderr,"@(CEO)>%s: freeing memory!\n",tag);
   HANDLE_ERROR( cudaFree( dev_ptr) );
   wavefront.cleanup();
 }

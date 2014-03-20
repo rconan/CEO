@@ -47,9 +47,6 @@ struct paStats {
 
   <<paStats parameters>>
 
-  void setup(int N, int osf, atmosphere *atm, float lenslet_pitch, 
-	     source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC);
-
   void setup(int M_, int N_, int osf_, atmosphere *atm, float lenslet_pitch, 
 	     source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC);
 
@@ -93,19 +90,16 @@ struct paStats {
 
 <<aaStats power spectrum kernel>>
 
-<<paStats power spectrum kernel with sources (same heights)>>
-<<paStats power spectrum kernel with sources (same heights,rect.)>>
-<<paStats power spectrum kernel with sources (same heights,rect.,multilayers)>>
-<<paStats power spectrum kernel with sources>>
+<<paStats power spectrum kernel>>
+<<paStats power spectrum kernel (single layer)>>
 
 <<covariance extraction>>
 <<PA covariance extraction>>
 
 <<aaStats setup>>
 
-<<paStats setup I>>
-<<paStats setup II>>
-<<paStats setup III>>
+<<paStats setup>>
+<<paStats setup (multilayers)>>
 
 <<save aa covariance to file>>
 <<save pa covariance to file>>
@@ -116,14 +110,8 @@ struct paStats {
 <<aaStats info>>
 <<paStats info>>
 
-<<2D interpolation>>
-<<2D interpolation kernel>>
-<<matrix-to-vector product kernel>>
-<<matrix-to-vector product>>
-
 <<aaStats variance>>
 
-<<covariance sampling>>
 @
 \subsection{The theory}
 
@@ -182,11 +170,28 @@ The covariance $C_{\varphi \vec \alpha}(\vec\rho)$ is derived from the Wiener--K
 \end{equation}
 where $\mathcal F^{-1}$ stands for the inverse Fourier transform.
 
-\subsection{Functions}
-\label{sec:functions}
+\subsection{Parameters}
+\label{sec:parameters}
 
-\subsubsection{Angle--of--arrival covariance matrix}
-\label{sec:angle-arriv-covar}
+The parameters of the [[aaStats]] structure are:
+<<aaStats parameters>>=
+int N, N2, NU, NU2, NF, NF2, psd_size, cov_size, ind_size;
+float2 *d__psd;
+float *d__cov, *d__alpha, *d__beta, n_full, n_comp, b_full, b_comp, cov_eval_et, sampling;
+cufftHandle plan;
+#if defined(AASTATS_DEBUG) || defined(PASTATS_DEBUG)
+float2 *psd, *cov;
+#endif
+int N_SRC2;
+@ The parameters of the [[paStats]] structure are:
+<<paStats parameters>>=
+int osf, M;
+int *M_LAYER;
+<<aaStats parameters>>
+
+@
+\subsection{Angle--of--arrival covariance matrix functions}
+\label{sec:aa-functions}
 
 The covariance matrix is computed for a square lenslet array of size $[[N]]\times[[N]]$ and of pitch [[sampling]].
 The covariance matrix depends on the atmosphere parameters and altitude profile.
@@ -226,6 +231,10 @@ Finally the Toeplitz compressed version of the matrix $\Theta$ is written:
   \cdots t_\Theta^{{y_[[N_SRC]]}{x_1}} t_\Theta^{{y_[[N_SRC]]}{y_1}} \cdots t_\Theta^{{y_[[N_SRC]]}{x_[[N_SRC]]}} t_\Theta^{{y_[[N_SRC]]}{y_[[N_SRC]]}} \right].
 \end{equation}
 
+@
+\subsubsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
 <<aaStats setup>>=
 void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch, 
 		    source *src, int N_SRC)
@@ -241,17 +250,7 @@ void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch,
   tid.toc(&cov_eval_et,"AA covariance evaluation");
   info(kappa, sampling);
 }
-@
-The parameters of the [[aaStats]] structure are:
-<<aaStats parameters>>=
-int N, N2, NU, NU2, NF, NF2, psd_size, cov_size, ind_size;
-float2 *d__psd;
-float *d__cov, *d__alpha, *d__beta, n_full, n_comp, b_full, b_comp, cov_eval_et, sampling;
-cufftHandle plan;
-#if defined(AASTATS_DEBUG) || defined(PASTATS_DEBUG)
-float2 *psd, *cov;
-#endif
-int N_SRC2;
+
 @ The parameters are initialized in the setup function:
 <<aaStats setup declarations>>=
 float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
@@ -352,7 +351,7 @@ dim3 blockDimCov(16,16);
 dim3 gridDimCov( 1+NU/16 , 1+NU/16 );
 
 int i_SRC, j_SRC, offset0, offset;
-fprintf(stderr,"Covariance 4x4 block:\n");
+fprintf(stderr,"Covariance %dx%d block:\n",N_SRC,N_SRC);
 for (i_SRC=0;i_SRC<N_SRC;i_SRC++) {
 
   offset0 = 4*N_SRC*i_SRC;
@@ -362,7 +361,7 @@ for (i_SRC=0;i_SRC<N_SRC;i_SRC++) {
     fprintf(stderr," [%d,%d]",i_SRC,j_SRC);
 
     offset = offset0 + 2*j_SRC;
-    fprintf(stderr,"(%2d",offset);
+    //fprintf(stderr,"(%2d",offset);
     aaPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (
                     d__psd, NF, lenslet_pitch, 
                     atm->wavelength, atm->r0, atm->turbulence.L0,
@@ -373,7 +372,7 @@ for (i_SRC=0;i_SRC<N_SRC;i_SRC++) {
     <<AA covariance reduction>>
 
     offset = offset0 + (2*j_SRC+1);
-    fprintf(stderr,",%2d",offset);
+    //fprintf(stderr,",%2d",offset);
     aaPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (
                     d__psd, NF, lenslet_pitch, 
                     atm->wavelength, atm->r0, atm->turbulence.L0,
@@ -384,7 +383,7 @@ for (i_SRC=0;i_SRC<N_SRC;i_SRC++) {
     <<AA covariance reduction>>
 
     offset = offset0 + 2*(N_SRC+j_SRC);
-    fprintf(stderr,",%2d",offset);
+    //fprintf(stderr,",%2d",offset);
     aaPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (
                     d__psd, NF, lenslet_pitch, 
                     atm->wavelength, atm->r0, atm->turbulence.L0,
@@ -395,7 +394,7 @@ for (i_SRC=0;i_SRC<N_SRC;i_SRC++) {
     <<AA covariance reduction>>
 
     offset = offset0 + (2*(N_SRC+j_SRC)+1);
-    fprintf(stderr,",%2d)",offset);
+    //fprintf(stderr,",%2d)",offset);
     aaPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (
                     d__psd, NF, lenslet_pitch, 
                     atm->wavelength, atm->r0, atm->turbulence.L0,
@@ -409,7 +408,7 @@ for (i_SRC=0;i_SRC<N_SRC;i_SRC++) {
  }
 
 @ 
-The Wiener-Khinchin is applied on the power spectrum with the following:
+The Wiener-Khinchin theorem is applied on the power spectrum with the following:
 <<AA covariance with Wiener-Khinchin>>=
 HANDLE_ERROR_CUFFT(cufftExecC2C(plan, d__psd, d__psd, CUFFT_FORWARD),
 		   "Unable to execute plan");
@@ -509,21 +508,6 @@ __global__ void covariance_extraction(float *cov_out, int NC_out,
   }
 }
 
-@ The main parameters of [[aaStats]] are displayed with the [[info]] routine:
-<<aaStats info>>=
-void aaStats::info(int kappa, float d)
-{
-  fprintf(stderr,"\n\x1B[1;42m@(CEO)>aaStats:\x1B[;42m\n");
-  <<info content>>
-  fprintf(stderr,"----------------------------------------------------\x1B[0m\n");
-}
-<<info content>>=
-fprintf(stderr," . sampling [m]                   : %.2f\n",d);
-fprintf(stderr," . size of covariance matrix block: %dX%d\n",NU,NU);
-fprintf(stderr," . spectrum resolution            : %d\n",NF);
-fprintf(stderr," . covariance oversampling factor : %d\n",kappa);
-fprintf(stderr," . spectrum highest frequency     : %4.2E\n",(2.0/NF)*(kappa/(2*d)));
-
 @ The memory is freed with the following routine: 
 <<aaStats cleanup>>=
 void aaStats::cleanup(void)
@@ -542,14 +526,24 @@ free(psd);
 free(cov);		
 #endif		
 
-@ From the power spectrum, once can derive the variance:
-<<aaStats variance>>=
-float aaStats::variance(void) {
-  float res;
-  HANDLE_ERROR( cudaMemcpy( &res, d__cov + (N-1)*(NU+1),
-			    sizeof(float), cudaMemcpyDeviceToHost) );
-  return res;
+@
+\subsubsection{Input/Output}
+\label{sec:inputoutput}
+
+The main parameters of [[aaStats]] are displayed with the [[info]] routine:
+<<aaStats info>>=
+void aaStats::info(int kappa, float d)
+{
+  fprintf(stderr,"\n\x1B[1;42m@(CEO)>aaStats:\x1B[;42m\n");
+  <<info content>>
+  fprintf(stderr,"----------------------------------------------------\x1B[0m\n");
 }
+<<info content>>=
+fprintf(stderr," . sampling [m]                   : %.2f\n",d);
+fprintf(stderr," . size of covariance matrix block: %dX%d\n",NU,NU);
+fprintf(stderr," . spectrum resolution            : %d\n",NF);
+fprintf(stderr," . covariance oversampling factor : %d\n",kappa);
+fprintf(stderr," . spectrum highest frequency     : %4.2E\n",(2.0/NF)*(kappa/(2*d)));
 
 @ The covariance can be written to a file with:
 <<save aa covariance to file>>=
@@ -559,8 +553,21 @@ void aaStats::toFile(char *filename)
 }
 
 @ 
-\subsubsection{Phase and Angle--of--arrival covariance matrix}
-\label{sec:phase-angle-arrival}
+\subsubsection{Miscellaneous}
+\label{sec:miscellaneous}
+
+From the power spectrum, once can derive the variance:
+<<aaStats variance>>=
+float aaStats::variance(void) {
+  float res;
+  HANDLE_ERROR( cudaMemcpy( &res, d__cov + (N-1)*(NU+1),
+			    sizeof(float), cudaMemcpyDeviceToHost) );
+  return res;
+}
+
+@ 
+\subsection{Phase and Angle--of--arrival covariance matrix functions}
+\label{sec:pa-functions}
 
 The covariance matrix is defined for a square lenslet array of size $N_L\times N_L$ and of pitch [[sampling]].
 The covariance sampling is set with the over--sampling factor [[osf]]. 
@@ -600,56 +607,11 @@ Finally the Toeplitz compressed version of the matrix $\Xi$ is written:
   \cdots t_\Xi^{{\phi_[[N_P_SRC]]}{x_1}} t_\Xi^{{\phi_[[N_P_SRC]]}{y_1}} \cdots t_\Xi^{{\phi_[[N_P_SRC]]}{x_[[N_S_SRC]]}} t_\Xi^{{\phi_[[N_P_SRC]]}{y_[[N_S_SRC]]}} \right].
 \end{equation}
 
-<<paStats setup I>>=
-void paStats::setup(int N_, int osf_, atmosphere *atm, float lenslet_pitch, 
-		      source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC)
-{
-  N_SRC2 = N_P_SRC*N_S_SRC;
-  float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
-  osf = osf_;
-  N = (osf==1)? N=N_ : osf*N_+1;
-  N2 = N*N;
-  NU = 2*N-1;
-  NU2 = NU*NU;
-  NF = 4096;
-  NF2 = NF*NF;
-  kappa = 4;
-  sampling = lenslet_pitch/osf;
-  M_LAYER = (int *)malloc(sizeof(int)*_N_LAYER_);
+@
+\subsubsection{Setup \& Cleanup}
+\label{sec:setup--cleanup-1}
 
-  
-  if (phase_src->height==slopes_src->height) {
-    psd_size = sizeof(float2)*NF2;
-    cov_size = sizeof(float)*NU2*2*N_SRC2;
-    ind_size = sizeof(int)*N2;
-    int BATCH = 1;
-
-    <<paStats setup allocation>>
-
-    stopwatch tid;
-    tid.tic();
-    <<paStats power spectrum with sources (same heights)>>
-    tid.toc(&cov_eval_et,"PA covariance evaluation");
-  }
-  else {
-    psd_size = sizeof(float2)*NF2;
-    cov_size = sizeof(float)*NU2*2*_N_LAYER_*N_SRC2;
-    ind_size = sizeof(int)*N2;
-    int BATCH = 1;
-
-    <<paStats setup allocation>>
-
-    stopwatch tid;
-    tid.tic();
-    <<paStats power spectrum with sources (different heights)>>
-    tid.toc(&cov_eval_et,"PA covariance evaluation");
-  }
-
-  info(kappa,sampling);
-  
-}
-    
-<<paStats setup II>>=
+<<paStats setup>>=
 void paStats::setup(int M_, int N_, int osf_, atmosphere *atm, float lenslet_pitch, 
 		    source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC)
 {
@@ -667,39 +629,22 @@ void paStats::setup(int M_, int N_, int osf_, atmosphere *atm, float lenslet_pit
   sampling = lenslet_pitch/osf;
   M_LAYER = (int *)malloc(sizeof(int)*_N_LAYER_);
 
-  
-  if (phase_src->height==slopes_src->height) {
-    psd_size = sizeof(float2)*NF2;
-    cov_size = sizeof(float)*NU2*2*N_SRC2;
-    ind_size = sizeof(int)*N2;
-    int BATCH = 1;
+  psd_size = sizeof(float2)*NF2;
+  cov_size = sizeof(float)*NU2*2*N_SRC2;
+  ind_size = sizeof(int)*N2;
+  int BATCH = 1;
 
-    <<paStats setup allocation>>
+  <<paStats setup allocation>>
 
-    stopwatch tid;
-    tid.tic();
-    <<paStats power spectrum with sources (same heights,rect.)>>
-    tid.toc(&cov_eval_et,"PA covariance evaluation");
-  }
-  else {
-    psd_size = sizeof(float2)*NF2;
-    cov_size = sizeof(float)*NU2*2*_N_LAYER_*N_SRC2;
-    ind_size = sizeof(int)*N2;
-    int BATCH = 1;
+  stopwatch tid;
+  tid.tic();
+  <<paStats power spectrum with sources (same heights,rect.)>>
+  tid.toc(&cov_eval_et,"PA covariance evaluation");
 
-    <<paStats setup allocation>>
-
-    stopwatch tid;
-    tid.tic();
-    <<paStats power spectrum with sources (different heights)>>
-    tid.toc(&cov_eval_et,"PA covariance evaluation");
-  }
-
-info(kappa,sampling);
-
+  info(kappa,sampling);
 }
-    
-<<paStats setup III>>=
+@ The covariance is computed for each layers independently in the following:    
+<<paStats setup (multilayers)>>=
 void paStats::setup_multilayers(int M_, int N_, int osf_, atmosphere *atm, float lenslet_pitch, 
 		    source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC)
 {
@@ -714,52 +659,31 @@ void paStats::setup_multilayers(int M_, int N_, int osf_, atmosphere *atm, float
   sampling = lenslet_pitch/osf;
   M_LAYER = (int *)malloc(sizeof(int)*_N_LAYER_);
   
-  if (phase_src->height==slopes_src->height) {
-
-    float g;
-    int o;
-    NU2 = 0;
-    for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
-      g = 1 - atm->turbulence.altitude[k_LAYER]/slopes_src[0].height;
-      o = (int) ceilf( osf*0.5*N_SIDE_LENSLET*(1-g)/g );
-      M_LAYER[k_LAYER] = M + o*2;
-      NU = M_LAYER[k_LAYER]+N-1;
-      NU2 += NU*NU;     
-      //      printf("@(CEO)>paStats: layer #%d - NU=%d\n",k_LAYER,NU);
-    }
-
-    psd_size = sizeof(float2)*NF2;
-    cov_size = sizeof(float)*NU2*2*N_SRC2;
-
-    int BATCH = 1;
-
-    <<paStats setup allocation>>
-
-    stopwatch tid;
-    tid.tic();
-    <<paStats power spectrum with sources (same heights,rect.,multilayers)>>
-    tid.toc(&cov_eval_et,"PA covariance evaluation");
-  }
-  else {
-    N2 = M*N;
-    NU = M+N-1;
-    NU2 = NU*NU;
-
-    psd_size = sizeof(float2)*NF2;
-    cov_size = sizeof(float)*NU2*2*_N_LAYER_*N_SRC2;
-    ind_size = sizeof(int)*N2;
-    int BATCH = 1;
-
-    <<paStats setup allocation>>
-
-    stopwatch tid;
-    tid.tic();
-    <<paStats power spectrum with sources (different heights)>>
-    tid.toc(&cov_eval_et,"PA covariance evaluation");
+  float g;
+  int o;
+  NU2 = 0;
+  for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
+    g = 1 - atm->turbulence.altitude[k_LAYER]/slopes_src[0].height;
+    o = (int) ceilf( osf*0.5*N_SIDE_LENSLET*(1-g)/g );
+    M_LAYER[k_LAYER] = M + o*2;
+    NU = M_LAYER[k_LAYER]+N-1;
+    NU2 += NU*NU;     
+    //      printf("@(CEO)>paStats: layer #%d - NU=%d\n",k_LAYER,NU);
   }
 
-info(kappa,sampling);
+  psd_size = sizeof(float2)*NF2;
+  cov_size = sizeof(float)*NU2*2*N_SRC2;
 
+  int BATCH = 1;
+
+  <<paStats setup allocation>>
+
+      stopwatch tid;
+  tid.tic();
+  <<paStats power spectrum with sources (same heights,rect.,multilayers)>>
+      tid.toc(&cov_eval_et,"PA covariance evaluation");
+
+  info(kappa,sampling);
 }
 
 <<covariance sampling>>=
@@ -772,12 +696,6 @@ int covariance_sampling(float h, float z, int osf, int M, int N) {
   NU = M_LAYER+N-1;
   return NU*NU;      
 }
-@ 
-The parameters of the [[paStats]] structure are:
-<<paStats parameters>>=
-int osf, M;
-int *M_LAYER;
-<<aaStats parameters>>
 @ Memory is allocated with:
 <<paStats setup allocation>>=
 HANDLE_ERROR( cudaMalloc((void**)&d__psd, psd_size ) );
@@ -853,176 +771,7 @@ with
   \label{eq:24}
   W_{\varphi \vec \alpha}^{12}(n,m) = \sum_{l=1}^{[[N]]} \left( 1\over\gamma_l\delta [[NF]]\right)^2 W_{\varphi \vec \alpha}^{l,12}\left({n\over\gamma_l\delta [[NF]]},{m\over\gamma_l\delta [[NF]]}\right)
 \end{equation}
-
-<<paStats power spectrum with sources (different heights)>>=
-dim3 blockDimPsd(16,16);
-dim3 gridDimPsd( 1+NF/16 , 1+NF/16 );
-dim3 blockDimCov(16,16);
-dim3 gridDimCov( 1+NU/16 , 1+NU/16 );
-
-int i_P_SRC, j_S_SRC, offset_i, offset_j, offset, k_LAYER;
-fprintf(stderr,"PA covariance 1x2 block:\n");
-for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
-
-  offset_i = 2*N_S_SRC*i_P_SRC*_N_LAYER_;
-
-  for (j_S_SRC=0;j_S_SRC<N_S_SRC;j_S_SRC++) {
-
-    fprintf(stderr," [%d,%d]",i_P_SRC,j_S_SRC);
-    offset_j = offset_i + 2*j_S_SRC*_N_LAYER_;
-
-    for (k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
-
-      offset = offset_j + 2*k_LAYER;
-      fprintf(stderr,"(%2d",offset);
-      paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch, 
-						      atm->wavelength, atm->r0, atm->turbulence.L0, 
-						      atm->d__turbulence, k_LAYER,
-						      (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
-						      d__alpha, kappa);
-      <<AA covariance with Wiener-Khinchin>>
-      <<AA covariance reduction>>
-
-      offset = offset_j + (2*k_LAYER+1);
-      fprintf(stderr,",%2d)",offset);
-      paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch,
-						      atm->wavelength, atm->r0, atm->turbulence.L0, 
-						      atm->d__turbulence, k_LAYER,
-						      (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
-						      d__beta, kappa);
-      <<AA covariance with Wiener-Khinchin>>
-      <<AA covariance reduction>>
-
-	  }
-  }
-  fprintf(stderr,"\n");
- }
-
-@ The power spectrum is computed with the following kernels:
-<<paStats power spectrum kernel with sources>>=
-__global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
-				float wavelength, float r0, float L0,
-                                profile *turb, int k_LAYER,
-				source *src1, source *src2,
-				float *alpha, float kappa)
-{
-  int i, j, k;
-  float fx, fy, f_square, fs, gl, red, c_red, s_red, wavenumber;
-  i = blockIdx.x * blockDim.x + threadIdx.x;
-  j = blockIdx.y * blockDim.y + threadIdx.y;
-  k = i*NF + j;
-  if ( (i<NF) && (j<(NF)) ) {
-    wavenumber = wavelength*0.5/PI;
-    k = i*NF + j;
-    d__psd[k].x = 0;
-    d__psd[k].y = 0;
-    gl = 1.0-turb->altitude[k_LAYER]/src2->height;
-    red = 2*PI*turb->altitude[k_LAYER];
-    fs = osf*(2.0/NF)*(kappa/(2*d));
-    fx = (float) i;
-    fy = (float) j;
-    if (i>=(NF/2))
-    fx = fx - NF;
-    if (j>=(NF/2))
-    fy = fy - NF;
-    fx *= fs;
-    fy *= fs;
-    f_square = fx*fx + fy*fy;
-    fs *= fs;
-    red *= fx*(src2->theta_x - src1->theta_x) + fy*(src2->theta_y - src1->theta_y);
-    sincosf( red, &s_red, &c_red);
-    red = -wavenumber*turb->xi0[k_LAYER]*fs*wavelength*(fx*alpha[0] + fy*alpha[1])*
-      powf(r0,-5.0/3.0)*
-      phasePowerSpectrum(f_square, 1.0/L0)*
-      gateAmp(gl*fx*d,gl*fy*d);
-    d__psd[k].x += -red*s_red;
-    d__psd[k].y +=  red*c_red;
-  }
-}
-
-<<paStats power spectrum with sources (same heights)>>=
-dim3 blockDimPsd(16,16);
-dim3 gridDimPsd( 1+NF/16 , 1+NF/16 );
-dim3 blockDimCov(16,16);
-dim3 gridDimCov( 1+NU/16 , 1+NU/16 );
-
-int i_P_SRC, j_S_SRC, offset0, offset;
-fprintf(stderr,"Covariance 1x2 block:\n");
-for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
-
-  offset0 = 2*N_S_SRC*i_P_SRC;
-
-  for (j_S_SRC=0;j_S_SRC<N_S_SRC;j_S_SRC++) {
-
-    fprintf(stderr," [%d,%d]",i_P_SRC,j_S_SRC);
-
-    offset = offset0 + 2*j_S_SRC;
-    fprintf(stderr,"(%2d",offset);
-    paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch, 
-						    atm->wavelength, atm->r0, atm->turbulence.L0, atm->d__turbulence,
-						    (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
-						    d__alpha, kappa);
-    <<AA covariance with Wiener-Khinchin>>
-    <<AA covariance reduction>>
-
-    offset = offset0 + (2*j_S_SRC+1);
-    fprintf(stderr,",%2d)",offset);
-    paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch,
-						    atm->wavelength, atm->r0, atm->turbulence.L0, atm->d__turbulence,
-						    (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
-						    d__beta, kappa);
-    <<AA covariance with Wiener-Khinchin>>
-    <<AA covariance reduction>>
-}
-fprintf(stderr,"\n");
-}
-<<paStats power spectrum kernel with sources (same heights)>>=
-__global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
-				float wavelength, float r0, float L0,
-                                profile *turb, source *src1, source *src2,
-				float *alpha, float kappa)
-{
-  int i, j, k;
-  float fx, fy, f_square, fs, gl, red, c_red, s_red, wavenumber, src_x, src_y;
-  i = blockIdx.x * blockDim.x + threadIdx.x;
-  j = blockIdx.y * blockDim.y + threadIdx.y;
-  k = i*NF + j;
-  if ( (i<NF) && (j<(NF)) ) {
-    wavenumber = wavelength*0.5/PI;
-    k = i*NF + j;
-    d__psd[k].x = 0;
-    d__psd[k].y = 0;
-     for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
-      gl = (1-turb->altitude[k_LAYER]/src1->height);
-      red = 2*PI;
-      src_x = src2->theta_x - src1->theta_x;
-      src_x *= turb->altitude[k_LAYER];
-      src_y = src2->theta_y - src1->theta_y;
-      src_y *= turb->altitude[k_LAYER];
-      fs = osf*(2.0/NF)*(kappa/(2*d*gl));
-      fx = (float) i;
-      fy = (float) j;
-      if (i>=(NF/2))
-	fx = fx - NF;
-      if (j>=(NF/2))
-	fy = fy - NF;
-      fx *= fs;
-      fy *= fs;
-      f_square = fx*fx + fy*fy;
-      fs *= fs;
-      //      red *= fx*(src_x + 0.5*d) + fy*(src_y + 0.5*d);
-      red *= fx*(src_x) + fy*(src_y);
-      sincosf( red, &s_red, &c_red);
-      red = -wavenumber*turb->xi0[k_LAYER]*fs*wavelength*(fx*alpha[0] + fy*alpha[1])*
-      powf(r0,-5.0/3.0)*
-      phasePowerSpectrum(f_square, 1.0/L0)*
-	gateAmp(gl*fx*d,gl*fy*d);
-      d__psd[k].x += -red*s_red;
-      d__psd[k].y +=  red*c_red;
-    }
-  }
-}
-@ 
+ 
 %% Rectangular 2RBT
 <<paStats power spectrum with sources (same heights,rect.)>>=
 dim3 blockDimPsd(16,16);
@@ -1031,7 +780,7 @@ dim3 blockDimCov(16,16);
 dim3 gridDimCov( 1+NU/16 , 1+NU/16 );
 
 int i_P_SRC, j_S_SRC, offset0, offset;
-fprintf(stderr,"Covariance 1x2 block:\n");
+fprintf(stderr,"Covariance %dx%d block:\n",N_P_SRC,N_S_SRC);
 for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 
   offset0 = 2*N_S_SRC*i_P_SRC;
@@ -1041,8 +790,8 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
     fprintf(stderr," [%d,%d]",i_P_SRC,j_S_SRC);
 
     offset = offset0 + 2*j_S_SRC;
-    fprintf(stderr,"(%2d",offset);
-    paPowerSpectrumRect LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch, 
+    //fprintf(stderr,"(%2d",offset);
+    paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch, 
 						    atm->wavelength, atm->r0, atm->turbulence.L0, atm->d__turbulence,
 						    (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
 						    d__alpha, kappa);
@@ -1050,8 +799,8 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
     <<PA covariance reduction>>
 
     offset = offset0 + (2*j_S_SRC+1);
-    fprintf(stderr,",%2d)",offset);
-    paPowerSpectrumRect LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch,
+    //fprintf(stderr,",%2d)",offset);
+    paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch,
 						    atm->wavelength, atm->r0, atm->turbulence.L0, atm->d__turbulence,
 						    (phase_src->dev_ptr) + i_P_SRC, (slopes_src->dev_ptr) + j_S_SRC,
 						    d__beta, kappa);
@@ -1060,8 +809,9 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 }
 fprintf(stderr,"\n");
 }
-<<paStats power spectrum kernel with sources (same heights,rect.)>>=
-__global__ void paPowerSpectrumRect(float2 *d__psd, int NF, int osf, float d,
+@ The power spectrum is computed with the following kernels:
+<<paStats power spectrum kernel>>=
+__global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
 				float wavelength, float r0, float L0,
                                 profile *turb, source *src1, source *src2,
 				float *alpha, float kappa)
@@ -1142,7 +892,7 @@ dim3 blockDimCov(16,16);
 dim3 gridDimCov( 1+NU/16 , 1+NU/16 );
 
 int i_P_SRC, j_S_SRC, k_LAYER;
-fprintf(stderr,"Covariance %dx%d block:\n",N_P_SRC*_N_LAYER_,2*N_S_SRC);
+fprintf(stderr,"Covariance %dx%d block:\n",N_P_SRC*_N_LAYER_,N_S_SRC);
 NU2 = 0;
 for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 
@@ -1154,8 +904,8 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 
       fprintf(stderr," [%d,%d]",i_P_SRC+k_LAYER*N_P_SRC,j_S_SRC);
 
-      fprintf(stderr,"(%2d",NU2);
-      paPowerSpectrumRectMultilayers LLL gridDimPsd,blockDimPsd RRR (
+      //fprintf(stderr,"(%2d",NU2);
+      paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (
 			       d__psd, NF, osf, lenslet_pitch, 
 			       atm->wavelength, atm->r0, atm->turbulence.L0, 
 			       atm->d__turbulence, k_LAYER,
@@ -1166,8 +916,8 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 							       d__psd, NF, kappa);
       NU2 += NU*NU;      
 
-      fprintf(stderr,",%2d)",NU2);
-      paPowerSpectrumRectMultilayers LLL gridDimPsd,blockDimPsd RRR (
+      //fprintf(stderr,",%2d)",NU2);
+      paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (
                                d__psd, NF, osf, lenslet_pitch,
 			       atm->wavelength, atm->r0, atm->turbulence.L0, 
 			       atm->d__turbulence, k_LAYER,
@@ -1178,11 +928,11 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 							       d__psd, NF, kappa);
       NU2 += NU*NU;      
     }
-  }
   fprintf(stderr,"\n");
+  }
  }
-<<paStats power spectrum kernel with sources (same heights,rect.,multilayers)>>=
-__global__ void paPowerSpectrumRectMultilayers(float2 *d__psd, int NF, int osf, float d,
+<<paStats power spectrum kernel (single layer)>>=
+__global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
 					       float wavelength, float r0, float L0,
 					       profile *turb, int k_LAYER,
 					       source *src1, source *src2,
@@ -1228,6 +978,18 @@ __global__ void paPowerSpectrumRectMultilayers(float2 *d__psd, int NF, int osf, 
   }
 }
 @ 
+The memory is freed with the following routine:
+<<paStats cleanup>>=
+void paStats::cleanup(void)
+{
+fprintf(stderr,"@(CEO)>paStats: freeing memory!\n");
+free(M_LAYER);
+<<cleanup contents>>
+}
+@
+\subsubsection{Input/Output}
+\label{sec:inputoutput-1}
+
 The main parameters of [[paStats]] are displayed with the info routine: 
 <<paStats info>>=
 void paStats::info(int kappa, float d)
@@ -1238,15 +1000,6 @@ void paStats::info(int kappa, float d)
   fprintf(stderr,"----------------------------------------------------\x1B[0m\n");
 }
 @
-The memory is freed with the following routine:
-<<paStats cleanup>>=
-void paStats::cleanup(void)
-{
-fprintf(stderr,"@(CEO)>paStats: freeing memory!\n");
-free(M_LAYER);
-<<cleanup contents>>
-}
-@ 
 The [[paStats]] covariance can be written to a file with:
 <<save pa covariance to file>>=
 void paStats::toFile(char *filename)
@@ -1254,7 +1007,10 @@ void paStats::toFile(char *filename)
   dev2file(filename, d__cov, cov_size/sizeof(float));
 }
 
-@ 
+@
+\subsubsection{Miscellaneous}
+\label{sec:miscellaneous-1}
+
 The phase power spectrum is given by:
 <<phase power spectrum>>=
  __device__ float phasePowerSpectrum(float f_square, float f0) {
@@ -1296,185 +1052,6 @@ __device__ float sinc(float x) {
   return (x==0) ? 1.0 : sinf( PI*x) / (PI*x) ; 
 }
 
-<<aaStats covariance>>=
-fprintf(stderr,"Covariance block: ");
-for (int k=0;k<N_SRC2;k++) {
-  fprintf(stderr,"#%d, ",k);
-  if (cufftExecC2C(plan, d__psd + 4*k*NF2, d__psd + 4*k*NF2, CUFFT_FORWARD) 
-      != CUFFT_SUCCESS){
-    fprintf(stderr,"CUFFT Error: Unable to execute plan\n");
-  }
-  if (cudaThreadSynchronize() != cudaSuccess){
-    fprintf(stderr, "Cuda error: Failed to synchronize\n");
-  }
-  dim3 blockDim(16,16);
-  dim3 gridDim( 1+NU/16 , 1+NU/16 );
-  covariance_extraction LLL gridDim,blockDim RRR( d__cov + 4*k*NU2    , NU,
-						  d__psd + 4*k*NF2, NF, kappa);
-  covariance_extraction LLL gridDim,blockDim RRR( d__cov + (4*k+1)*NU2, NU,
-						  d__psd + (4*k+1)*NF2, NF, kappa);
-  covariance_extraction LLL gridDim,blockDim RRR( d__cov + (4*k+2)*NU2, NU,
-						  d__psd + (4*k+2)*NF2, NF, kappa);
-  covariance_extraction LLL gridDim,blockDim RRR( d__cov + (4*k+3)*NU2, NU,
-						  d__psd + (4*k+3)*NF2, NF, kappa);
-}
-fprintf(stderr,"\b\b\n");
-
-<<paStats covariance>>=
-if (cufftExecC2C(plan, d__psd, d__psd, CUFFT_FORWARD) 
-    != CUFFT_SUCCESS){
-  fprintf(stderr,"CUFFT Error: Unable to execute plan\n");
- }
-if (cudaThreadSynchronize() != cudaSuccess){
-  fprintf(stderr, "Cuda error: Failed to synchronize\n");
- }
-blockDim = dim3(16,16);
-gridDim = dim3( 1+NU/16 , 1+NU/16 );
-covariance_extraction LLL gridDim,blockDim RRR( d__cov, NU, d__psd, NF, kappa);
-covariance_extraction LLL gridDim,blockDim RRR( d__cov + NU2, NU, d__psd + NF2, NF, kappa);
-
-<<paStats covariance with sources (different heights)>>=
-blockDim = dim3(16,16);
-gridDim = dim3( 1+NU/16 , 1+NU/16 );
-for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
-  if (cufftExecC2C(plan, d__psd + 2*k_LAYER*NF2, d__psd + 2*k_LAYER*NF2, CUFFT_FORWARD) 
-      != CUFFT_SUCCESS){
-    fprintf(stderr,"CUFFT Error: Unable to execute plan\n");
-  }
-  if (cudaThreadSynchronize() != cudaSuccess){
-    fprintf(stderr, "Cuda error: Failed to synchronize\n");
-  }
-  covariance_extraction LLL gridDim,blockDim RRR( d__cov + 2*k_LAYER*NU2,     NU, d__psd + 2*k_LAYER*NF2,     NF, kappa);
-  covariance_extraction LLL gridDim,blockDim RRR( d__cov + (2*k_LAYER+1)*NU2, NU, d__psd + (2*k_LAYER+1)*NF2, NF, kappa);
-}
-
-
-@ The product between the covariance matrix and a vector is done by interpolating the matrix values into [[d__cov]] and multiplying and summing the interpolated covariance values with the vector values.
-[[d__cov]] is a $[[NU]]\times[[NU]]$ array sampled at the coordinates: $$x,y = \left[ -{[[NU]]-1\over 2},\dots,{[[NU]]-1\over 2}  \right]\times [[sampling]]$$ covering a $\left([[NU]]-1\right)\times [[sampling]]$ area.
-The covariance matrix is defined between the coordinate grids $(x_1,y_1)$ and $(x_2,y_2)$.
-The slopes are sampled on the grid $(x_2,y_2)$ with $(x,y)_2 =d_2\left((i,j) + (1 - N_2)/2 \right)$ and $i,j=0,\dots,N_2-1$
- and the phase values are sampled on the grid $(x_1,y_1)$ with $(x,y)_1 =d_1\left(i + (1 - N_1)/2 \right)$ and $i,j=0,\dots,N_1-1$.
-The covariance matrix size is then $N_1^2\times N_2^2$.
-<<matrix-to-vector product>>=
-void paStats::MVM(float *out_vector, float *in_vector, 
-		  float d1, float g1, int N1, 
-		  float d2, int N2,
-		  atmosphere *atm, 
-		  source *phase_src, int N_P_SRC,
-		  source *slopes_src, int N_S_SRC) 
-{
-  dim3 blockDim(16,16);
-  dim3 gridDim( 1 + N1/16 , 1 + N1/16 , N_P_SRC);
-  stopwatch tid;
-  tid.tic();
-  MVM_kernel LLL gridDim,blockDim RRR (out_vector, in_vector, 
-				       sampling, NU, d__cov,
-				       d1, g1, N1,
-				       d2, N2,
-				       atm->d__turbulence,
-				       phase_src->dev_ptr,
-				       slopes_src->dev_ptr, N_S_SRC);
-  tid.toc("Product phase/slope covariance");
-}
-@ with the kernel
-<<matrix-to-vector product kernel>>=
-__global__ void MVM_kernel(float *out_vector, float *in_vector, 
-			   float sampling, int NU, float *cov,
-			   float d1, float g1, int N1, 
-			   float d2, int N2,
-			   profile *turb, 
-			   source *src1, source *src2, int N_SRC2) 
-{
-  int col ,row, i1, j1, i2, j2, k, i_P_SRC, j_S_SRC, offset;
-  float xi, yi, x1, y1, covi_x, covi_y, g2;
-  int ndx;
-  float s, t, fs, ft, onemt, *z;
-  i1 = blockIdx.x * blockDim.x + threadIdx.x;
-  j1 = blockIdx.y * blockDim.y + threadIdx.y;
-  i_P_SRC = blockIdx.z;
-  if ( (i1<N1) & (j1<N1) ) {
-    row = j1 + i1*N1 + i_P_SRC*N1*N1;
-    out_vector[row] = 0;
-    covi_x = covi_y = 0;
-    for (j_S_SRC=0;j_S_SRC<N_SRC2;j_S_SRC++) {
-      offset = j_S_SRC*2*_N_LAYER_;
-      for (k=0;k<_N_LAYER_;k++) {
-	g2 = 1.0 - turb->altitude[k]/src2[j_S_SRC].height;
-	<<coordinates 1>>
-	    for (i2=0;i2<N2;i2++) {
-	      for (j2=0;j2<N2;j2++) {
-		col = j2 + i2*N2;
-		<<coordinates 2>>
-		    //    covi_x = interpolate(xi,yi, cov + (2*k+offset)*NU*NU,sampling,NU);
-		    //covi_y = interpolate(xi,yi, cov+(2*k+1+offset)*NU*NU,sampling,NU);
-		<<bilinear interpolation>>
-		onemt = 1 - t;
-		z = cov + (2*k+offset)*NU*NU;
-		covi_x =  ( ( z[ndx]*onemt + z[ndx+1]*t )*(1-s) + 
-			 ( z[ndx+NU]*onemt + z[ndx+NU+1]*t )*s );
-		out_vector[row] += covi_x*in_vector[col + 2*j_S_SRC*N2*N2];
-		z = cov + (2*k+1+offset)*NU*NU;
-		covi_y =  ( ( z[ndx]*onemt + z[ndx+1]*t )*(1-s) + 
-			 ( z[ndx+NU]*onemt + z[ndx+NU+1]*t )*s );
-		out_vector[row] += covi_y*in_vector[col + (2*j_S_SRC+1)*N2*N2];
-	      }
-	    }
-      }
-    }
-  }
-}
-<<2D interpolation>>=
-__device__ float interpolate(float xi, float yi, 
-	   float *z, float sampling, int NU)
-{
-int ndx;
-float s, t, fs, ft, onemt;
-<<bilinear interpolation>>
-<<bilinear interpolation end>>
-}
-<<2D interpolation kernel>>=
-__global__ void interpolate(float *zi, float xi, float yi, 
-	   float *z, float sampling, int NU)
-{
-int ndx;
-float s, t, fs, ft, onemt;
-<<bilinear interpolation>>
-onemt = 1 - t;
-*zi = ( z[ndx]*onemt + z[ndx+1]*t )*(1-s) + 
-        ( z[ndx+NU]*onemt + z[ndx+NU+1]*t )*s;
-}
-@  $x_1$ and $y_1$ coordinates:
-<<coordinates 1>>=
-x1 = g1*d1*(i1 + (1-N1)*0.5);
-y1 = g1*d1*(j1 + (1-N1)*0.5);
-@  $x_2$ and $y_2$ coordinates:
-<<coordinates 2>>=
-xi = g2*d2*(i2 + (1-N2)*0.5) - x1;
-yi = g2*d2*(j2 + (1-N2)*0.5) - y1;
-@ The interpolation starts with normalizing the coordinates to the pixel size i.e.
-<<bilinear interpolation>>=
-s = (NU-1)*( xi/(sampling*(NU-1)) + 0.5 );
-t = (NU-1)*( yi/(sampling*(NU-1)) + 0.5 );
-@  and taking the floor integer part to locate the bottom--left coordinate of the pixels surrounding [[xi]] and [[yi]]
-<<bilinear interpolation>>=
-fs  = floorf(s);
-ft  = floorf(t);
-ndx = __float2int_rd( ft + fs*NU );
-@ Next, one checks if the edges of the array have been reached
-<<bilinear interpolation>>=
-if (s==(NU-1)) { s += 1 - fs; ndx -= NU; } else { s -= fs; }    
-if (t==(NU-1)) { t += 1 - ft; ndx -= 1; }   else { t -= ft; }
-@ and finally the interpolation is computed as
-<<bilinear interpolation end>>=	 
-onemt = 1 - t;
-return ( ( z[ndx]*onemt + z[ndx+1]*t )*(1-s) + 
-        ( z[ndx+NU]*onemt + z[ndx+NU+1]*t )*s );
-@ matrix--to--vector product
-<<MAC>>=
-covi = interpolate(xi,yi,cov + 2*k*NU*NU,sampling,NU);
-out_vector[row] += covi*in_vector[col];
-covi = interpolate(xi,yi,cov+(2*k+1)*NU*NU,sampling,NU);
-out_vector[row] += covi*in_vector[col+N2*N2];
 @
 \subsection{Tests}
 \label{sec:tests}
