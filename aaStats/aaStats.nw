@@ -50,9 +50,6 @@ struct paStats {
   void setup(int M_, int N_, int osf_, atmosphere *atm, float lenslet_pitch, 
 	     source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC);
 
-  void setup_multilayers(int M_, int N_, int osf_, atmosphere *atm, float lenslet_pitch, 
-	     source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC);
-
   void cleanup(void);
 
   void info(int kappa, float d);
@@ -99,7 +96,6 @@ struct paStats {
 <<aaStats setup>>
 
 <<paStats setup>>
-<<paStats setup (multilayers)>>
 
 <<save aa covariance to file>>
 <<save pa covariance to file>>
@@ -612,8 +608,8 @@ Finally the Toeplitz compressed version of the matrix $\Xi$ is written:
 \label{sec:setup--cleanup-1}
 
 <<paStats setup>>=
-void paStats::setup(int M_, int N_, int osf_, atmosphere *atm, float lenslet_pitch, 
-		    source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC)
+  void paStats::setup(int M_, int N_, int osf_, atmosphere *atm, float lenslet_pitch, 
+		      source *phase_src_in, int N_P_SRC, source *slopes_src, int N_S_SRC)
 {
   N_SRC2 = N_P_SRC*N_S_SRC;
   float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
@@ -627,64 +623,65 @@ void paStats::setup(int M_, int N_, int osf_, atmosphere *atm, float lenslet_pit
   NF2 = NF*NF;
   kappa = 4;
   sampling = lenslet_pitch/osf;
-  M_LAYER = (int *)malloc(sizeof(int)*_N_LAYER_);
+  source *phase_src;
 
-  psd_size = sizeof(float2)*NF2;
-  cov_size = sizeof(float)*NU2*2*N_SRC2;
-  ind_size = sizeof(int)*N2;
-  int BATCH = 1;
+  if (phase_src_in[0].height==slopes_src[0].height) {
 
-  <<paStats setup allocation>>
+    phase_src = phase_src_in;
 
-  stopwatch tid;
-  tid.tic();
-  <<paStats power spectrum with sources (same heights,rect.)>>
-  tid.toc(&cov_eval_et,"PA covariance evaluation");
+    M_LAYER = (int *)malloc(sizeof(int));
+    M_LAYER[0] = M; 
+
+    psd_size = sizeof(float2)*NF2;
+    cov_size = sizeof(float)*NU2*2*N_SRC2;
+    ind_size = sizeof(int)*N2;
+    int BATCH = 1;
+
+    <<paStats setup allocation>>
+
+    stopwatch tid;
+    tid.tic();
+    <<paStats power spectrum with sources (same heights,rect.)>>
+    tid.toc(&cov_eval_et,"PA covariance evaluation");
+
+  } else {
+     <<paStats setup (multilayers)>>
+  }
 
   info(kappa,sampling);
 }
 @ The covariance is computed for each layers independently in the following:    
 <<paStats setup (multilayers)>>=
-void paStats::setup_multilayers(int M_, int N_, int osf_, atmosphere *atm, float lenslet_pitch, 
-		    source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC)
-{
-  N_SRC2 = N_P_SRC*N_S_SRC;
-  float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
-  osf = osf_;
-  N = N_;
-  M = M_;
-  NF = 4096;
-  NF2 = NF*NF;
-  kappa = 4;
-  sampling = lenslet_pitch/osf;
-  M_LAYER = (int *)malloc(sizeof(int)*_N_LAYER_);
-  
-  float g;
-  int o;
-  NU2 = 0;
-  for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
-    g = 1 - atm->turbulence.altitude[k_LAYER]/slopes_src[0].height;
-    o = (int) ceilf( osf*0.5*N_SIDE_LENSLET*(1-g)/g );
-    M_LAYER[k_LAYER] = M + o*2;
-    NU = M_LAYER[k_LAYER]+N-1;
-    NU2 += NU*NU;     
-    //      printf("@(CEO)>paStats: layer #%d - NU=%d\n",k_LAYER,NU);
-  }
+source clone_phase_src;
+clone_phase_src.setup(phase_src_in[0].zenith,phase_src_in[0].azimuth,slopes_src[0].height,0);
+phase_src = &clone_phase_src;
 
-  psd_size = sizeof(float2)*NF2;
-  cov_size = sizeof(float)*NU2*2*N_SRC2;
+float g;
+int o;
+NU2 = 0;
+M_LAYER = (int *)malloc(sizeof(int)*_N_LAYER_);
+for (int k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
+  g = 1 - atm->turbulence.altitude[k_LAYER]/slopes_src[0].height;
+  o = (int) ceilf( osf*0.5*N_SIDE_LENSLET*(1-g)/g );
+  M_LAYER[k_LAYER] = M + o*2;
+  NU = M_LAYER[k_LAYER]+N-1;
+  NU2 += NU*NU;     
+  //      printf("@(CEO)>paStats: layer #%d - NU=%d\n",k_LAYER,NU);
+ }
 
-  int BATCH = 1;
+psd_size = sizeof(float2)*NF2;
+cov_size = sizeof(float)*NU2*2*N_SRC2;
 
-  <<paStats setup allocation>>
+int BATCH = 1;
 
-      stopwatch tid;
-  tid.tic();
-  <<paStats power spectrum with sources (same heights,rect.,multilayers)>>
-      tid.toc(&cov_eval_et,"PA covariance evaluation");
+<<paStats setup allocation>>
+	
+stopwatch tid;
+tid.tic();
+<<paStats power spectrum with sources (same heights,rect.,multilayers)>>
+  tid.toc(&cov_eval_et,"PA covariance evaluation");
 
-  info(kappa,sampling);
-}
+clone_phase_src.cleanup();
 
 <<covariance sampling>>=
 int covariance_sampling(float h, float z, int osf, int M, int N) {

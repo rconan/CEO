@@ -395,29 +395,18 @@ void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star,
   osf = 1;
   NP = osf*N_SIDE_LENSLET+1;
 
+  pa.setup(NP,N_SIDE_LENSLET,osf,atm,sampling,
+           mmse_star, N_mmse_star, guide_star, N_guide_star);
+
   if (mmse_star[0].height==guide_star[0].height) {
 
-     PS_E_N_PX = NP;
-     PS_E_N_PX *= PS_E_N_PX;
+     paCov.setup(N_mmse_star,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET,pa.d__cov);
 
-     pa.setup(NP,N_SIDE_LENSLET,osf,atm,sampling,
-           mmse_star, N_mmse_star, guide_star, N_guide_star);
-     paCov.setup(N_mmse_star,2*N_guide_star,NP,N_SIDE_LENSLET,pa.d__cov);
-
+     PS_E_N_PX = paCov.MT2_TOTAL;
      nnz = 0;
 
   } else {
  
-
-
-  source clone_mmse_star;
-  clone_mmse_star.setup(mmse_star[0].zenith,mmse_star[0].azimuth,guide_star[0].height,0);
-
-  pa.setup_multilayers(NP,N_SIDE_LENSLET,osf,atm,sampling,
-           &clone_mmse_star, N_mmse_star, guide_star, N_guide_star);
-
-  clone_mmse_star.cleanup();
-
   paCov.setup(N_mmse_star*_N_LAYER_,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET,pa.d__cov);
 
   PS_E_N_PX = paCov.MT2_TOTAL;
