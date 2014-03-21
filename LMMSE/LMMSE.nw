@@ -43,6 +43,7 @@ struct LMMSE {
   void estimation_old(float* d__c, int nMaxIteration);
   void estimation(float* d__c, int nMaxIteration);
 
+  void toFile(const char *filename);
 };
 #endif // __LMMSE_H__
 @
@@ -65,6 +66,9 @@ struct LMMSE {
 <<wavefront estimation (old version I)>>
 <<wavefront estimation (old version II)>>
 <<wavefront estimation>>
+
+<<phase estimate to file>>
+
 @
 
 \subsection{Parameters}
@@ -73,7 +77,7 @@ struct LMMSE {
 The parameters are defined in
 <<parameters>>=
 int *d__idx, PS_E_N_PX, N_guide_star, offset, NP, osf;
-float *d__ce, *d__phase_est, *d__phase_est_i, *d__x;
+float *d__ce, *d__phase_est, *d__phase_est_c, *d__phase_est_i, *d__x;
 aaStats aa;
 BTBT aaCov;
 paStats pa;
@@ -429,7 +433,7 @@ void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star,
 
 d__idx = 0;
 d__ce  = 0;
-HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est, sizeof(float)*PS_E_N_PX ) );
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est_c, sizeof(float)*PS_E_N_PX ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
 }
@@ -453,7 +457,7 @@ void LMMSE::cleanup(void)
 
   if (d__idx) HANDLE_ERROR( cudaFree( d__idx ) );
   if (d__ce)  HANDLE_ERROR( cudaFree( d__ce ) );
-  HANDLE_ERROR( cudaFree( d__phase_est ) );
+  HANDLE_ERROR( cudaFree( d__phase_est_c ) );
   HANDLE_ERROR( cudaFree(d__x) );
 
   if (nnz) {
@@ -540,8 +544,10 @@ tid.tic();
 HANDLE_ERROR_CUSPARSE( cusparseScsrmv(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
 				      NI*NI, paCov.MT2_TOTAL, nnz, &alpha,
 				      descr, csrValH, csrRowPtrH, csrColIndH,
-				      d__phase_est, &beta, d__phase_est_i),
+				      d__phase_est_c, &beta, d__phase_est_i),
 		       "Sparse to vector product failed!");
+
+d__phase_est = d__phase_est_i;
 
 tid.toc("WAVEFRONT ESTIMATION (SPARSE MVM)");
 }
@@ -559,7 +565,9 @@ tid.toc("WAVEFRONT ESTIMATION (MINRES)");
 
 tid.tic();
 
-paCov.MVM(d__phase_est,d__x);
+paCov.MVM(d__phase_est_c,d__x);
+
+d__phase_est = d__phase_est_c;
 
 tid.toc("WAVEFRONT ESTIMATION (PA MVM)");
 
@@ -582,7 +590,7 @@ free(idx);
 <<MVM (prep.)>>=
 HANDLE_ERROR( cudaMalloc((void**)&d__ce, sizeof(float)*PS_E_N_PX*2*N_guide_star ) );
 HANDLE_ERROR( cudaMemset(d__ce, 0, sizeof(float)*PS_E_N_PX*2*N_guide_star ) );
-HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est_c           , sizeof(float)*PS_E_N_PX ) );
 
 <<MVM>>=
 dim3 blockDim(16,16);
@@ -593,7 +601,7 @@ for (int k_guide_star=0;k_guide_star<N_guide_star;k_guide_star++) {
   set_pa_input LLL gridDim,blockDim RRR (d__ce + (2*k_guide_star+1)*PS_E_N_PX,
 					 d__x + (2*k_guide_star+1)*_N_LENSLET_, d__idx, N_SIDE_LENSLET);
  }
-paCov.MVM(d__phase_est,d__ce);
+paCov.MVM(d__phase_est_c,d__ce);
 
 @ 
 
@@ -942,3 +950,8 @@ fid = fopen(filename,"wb");
 //fid = fopen("phaseScreenEst.bin","wb");
 fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
 fclose(fid);
+
+<<phase estimate to file>>=
+void LMMSE::toFile(const char *filename){
+  dev2file(filename,d__phase_est,NP*NP);
+}

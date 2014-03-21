@@ -6,9 +6,9 @@
 \RequirePackage[dvips]{graphicx}
 \RequirePackage{color,amsmath,amssymb,lastpage,booktabs,xspace}
 \RequirePackage{tikz}
-\DeclareOption*{\PassOptionsToClass{\CurrentOption}{article}}
+\DeclareOption*{\PassOptionsToClass{\CurrentOption}{report}}
 \ProcessOptions
-\LoadClass[twoside,a4paper,10pt]{article}
+\LoadClass[twoside,a4paper,10pt]{report}
 
 % \newcommand{\Project}[1]  {\renewcommand{\DH@project}{#1}}
 % \newcommand{\DocNumber}[1]  {\renewcommand{\DH@number}{#1}}
