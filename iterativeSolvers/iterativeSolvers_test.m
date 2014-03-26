@@ -8,7 +8,7 @@ r0 = 15e-2;
 L0 = 30;
 atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
 lambda = atm.wavelength;
-phase2nm = 1e9*lambda/2/pi;
+phase2nm = 1e9;%*lambda/2/pi;
     
 D = 30;
 
@@ -27,7 +27,7 @@ nPxLenslet = 16;
 cxy0 = 0.5*(nPxLenslet-1);
 nxy = nLenslet*nPxLenslet;
 
-ne = 2*nLenslet+1;
+ne = nLenslet+1;
 
 compile = true;
 
@@ -46,7 +46,7 @@ unix('make clean all')
 % clear ceo_imaging
 % mex -largeArrayDims -I../include -L../lib -lceo -o ceo_imaging imaging.mex.cu
 %%
-nIt = 400;
+nIt = 100;
 cd([ceodir,'/iterativeSolvers'])
 unix('make iterativeSolvers.bin')
 % fprintf(' ==>>> CG (N=%d)\n',nLenslet)
@@ -59,7 +59,7 @@ unix(sprintf('./a.out %3.1f MINRES > MINRES_%03d_%03d.log',D,nIt,nLenslet));
 toc
 %%
 % ps = loadBin('phaseScreen',[nxy,nxy]);
-ps = phase2nm*loadBin('phaseScreenLowRes',[ne,ne]);
+ps = phase2nm*loadBin('phaseScreenLowRes','map');
 ps = ps - mean(ps(:));
 figure(102)
 % subplot(2,3,[1,2])
@@ -75,15 +75,15 @@ colorbar('location','north')
 
 %ps_e = phase2nm*loadBin('phaseScreenEst',[ne,ne]);
 %ps_e = phase2nm*loadBin(sprintf('CG_phaseEst_%3d_%2d',nIt,nLenslet),[ne*ne,nIt]);
-ps_e = phase2nm*loadBin(sprintf('MINRES_phaseEst_%d',nIt),[ne*ne]);
-ps_e = bsxfun( @minus, ps_e, mean(ps_e,1) );
+ps_e = phase2nm*loadBin(sprintf('MINRES_phaseEst_%d',nIt),'map');
+ps_e = bsxfun( @minus, ps_e, mean(ps_e(:),1) );
 ps_e_k = reshape(ps_e,[ne,ne]);
 subplot(3,4,[1,6])
 imagesc([ps,ps_e_k])
 axis equal tight
 xlabel(colorbar('location','northOutside'),'[nm]')
 
-ps_err = bsxfun( @minus, ps(:), ps_e);
+ps_err = bsxfun( @minus, ps(:), ps_e(:));
 rms_ps_err = std(ps_err);
 ps_err_k = reshape(ps_err,[ne,ne]);
 subplot(3,4,[3,8])

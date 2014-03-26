@@ -31,7 +31,7 @@ struct aaStats {
 
   <<aaStats parameters>>
 
-  void setup(int N, atmosphere *atm, float lenslet_pitch, source *src, int N_SRC);
+  void setup(int N, const atmosphere *atm, float lenslet_pitch, const source *src, int N_SRC);
 
   void cleanup(void);
 
@@ -47,8 +47,8 @@ struct paStats {
 
   <<paStats parameters>>
 
-  void setup(int M_, int N_, int osf_, atmosphere *atm, float lenslet_pitch, 
-	     source *phase_src, int N_P_SRC, source *slopes_src, int N_S_SRC);
+  void setup(int M_, int N_, int osf_, const atmosphere *atm, float lenslet_pitch, 
+	     source *phase_src, int N_P_SRC, const source *slopes_src, int N_S_SRC);
 
   void cleanup(void);
 
@@ -232,8 +232,8 @@ Finally the Toeplitz compressed version of the matrix $\Theta$ is written:
 \label{sec:setup--cleanup}
 
 <<aaStats setup>>=
-void aaStats::setup(int N_, atmosphere *atm, float lenslet_pitch, 
-		    source *src, int N_SRC)
+void aaStats::setup(int N_, const atmosphere *atm, float lenslet_pitch, 
+		    const source *src, int N_SRC)
 {
   N_SRC2 = N_SRC*N_SRC;
   int BATCH = 1;
@@ -608,8 +608,8 @@ Finally the Toeplitz compressed version of the matrix $\Xi$ is written:
 \label{sec:setup--cleanup-1}
 
 <<paStats setup>>=
-  void paStats::setup(int M_, int N_, int osf_, atmosphere *atm, float lenslet_pitch, 
-		      source *phase_src_in, int N_P_SRC, source *slopes_src, int N_S_SRC)
+  void paStats::setup(int M_, int N_, int osf_, const atmosphere *atm, float lenslet_pitch, 
+		      source *phase_src_in, int N_P_SRC, const source *slopes_src, int N_S_SRC)
 {
   N_SRC2 = N_P_SRC*N_S_SRC;
   float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
@@ -1082,6 +1082,7 @@ __global__ void fill(float *A, int m_a, int n_a) {
 
 int main( void) {
   atmosphere atm;
+  source src;
   aaStats aa;
   paStats pa;
   BTBT C, S;
@@ -1097,6 +1098,7 @@ int main( void) {
   cublasStatus_t status;
 
   atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
+  src.setup(0,0,INFINITY);
 
   int N_[N_RUN] = {20,40,64,84,150};
   float aa_full_mvm_et[N_RUN], pa_full_mvm_et[N_RUN], aa_comp_mvm_et[N_RUN], pa_comp_mvm_et[N_RUN], 
@@ -1107,7 +1109,7 @@ int main( void) {
   float alpha, beta;
   alpha = 1;
   beta  = 0;
-  osf = 2;
+  osf = 1;
 
   std::ofstream aa_fid, pa_fid;
   aa_fid.open ("aa_runtime.txt");
@@ -1127,6 +1129,8 @@ int main( void) {
   //AASTATS TESTS
   for (k_N=0;k_N<N_RUN;k_N++) {
 
+    printf("\n_______ AASTATS TESTS: SAMPLE #%d - RUN #%d _______\n",k_SAMPLE,k_N);
+
     N = N_[k_N];
     NX = N*N*2;
     data_size = sizeof(float)*NX;
@@ -1141,7 +1145,7 @@ int main( void) {
     }
     HANDLE_ERROR( cudaMemcpy( d__x, x, data_size, cudaMemcpyHostToDevice) );
 
-    aa.setup(N,&atm,0.1);
+    aa.setup(N,&atm,0.1,&src,1);
     C.setup(2,2,N,aa.d__cov);
     aa_comp_eval_et[k_N] = aa.cov_eval_et;
     
@@ -1192,9 +1196,13 @@ int main( void) {
   //PASTATS TESTS
   for (k_N=0;k_N<N_RUN;k_N++) {
 
-    N = 2*N_[k_N]+1;
-    NX = N*N*2;
-    NY = N*N;
+    printf("\n_______ PASTATS TESTS: SAMPLE #%d - RUN #%d _______\n",k_SAMPLE,k_N);
+
+    //    N = 2*N_[k_N]+1;
+    NX = N_[k_N];
+    NX *= NX*2;
+    NY = N_[k_N] + 1;
+    NY *= NY;
     data_size = sizeof(float);
 
     x = (float *)malloc( data_size*NX );
@@ -1206,8 +1214,8 @@ int main( void) {
       x[k] = (float)k;
     }
     HANDLE_ERROR( cudaMemcpy( d__x, x, data_size*NX, cudaMemcpyHostToDevice) );
-    pa.setup(N_[k_N],osf,&atm,0.1);
-    S.setup(1,2,N,pa.d__cov);
+    pa.setup(N_[k_N]+1,N_[k_N],osf,&atm,0.1,&src,1,&src,1);
+    S.setup(1,2,N_[k_N]+1,N_[k_N],pa.d__cov);
     pa_comp_eval_et[k_N] = pa.cov_eval_et;
 
     tid.tic();
@@ -1225,9 +1233,9 @@ int main( void) {
     fwrite(y,sizeof(float),NY,aa_fid);
     fclose(aa_fid);
 
-    if (N<=100) {
-      MA = N*N;
-      NA = 2*MA;
+    if (N_[k_N]<=100) {
+      MA = NY;
+      NA = NX;
       data_size = sizeof(float)*MA*NA;
       HANDLE_ERROR( cudaMalloc((void**)&d__A, data_size ) );
       gridDim = dim3(1+MA/16,1+NA/16);

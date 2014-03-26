@@ -27,10 +27,10 @@ r0 = d;
 L0 = 30;
 atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
 lambda = atm.wavelength;
-phase2nm = 1e9*lambda/2/pi;
+phase2nm = 1e9;%*lambda/2/pi;
 
 nIt = 200;
-ne = 2*nLenslet+1;
+ne = nLenslet+1;
 
 compile = true;
 figure(102)
@@ -46,16 +46,16 @@ unix(['sed -i ',...
 unix('cat definitions.h');
 cd(ceodir)
 unix('make clean all')
-cd([ceodir,'/iterativeSolvers'])
-unix('make iterativeSolvers.bin')
 % unix('make imaging.mex')
 % clear ceo_imaging
 % mex -largeArrayDims -I../include -L../lib -lceo -o ceo_imaging imaging.mex.cu
 %%
-%  fprintf(' ==>>> CG (N=%d)\n',nLenslet)
-%  tic
-% unix(sprintf('./a.out %3.1f CG > CVGCE_CG_%03d_%03d.log',D,nIt,nLenslet));
-% toc
+cd([ceodir,'/iterativeSolvers'])
+unix('make iterativeSolvers.bin')
+ fprintf(' ==>>> CG (N=%d)\n',nLenslet)
+ tic
+unix(sprintf('./a.out %3.1f CG > CVGCE_CG_%03d_%03d.log',D,nIt,nLenslet));
+toc
 fprintf(' ==>>> MINRES (N=%d)\n',nLenslet)
 tic
 unix(sprintf('./a.out %3.1f MINRES > CVGCE_MINRES_%03d_%03d.log',D,nIt,nLenslet));
@@ -69,7 +69,7 @@ colorbar('location','north')
 
 end
 %%
-pup = tools.piston(ne,'type','logical');
+pup = tools.piston(ne,'type','logical','shape','square');
 % ps = loadBin('phaseScreen',[nxy,nxy]);
 ps = phase2nm*loadBin(sprintf('CVGCE_phaseScreenLowRes_%03d',nLenslet),[ne,ne]);
 ps = pup.*(ps - mean(ps(pup)));
