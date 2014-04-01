@@ -13,9 +13,9 @@ D = D_(kRun);
 %      'fractionnalR0',[0.2, 0.1, 0.1, 0.3, 0.2, 0.05, 0.05],...
 %      'windSpeed',[10, 5, 7.5, 5, 10, 12, 15],...
 %      'windDirection',[0, 0.25, 0.5, 1, 1.5, 1.75, 2]);
-% atm = gmtAtmosphere(1);
-% r0 = atm.r0;
-% L0 = atm.L0;
+atm = gmtAtmosphere(1);
+r0 = atm.r0;
+L0 = atm.L0;
 
  nLenslet = nLenslet_(kRun);
 d = D/nLenslet;
@@ -24,8 +24,8 @@ cxy0 = 0.5*(nPxLenslet-1);
 nxy = nLenslet*nPxLenslet;
 
 r0 = d;
-L0 = 30;
-atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
+% L0 = 30;
+% atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
 lambda = atm.wavelength;
 phase2nm = 1e9;%*lambda/2/pi;
 
@@ -66,6 +66,8 @@ subplot(3,4,[9,12])
 imagesc(c)
 axis equal tight
 colorbar('location','north')
+
+drawnow
 
 end
 %%
@@ -149,4 +151,74 @@ ylabel('WFE [nm]')
 legend('MINRES','CG',0)
 
 end
+%}
+
+%% 
+%{
+nu = 2*nLenslet-1;
+AA = loadBin('aaCovariance',[nu,nu*4]);
+figure(301),subplot(2,1,1),imagesc(AA),axis equal tight
+
+nm = ones(1,2)*nLenslet;
+u = 1:nu;
+T = toeplitzBlockToeplitz( nm, nm, AA(:,u) );
+CTBT{1,1} = T;
+u = u + nu;
+T = toeplitzBlockToeplitz( nm, nm, AA(:,u) );
+CTBT{1,2} = T;
+u = u + nu;
+T = toeplitzBlockToeplitz( nm, nm, AA(:,u) );
+CTBT{2,1} = T;
+u = u + nu;
+T = toeplitzBlockToeplitz( nm, nm, AA(:,u) );
+CTBT{2,2} = T;
+
+AA_full = cell2mat(cellfun( @(x)full(x) , CTBT , 'UniformOutput', false));
+% figure(302),imagesc(AA_full)
+% M = spdiags(diag(AA_full), 0 , nLenslet^2*2, nLenslet^2*2);
+
+nu = 2*nLenslet;
+PA = loadBin('paCovariance',[nu,nu*2]);
+figure(301),subplot(2,1,2),imagesc(PA),axis equal tight
+
+nm = [ne,nLenslet];
+u = 1:nu;
+ST{1} = toeplitzBlockToeplitz( nm, nm, PA(:,u) );
+u = u + nu;
+ST{2} = toeplitzBlockToeplitz( nm, nm, PA(:,u) );
+
+figure(303),imagesc(cell2mat(cellfun( @(x)full(x) , ST , 'UniformOutput', false)))
+
+c = loadBin('centroids');
+ps = phase2nm*loadBin(sprintf('CVGCE_phaseScreenLowRes_%03d',nLenslet));
+ps = ps - mean(ps);
+
+fun = @(x) mtimes4squareBlocks(CTBT,x);
+% [yy,flag,relres,iter,resvec] = minres(fun,c,1e-3,50);
+
+yy = minres(fun,c,5e-2,200);
+ps_e = -phase2nm*(ST{1}*yy(1:end/2) + ST{2}*yy(1+end/2:end));
+fprintf(' ==>> WFE=%5.2fnm\n',std(ps-ps_e))
+
+% M = diag(diag(AA_full));
+L = chol(AA_full,'lower');
+yy = minres(fun,c,5e-2,200,L,L');
+ps_e = -phase2nm*(ST{1}*yy(1:end/2) + ST{2}*yy(1+end/2:end));
+fprintf(' ==>> WFE=%5.2fnm\n',std(ps-ps_e))
+
+A = cellfun( @(x)full(x) , CTBT , 'UniformOutput', false);
+A{1,2} = zeros(nLenslet^2,'single');
+A{2,1} = zeros(nLenslet^2,'single');
+A = cell2mat(A);
+iL = ichol(sparse(double((A))));
+iL = full(iL);
+yy = minres(fun,c,5e-2,200,iL,iL');
+ps_e = -phase2nm*(ST{1}*yy(1:end/2) + ST{2}*yy(1+end/2:end));
+fprintf(' ==>> WFE=%5.2fnm\n',std(ps-ps_e))
+
+% ps = reshape( ps, ne, ne);
+% ps_e = reshape( ps_e, ne, ne);
+wfs = shackHartmann(nLenslet,nLenslet*16);
+G = wfs.sparseGradientMatrix;
+D = delsq( numgrid('S', ne ) );
 %}

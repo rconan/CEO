@@ -463,19 +463,19 @@ __global__ void mvm_output_order(float *x_out, int n_x_out,
 }
 <<MVM STEP 5: output ordering (masked)>>=
 blockDim = dim3(256,1);
-gridDim  = dim3( 1+NT2/256,1);
-for (int k=0;k<M;k++) 
-  mvm_output_order_mask LLL gridDim,blockDim RRR (y + k*NT2, NT2, ((float *)d__c) + k*NDFT, NDFT, d__xi, mask);
+gridDim  = dim3( 1+MT2/256,M);
+mvm_output_order_mask LLL gridDim,blockDim RRR (y, MT2, ((float *)d__c), NDFT, d__xi, mask);
 @  using the kernel:
 <<MVM output ordering kernel (masked)>>=
 __global__ void mvm_output_order_mask(float *x_out, int n_x_out, 
                                 float *x_in, int n_x_in, 
                                 unsigned int *ind, char *mask) 
 {
-  int k;
+  int k, m;
   k = blockIdx.x * blockDim.x + threadIdx.x;
+  m = blockIdx.y;
   if (k<n_x_out) {
-      x_out[k] = (mask[k]>0) ? x_in[ind[k]]/n_x_in : 0;		
+    x_out[k + m*n_x_out] = (mask[k]>0) ?  x_in[ind[k] + m*n_x_in]/n_x_in : 0;		
   }
 }
 @ \end{enumerate}

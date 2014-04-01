@@ -23,12 +23,14 @@ struct iterativeSolvers {
   <<parameters>>
 
   void cg_setup(int n_vector);
+  void pcg_setup(int n_vector);
 
   void minres_setup(int n_vector);
 
   void cleanup(void);
 
   void cg(float *x, BTBT* A, float *b, int max_it, float* x0);
+  void pcg(float *x, BTBT* A, float *b, int max_it, float* x0, float ip);
 
   void sym_ortho(float *c,float *s,float *r,
 		 float *a,float *b);
@@ -37,7 +39,10 @@ struct iterativeSolvers {
 		    BTBT *A, float *nu_k, float *nu_km1, float sigma);
 
 
+  void minres_vorst(float *x, BTBT* A, float *b, float* x0);
   void minres_vorst(float *x, BTBT* A, float *b, int max_it, float* x0);
+  void minres_vorst(float *x, BTBT* A, float *b, float rtol, float* x0);
+  void pminres_vorst(float *x, BTBT* A, float *b, int max_it, float* x0, float ip);
   void minres_vorst(float *x, float *res, BTBT* A, float *b, int max_it, float* x0);
 
   void minres_choi(float *x, BTBT* A, float *b, int max_it, float* x0);
@@ -52,18 +57,22 @@ struct iterativeSolvers {
 #include "iterativeSolvers.h"
 
 <<CG setup>>
-
+<<PCG setup>>
 <<MINRES setup>>
 
 <<cleanup>>
 
 <<conjugate gradient>>
+<<preconditioned conjugate gradient>>
 
 <<sym-ortho algorithm>>
 
 <<Lanczos step>>
 
-<<MINRES (Vorst)>>
+<<MINRES (Vorst) I>>
+<<MINRES (Vorst) II>>
+<<MINRES (Vorst) III>>
+<<PMINRES (Vorst)>>
 <<MINRES (Vorst) with residue>>
 <<MINRES (Choi)>>
 @
@@ -73,11 +82,11 @@ struct iterativeSolvers {
 The structure parameters are
 <<parameters>>=
 float *d__vectors,
-  *q, *x, *r, *p,
+  *q, *x, *r, *p, *z,
   *nu_i, *nu_im1, *nu_ip1,
   *w_i, *w_im1, *w_im2;
-float rnorm, mean_time_per_iteration;
-int N;
+float rnorm, rel_rnorm, mean_time_per_iteration, RTOL, ATOL;
+int N, N_ITERATION;
 stopwatch tid;
 cublasHandle_t handle;
 cublasStatus_t status;
@@ -104,6 +113,19 @@ void iterativeSolvers::cg_setup(int n_vector)
   p = d__vectors + 3*N;
   cublasCreate(&handle);
 }
+<<PCG setup>>=
+void iterativeSolvers::pcg_setup(int n_vector)
+{
+  fprintf(stderr,"@(CEO)>iterativeSolvers: CONJUGATE GRADIENT\n");
+  N = n_vector;
+  HANDLE_ERROR( cudaMalloc((void**)&d__vectors, sizeof(float)*N*5 ) );
+  q = d__vectors;
+  x = d__vectors + N;
+  r = d__vectors + 2*N;
+  p = d__vectors + 3*N;
+  z = d__vectors + 4*N;
+  cublasCreate(&handle);
+}
 @  \item
 <<MINRES setup>>=
 void iterativeSolvers::minres_setup(int n_vector)
@@ -119,6 +141,9 @@ void iterativeSolvers::minres_setup(int n_vector)
   w_im2  = d__vectors + 5*N;
   cublasCreate(&handle);
   VERBOSE = 0;
+  ATOL = 0;
+  RTOL = 5E-2;
+  N_ITERATION = 100;
 }
 @ \end{itemize}
 
@@ -207,6 +232,101 @@ cublasSaxpy(handle, N, &alpha, r, 1, p, 1);
 @  \end{enumerate}
  \end{itemize}
 
+\subsubsection{Preconditioned conjugate gradient}
+\label{sec:conjugate-gradient}
+
+The next routine implements the conjugate gradient iterative method with Jacobi preconditioner.
+The Jacobi preconditioner $M$ is given by
+\begin{equation}
+  \label{eq:2}
+  M = \operatorname{diag}\left( A \right) = \sigma_A^2 I,
+\end{equation}
+and its inverse is simply
+\begin{equation}
+  \label{eq:3}
+  M^{-1} = \sigma_A^{-2} I = [[ip]] I.
+\end{equation}
+
+<<preconditioned conjugate gradient>>=
+  void iterativeSolvers::pcg(float *x, BTBT* A, float *b, 
+			     int max_it, float* x0, float ip)
+{
+  float alpha, beta, gamma;
+  int k;
+  <<preconditioned conjugate gradient init>>
+  tid.tic();
+  for (k=0;k<max_it;k++) {
+    //printf("CG IT=%d - ",k);
+    <<preconditioned conjugate gradient loop part 1>>
+      if (k<(max_it-1)) {
+	  <<preconditioned conjugate gradient loop part 2>>
+      }
+  }    
+  tid.toc(&mean_time_per_iteration);
+  mean_time_per_iteration /= max_it;
+}
+@ 
+The preconditioned conjugate gradient algorithm is written:
+\begin{itemize}
+\item initialization:
+  \begin{enumerate}
+  \item $r=Ax_0$
+<<preconditioned conjugate gradient init>>=
+    A->MVM(r , x0);
+@ \item $r_0 = b - r_0$
+<<preconditioned conjugate gradient init>>=
+beta = -1;
+cublasSscal(handle, N, &beta, r, 1);
+alpha = 1;
+cublasSaxpy(handle, N, &alpha, b, 1, r, 1);
+@ \item $z_0=M^{-1}r_0$
+<<preconditioned conjugate gradient init>>=
+cublasScopy(handle, N, r, 1, z, 1);
+cublasSscal(handle, N, &ip, z, 1);
+@ \item $p_0=z_0$
+<<preconditioned conjugate gradient init>>=
+cublasScopy(handle, N, z, 1, p, 1);
+@ \end{enumerate}
+\item loop:
+  \begin{enumerate}
+  \item $q=Ap_k$
+<<preconditioned conjugate gradient loop part 1>>=
+    A->MVM(q , p);
+@ \item $\gamma=r_k^Tz_k$
+<<preconditioned conjugate gradient loop part 1>>=
+cublasSdot(handle, N, r, 1, z, 1, &gamma);
+//printf("r norm=%6.2E\n",sqrt(gamma));
+@ \item $\left\| r \right\|_2=\sqrt\gamma$
+<<preconditioned conjugate gradient loop part 1>>=
+rnorm = sqrt(gamma);
+if (gamma==0) break;
+@ \item $\alpha_k = {\displaystyle \gamma\over p_K^Tq}$
+<<preconditioned conjugate gradient loop part 1>>=
+cublasSdot(handle, N, p, 1, q, 1, &alpha);
+alpha = gamma/alpha;
+@ \item $x_{k+1} = x_k + \alpha_kp_k$
+<<preconditioned conjugate gradient loop part 1>>=
+cublasSaxpy(handle, N, &alpha, p, 1, x, 1);
+@ \item $r_{k+1} = r_k - \alpha_kq$
+<<preconditioned conjugate gradient loop part 2>>=
+alpha = -alpha;
+cublasSaxpy(handle, N, &alpha, q, 1, r, 1);
+@ \item $z_{k+1} = M^{-1}r_{k+1}$
+<<preconditioned conjugate gradient loop part 2>>=
+cublasScopy(handle, N, r, 1, z, 1);
+cublasSscal(handle, N, &ip, z, 1);
+@ \item $\beta_k = {\displaystyle r_{k+1}^Tz_{k+1} \over \gamma} $
+<<preconditioned conjugate gradient loop part 2>>=
+cublasSdot(handle, N, r, 1, z, 1, &beta);
+beta = beta/gamma;
+@ \item $p_{k+1} = z_{k+1} + \beta_k p_k$
+<<preconditioned conjugate gradient loop part 2>>=
+cublasSscal(handle, N, &beta, p, 1);
+alpha = 1;
+cublasSaxpy(handle, N, &alpha, z, 1, p, 1);
+@  \end{enumerate}
+ \end{itemize}
+
  \subsubsection{MINRES}
  \label{sec:minres}
 
@@ -214,7 +334,23 @@ cublasSaxpy(handle, N, &alpha, r, 1, p, 1);
 \label{sec:vorst-implementation}
 
 The MINRES iterative solver method is implemented in the next routine:
-<<MINRES (Vorst)>>=
+<<MINRES (Vorst) I>>=
+  void iterativeSolvers::minres_vorst(float *x, BTBT* A, float *b, float* x0)
+{
+  float alpha, beta, gamma_i, gamma_im1, sigma_i, sigma_im1,
+    eta, delta, rho1, rho2, rho3, rnorm0;
+  int k;
+  <<MINRES (Vorst) init>>
+      //  tid.tic();
+  for (k=0;k<N_ITERATION;k++) {
+    //printf("MINRES IT=%d - ",k);
+    <<MINRES (Vorst) loop>>
+  }  
+  //  tid.toc(&mean_time_per_iteration);
+  //  mean_time_per_iteration /= max_it;
+  printf("MINRES converged at iteration %d to a solution with relative residual %.2E.\n",k,rel_rnorm);
+}
+<<MINRES (Vorst) II>>=
   void iterativeSolvers::minres_vorst(float *x, BTBT* A, float *b, int max_it, float* x0)
 {
   float alpha, beta, gamma_i, gamma_im1, sigma_i, sigma_im1,
@@ -226,9 +362,26 @@ The MINRES iterative solver method is implemented in the next routine:
     //printf("MINRES IT=%d - ",k);
     <<MINRES (Vorst) loop>>
   }  
-  rnorm /= rnorm0;
   //  tid.toc(&mean_time_per_iteration);
   //  mean_time_per_iteration /= max_it;
+  printf("MINRES converged at iteration %d to a solution with relative residual %.2E.\n",k,rel_rnorm);
+}
+<<MINRES (Vorst) III>>=
+  void iterativeSolvers::minres_vorst(float *x, BTBT* A, float *b, float rtol, float* x0)
+{
+  float alpha, beta, gamma_i, gamma_im1, sigma_i, sigma_im1,
+    eta, delta, rho1, rho2, rho3, rnorm0;
+  int k;
+  <<MINRES (Vorst) init>>
+  RTOL = rtol;
+      //  tid.tic();
+  for (k=0;k<N_ITERATION;k++) {
+    //printf("MINRES IT=%d - ",k);
+    <<MINRES (Vorst) loop>>
+  }  
+  //  tid.toc(&mean_time_per_iteration);
+  //  mean_time_per_iteration /= max_it;
+  printf("MINRES converged at iteration %d to a solution with relative residual %.2E.\n",k,rel_rnorm);
 }
 <<MINRES (Vorst) with residue>>=
   void iterativeSolvers::minres_vorst(float *x, float *res, BTBT* A, float *b, int max_it, float* x0)
@@ -284,7 +437,7 @@ rnorm0 = rnorm;
 #ifdef MINRES_DEBUG
 fprintf(stderr,"beta=%.2E\n",beta);
 #endif
-@ \item $\eta=beta_1$, $\gamma_1=\gamma_0=1$, $\sigma_1=\sigma_0=0$, $\nu_0=0$
+@ \item $\eta=\beta_1$, $\gamma_1=\gamma_0=1$, $\sigma_1=\sigma_0=0$, $\nu_0=0$
 <<MINRES (Vorst) init>>=
 eta = beta;
 gamma_i = gamma_im1 = 1;
@@ -382,8 +535,11 @@ cublasSaxpy(handle, N, &rho1, w_i, 1, x, 1);
 @ \item $\left\| r_i \right\|_2 = \left| \sigma_{i+1} \right|\left\| r_{i-1} \right\|_2 $
 <<MINRES (Vorst) loop>>=
 rnorm = rnorm*fabs(sigma_i);
+rel_rnorm = rnorm/rnorm0;
 if (VERBOSE)
   fprintf(stderr,"#%3d: r norm=%6.2E - rel. tol.=%6.2E\n",k,rnorm,rnorm/rnorm0);
+if ( (rnorm<ATOL) || (rel_rnorm<=RTOL) )
+  break;
 @ \item $\eta = \sigma_{i+1}\eta$
 <<MINRES (Vorst) loop>>=
 eta = -sigma_i*eta;
@@ -562,6 +718,185 @@ void iterativeSolvers::lanczos_step(float *alpha, float *beta, float *nu_kp1,
 }
 
 @
+
+ \subsubsection{Preconditioned MINRES}
+ \label{sec:minres}
+
+\paragraph{Vorst implementation}
+\label{sec:vorst-implementation}
+
+The MINRES iterative solver method is implemented in the next routine:
+<<PMINRES (Vorst)>>=
+  void iterativeSolvers::pminres_vorst(float *x, BTBT* A, float *b, int max_it, float* x0, float ip)
+{
+  float alpha, beta, gamma_i, gamma_im1, sigma_i, sigma_im1,
+    eta, delta, rho1, rho2, rho3, rnorm0;
+  int k;
+  <<PMINRES (Vorst) init>>
+      //  tid.tic();
+  for (k=0;k<max_it;k++) {
+    //printf("MINRES IT=%d - ",k);
+    <<PMINRES (Vorst) loop>>
+  }  
+  rnorm /= rnorm0;
+  //  tid.toc(&mean_time_per_iteration);
+  //  mean_time_per_iteration /= max_it;
+}
+@ 
+The MINRES algorithm is written:
+\begin{itemize}
+\item initialization:
+  \begin{enumerate}
+  \item $r=Ax_0$
+<<PMINRES (Vorst) init>>=
+A->MVM(nu_i , x0);
+@ \item $r_0 = b - r_0$
+<<PMINRES (Vorst) init>>=
+beta = -1;
+cublasSscal(handle, N, &beta, nu_i, 1);
+alpha = 1;
+cublasSaxpy(handle, N, &alpha, b, 1, nu_i, 1);
+#ifdef MINRES_DEBUG
+cublasSnrm2(handle, N, b, 1, &beta);
+fprintf(stderr,"beta=%.2E\n",beta);
+#endif
+@ \item $\nu_i = M^{-1}\nu_i$
+<<PMINRES (Vorst) init>>=
+cublasSscal(handle, N, &ip, nu_i, 1);
+@ \item $\beta_1=\left\| \nu_1 \right\|_2=\left\| r \right\|_2$
+<<PMINRES (Vorst) init>>=
+  //cublasSnrm2(handle, N, nu_i, 1, &beta);
+cublasSdot(handle, N, nu_i, 1, nu_i, 1, &beta);
+beta = sqrtf(beta);
+rnorm = beta;
+rnorm0 = rnorm;
+#ifdef MINRES_DEBUG
+fprintf(stderr,"beta=%.2E\n",beta);
+#endif
+@ \item $\eta=beta_1$, $\gamma_1=\gamma_0=1$, $\sigma_1=\sigma_0=0$, $\nu_0=0$
+<<PMINRES (Vorst) init>>=
+eta = beta;
+gamma_i = gamma_im1 = 1;
+sigma_i = sigma_im1 = 0;
+@ \item $\nu_0=0$, $w_0=w_{-1}=0$
+<<PMINRES (Vorst) init>>=
+HANDLE_ERROR( cudaMemset(nu_im1, 0, sizeof(float)*N ) );
+HANDLE_ERROR( cudaMemset(w_im1 , 0, sizeof(float)*N ) );
+HANDLE_ERROR( cudaMemset(w_im2 , 0, sizeof(float)*N ) );
+@ \end{enumerate}
+\item loop:
+  \begin{enumerate}
+  \item $\nu_i = \nu_i / \beta_i$
+<<PMINRES (Vorst) loop>>=
+rho1 = 1/beta;
+cublasSscal(handle, N, &rho1, nu_i, 1);
+@ \item $\nu_{i+1}= A\nu_i$
+<<PMINRES (Vorst) loop>>=
+A->MVM(nu_ip1 , nu_i);
+@ \item $\alpha_i = \nu_i^T\nu_{i+1}$
+<<PMINRES (Vorst) loop>>=
+cublasSdot(handle, N, nu_i, 1, nu_ip1, 1, &alpha);
+#ifdef MINRES_DEBUG
+fprintf(stderr,"alpha=%.2E\n",alpha);
+#endif
+@ \item $\nu_{i+1} = \nu_{i+1} - \alpha_i\nu_i - \beta_i\nu_{i-1}$
+<<PMINRES (Vorst) loop>>=
+alpha = -alpha;
+beta  = -beta;
+cublasSaxpy(handle, N, &alpha, nu_i, 1, nu_ip1, 1);
+cublasSaxpy(handle, N, &beta, nu_im1, 1, nu_ip1, 1);
+alpha = -alpha;
+beta  = -beta;
+@ \item $\delta = \gamma_i\alpha_i - \gamma_{i-1}\sigma_i\beta_i$
+<<PMINRES (Vorst) loop>>=
+delta = gamma_i*alpha - gamma_im1*sigma_i*beta;
+#ifdef MINRES_DEBUG
+fprintf(stderr,"delta=%.2E\n",delta);
+#endif
+@ \item $\rho_2 = \sigma_i\alpha_i + \gamma_{i-1}\gamma_i\beta_i$
+<<PMINRES (Vorst) loop>>=
+rho2 = sigma_i*alpha + gamma_im1*gamma_i*beta;
+#ifdef MINRES_DEBUG
+fprintf(stderr,"rho2=%.2E\n",rho2);
+#endif
+@ \item $\rho_3 = \sigma_{i-1}\beta_i$
+<<PMINRES (Vorst) loop>>=
+rho3 = sigma_im1*beta;
+#ifdef MINRES_DEBUG
+fprintf(stderr,"rho3=%.2E\n",rho3);
+#endif
+@ \item $\beta_{i+1}=\left\| \nu_{i+1} \right\|_2$
+<<PMINRES (Vorst) loop>>=
+  //cublasSnrm2(handle, N, nu_ip1, 1, &beta);
+cublasSdot(handle, N, nu_ip1, 1, nu_ip1, 1, &beta);
+beta = sqrtf(beta);
+#ifdef MINRES_DEBUG
+fprintf(stderr,"beta=%.2E\n",beta);
+#endif
+@ \item $\rho_1 = \sqrt{\delta^2+\beta_{i+1}^2}$
+<<PMINRES (Vorst) loop>>=
+rho1 = hypotf(delta,beta);
+#ifdef MINRES_DEBUG
+fprintf(stderr,"rho1=%.2E\n",rho1);
+#endif
+@ \item $\gamma_{i+1} = \delta / \rho_1$
+<<PMINRES (Vorst) loop>>=
+gamma_im1 = gamma_i;
+gamma_i = delta/rho1;
+#ifdef MINRES_DEBUG
+fprintf(stderr,"gamma_im1=%.2E\n",gamma_im1);
+fprintf(stderr,"gamma_i=%.2E\n",gamma_i);
+#endif
+@ \item $\sigma_{i+1} = \beta_{i+1} / \rho_1$
+<<PMINRES (Vorst) loop>>=
+sigma_im1 = sigma_i;
+sigma_i = beta/rho1;
+#ifdef MINRES_DEBUG
+fprintf(stderr,"sigma_im1=%.2E\n",sigma_im1);
+fprintf(stderr,"sigma_i=%.2E\n",sigma_i);
+#endif
+@ \item $w_i = (\nu_i-\rho_3w_{i-2}-\rho_2w_{i-1})/\rho_1$
+<<PMINRES (Vorst) loop>>=
+cublasScopy(handle, N, nu_i, 1, w_i, 1);
+rho1 = 1.0/rho1;
+cublasSscal(handle, N, &rho1, w_i, 1);
+rho3 = -rho3*rho1;
+cublasSaxpy(handle, N, &rho3, w_im2, 1, w_i, 1);
+rho2 = -rho2*rho1;
+cublasSaxpy(handle, N, &rho2, w_im1, 1, w_i, 1);
+@ \item $x_i = x_{i-1} + \gamma_{i+1}\eta w_i$
+<<PMINRES (Vorst) loop>>=
+rho1 = gamma_i*eta;
+cublasSaxpy(handle, N, &rho1, w_i, 1, x, 1);
+@ \item $\left\| r_i \right\|_2 = \left| \sigma_{i+1} \right|\left\| r_{i-1} \right\|_2 $
+<<PMINRES (Vorst) loop>>=
+rnorm = rnorm*fabs(sigma_i);
+if (VERBOSE)
+  fprintf(stderr,"#%3d: r norm=%6.2E - rel. tol.=%6.2E\n",k,rnorm,rnorm/rnorm0);
+@ \item $\eta = \sigma_{i+1}\eta$
+<<PMINRES (Vorst) loop>>=
+eta = -sigma_i*eta;
+#ifdef MINRES_DEBUG
+fprintf(stderr,"eta=%.2E\n",eta);
+#endif
+@ \item
+\begin{eqnarray}
+  \label{eq:1}
+  \nu_{i-1} &\leftarrow& \nu_i \nonumber\\
+  \nu_{i} &\leftarrow& \nu_{i+1} \nonumber\\
+  w_{i-2} &\leftarrow& w_{i-1} \nonumber\\
+  w_{i-1} &\leftarrow& \nu_{i} \nonumber
+\end{eqnarray}
+<<PMINRES (Vorst) loop>>=
+cublasScopy(handle, N, nu_i  , 1, nu_im1, 1);
+cublasScopy(handle, N, nu_ip1, 1, nu_i  , 1);
+cublasScopy(handle, N, w_im1 , 1, w_im2 , 1);
+cublasScopy(handle, N, w_i   , 1, w_im1 , 1);
+if (beta==0) break;
+@  \end{enumerate}
+ \end{itemize}
+
+
 \subsection{Tests}
 \label{sec:tests}
 
@@ -701,8 +1036,8 @@ $r_0$ is set to 15cm per default but can be override to any other value after th
 @ 
 In the following, all the variables are declared and set to their default or user given values.
 <<declaration>>=
-int N = _N_LENSLET_*2, NP, PS_N_PX, PS_E_N_PX, i, j ,k, osf;
-float *d__x, *d__b, *b, *d__ce, *d__phase_est, *phase_screen_est, *x;
+int N = _N_LENSLET_*2, NP, PS_E_N_PX, i, j ,k, osf;
+float *d__x, *d__phase_est, *phase_screen_est, *x;
 float D, d, delta, delta_e, wf_rms, phase2nm, slopes2Angle, cxy0, r0=0.15;
 int *idx, *d__idx;
 char *d__mask;
@@ -724,7 +1059,6 @@ delta_e = d/osf;
 NP = osf*N_SIDE_LENSLET+1;
 PS_E_N_PX = NP;
 PS_E_N_PX *= PS_E_N_PX;
-PS_N_PX = N_SIDE_LENSLET*_N_PX_PUPIL_;
 
 printf("\nd    =%.4f\n",d);
 printf("\ndelta=%.4f\n",delta);
@@ -747,22 +1081,16 @@ Then all the components are initialized and the dynamic arrays are allocated.
 <<initialization>>=
 src.setup(ARCSEC(0) , 0, INFINITY, PS_E_N_PX);
         
+
+// Atmosphere
 // Single layer turbulence profile
 float altitude[] = {0},
   xi0[] = {1},
   wind_speed[] = {10},
   wind_direction[] = {0};
-
+//atm.setup(r0,30,altitude,xi0,wind_speed,wind_direction);
 // GMT 7 layers turbulence profile
-/*
-float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
-              xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
-              wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
-              wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
-*/
-
-// Atmosphere
-atm.setup(r0,30,altitude,xi0,wind_speed,wind_direction);
+atm.gmt_setup(r0,30);
 //atm.reset();
 
 phase2nm = 1E9;//*atm.wavelength/2/PI;
@@ -776,18 +1104,37 @@ cog.setup();
 
 // covariances
 aa.setup(N_SIDE_LENSLET,&atm,d, &src, 1);
+aa.toFile("aaCovariance.bin");
 printf("\n AA variance [rd^2]: %.3E\n",aa.variance());
 aaCov.setup(2,2,N_SIDE_LENSLET,aa.d__cov);
 
 pa.setup(NP,N_SIDE_LENSLET,osf,&atm,d,&src,1,&src,1);
+pa.toFile("paCovariance.bin");
 paCov.setup(1,2,NP,N_SIDE_LENSLET,pa.d__cov);
 
-/*
 HANDLE_ERROR( cudaMalloc((void**)&d__mask, sizeof(char)*_N_LENSLET_ ) );
 dim3 blockDim_vl(16,16);
 dim3 gridDim_vl(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
 valid_lenslet LLL gridDim_vl,blockDim_vl RRR (d__mask,N_SIDE_LENSLET*_N_PX_PUPIL_,0.5);
-*/
+
+/* char *L_mask, *A_mask; */
+/* HANDLE_ERROR( cudaMalloc((void**)&L_mask, sizeof(char)*_N_LENSLET_ ) ); */
+/* HANDLE_ERROR( cudaMemset(L_mask, 0, sizeof(char)*_N_LENSLET_  ) ); */
+/* HANDLE_ERROR( cudaMalloc((void**)&A_mask, sizeof(char)*PS_E_N_PX ) ); */
+/* HANDLE_ERROR( cudaMemset(A_mask, 0, sizeof(char)*PS_E_N_PX ) ); */
+
+/* fried_geometry LLL gridDim_vl,blockDim_vl RRR (L_mask, A_mask, N_SIDE_LENSLET, 16, 0.5); */
+
+/* dev2file("L_mask.bin",L_mask,_N_LENSLET_); */
+/* dev2file("A_mask.bin",A_mask,PS_E_N_PX); */
+
+/* HANDLE_ERROR( cudaFree( L_mask) ); */
+/* HANDLE_ERROR( cudaFree( A_mask) ); */
+
+char MASK_SET;
+MASK_SET = fried_geometry_setup(cog.lenslet_mask, src.wavefront.pupil_mask, N_SIDE_LENSLET, 16, 0.5);
+//printf("MASK_SET = %d\n",MASK_SET);
+dev2file("A_mask.bin",src.wavefront.pupil_mask,PS_E_N_PX);
 
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
 @ 
@@ -805,8 +1152,8 @@ src.phase2file("phaseScreenLowRes.bin");
   //iSolve.cg_setup(N);
 iSolve.minres_setup(N);
 
-<<linear solver (prep.)>>
-<<MVM (prep.)>>
+//aaCov.mask = d__mask;
+dev2file("mask.bin",d__mask,_N_LENSLET_);
 
 char filename[100];
 /* for (k=1;k<6;k++) { */
@@ -814,12 +1161,13 @@ k = 100;
 
 sprintf(filename,"MINRES_phaseEst_%d.bin",k);
 //sprintf(filename,"CG_phaseEst_%d.bin",k);
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
 
 tid.tic();
 
 //cudaProfilerStart();
-iSolve.minres_vorst(d__x, &aaCov, cog.d__c, k, d__x);
+iSolve.minres_vorst(d__x, &aaCov, cog.d__c, d__x);
 //iSolve.cg(d__x, &aaCov, cog.d__c, k, d__x);
 //cudaProfilerStop();
 
@@ -829,8 +1177,8 @@ tid.toc("WAVEFRONT ESTIMATION");
 
 <<MVM (wrap.)>>
 
-printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
-printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+  //printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
+  //printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
 
 /* } */
 @ 
@@ -846,9 +1194,7 @@ src.phase2file(filename);
 
 <<wavefront sensing>>
 
-<<linear solver (prep.)>>
   //aaCov.mask = d__mask;
-<<MVM (prep.)>>
 
 sprintf(filename,"bins/CVGCE_%s_phaseEst_200_%03d.bin",solver,N_SIDE_LENSLET);
 FILE *fid;
@@ -857,9 +1203,11 @@ int n_page = 1, n_data = PS_E_N_PX*200;
 fwrite(&n_page,sizeof(int),1,fid);
 fwrite(&n_data,sizeof(int),1,fid);
 phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
+
 // CG
 if (strcmp(solver,"CG")==0) {
-  iSolve.cg_setup(N);
+  iSolve.pcg_setup(N);
   for (k=1;k<=200;k++) {
 
     printf("\n______ ITERATION #: %03d ______\n",k);
@@ -868,7 +1216,7 @@ if (strcmp(solver,"CG")==0) {
 
     tid.tic();
 
-    iSolve.cg(d__x, &aaCov, cog.d__c, k, d__x);
+    iSolve.pcg(d__x, &aaCov, cog.d__c, k, d__x, 1./aa.variance());
     
     <<MVM>>
 
@@ -888,6 +1236,7 @@ if (strcmp(solver,"CG")==0) {
 // MINRES
 if (strcmp(solver,"MINRES")==0) {
   iSolve.minres_setup(N);
+  iSolve.RTOL = 1e-6;
   for (k=1;k<=200;k++) {
 
     printf("\n______ ITERATION #: %03d ______\n",k);
@@ -938,22 +1287,32 @@ fwrite(phase_screen,sizeof(float),_N_PIXEL_,fid);
 fclose(fid);
 */
 
+atm.get_phase_screen(&src,delta_e,NP,delta_e,NP,0);
+src.phase2file("srcPhase.bin");
+
 float *d__phase_screen_low_res;
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*PS_E_N_PX ) );
 float *phase_screen_low_res;
 phase_screen_low_res = (float*)malloc(sizeof(float)*PS_E_N_PX);
 
 char filename[100];
-sprintf(filename,"CVGCE_phaseScreenLowRes_%03d.bin",N_SIDE_LENSLET);
+sprintf(filename,"bins/CVGCE_phaseScreenLowRes_%03d.bin",N_SIDE_LENSLET);
 FILE *fid_phaseScreenLowRes;
 fid_phaseScreenLowRes = fopen(filename,"wb");
+int n_page = 1, n_data, n_step;
+n_step = 5000;
+n_data = PS_E_N_PX*n_step;
+fwrite(&n_page,sizeof(int),1,fid_phaseScreenLowRes);
+fwrite(&n_data,sizeof(int),1,fid_phaseScreenLowRes);
 
 <<linear solver (prep.)>>
-aaCov.mask = d__mask;
+  //aaCov.mask = d__mask;
 <<MVM (prep.)>>
 
-sprintf(filename,"CVGCE_%s_phaseEst_200_%03d.bin",solver,N_SIDE_LENSLET);
+sprintf(filename,"bins/CVGCE_%s_phaseEst_%03d_%03d.bin",solver,n_step,N_SIDE_LENSLET);
 fid = fopen(filename,"wb");
+fwrite(&n_page,sizeof(int),1,fid);
+fwrite(&n_data,sizeof(int),1,fid);
 
 phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
@@ -964,37 +1323,44 @@ solv_it = 60;
 // MINRES
 if (strcmp(solver,"MINRES")==0) {
   iSolve.minres_setup(N);
-  for (k=1;k<=200;k++) {
+  iSolve.VERBOSE = 0;
+  iSolve.RTOL = 5E-2;
+  for (k=1;k<=n_step;k++) {
 
     printf("\n______ ITERATION #: %03d ______\n",k);
     
-    tau = 2e-3*(k-1);
-    atm.get_phase_screen(d__phase_screen_low_res,delta_e,NP,delta_e,NP,src,tau);
-    HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res,
+    tau = 1e-3*(k-1);
+    atm.get_phase_screen(&src,delta_e,NP,delta_e,NP,tau);
+    HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, src.wavefront.phase,
     			  sizeof(float)*PS_E_N_PX,
     			  cudaMemcpyDeviceToHost ) );
     fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid_phaseScreenLowRes);
 
-    atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d__mask,d,src,tau);
+    //atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d__mask,d,src,tau);
+    tau = 1e-3*k;
+    atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&src,tau);
     /* if (k>10) */
     /*   solv_it = 0; */
-    
-       tid.tic();
+   
+    tid.tic();
 
-    iSolve.minres_vorst(d__x, &aaCov, cog.d__c, solv_it, d__x);
+    iSolve.minres_vorst(d__x, &aaCov, cog.d__c, d__x);
 
     <<MVM>>
 
-	  tid.toc("WAVEFRONT ESTIMATION");
+    tid.toc("WAVEFRONT ESTIMATION");
 
     HANDLE_ERROR( cudaMemcpy( phase_screen_est, d__phase_est,
     			      sizeof(float)*PS_E_N_PX,
     			      cudaMemcpyDeviceToHost ) );
     fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
 
-    printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
-    printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+    //printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
+    //printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
     printf("\n-------------------------------\n");
+
+    if (k==1)
+      iSolve.ATOL = iSolve.rnorm;
 
   }
  }
@@ -1113,15 +1479,15 @@ paCov.cleanup();
 iSolve.cleanup();
 S.cleanup();
 HANDLE_ERROR( cudaFree( d__x ) );
-HANDLE_ERROR( cudaFree( d__idx ) );
-HANDLE_ERROR( cudaFree( d__ce ) );
+//HANDLE_ERROR( cudaFree( d__idx ) );
+//HANDLE_ERROR( cudaFree( d__ce ) );
 HANDLE_ERROR( cudaFree( d__phase_est ) );
 //HANDLE_ERROR( cudaFree( d__phase_screen_low_res ) );
-//HANDLE_ERROR( cudaFree( d__mask ) );
+HANDLE_ERROR( cudaFree( d__mask ) );
 //free(phase_screen_low_res);
-free(idx);
+//free(idx);
 //free(phase_screen_est);
-free(x);
+//free(x);
 @ 
 <<PA input>>=
 __global__ void set_pa_input(float *pa_c, float *aa_c, int *idx, int N) 
@@ -1164,9 +1530,9 @@ cxy0 = (_N_PX_PUPIL_ - 1)/2.0;
 cog.get_data(lenslet_array.d__frame, cxy0, cxy0, slopes2Angle);
 @ 
 <<wavefront sensing (geometric)>>=
-atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&src,0);
+atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&src,1,0);
 <<wavefront sensing (geometric and masked)>>=
-atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d__mask,d,&src,0);
+atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d__mask,d,&src,1,0);
 @ 
 <<save centroids to file>>=
 dev2file("centroids.bin",cog.d__c,N);

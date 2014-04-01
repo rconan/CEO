@@ -41,7 +41,7 @@ struct LMMSE {
 
   void estimation_old(float* d__c, int nMaxIteration, float *d__x0);
   void estimation_old(float* d__c, int nMaxIteration);
-  void estimation(float* d__c, int nMaxIteration);
+  void estimation(const centroiding *cog);
 
   void toFile(const char *filename);
 };
@@ -381,6 +381,8 @@ void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star,
   if (strcmp(solver_id,"MINRES")==0)
     iSolve.minres_setup(N*N_guide_star);
 
+  iSolve.RTOL = 5E-2;
+
 d__idx = 0;
 d__ce  = 0;
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est_c, sizeof(float)*PS_E_N_PX ) );
@@ -483,7 +485,7 @@ printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
 }
 @ 
 <<wavefront estimation>>=
-void LMMSE::estimation(float* d__c, int nMaxIteration)
+void LMMSE::estimation(const centroiding *cog)
 {
 
 <<wavefront estimation (solver and projection)>>
@@ -507,9 +509,11 @@ printf("Solver residue norm           : %.2E\n",iSolve.rnorm);
 }
 
 <<wavefront estimation (solver and projection)>>=
+if (cog->MASK_SET) aaCov.mask = cog->lenslet_mask;
+
 tid.tic();
 
-iSolve.minres_vorst(d__x, &aaCov, d__c, nMaxIteration, d__x);
+iSolve.minres_vorst(d__x, &aaCov, cog->d__c, d__x);
 
 tid.toc("WAVEFRONT ESTIMATION (MINRES)");
 

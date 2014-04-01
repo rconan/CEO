@@ -76,16 +76,23 @@ int round_up_to_nhp2(int n);
 <<threads2lenslet>>
 
 <<tic-toc>>
-  void CUBLAS_ERROR(cublasStatus_t status);
+
+void CUBLAS_ERROR(cublasStatus_t status);
+
 <<statistics definition>>
+
+<<lenslet 2 actuator>>
 __global__ void circular_pupil(int *pupil, int N);
 __global__ void valid_lenslet(char *mask, int N_pupil, float threshold);
+__global__ void fried_geometry(char *lenslet_mask, char *actuator_mask, int NL, int n, float threshold);
+char fried_geometry_setup(char *lenslet_mask, char *actuator_mask, int NL, int n, float threshold);
 
 void dev2file(const char* filename, float* d__data, int n_data);
 void dev2file(const char* filename, float* d__data, int n_data, int n_data_page, int n_page);
 void dev2file(const char* filename, float* d__data, int n_data, int *n_data_page, int n_page);
 void dev2file(const char* filename, int* d__data, int n_data);
 void dev2file(const char* filename, float2* d__data, int n_data);
+void dev2file(const char* filename, char* d__data, int n_data);
 
 #endif  // __CEO_H__
 
@@ -112,6 +119,8 @@ int round_up_to_nhp2(int n) {
 
 <<cublas error>>
 
+<<mask filter>>
+<<fill ones>>
 <<statistics functions>>
 
 __global__ void centroiding(float *cx, float *cy, float *flux, const float *frame)
@@ -163,8 +172,12 @@ __global__ void centroiding(float *cx, float *cy, float *flux, const float *fram
       }
   }
 }
+
 <<circular pupil>>
 <<valid lenslet>>
+<<Fried geometry masks>>
+<<Fried geometry>>
+
 <<device to file>>
 @
 \subsection{Mapping to lenslet array}
@@ -368,11 +381,15 @@ struct stats {
   cublasStatus_t status;
   void setup(void);
   void cleanup(void);
-  float mean(float *data, int n_data);
-  float var(float *data, int n_data);
-  float std(float *data, int n_data);
-  float diff_var(float *data_1, float *data_2, int n_data);
-  float diff_std(float *data_1, float *data_2, int n_data);
+  float mean(const float *data, int n_data);
+  float var(const float *data, int n_data);
+  float std(const float *data, int n_data);
+  float diff_var(const float *data_1, const float *data_2, int n_data);
+  float diff_std(const float *data_1, const float *data_2, int n_data);
+  float var(const float *data1, const char *mask, int n_data);
+  float std(const float *data1, const char *mask, int n_data);
+  float diff_var(const float *data1, const float *data2, const char *mask, int n_data);
+  float diff_std(const float *data1, const float *data2, const char *mask, int n_data);
 };
 <<statistics functions>>=
 void stats::setup(void) {
@@ -386,25 +403,49 @@ void stats::cleanup(void) {
 <<differential variance>> 
 <<standart deviation>>
 <<differential standart deviation>>
+<<variance filtered data>>
+<<standart deviation filtered data>>
+<<differential variance filtered data>>
+<<differential standard deviation filtered data>>
 @  
 Computing the mean of a vector [[data]]$=x$, $\bar x = \langle x \rangle$:
 <<mean>>=
-float stats::mean(float *data, int n_data) {
-  float results;
-  CUBLAS_ERROR( cublasSasum(handle, n_data, data, 1, &results) );
+float stats::mean(const float *data, int n_data) {
+  float results, *ones;
+  HANDLE_ERROR( cudaMalloc((void**)&ones, sizeof(float)*n_data ) );
+  dim3 blockDim(256);
+  dim3 gridDim(n_data/256+1);
+  fill_ones LLL gridDim,blockDim RRR (ones, n_data);
+  CUBLAS_ERROR( cublasSdot(handle, n_data, data, 1, ones, 1, &results) );
+  HANDLE_ERROR( cudaFree( ones ) );
   return results/n_data;
 }
+@  with the kernel
+<<fill ones>>=
+__global__ void fill_ones(float *ones, int n_data) 
+{
+int i;
+i = blockIdx.x * blockDim.x + threadIdx.x;
+ if (i<n_data)
+       ones[i] = 1.;
+}
+
 @  
 Computing the variance of a vector [[data]]$=x$, $\sigma^2_x=\langle x^2 \rangle - \langle x \rangle^2$:
 <<variance>>=
-float stats::var(float *data, int n_data) {
+float stats::var(const float *data, int n_data) {
   <<variance algorithm>>
   return results;
 }
 @  with 
 <<variance algorithm>>=
-float results, mean_data;
-CUBLAS_ERROR( cublasSasum(handle, n_data, data, 1, &mean_data) );
+float results, mean_data, *ones;
+HANDLE_ERROR( cudaMalloc((void**)&ones, sizeof(float)*n_data ) );
+dim3 blockDim(256);
+dim3 gridDim(n_data/256+1);
+fill_ones LLL gridDim,blockDim RRR (ones, n_data);
+CUBLAS_ERROR( cublasSdot(handle, n_data, data, 1, ones, 1, &mean_data) );
+HANDLE_ERROR( cudaFree( ones ) );
 mean_data /= n_data;
 CUBLAS_ERROR( cublasSdot(handle, n_data, data, 1, data, 1, &results) );
 results /= n_data;
@@ -412,14 +453,95 @@ results -= (mean_data*mean_data);
 @  
 Computing the standart deviation $\sigma_x$ of a vector [[data]]$=x$:
 <<standart deviation>>=
-float stats::std(float *data, int n_data) {
+float stats::std(const float *data, int n_data) {
   <<variance algorithm>>
   return sqrtf(results);
 }
 @  
+Computing the variance of a vector [[data]]$=x\times f$, $\sigma^2_{xf}=\langle (xf)^2 \rangle - \langle xf \rangle^2$ where $f$ is a filtering vector the same size than $x$ and made of 0 and 1:
+<<variance filtered data>>=
+float stats::var(const float *data1, const char *mask, int n_data) {
+  float n_data_mask;
+  float results, mean_data, *data, *filter;
+  HANDLE_ERROR( cudaMalloc((void**)&data, sizeof(float)*n_data ) );
+  HANDLE_ERROR( cudaMalloc((void**)&filter, sizeof(float)*n_data ) );
+  CUBLAS_ERROR( cublasScopy(handle, n_data, data1, 1, data, 1) );
+  <<variance filtered data steps>>
+  return results;
+}
+<<differential variance filtered data>>=
+float stats::diff_var(const float *data1, const float *data2, const char *mask, int n_data) {
+  float n_data_mask;
+  float results, mean_data, *data, *filter;
+  HANDLE_ERROR( cudaMalloc((void**)&data, sizeof(float)*n_data ) );
+  HANDLE_ERROR( cudaMalloc((void**)&filter, sizeof(float)*n_data ) );
+  float alpha = -1;
+  CUBLAS_ERROR( cublasScopy(handle, n_data, data1, 1, data, 1) );
+  CUBLAS_ERROR( cublasSaxpy(handle, n_data, &alpha, data2, 1, data, 1) );
+  <<variance filtered data steps>>
+  return results;
+}
+<<differential standard deviation filtered data>>=
+float stats::diff_std(const float *data1, const float *data2, const char *mask, int n_data) {
+  float n_data_mask;
+  float results, mean_data, *data, *filter;
+  HANDLE_ERROR( cudaMalloc((void**)&data, sizeof(float)*n_data ) );
+  HANDLE_ERROR( cudaMalloc((void**)&filter, sizeof(float)*n_data ) );
+  float alpha = -1;
+  CUBLAS_ERROR( cublasScopy(handle, n_data, data1, 1, data, 1) );
+  CUBLAS_ERROR( cublasSaxpy(handle, n_data, &alpha, data2, 1, data, 1) );
+  <<variance filtered data steps>>
+  return sqrtf(results);
+}
+@  Lets compute the area of the filter [[n_data_mask]] and the filtered data:
+<<variance filtered data steps>>=
+dim3 blockDim(256);
+dim3 gridDim(n_data/256+1);
+mask_filter LLL gridDim,blockDim RRR (data, filter, mask, n_data);
+CUBLAS_ERROR( cublasSasum(handle, n_data, filter, 1, &n_data_mask) );
+@ with the kernel:
+<<mask filter>>=
+__global__ void mask_filter(float *data, float *filter, const char *mask, int n_data) 
+{
+int i;
+i = blockIdx.x * blockDim.x + threadIdx.x;
+ if (i<n_data)
+   if (mask[i]>0) {
+     filter[i] = 1;
+   } else {
+     data[i] = 0;
+     filter[i] = 0;
+   }
+}
+@ the variance algorithm can now be applied on the filtered data
+<<variance filtered data steps>>=
+CUBLAS_ERROR( cublasSdot(handle, n_data, data, 1, filter, 1, &mean_data) );
+mean_data /= n_data_mask;
+CUBLAS_ERROR( cublasSdot(handle, n_data, data, 1, data, 1, &results) );
+results /= n_data_mask;
+results -= (mean_data*mean_data);
+@ finally the allocated memory is freed
+<<variance filtered data steps>>=
+HANDLE_ERROR( cudaFree( filter ) );
+HANDLE_ERROR( cudaFree( data ) );
+
+@  
+Computing the standard deviation of a vector [[data]]$=x\times f$, $\sigma_{xf}=\left(\langle (xf)^2 \rangle - \langle xf \rangle^2\right)^{1/2}$ where $f$ is a filtering vector the same size than $x$ and made of 0 and 1:
+<<standart deviation filtered data>>=
+float stats::std(const float *data1, const char *mask, int n_data) {
+  float n_data_mask;
+  float results, mean_data, *data, *filter;
+  HANDLE_ERROR( cudaMalloc((void**)&data, sizeof(float)*n_data ) );
+  HANDLE_ERROR( cudaMalloc((void**)&filter, sizeof(float)*n_data ) );
+  CUBLAS_ERROR( cublasScopy(handle, n_data, data1, 1, data, 1) );
+  <<variance filtered data steps>>
+  return sqrtf(results);
+}
+
+@  
 Computing the differential variance of 2 vectors [[data1]]$=x_1$ and [[data2]]$=x_2$, $\sigma^2_{x_1-x_2}=\langle (x_1-x_2)^2 \rangle - \langle (x_1-x_2) \rangle^2$:
 <<differential variance>>=
-float stats::diff_var(float *data1, float *data2, int n_data) {
+float stats::diff_var(const float *data1, const float *data2, int n_data) {
   <<differential variance algorithm>>
   return results;
 }
@@ -435,7 +557,7 @@ HANDLE_ERROR( cudaFree( data ) );
 @  
 Computing the differential standart deviation $\sigma_{x_1-x_2}$ of vector [[data1]]$=x_1$ and [[data2]]$=x_2$:
 <<differential standart deviation>>=
-float stats::diff_std(float *data1, float *data2, int n_data) {
+float stats::diff_std(const float *data1, const float *data2, int n_data) {
   <<differential variance algorithm>>
   return sqrtf(results);
 }
@@ -516,7 +638,84 @@ __global__ void valid_lenslet(char *mask, int N_pupil, float threshold)
 
   }
 }
+@  The following routine computes the masks of valid lenslet [[lenslet_mask]] and actuators [[actuator_mask] for a circular pupil corresponding to a square [[NL]]$\times$[[NL]] lenslet array with [[n]] pixel per lenslet.
+<<Fried geometry masks>>=
+char fried_geometry_setup(char *lenslet_mask, char *actuator_mask, int NL, int n, float threshold)
+{
+HANDLE_ERROR( cudaMemset(lenslet_mask,  0, sizeof(char)*NL*NL         ) );
+HANDLE_ERROR( cudaMemset(actuator_mask, 0, sizeof(char)*(NL+1)*(NL+1) ) );
+dim3 blockDim(16,16);
+dim3 gridDim(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
+fried_geometry LLL gridDim,blockDim RRR (lenslet_mask, actuator_mask, NL, n, threshold);
+return 1;
+}
+<<Fried geometry>>=
+  __global__ void fried_geometry(char *lenslet_mask, char *actuator_mask, int NL, int n, float threshold)
+{
+  int i, j, iL, jL, sum, ai, bi, aj, bj, kL, kA, N_pupil;
+  float h,x,y,r,R;
+  // total pixel
+  N_pupil = n*NL;
+  // lenslet index
+  iL = blockIdx.x * blockDim.x + threadIdx.x;
+  jL = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (iL<NL) & (jL<NL)) {
 
+    sum = 0;
+    ai = iL*n;
+    bi = (iL+1)*n;
+    aj = jL*n;
+    bj = (jL+1)*n;
+    h = (float) (N_pupil-1)/2;
+    R = N_pupil*N_pupil/4;
+
+    for (i=ai;i<bi;i++) {
+      for (j=aj;j<bj;j++) {
+	x = i - h;
+	y = j - h;
+	r = x*x + y*y;
+    	sum += (r>R) ? 0 : 1;
+      }
+    }
+ 
+    threshold *= n*n;
+
+    if (sum>threshold) {
+
+      kL = iL*NL + jL;
+      lenslet_mask[kL] = 1;
+
+      kA = lenset2actuator(iL,jL,NL, 1, 1);     
+      actuator_mask[kA] = 1;
+      kA = lenset2actuator(iL,jL,NL,-1, 1);     
+      actuator_mask[kA] = 1;
+      kA = lenset2actuator(iL,jL,NL,-1,-1);     
+      actuator_mask[kA] = 1;
+      kA = lenset2actuator(iL,jL,NL, 1,-1);     
+      actuator_mask[kA] = 1;
+
+    }
+
+  }
+}
+
+<<lenslet 2 actuator>>=
+__device__ inline int lenset2actuator(int iL, int jL, int NL, int io, int jo)
+{
+  int iL_p, jL_p, iL_pp, jL_pp, iA, jA;
+
+  iL_p = 2*iL + 1;
+  jL_p = 2*jL + 1;
+  
+  iL_pp = iL_p + io;
+  jL_pp = jL_p + jo;
+  
+  iA = iL_pp/2;
+  jA = jL_pp/2;
+  
+  return iA*(NL+1) + jA;
+
+}
 
 @
 \subsection{Input/Output}
@@ -589,6 +788,18 @@ void dev2file(const char* filename, int* d__data, int n_data) {
 			  cudaMemcpyDeviceToHost ) );
   fwrite(&n_data,sizeof(int),1,fid);
   fwrite(data,sizeof(int),n_data,fid);
+  <<device to file common end>>
+}
+void dev2file(const char* filename, char* d__data, int n_data) {
+  int n_page=1;
+   <<device to file common start>>
+  char *data;
+  data = (char*)malloc(sizeof(char)*n_data);
+  HANDLE_ERROR( cudaMemcpy( data, d__data,
+			  sizeof(char)*n_data,
+			  cudaMemcpyDeviceToHost ) );
+  fwrite(&n_data,sizeof(int),1,fid);
+  fwrite(data,sizeof(char),n_data,fid);
   <<device to file common end>>
 }
 

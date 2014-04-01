@@ -10,7 +10,7 @@ atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
 lambda = atm.wavelength;
 phase2nm = 1e9;%*lambda/2/pi;
     
-D = 30;
+D = 42;
 
 %  atm = atmosphere(photometry.V,r0,L0,...
 %      'altitude',[0, 500, 1000, 2000, 5000, 8000. 13000],...
@@ -21,7 +21,7 @@ D = 30;
 % r0 = atm.r0;
 % L0 = atm.L0;
 
-nLenslet = 150;
+nLenslet = 84;
 d = D/nLenslet;
 nPxLenslet = 16;
 cxy0 = 0.5*(nPxLenslet-1);
@@ -33,6 +33,7 @@ compile = true;
 
 %%
 ceodir = '~/CEO';
+if compile
 cd([ceodir,'/include'])
 unix(['sed -i ',...
     '-e ''s/#define N_SIDE_LENSLET [0-9]*/#define N_SIDE_LENSLET ',num2str(nLenslet),'/g'' ',...
@@ -45,6 +46,7 @@ unix('make clean all')
 % unix('make imaging.mex')
 % clear ceo_imaging
 % mex -largeArrayDims -I../include -L../lib -lceo -o ceo_imaging imaging.mex.cu
+end
 %%
 nIt = 100;
 cd([ceodir,'/iterativeSolvers'])
@@ -53,14 +55,17 @@ unix('make iterativeSolvers.bin')
 % tic
 % unix(sprintf('./a.out %3.1f CG > CG_%03d_%03d.log',D,nIt,nLenslet));
 % toc
+%%
 fprintf(' ==>>> MINRES (N=%d)\n',nLenslet)
 tic
 unix(sprintf('./a.out %3.1f MINRES > MINRES_%03d_%03d.log',D,nIt,nLenslet));
 toc
 %%
 % ps = loadBin('phaseScreen',[nxy,nxy]);
-ps = phase2nm*loadBin('phaseScreenLowRes','map');
-ps = ps - mean(ps(:));
+% pup = logical( loadBin('A_mask','map','type','char') );
+pup = tools.piston(ne,'type','logical','shape','square');
+ps = loadBin('phaseScreenLowRes','map','scaling',1e9);
+ps = pup.*(ps - mean(ps(pup(:))));
 figure(102)
 % subplot(2,3,[1,2])
 % imagesc(ps)
@@ -76,7 +81,7 @@ colorbar('location','north')
 %ps_e = phase2nm*loadBin('phaseScreenEst',[ne,ne]);
 %ps_e = phase2nm*loadBin(sprintf('CG_phaseEst_%3d_%2d',nIt,nLenslet),[ne*ne,nIt]);
 ps_e = phase2nm*loadBin(sprintf('MINRES_phaseEst_%d',nIt),'map');
-ps_e = bsxfun( @minus, ps_e, mean(ps_e(:),1) );
+ps_e = pup.*bsxfun( @minus, ps_e, mean(ps_e(pup(:)),1) );
 ps_e_k = reshape(ps_e,[ne,ne]);
 subplot(3,4,[1,6])
 imagesc([ps,ps_e_k])

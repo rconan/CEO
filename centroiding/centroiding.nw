@@ -51,6 +51,7 @@ The first half contains the X axis centroids [[d__cx]] and the other half contai
 The lenslet intensity is stored in the vector [[d__mass]] of length [[n_data]].
 <<parameters>>=
 float *d__c, *d__cx, *d__cy, *d__mass;
+char *lenslet_mask, MASK_SET;
 int n_data;
 @ 
 \subsection{Functions}
@@ -66,6 +67,8 @@ void centroiding::setup(void) {
   d__cx = d__c;
   d__cy = d__c + _N_LENSLET_*_N_SOURCE_;
   HANDLE_ERROR( cudaMalloc( (void**)&d__mass , sizeof(float) *_N_LENSLET_*_N_SOURCE_ ) );     
+  HANDLE_ERROR( cudaMalloc( (void**)&lenslet_mask , sizeof(char) *_N_LENSLET_ ) );     
+  MASK_SET = 0;
 }
 @ or with the total number of lenslet [[n_data]] and the number of sources [[N_SRC]]
 <<setup with data length>>=
@@ -75,6 +78,8 @@ void centroiding::setup(int n_data_,int N_SRC) {
   d__cx = d__c;
   d__cy = d__c + n_data;
   HANDLE_ERROR( cudaMalloc( (void**)&d__mass , sizeof(float) *n_data*N_SRC ) );     
+  HANDLE_ERROR( cudaMalloc( (void**)&lenslet_mask , sizeof(char) *_N_LENSLET_ ) );     
+  MASK_SET = 0;
 }
 @ and de--allocated with the [[cleanup]] routine
 <<cleanup>>=
@@ -82,6 +87,7 @@ void centroiding::cleanup(void) {
   fprintf(stderr,"@(CEO)>centroiding: freeing memory!\n");
   HANDLE_ERROR( cudaFree( d__c ) );
   HANDLE_ERROR( cudaFree( d__mass ) );
+  HANDLE_ERROR( cudaFree( lenslet_mask ) );
 }
 @
 \subsubsection{Data processing}

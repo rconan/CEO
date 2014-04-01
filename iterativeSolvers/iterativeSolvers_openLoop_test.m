@@ -4,7 +4,7 @@
 nLenslet_ = [20 40 64 84 150];
 D_        = [3.6 8 5 42 30];
 
-for kRun = 1:length(D_)
+for kRun = 2%1:length(D_)
     
 D = D_(kRun);
 
@@ -13,7 +13,7 @@ D = D_(kRun);
 %      'fractionnalR0',[0.2, 0.1, 0.1, 0.3, 0.2, 0.05, 0.05],...
 %      'windSpeed',[10, 5, 7.5, 5, 10, 12, 15],...
 %      'windDirection',[0, 0.25, 0.5, 1, 1.5, 1.75, 2]);
- atm = gmtAtmosphere(1);
+%  atm = gmtAtmosphere(1);
 % r0 = atm.r0;
 % L0 = atm.L0;
 
@@ -25,12 +25,12 @@ nxy = nLenslet*nPxLenslet;
 
 r0 = d;
 L0 = 30;
-%atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
+atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
 lambda = atm.wavelength;
-phase2nm = 1e9*lambda/2/pi;
+phase2nm = 1e9;
 
-nIt = 200;
-ne = 2*nLenslet+1;
+nIt = 5000;
+ne = nLenslet+1;
 
 compile = true;
 
@@ -64,7 +64,7 @@ toc
 
 end
 %%
-pup = tools.piston(ne,'type','logical');
+pup = tools.piston(ne,'type','logical','shape','square');
 pup = pup(:);
 % ps = loadBin('phaseScreen',[nxy,nxy]);
 ps = phase2nm*loadBin(sprintf('CVGCE_phaseScreenLowRes_%03d',nLenslet),[ne*ne,nIt]);
@@ -110,17 +110,18 @@ rms_ps_err_minres = std(ps_err);
 logdata    = fileread(sprintf('CVGCE_MINRES_%03d_%03d.log',nIt,nLenslet));
 logexcerpt = regexp(logdata,'[^\n]*WAVEFRONT ESTIMATION: Elapsed time[^\n]*','match');
 est_ET = cellfun( @(x) str2double(x(42:49)) , logexcerpt);
+logexcerpt = regexp(logdata,'[^\n]*MINRES converged at iteration[^\n]*','match');
+est_nIt = cellfun( @(x) str2double(x(30:32)) , logexcerpt);
 
 u = 1:nIt;
 figure(3141)   
 subplot(2,3,kRun)
-hold all
-loglog(u,rms_ps,'k',u,rms_ps_err_minres,'.-')
-grid
-title(sprintf('N=%d - recon. time: %4.2fms+/-%2.0f\\mus',...
-    nLenslet,mean(est_ET),std(est_ET)*1e3))
+plot(u,rms_ps,'k',u,rms_ps_err_minres,'.-')
+title(sprintf('N=%d - recon. time: %4.2fms+/-%2.0f\\mus -%d It.',...
+    nLenslet,mean(est_ET),std(est_ET)*1e3,median(est_nIt)))
 xlabel('Iteration #')
 ylabel('WFE [nm]')
+grid
 %legend('MINRES','CG',0)
 
 drawnow
