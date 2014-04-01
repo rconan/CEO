@@ -115,7 +115,7 @@ ps_err = bsxfun( @minus, ps(:), ps_e);
 rms_ps_err_cg = std(ps_err(pup(:),:));
 
 figure(314)   
-subplot(2,3,kRun)
+subplot(3,2,kRun)
 loglog(1:nIt,rms_ps_err_minres,'.-',1:nIt,rms_ps_err_cg,'.-')
 grid
 title(sprintf('N=%d',nLenslet))

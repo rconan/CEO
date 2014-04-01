@@ -1036,10 +1036,9 @@ $r_0$ is set to 15cm per default but can be override to any other value after th
 @ 
 In the following, all the variables are declared and set to their default or user given values.
 <<declaration>>=
-int N = _N_LENSLET_*2, NP, PS_E_N_PX, i, j ,k, osf;
-float *d__x, *d__phase_est, *phase_screen_est, *x;
-float D, d, delta, delta_e, wf_rms, phase2nm, slopes2Angle, cxy0, r0=0.15;
-int *idx, *d__idx;
+int N = _N_LENSLET_*2, NP, PS_E_N_PX, k, osf;
+float *d__x, *d__phase_est, *phase_screen_est;
+float D, d, delta, delta_e,  r0=0.15;
 char *d__mask;
 
 if (argc != 3) {
@@ -1093,9 +1092,6 @@ float altitude[] = {0},
 atm.gmt_setup(r0,30);
 //atm.reset();
 
-phase2nm = 1E9;//*atm.wavelength/2/PI;
-slopes2Angle = (atm.wavelength/2/d);
-
 // SH WFS
 lenslet_array.setup();
 
@@ -1137,6 +1133,11 @@ MASK_SET = fried_geometry_setup(cog.lenslet_mask, src.wavefront.pupil_mask, N_SI
 dev2file("A_mask.bin",src.wavefront.pupil_mask,PS_E_N_PX);
 
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
+
+float *d__phase_screen_low_res, *phase_screen_low_res;
+d__phase_screen_low_res = 0;
+phase_screen_low_res    = 0;
+phase_screen_est        = 0;
 @ 
 \subsubsection{Main test}
 \label{sec:main-test}
@@ -1194,7 +1195,7 @@ src.phase2file(filename);
 
 <<wavefront sensing>>
 
-  //aaCov.mask = d__mask;
+if (cog.MASK_SET) aaCov.mask = cog.lenslet_mask;
 
 sprintf(filename,"bins/CVGCE_%s_phaseEst_200_%03d.bin",solver,N_SIDE_LENSLET);
 FILE *fid;
@@ -1272,27 +1273,11 @@ fclose(fid);
 The [[hot convergence test]] reconstructs the wavefront with MINRES re-using the previous estimate as starting point for the next one.
 <<hot convergence test>>=
 FILE *fid;
-  /*
-atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
-
-wf_rms = phase2nm*S.std(d__src->phase, _N_PIXEL_);
-printf("\n WF RMS: %7.2fnm\n",wf_rms);
-
-float phase_screen[_N_PIXEL_];
-HANDLE_ERROR( cudaMemcpy( phase_screen, d__src->phase,
-			  sizeof(float)*_N_PIXEL_,
-			  cudaMemcpyDeviceToHost ) );
-fid = fopen("phaseScreen.bin","wb");
-fwrite(phase_screen,sizeof(float),_N_PIXEL_,fid);
-fclose(fid);
-*/
 
 atm.get_phase_screen(&src,delta_e,NP,delta_e,NP,0);
 src.phase2file("srcPhase.bin");
 
-float *d__phase_screen_low_res;
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*PS_E_N_PX ) );
-float *phase_screen_low_res;
 phase_screen_low_res = (float*)malloc(sizeof(float)*PS_E_N_PX);
 
 char filename[100];
@@ -1300,14 +1285,12 @@ sprintf(filename,"bins/CVGCE_phaseScreenLowRes_%03d.bin",N_SIDE_LENSLET);
 FILE *fid_phaseScreenLowRes;
 fid_phaseScreenLowRes = fopen(filename,"wb");
 int n_page = 1, n_data, n_step;
-n_step = 5000;
+n_step = 200;
 n_data = PS_E_N_PX*n_step;
 fwrite(&n_page,sizeof(int),1,fid_phaseScreenLowRes);
 fwrite(&n_data,sizeof(int),1,fid_phaseScreenLowRes);
 
-<<linear solver (prep.)>>
-  //aaCov.mask = d__mask;
-<<MVM (prep.)>>
+if (cog.MASK_SET) aaCov.mask = cog.lenslet_mask;
 
 sprintf(filename,"bins/CVGCE_%s_phaseEst_%03d_%03d.bin",solver,n_step,N_SIDE_LENSLET);
 fid = fopen(filename,"wb");
@@ -1315,10 +1298,9 @@ fwrite(&n_page,sizeof(int),1,fid);
 fwrite(&n_data,sizeof(int),1,fid);
 
 phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
 float tau=0;
-int solv_it;
-solv_it = 60;
 
 // MINRES
 if (strcmp(solver,"MINRES")==0) {
@@ -1337,7 +1319,7 @@ if (strcmp(solver,"MINRES")==0) {
     fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid_phaseScreenLowRes);
 
     //atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d__mask,d,src,tau);
-    tau = 1e-3*k;
+    tau = 1e-3*(k-1);
     atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&src,tau);
     /* if (k>10) */
     /*   solv_it = 0; */
@@ -1479,15 +1461,11 @@ paCov.cleanup();
 iSolve.cleanup();
 S.cleanup();
 HANDLE_ERROR( cudaFree( d__x ) );
-//HANDLE_ERROR( cudaFree( d__idx ) );
-//HANDLE_ERROR( cudaFree( d__ce ) );
 HANDLE_ERROR( cudaFree( d__phase_est ) );
-//HANDLE_ERROR( cudaFree( d__phase_screen_low_res ) );
+if (d__phase_screen_low_res) HANDLE_ERROR( cudaFree( d__phase_screen_low_res ) );
 HANDLE_ERROR( cudaFree( d__mask ) );
-//free(phase_screen_low_res);
-//free(idx);
-//free(phase_screen_est);
-//free(x);
+if (phase_screen_low_res) free(phase_screen_low_res);
+if (phase_screen_est) free(phase_screen_est);
 @ 
 <<PA input>>=
 __global__ void set_pa_input(float *pa_c, float *aa_c, int *idx, int N) 
@@ -1503,9 +1481,6 @@ __global__ void set_pa_input(float *pa_c, float *aa_c, int *idx, int N)
 @ 
 This is a chunk of code for the [[statistics]] test routine:
 <<atmosphere propagation and wavefront sensing>>=
-/* atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0); */
-/* wf_rms = phase2nm*S.std(d__src->phase, _N_PIXEL_); */
-/* printf("\n WF RMS: %7.2fnm\n",wf_rms); */
 
 atm.get_phase_screen(d__phase_screen_low_res,delta_e,NP,delta_e,NP,d__src,0);
 

@@ -4,7 +4,7 @@
 nLenslet_ = [20 40 64 84 150];
 D_        = [3.6 8 5 42 30];
 
-for kRun = 2%1:length(D_)
+for kRun = 1%1:length(D_)
     
 D = D_(kRun);
 
@@ -25,11 +25,13 @@ nxy = nLenslet*nPxLenslet;
 
 r0 = d;
 L0 = 30;
-atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
+% atm = atmosphere(photometry.V,r0,L0,'windSpeed',10,'windDirection',0);
+atm = gmtAtmosphere(1,'L0',L0);
+atm.r0 = d;
 lambda = atm.wavelength;
 phase2nm = 1e9;
 
-nIt = 5000;
+nIt = 200;
 ne = nLenslet+1;
 
 compile = true;
@@ -47,8 +49,6 @@ unix(['sed -i ',...
 unix('cat definitions.h');
 cd(ceodir)
 unix('make clean all')
-cd([ceodir,'/iterativeSolvers'])
-unix('make iterativeSolvers.bin')
 % unix('make imaging.mex')
 % clear ceo_imaging
 % mex -largeArrayDims -I../include -L../lib -lceo -o ceo_imaging imaging.mex.cu
@@ -57,14 +57,17 @@ unix('make iterativeSolvers.bin')
 % tic
 %unix(sprintf('./a.out %3.1f CG > CVGCE_CG_%03d_%03d.log',D,nIt,nLenslet));
 %toc
+cd([ceodir,'/iterativeSolvers'])
+unix('make iterativeSolvers.bin')
 fprintf(' ==>>> MINRES (N=%d)\n',nLenslet)
 tic
 unix(sprintf('./a.out %3.1f MINRES > CVGCE_MINRES_%03d_%03d.log',D,nIt,nLenslet));
 toc
-
 end
+
 %%
-pup = tools.piston(ne,'type','logical','shape','square');
+% pup = tools.piston(ne,'type','logical','shape','square');
+pup = logical( loadBin('A_mask','map','type','char') );
 pup = pup(:);
 % ps = loadBin('phaseScreen',[nxy,nxy]);
 ps = phase2nm*loadBin(sprintf('CVGCE_phaseScreenLowRes_%03d',nLenslet),[ne*ne,nIt]);
@@ -89,7 +92,7 @@ ps_e = phase2nm*loadBin(sprintf('CVGCE_MINRES_phaseEst_%03d_%03d',nIt,nLenslet),
 ps_e = bsxfun( @minus, ps_e, mean(ps_e(pup,:),1) );
 ps_e = bsxfun( @times, pup, ps_e);
 ps_e_k = reshape(ps_e(:,nIt),[ne,ne]);
-subplot(3,4,[1,6])
+subplot(2,1,1)
 imagesc([ps_k,ps_e_k])
 axis equal tight
 xlabel(colorbar('location','northOutside'),'[nm]')
@@ -97,7 +100,7 @@ xlabel(colorbar('location','northOutside'),'[nm]')
 ps_err = bsxfun( @minus, ps, ps_e);
 rms_ps_err = std(ps_err);
 ps_err_k = reshape(ps_err(:,nIt),[ne,ne]);
-subplot(3,4,[3,8])
+subplot(2,1,2)
 imagesc(ps_err_k)
 axis equal tight
 title(sprintf('wfe=%6.2fnm',rms_ps_err(nIt)))
@@ -117,8 +120,9 @@ u = 1:nIt;
 figure(3141)   
 subplot(2,3,kRun)
 plot(u,rms_ps,'k',u,rms_ps_err_minres,'.-')
-title(sprintf('N=%d - recon. time: %4.2fms+/-%2.0f\\mus -%d It.',...
-    nLenslet,mean(est_ET),std(est_ET)*1e3,median(est_nIt)))
+title({sprintf('N=%d',nLenslet), sprintf('rec.: %4.2fms+/-%2.0f\\mus, %d It., wfe: %3.0f+/-%2.0fnm',...
+    mean(est_ET),std(est_ET)*1e3,round(median(est_nIt)),...
+    mean(rms_ps_err_minres),std(rms_ps_err_minres))})
 xlabel('Iteration #')
 ylabel('WFE [nm]')
 grid
