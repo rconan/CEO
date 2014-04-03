@@ -333,7 +333,7 @@ cublasSaxpy(handle, N, &alpha, z, 1, p, 1);
 \paragraph{Vorst implementation}
 \label{sec:vorst-implementation}
 
-The MINRES iterative solver method is implemented in the next routine:
+The MINRES iterative solver~\cite{PS75,Vorst03,Choi06} method is implemented in the next routine:
 <<MINRES (Vorst) I>>=
   void iterativeSolvers::minres_vorst(float *x, BTBT* A, float *b, float* x0)
 {
@@ -348,7 +348,8 @@ The MINRES iterative solver method is implemented in the next routine:
   }  
   //  tid.toc(&mean_time_per_iteration);
   //  mean_time_per_iteration /= max_it;
-  printf("MINRES converged at iteration %d to a solution with relative residual %.2E.\n",k,rel_rnorm);
+  printf("MINRES converged at iteration %d to a solution with relative residual %.2E.\n",
+	 k,rel_rnorm);
 }
 <<MINRES (Vorst) II>>=
   void iterativeSolvers::minres_vorst(float *x, BTBT* A, float *b, int max_it, float* x0)
@@ -364,7 +365,8 @@ The MINRES iterative solver method is implemented in the next routine:
   }  
   //  tid.toc(&mean_time_per_iteration);
   //  mean_time_per_iteration /= max_it;
-  printf("MINRES converged at iteration %d to a solution with relative residual %.2E.\n",k,rel_rnorm);
+  printf("MINRES converged at iteration %d to a solution with relative residual %.2E.\n",
+	 k,rel_rnorm);
 }
 <<MINRES (Vorst) III>>=
   void iterativeSolvers::minres_vorst(float *x, BTBT* A, float *b, float rtol, float* x0)
@@ -381,7 +383,8 @@ The MINRES iterative solver method is implemented in the next routine:
   }  
   //  tid.toc(&mean_time_per_iteration);
   //  mean_time_per_iteration /= max_it;
-  printf("MINRES converged at iteration %d to a solution with relative residual %.2E.\n",k,rel_rnorm);
+  printf("MINRES converged at iteration %d to a solution with relative residual %.2E.\n",
+	 k,rel_rnorm);
 }
 <<MINRES (Vorst) with residue>>=
   void iterativeSolvers::minres_vorst(float *x, float *res, BTBT* A, float *b, int max_it, float* x0)
@@ -718,185 +721,6 @@ void iterativeSolvers::lanczos_step(float *alpha, float *beta, float *nu_kp1,
 }
 
 @
-
- \subsubsection{Preconditioned MINRES}
- \label{sec:minres}
-
-\paragraph{Vorst implementation}
-\label{sec:vorst-implementation}
-
-The MINRES iterative solver method is implemented in the next routine:
-<<PMINRES (Vorst)>>=
-  void iterativeSolvers::pminres_vorst(float *x, BTBT* A, float *b, int max_it, float* x0, float ip)
-{
-  float alpha, beta, gamma_i, gamma_im1, sigma_i, sigma_im1,
-    eta, delta, rho1, rho2, rho3, rnorm0;
-  int k;
-  <<PMINRES (Vorst) init>>
-      //  tid.tic();
-  for (k=0;k<max_it;k++) {
-    //printf("MINRES IT=%d - ",k);
-    <<PMINRES (Vorst) loop>>
-  }  
-  rnorm /= rnorm0;
-  //  tid.toc(&mean_time_per_iteration);
-  //  mean_time_per_iteration /= max_it;
-}
-@ 
-The MINRES algorithm is written:
-\begin{itemize}
-\item initialization:
-  \begin{enumerate}
-  \item $r=Ax_0$
-<<PMINRES (Vorst) init>>=
-A->MVM(nu_i , x0);
-@ \item $r_0 = b - r_0$
-<<PMINRES (Vorst) init>>=
-beta = -1;
-cublasSscal(handle, N, &beta, nu_i, 1);
-alpha = 1;
-cublasSaxpy(handle, N, &alpha, b, 1, nu_i, 1);
-#ifdef MINRES_DEBUG
-cublasSnrm2(handle, N, b, 1, &beta);
-fprintf(stderr,"beta=%.2E\n",beta);
-#endif
-@ \item $\nu_i = M^{-1}\nu_i$
-<<PMINRES (Vorst) init>>=
-cublasSscal(handle, N, &ip, nu_i, 1);
-@ \item $\beta_1=\left\| \nu_1 \right\|_2=\left\| r \right\|_2$
-<<PMINRES (Vorst) init>>=
-  //cublasSnrm2(handle, N, nu_i, 1, &beta);
-cublasSdot(handle, N, nu_i, 1, nu_i, 1, &beta);
-beta = sqrtf(beta);
-rnorm = beta;
-rnorm0 = rnorm;
-#ifdef MINRES_DEBUG
-fprintf(stderr,"beta=%.2E\n",beta);
-#endif
-@ \item $\eta=beta_1$, $\gamma_1=\gamma_0=1$, $\sigma_1=\sigma_0=0$, $\nu_0=0$
-<<PMINRES (Vorst) init>>=
-eta = beta;
-gamma_i = gamma_im1 = 1;
-sigma_i = sigma_im1 = 0;
-@ \item $\nu_0=0$, $w_0=w_{-1}=0$
-<<PMINRES (Vorst) init>>=
-HANDLE_ERROR( cudaMemset(nu_im1, 0, sizeof(float)*N ) );
-HANDLE_ERROR( cudaMemset(w_im1 , 0, sizeof(float)*N ) );
-HANDLE_ERROR( cudaMemset(w_im2 , 0, sizeof(float)*N ) );
-@ \end{enumerate}
-\item loop:
-  \begin{enumerate}
-  \item $\nu_i = \nu_i / \beta_i$
-<<PMINRES (Vorst) loop>>=
-rho1 = 1/beta;
-cublasSscal(handle, N, &rho1, nu_i, 1);
-@ \item $\nu_{i+1}= A\nu_i$
-<<PMINRES (Vorst) loop>>=
-A->MVM(nu_ip1 , nu_i);
-@ \item $\alpha_i = \nu_i^T\nu_{i+1}$
-<<PMINRES (Vorst) loop>>=
-cublasSdot(handle, N, nu_i, 1, nu_ip1, 1, &alpha);
-#ifdef MINRES_DEBUG
-fprintf(stderr,"alpha=%.2E\n",alpha);
-#endif
-@ \item $\nu_{i+1} = \nu_{i+1} - \alpha_i\nu_i - \beta_i\nu_{i-1}$
-<<PMINRES (Vorst) loop>>=
-alpha = -alpha;
-beta  = -beta;
-cublasSaxpy(handle, N, &alpha, nu_i, 1, nu_ip1, 1);
-cublasSaxpy(handle, N, &beta, nu_im1, 1, nu_ip1, 1);
-alpha = -alpha;
-beta  = -beta;
-@ \item $\delta = \gamma_i\alpha_i - \gamma_{i-1}\sigma_i\beta_i$
-<<PMINRES (Vorst) loop>>=
-delta = gamma_i*alpha - gamma_im1*sigma_i*beta;
-#ifdef MINRES_DEBUG
-fprintf(stderr,"delta=%.2E\n",delta);
-#endif
-@ \item $\rho_2 = \sigma_i\alpha_i + \gamma_{i-1}\gamma_i\beta_i$
-<<PMINRES (Vorst) loop>>=
-rho2 = sigma_i*alpha + gamma_im1*gamma_i*beta;
-#ifdef MINRES_DEBUG
-fprintf(stderr,"rho2=%.2E\n",rho2);
-#endif
-@ \item $\rho_3 = \sigma_{i-1}\beta_i$
-<<PMINRES (Vorst) loop>>=
-rho3 = sigma_im1*beta;
-#ifdef MINRES_DEBUG
-fprintf(stderr,"rho3=%.2E\n",rho3);
-#endif
-@ \item $\beta_{i+1}=\left\| \nu_{i+1} \right\|_2$
-<<PMINRES (Vorst) loop>>=
-  //cublasSnrm2(handle, N, nu_ip1, 1, &beta);
-cublasSdot(handle, N, nu_ip1, 1, nu_ip1, 1, &beta);
-beta = sqrtf(beta);
-#ifdef MINRES_DEBUG
-fprintf(stderr,"beta=%.2E\n",beta);
-#endif
-@ \item $\rho_1 = \sqrt{\delta^2+\beta_{i+1}^2}$
-<<PMINRES (Vorst) loop>>=
-rho1 = hypotf(delta,beta);
-#ifdef MINRES_DEBUG
-fprintf(stderr,"rho1=%.2E\n",rho1);
-#endif
-@ \item $\gamma_{i+1} = \delta / \rho_1$
-<<PMINRES (Vorst) loop>>=
-gamma_im1 = gamma_i;
-gamma_i = delta/rho1;
-#ifdef MINRES_DEBUG
-fprintf(stderr,"gamma_im1=%.2E\n",gamma_im1);
-fprintf(stderr,"gamma_i=%.2E\n",gamma_i);
-#endif
-@ \item $\sigma_{i+1} = \beta_{i+1} / \rho_1$
-<<PMINRES (Vorst) loop>>=
-sigma_im1 = sigma_i;
-sigma_i = beta/rho1;
-#ifdef MINRES_DEBUG
-fprintf(stderr,"sigma_im1=%.2E\n",sigma_im1);
-fprintf(stderr,"sigma_i=%.2E\n",sigma_i);
-#endif
-@ \item $w_i = (\nu_i-\rho_3w_{i-2}-\rho_2w_{i-1})/\rho_1$
-<<PMINRES (Vorst) loop>>=
-cublasScopy(handle, N, nu_i, 1, w_i, 1);
-rho1 = 1.0/rho1;
-cublasSscal(handle, N, &rho1, w_i, 1);
-rho3 = -rho3*rho1;
-cublasSaxpy(handle, N, &rho3, w_im2, 1, w_i, 1);
-rho2 = -rho2*rho1;
-cublasSaxpy(handle, N, &rho2, w_im1, 1, w_i, 1);
-@ \item $x_i = x_{i-1} + \gamma_{i+1}\eta w_i$
-<<PMINRES (Vorst) loop>>=
-rho1 = gamma_i*eta;
-cublasSaxpy(handle, N, &rho1, w_i, 1, x, 1);
-@ \item $\left\| r_i \right\|_2 = \left| \sigma_{i+1} \right|\left\| r_{i-1} \right\|_2 $
-<<PMINRES (Vorst) loop>>=
-rnorm = rnorm*fabs(sigma_i);
-if (VERBOSE)
-  fprintf(stderr,"#%3d: r norm=%6.2E - rel. tol.=%6.2E\n",k,rnorm,rnorm/rnorm0);
-@ \item $\eta = \sigma_{i+1}\eta$
-<<PMINRES (Vorst) loop>>=
-eta = -sigma_i*eta;
-#ifdef MINRES_DEBUG
-fprintf(stderr,"eta=%.2E\n",eta);
-#endif
-@ \item
-\begin{eqnarray}
-  \label{eq:1}
-  \nu_{i-1} &\leftarrow& \nu_i \nonumber\\
-  \nu_{i} &\leftarrow& \nu_{i+1} \nonumber\\
-  w_{i-2} &\leftarrow& w_{i-1} \nonumber\\
-  w_{i-1} &\leftarrow& \nu_{i} \nonumber
-\end{eqnarray}
-<<PMINRES (Vorst) loop>>=
-cublasScopy(handle, N, nu_i  , 1, nu_im1, 1);
-cublasScopy(handle, N, nu_ip1, 1, nu_i  , 1);
-cublasScopy(handle, N, w_im1 , 1, w_im2 , 1);
-cublasScopy(handle, N, w_i   , 1, w_im1 , 1);
-if (beta==0) break;
-@  \end{enumerate}
- \end{itemize}
-
-
 \subsection{Tests}
 \label{sec:tests}
 

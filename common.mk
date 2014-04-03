@@ -2,6 +2,8 @@ CEOPATH	        = /home/rconan/CEO
 CUDAPATH	= /opt/local/cuda
 NVCC          	= $(CUDAPATH)/bin/nvcc
 CUDALIBPATH   	= $(CUDAPATH)/lib64
+MATLABINCS	= -I/priv/monarcas1/rconan/MATLAB/R2013a/extern/include \
+	-I/export/monarcas1/rconan/MATLAB/R2013a/toolbox/distcomp/gpu/extern/include
 CUDALIBS	= cusparse cufft cublas cudart cuda 
 NOWEBPATH	= /opt/local/noweb
 WEAVE   	= $(NOWEBPATH)/bin/noweave
@@ -11,8 +13,7 @@ TEXTOPDF  	= pdflatex
 NVCCFLAGS	= -gencode=arch=compute_20,code=\"sm_20,compute_20\" \
 		--compiler-options=-ansi,-D_GNU_SOURCE,-fPIC,-fno-omit-frame-pointer,-pthread -O2
 LIBS 		= -L$(CEOPATH)/lib $(CUDALIBPATH:%=-L%) $(CUDALIBS:%=-l%)
-INCS		= -I. -I$(CEOPATH)/include -I/priv/monarcas1/rconan/MATLAB/R2013a/extern/include \
-		 -I/export/monarcas1/rconan/MATLAB/R2013a/toolbox/distcomp/gpu/extern/include
+INCS		= -I. -I$(CEOPATH)/include #$(MATLABINCS)
 
 texsrc = $(nwsrc:%.nw=%.tex)
 header = $(nwsrc:%.nw=%.h)

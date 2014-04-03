@@ -34,7 +34,8 @@ struct LMMSE {
 
   <<parameters>>
 
-  void setup(atmosphere *atm, source *guide_star, int N_guide_star, source *mmse_star, int N_mmse_star,
+  void setup(atmosphere *atm, source *guide_star, int N_guide_star, 
+	     source *mmse_star, int N_mmse_star,
 	     float sampling, int N, char *solver_id);
 
   void cleanup(void);
@@ -54,17 +55,12 @@ struct LMMSE {
 #include "LMMSE.h"
 #endif
 
-<<PA input>>
-<<PA input with sizes>>
-
 <<sparse matrix kernel>>
 
 <<setup>>
 
 <<cleanup>>
 
-<<wavefront estimation (old version I)>>
-<<wavefront estimation (old version II)>>
 <<wavefront estimation>>
 
 <<phase estimate to file>>
@@ -320,29 +316,6 @@ where $H_i$ is the sparse bi--linear interpolation matrix.
 \label{sec:setup--cleanup}
 
 The setup method is initializing the required structures:
-<<setup (old version)>>=
-void LMMSE::setup_old(atmosphere *atm, source *guide_star, int _N_guide_star, source *mmse_star, int N_mmse_star,
-		  float sampling,int N, char *solver_id)
-{
-  N_guide_star = _N_guide_star;
-  aa.setup(N_SIDE_LENSLET,atm,sampling,guide_star, N_guide_star);
-  aaCov.setup(2*N_guide_star,2*N_guide_star,N_SIDE_LENSLET,aa.d__cov);
-  osf = 2;
-  NP = osf*N_SIDE_LENSLET+1;
-  PS_E_N_PX = NP;
-  PS_E_N_PX *= PS_E_N_PX;
-  pa.setup(N_SIDE_LENSLET,osf,atm,sampling,mmse_star, N_mmse_star, guide_star, N_guide_star);
-  paCov.setup(N_mmse_star,2*N_guide_star,NP,pa.d__cov);
-  if (strcmp(solver_id,"CG")==0)
-    iSolve.cg_setup(N*N_guide_star);
-  if (strcmp(solver_id,"MINRES")==0)
-    iSolve.minres_setup(N*N_guide_star);
-<<linear solver (prep.)>>
-<<MVM (prep.)>>
-HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
-HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
-}
-
 <<setup>>=
 void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star, 
                         source *mmse_star, int N_mmse_star,
@@ -420,70 +393,6 @@ void LMMSE::cleanup(void)
 @
 \subsubsection{Wavefront estimation}
 
-<<PA input>>=
-__global__ void set_pa_input(float *pa_c, float *aa_c, int *idx, int N) 
-{
-  int i, j, k;
-  i = blockIdx.x * blockDim.x + threadIdx.x;
-  j = blockIdx.y * blockDim.y + threadIdx.y;
-  if ( (i<N) && (j<N) ) {
-    k = i*N + j;
-    pa_c[idx[k]] = aa_c[k];
-  }
-}
-<<PA input with sizes>>=
-__global__ void set_pa_input(float *pa_c, float *aa_c, int N, int offset) 
-{
-  int i, j, k, ii, jj, idx;
-  i = blockIdx.x * blockDim.x + threadIdx.x;
-  j = blockIdx.y * blockDim.y + threadIdx.y;
-  if ( (i<N) && (j<N) ) {
-    ii  = 2*i + 1 + offset;
-    jj  = 2*j + 1 + offset;
-    idx = ii*(2*N + 1 + 2*offset) + jj;
-    k   = i*N + j;
-    pa_c[idx] = aa_c[k];
-  }
-}
-@ 
-<<wavefront estimation (old version I)>>=
-  void LMMSE::estimation_old(float* d__c, int nMaxIteration, float *d__x0)
-{
-
-tid.tic();
-
-iSolve.minres_vorst(d__x, &aaCov, d__c, nMaxIteration, d__x0);
-
-<<MVM>>
-
-tid.toc("WAVEFRONT ESTIMATION");
-
-
-printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
-printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
-}
-
-<<wavefront estimation (old version II)>>=
-  void LMMSE::estimation_old(float* d__c, int nMaxIteration)
-{
-
-tid.tic();
-
-iSolve.minres_vorst(d__x, &aaCov, d__c, nMaxIteration, d__x);
-
-tid.toc("WAVEFRONT ESTIMATION (MINRES)");
-
-tid.tic();
-
-<<MVM>>
-
-tid.toc("WAVEFRONT ESTIMATION (PA MVM)");
-
-
-printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
-//printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
-}
-@ 
 <<wavefront estimation>>=
 void LMMSE::estimation(const centroiding *cog)
 {
@@ -526,39 +435,6 @@ d__phase_est = d__phase_est_c;
 tid.toc("WAVEFRONT ESTIMATION (PA MVM)");
 
 @ 
-<<linear solver (prep.)>>=
-  int *idx, i, j , k;
-idx = (int *)malloc(sizeof(int)*_N_LENSLET_);
-k = -1;
-for (i=1;i<2*N_SIDE_LENSLET;i+=2) {
-  for (j=1;j<2*N_SIDE_LENSLET;j+=2) {
-    idx[++k] = i*(2*N_SIDE_LENSLET + 1) + j;
-  }
- }
-HANDLE_ERROR( cudaMalloc( (void**)&d__idx, sizeof(int)*_N_LENSLET_ ) );
-HANDLE_ERROR( cudaMemcpy( d__idx, idx,
-			  sizeof(int)*_N_LENSLET_,
-			  cudaMemcpyHostToDevice ) );
-free(idx);
-
-<<MVM (prep.)>>=
-HANDLE_ERROR( cudaMalloc((void**)&d__ce, sizeof(float)*PS_E_N_PX*2*N_guide_star ) );
-HANDLE_ERROR( cudaMemset(d__ce, 0, sizeof(float)*PS_E_N_PX*2*N_guide_star ) );
-HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est_c           , sizeof(float)*PS_E_N_PX ) );
-
-<<MVM>>=
-dim3 blockDim(16,16);
-dim3 gridDim(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
-for (int k_guide_star=0;k_guide_star<N_guide_star;k_guide_star++) {
-  set_pa_input LLL gridDim,blockDim RRR (d__ce + 2*k_guide_star*PS_E_N_PX,
-					 d__x + 2*k_guide_star*_N_LENSLET_,     d__idx, N_SIDE_LENSLET);
-  set_pa_input LLL gridDim,blockDim RRR (d__ce + (2*k_guide_star+1)*PS_E_N_PX,
-					 d__x + (2*k_guide_star+1)*_N_LENSLET_, d__idx, N_SIDE_LENSLET);
- }
-paCov.MVM(d__phase_est_c,d__ce);
-
-@ 
-
 \subsubsection{Sparse bi--linear interpolation}
 \label{sec:sparse-bi-linear}
 
