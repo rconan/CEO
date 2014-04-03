@@ -4,7 +4,7 @@
 nLenslet_ = [20 40 64 84 150];
 D_        = [3.6 8 5 42 30];
 
-for kRun = 1%1:length(D_)
+for kRun = [1]%1:length(D_)
     
 D = D_(kRun);
 
@@ -67,7 +67,7 @@ end
 
 %%
 % pup = tools.piston(ne,'type','logical','shape','square');
-pup = logical( loadBin('A_mask','map','type','char') );
+pup = logical( loadBin(sprintf('A_mask_%03d',nLenslet),'map','type','char') );
 pup = pup(:);
 % ps = loadBin('phaseScreen',[nxy,nxy]);
 ps = phase2nm*loadBin(sprintf('CVGCE_phaseScreenLowRes_%03d',nLenslet),[ne*ne,nIt]);
@@ -120,8 +120,9 @@ u = 1:nIt;
 figure(3141)   
 subplot(2,3,kRun)
 plot(u,rms_ps,'k',u,rms_ps_err_minres,'.-')
-title({sprintf('N=%d',nLenslet), sprintf('rec.: %4.2fms+/-%2.0f\\mus, %d It., wfe: %3.0f+/-%2.0fnm',...
-    mean(est_ET),std(est_ET)*1e3,round(median(est_nIt)),...
+title({sprintf('N=%d',nLenslet), sprintf('rec.: %4.2fms+/-%2.0f\\mus, (%d)%d It., wfe: %3.0f+/-%2.0fnm',...
+    mean(est_ET),std(est_ET)*1e3,...
+    est_nIt(1),round(median(est_nIt(2:end))),...
     mean(rms_ps_err_minres),std(rms_ps_err_minres))})
 xlabel('Iteration #')
 ylabel('WFE [nm]')

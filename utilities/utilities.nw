@@ -4,9 +4,9 @@
 
 \subsubsection{Header}
 
-<<ceo.h>>=
-#ifndef __CEO_H__
-#define __CEO_H__
+<<utilities.h>>=
+#ifndef __UTILITIES_H__
+#define __UTILITIES_H__
 
 #include <sys/stat.h>
 #include <stdio.h>
@@ -94,14 +94,14 @@ void dev2file(const char* filename, int* d__data, int n_data);
 void dev2file(const char* filename, float2* d__data, int n_data);
 void dev2file(const char* filename, char* d__data, int n_data);
 
-#endif  // __CEO_H__
+#endif  // __UTILITIES_H__
 
 @
 \subsubsection{Source}
 
-<<ceo.cu>>=
-#ifndef __CEO_H__
-#include "ceo.h"
+<<utilities.cu>>=
+#ifndef __UTILITIES_H__
+#include "utilities.h"
 #endif
 
 int round_up_to_nhp2(int n) {
@@ -638,14 +638,14 @@ __global__ void valid_lenslet(char *mask, int N_pupil, float threshold)
 
   }
 }
-@  The following routine computes the masks of valid lenslet [[lenslet_mask]] and actuators [[actuator_mask] for a circular pupil corresponding to a square [[NL]]$\times$[[NL]] lenslet array with [[n]] pixel per lenslet.
+@  The following routine computes the masks of valid lenslet [[lenslet_mask]] and actuators [[actuator_mask]] for a circular pupil corresponding to a square [[NL]]$\times$[[NL]] lenslet array with [[n]] pixel per lenslet.
 <<Fried geometry masks>>=
 char fried_geometry_setup(char *lenslet_mask, char *actuator_mask, int NL, int n, float threshold)
 {
 HANDLE_ERROR( cudaMemset(lenslet_mask,  0, sizeof(char)*NL*NL         ) );
 HANDLE_ERROR( cudaMemset(actuator_mask, 0, sizeof(char)*(NL+1)*(NL+1) ) );
 dim3 blockDim(16,16);
-dim3 gridDim(N_SIDE_LENSLET/16+1,N_SIDE_LENSLET/16+1);
+dim3 gridDim(NL/16+1,NL/16+1);
 fried_geometry LLL gridDim,blockDim RRR (lenslet_mask, actuator_mask, NL, n, threshold);
 return 1;
 }
@@ -809,9 +809,9 @@ char path[50];
 
 if (stat("bins",&sb)!=0)
   if (mkdir("bins", S_IRWXU)==0)
-    fprintf(stderr,"@(CEO)>ceo: bins directory created!\n");
+    fprintf(stderr,"@(CEO)>utilities: bins directory created!\n");
   else {
-    fprintf(stderr,"\n\x1B[31m@(CEO)>ceo: bins mkdir failed!\x1B[0m\n");
+    fprintf(stderr,"\n\x1B[31m@(CEO)>utilities: bins mkdir failed!\x1B[0m\n");
     return;
   }
 strcpy(path,"bins/");
@@ -819,11 +819,11 @@ strcat(path,filename);
 FILE *fid;
 fid = fopen(path,"wb");
 if (fid==NULL) {
-  fprintf(stderr,"\n\x1B[31m@(CEO)>ceo: Unable to open the file: %s!\x1B[0m\n",path);
+  fprintf(stderr,"\n\x1B[31m@(CEO)>utilities: Unable to open the file: %s!\x1B[0m\n",path);
   return;
  }
 fwrite(&n_page,sizeof(int),1,fid);
 <<device to file common end>>=
 fclose(fid);
 free(data);
-fprintf(stderr,"@(CEO)>ceo: Data saved to %s!\n",filename);
+fprintf(stderr,"@(CEO)>utilities: Data saved to %s!\n",filename);

@@ -8,8 +8,8 @@
 #ifndef __ITERATIVESOLVERS_H__
 #define __ITERATIVESOLVERS_H__
 
-#ifndef __CEO_H__
-#include "ceo.h"
+#ifndef __UTILITIES_H__
+#include "utilities.h"
 #endif
 
 #ifndef __BTBT_H__
@@ -908,25 +908,6 @@ The test routine is:
 #ifndef __CEO_H__
 #include "ceo.h"
 #endif
-#ifndef __SOURCE_H__
-#include "source.h"
-#endif
-#ifndef __ATMOSPHERE_H__
-#include "atmosphere.h"
-#endif
-#ifndef __IMAGING_H__
-#include "imaging.h"
-#endif
-#ifndef __CENTROIDING_H__
-#include "centroiding.h"
-#endif
-#ifndef __AASTATS_H__
-#include "aaStats.h"
-#endif
-#ifndef __BTBT_H__
-#include "BTBT.h"
-#endif
-#include "iterativeSolvers.h"
 
    //#define N 10
 
@@ -1029,9 +1010,9 @@ There are 3 tests available: [[[main test]]], [[convergence test]] and [[statist
 $r_0$ is set to 15cm per default but can be override to any other value after the variable declaration.
 <<complete test>>=
 <<declaration>>
-  r0 = d;
+  //  r0 = d;
 <<initialization>>
-<<convergence test>>
+<<hot convergence test>>
 <<cleanup and free memory>>
 @ 
 In the following, all the variables are declared and set to their default or user given values.
@@ -1130,11 +1111,13 @@ valid_lenslet LLL gridDim_vl,blockDim_vl RRR (d__mask,N_SIDE_LENSLET*_N_PX_PUPIL
 char MASK_SET;
 MASK_SET = fried_geometry_setup(cog.lenslet_mask, src.wavefront.pupil_mask, N_SIDE_LENSLET, 16, 0.5);
 //printf("MASK_SET = %d\n",MASK_SET);
-dev2file("A_mask.bin",src.wavefront.pupil_mask,PS_E_N_PX);
+char A_mask_filename[32];
+sprintf(A_mask_filename,"A_mask_%03d.bin",N_SIDE_LENSLET);
+dev2file(A_mask_filename,src.wavefront.pupil_mask,PS_E_N_PX);
 
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
 
-float *d__phase_screen_low_res, *phase_screen_low_res;
+float *d__phase_screen_low_res, *d__phase_screen_est, *phase_screen_low_res;
 d__phase_screen_low_res = 0;
 phase_screen_low_res    = 0;
 phase_screen_est        = 0;
@@ -1272,85 +1255,75 @@ fclose(fid);
 
 The [[hot convergence test]] reconstructs the wavefront with MINRES re-using the previous estimate as starting point for the next one.
 <<hot convergence test>>=
-FILE *fid;
+int n_step = 200;
 
-atm.get_phase_screen(&src,delta_e,NP,delta_e,NP,0);
-src.phase2file("srcPhase.bin");
-
-HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*PS_E_N_PX ) );
-phase_screen_low_res = (float*)malloc(sizeof(float)*PS_E_N_PX);
-
-char filename[100];
-sprintf(filename,"bins/CVGCE_phaseScreenLowRes_%03d.bin",N_SIDE_LENSLET);
-FILE *fid_phaseScreenLowRes;
-fid_phaseScreenLowRes = fopen(filename,"wb");
-int n_page = 1, n_data, n_step;
-n_step = 200;
-n_data = PS_E_N_PX*n_step;
-fwrite(&n_page,sizeof(int),1,fid_phaseScreenLowRes);
-fwrite(&n_data,sizeof(int),1,fid_phaseScreenLowRes);
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*PS_E_N_PX*n_step ) );
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_est,     sizeof(float)*PS_E_N_PX*n_step ) );
 
 if (cog.MASK_SET) aaCov.mask = cog.lenslet_mask;
 
-sprintf(filename,"bins/CVGCE_%s_phaseEst_%03d_%03d.bin",solver,n_step,N_SIDE_LENSLET);
-fid = fopen(filename,"wb");
-fwrite(&n_page,sizeof(int),1,fid);
-fwrite(&n_data,sizeof(int),1,fid);
-
-phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
 HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
-float tau=0;
+float time_step,tau=0, tau0=0, delta_tau;
+time_step = 2;
+
+iSolve.minres_setup(N);
+iSolve.VERBOSE = 0;
+iSolve.RTOL = 5E-2;
+
+// First wavefront estimate
+atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&src,tau);
+tid.tic();
+iSolve.minres_vorst(d__x, &aaCov, cog.d__c, d__x);
+tid.toc(&tau0,"WAVEFRONT ESTIMATION");
+tau = tau0;
+
+iSolve.N_ITERATION = 10;
+//iSolve.ATOL = iSolve.rnorm;
 
 // MINRES
-if (strcmp(solver,"MINRES")==0) {
-  iSolve.minres_setup(N);
-  iSolve.VERBOSE = 0;
-  iSolve.RTOL = 5E-2;
-  for (k=1;k<=n_step;k++) {
+for (k=1;k<=n_step;k++) {
 
-    printf("\n______ ITERATION #: %03d ______\n",k);
+  printf("\n______ ITERATION #: %03d ______\n",k);
     
-    tau = 1e-3*(k-1);
-    atm.get_phase_screen(&src,delta_e,NP,delta_e,NP,tau);
-    HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, src.wavefront.phase,
-    			  sizeof(float)*PS_E_N_PX,
-    			  cudaMemcpyDeviceToHost ) );
-    fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid_phaseScreenLowRes);
-
-    //atm.get_phase_screen_gradient(cog.d__cx,cog.d__cy,N_SIDE_LENSLET,d__mask,d,src,tau);
-    tau = 1e-3*(k-1);
-    atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&src,tau);
-    /* if (k>10) */
-    /*   solv_it = 0; */
+  tau +=  time_step;
+  atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&src,1E-3*tau);
    
-    tid.tic();
+  tid.tic();
 
-    iSolve.minres_vorst(d__x, &aaCov, cog.d__c, d__x);
+  iSolve.minres_vorst(d__x, &aaCov, cog.d__c, d__x);
 
-    <<MVM>>
+  paCov.MVM(d__phase_screen_est + (k-1)*PS_E_N_PX, d__x);
 
-    tid.toc("WAVEFRONT ESTIMATION");
+  tid.toc(&delta_tau, "WAVEFRONT ESTIMATION");
 
-    HANDLE_ERROR( cudaMemcpy( phase_screen_est, d__phase_est,
-    			      sizeof(float)*PS_E_N_PX,
-    			      cudaMemcpyDeviceToHost ) );
-    fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
+  //tau += delta_tau + 0*time_step;
 
-    //printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
-    //printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
-    printf("\n-------------------------------\n");
+  src.wavefront.phase = d__phase_screen_low_res + (k-1)*PS_E_N_PX;
+  atm.get_phase_screen(&src,delta_e,NP,delta_e,NP,1E-3*tau);
+  /* HANDLE_ERROR( cudaMemcpy( d__phase_screen_low_res + (k-1)*PS_E_N_PX, src.wavefront.phase, */
+  /* 			    sizeof(float)*PS_E_N_PX, */
+  /* 			    cudaMemcpyDeviceToDevice) ); */
 
-    if (k==1)
-      iSolve.ATOL = iSolve.rnorm;
+  //printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm);
+  //printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+  printf("\n-------------------------------\n");
 
-  }
+  /* if (k==1) */
+  /*   iSolve.ATOL = iSolve.rnorm; */
+  //if (k>1)
+  //iSolve.N_ITERATION = 10;
+
  }
 
-fclose(fid_phaseScreenLowRes);
-fclose(fid);
-//HANDLE_ERROR( cudaFree( d__b ) );
-//free(b);
+char filename[100];
+
+sprintf(filename,"CVGCE_phaseScreenLowRes_%03d.bin",N_SIDE_LENSLET);
+dev2file(filename,d__phase_screen_low_res,PS_E_N_PX*n_step);
+
+sprintf(filename,"CVGCE_%s_phaseEst_%03d_%03d.bin",solver,n_step,N_SIDE_LENSLET);
+dev2file(filename,d__phase_screen_est,PS_E_N_PX*n_step);
+
 @
 \subsubsection{Statistics test}
 \label{sec:statistics-test}
@@ -1463,6 +1436,7 @@ S.cleanup();
 HANDLE_ERROR( cudaFree( d__x ) );
 HANDLE_ERROR( cudaFree( d__phase_est ) );
 if (d__phase_screen_low_res) HANDLE_ERROR( cudaFree( d__phase_screen_low_res ) );
+if (d__phase_screen_est)     HANDLE_ERROR( cudaFree( d__phase_screen_est ) );
 HANDLE_ERROR( cudaFree( d__mask ) );
 if (phase_screen_low_res) free(phase_screen_low_res);
 if (phase_screen_est) free(phase_screen_est);
