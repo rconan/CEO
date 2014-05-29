@@ -868,7 +868,7 @@ printf("\nd    =%.4f\n",d);
 printf("\ndelta=%.4f\n",delta);
 printf("\ndelta_e=%.4f\n",delta_e);
 
-source src;
+source src, gs;
 atmosphere atm;
 imaging lenslet_array;
 centroiding cog;
@@ -884,7 +884,7 @@ stopwatch tid;
 Then all the components are initialized and the dynamic arrays are allocated.
 <<initialization>>=
 src.setup(ARCSEC(0) , 0, INFINITY, PS_E_N_PX);
-        
+gs.setup(ARCSEC(0) , 0, 90e3, PS_E_N_PX);        
 
 // Atmosphere
 // Single layer turbulence profile
@@ -904,12 +904,12 @@ lenslet_array.setup();
 cog.setup();
 
 // covariances
-aa.setup(N_SIDE_LENSLET,&atm,d, &src, 1);
+aa.setup(N_SIDE_LENSLET,&atm,d, &gs, 1);
 aa.toFile("aaCovariance.bin");
 printf("\n AA variance [rd^2]: %.3E\n",aa.variance());
 aaCov.setup(2,2,N_SIDE_LENSLET,aa.d__cov);
 
-pa.setup(NP,N_SIDE_LENSLET,osf,&atm,d,&src,1,&src,1);
+pa.setup(NP,N_SIDE_LENSLET,osf,&atm,d,&src,1,&gs,1);
 pa.toFile("paCovariance.bin");
 paCov.setup(1,2,NP,N_SIDE_LENSLET,pa.d__cov);
 
@@ -1079,9 +1079,15 @@ fclose(fid);
 
 The [[hot convergence test]] reconstructs the wavefront with MINRES re-using the previous estimate as starting point for the next one.
 <<hot convergence test>>=
+
+LMMSE lmmse;
+lmmse.setup(&atm,&gs,1,&src,1,d,_N_LENSLET_*2,"MINRES");
+
 int n_step = 200;
 
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*PS_E_N_PX*n_step ) );
+float *d__gs_phase_screen_low_res;
+HANDLE_ERROR( cudaMalloc( (void**)&d__gs_phase_screen_low_res, sizeof(float)*PS_E_N_PX*n_step ) );
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_est,     sizeof(float)*PS_E_N_PX*n_step ) );
 
 if (cog.MASK_SET) aaCov.mask = cog.lenslet_mask;
@@ -1091,19 +1097,20 @@ HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
 float time_step,tau=0, tau0=0, delta_tau;
 time_step = 2;
 
-iSolve.minres_setup(N);
-iSolve.VERBOSE = 0;
-iSolve.RTOL = 5E-2;
+//iSolve.minres_setup(N);
+lmmse.iSolve.VERBOSE = 0;
+lmmse.iSolve.RTOL = 5E-2;
 
 // First wavefront estimate
-atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&src,tau);
+atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&gs,tau);
 tid.tic();
-iSolve.minres_vorst(d__x, &aaCov, cog.d__c, d__x);
+//iSolve.minres_vorst(d__x, &aaCov, cog.d__c, d__x);
+lmmse.estimation(&cog);
 tid.toc(&tau0,"WAVEFRONT ESTIMATION");
 tau = tau0;
 
-iSolve.N_ITERATION = 10;
-//iSolve.ATOL = iSolve.rnorm;
+//lmmse.iSolve.N_ITERATION = 5;
+lmmse.iSolve.ATOL = lmmse.iSolve.rnorm;
 
 // MINRES
 for (k=1;k<=n_step;k++) {
@@ -1111,13 +1118,17 @@ for (k=1;k<=n_step;k++) {
   printf("\n______ ITERATION #: %03d ______\n",k);
     
   tau +=  time_step;
-  atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&src,1E-3*tau);
-   
+  atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&gs,1E-3*tau);
+
+  //  lmmse.d__phase_est_c = d__phase_screen_est + (k-1)*PS_E_N_PX;
+  lmmse.set_phase_est_ptr( d__phase_screen_est + (k-1)*PS_E_N_PX );
+
   tid.tic();
 
-  iSolve.minres_vorst(d__x, &aaCov, cog.d__c, d__x);
+  /* iSolve.minres_vorst(d__x, &aaCov, cog.d__c, d__x); */
 
-  paCov.MVM(d__phase_screen_est + (k-1)*PS_E_N_PX, d__x);
+  /* paCov.MVM(d__phase_screen_est + (k-1)*PS_E_N_PX, d__x); */
+  lmmse.estimation(&cog);
 
   tid.toc(&delta_tau, "WAVEFRONT ESTIMATION");
 
@@ -1125,6 +1136,8 @@ for (k=1;k<=n_step;k++) {
 
   src.wavefront.phase = d__phase_screen_low_res + (k-1)*PS_E_N_PX;
   atm.get_phase_screen(&src,delta_e,NP,delta_e,NP,1E-3*tau);
+  gs.wavefront.phase = d__gs_phase_screen_low_res + (k-1)*PS_E_N_PX;
+  atm.get_phase_screen(&gs,delta_e,NP,delta_e,NP,1E-3*tau);
   /* HANDLE_ERROR( cudaMemcpy( d__phase_screen_low_res + (k-1)*PS_E_N_PX, src.wavefront.phase, */
   /* 			    sizeof(float)*PS_E_N_PX, */
   /* 			    cudaMemcpyDeviceToDevice) ); */
@@ -1144,9 +1157,14 @@ char filename[100];
 
 sprintf(filename,"CVGCE_phaseScreenLowRes_%03d.bin",N_SIDE_LENSLET);
 dev2file(filename,d__phase_screen_low_res,PS_E_N_PX*n_step);
+sprintf(filename,"CVGCE_GS_phaseScreenLowRes_%03d.bin",N_SIDE_LENSLET);
+dev2file(filename,d__gs_phase_screen_low_res,PS_E_N_PX*n_step);
 
 sprintf(filename,"CVGCE_%s_phaseEst_%03d_%03d.bin",solver,n_step,N_SIDE_LENSLET);
 dev2file(filename,d__phase_screen_est,PS_E_N_PX*n_step);
+
+lmmse.cleanup();
+HANDLE_ERROR( cudaFree( d__gs_phase_screen_low_res ) );
 
 @
 \subsubsection{Statistics test}

@@ -44,6 +44,7 @@ struct LMMSE {
   void estimation_old(float* d__c, int nMaxIteration);
   void estimation(const centroiding *cog);
 
+  void set_phase_est_ptr(float *data_ptr);
   void toFile(const char *filename);
 };
 #endif // __LMMSE_H__
@@ -63,6 +64,7 @@ struct LMMSE {
 
 <<wavefront estimation>>
 
+<<phase estimate pointer>>
 <<phase estimate to file>>
 
 @
@@ -400,7 +402,7 @@ void LMMSE::estimation(const centroiding *cog)
 <<wavefront estimation (solver and projection)>>
 
 if (nnz) {
-tid.tic();
+//tid.tic();
 
 HANDLE_ERROR_CUSPARSE( cusparseScsrmv(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
 				      NI*NI, paCov.MT2_TOTAL, nnz, &alpha,
@@ -410,7 +412,7 @@ HANDLE_ERROR_CUSPARSE( cusparseScsrmv(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
 
 d__phase_est = d__phase_est_i;
 
-tid.toc("WAVEFRONT ESTIMATION (SPARSE MVM)");
+//tid.toc("WAVEFRONT ESTIMATION (SPARSE MVM)");
 }
 
 printf("Solver residue norm           : %.2E\n",iSolve.rnorm);
@@ -420,19 +422,19 @@ printf("Solver residue norm           : %.2E\n",iSolve.rnorm);
 <<wavefront estimation (solver and projection)>>=
 if (cog->MASK_SET) aaCov.mask = cog->lenslet_mask;
 
-tid.tic();
+//tid.tic();
 
 iSolve.minres_vorst(d__x, &aaCov, cog->d__c, d__x);
 
-tid.toc("WAVEFRONT ESTIMATION (MINRES)");
+//tid.toc("WAVEFRONT ESTIMATION (MINRES)");
 
-tid.tic();
+//tid.tic();
 
 paCov.MVM(d__phase_est_c,d__x);
 
 d__phase_est = d__phase_est_c;
 
-tid.toc("WAVEFRONT ESTIMATION (PA MVM)");
+//tid.toc("WAVEFRONT ESTIMATION (PA MVM)");
 
 @ 
 \subsubsection{Sparse bi--linear interpolation}
@@ -584,6 +586,26 @@ HANDLE_ERROR( cudaFree( csrValH ) );
 HANDLE_ERROR( cudaFree( csrColIndH ) );
 HANDLE_ERROR( cudaFree( csrRowPtrH ) );
 HANDLE_ERROR( cudaFree( d__phase_est_i ) );
+@
+\subsubsection{Input/Output}
+\label{sec:inputoutput}
+
+The next routine sets the phase estimate pointer to a device memory address:
+<<phase estimate pointer>>=
+void LMMSE::set_phase_est_ptr(float *data_ptr)
+{
+if (nnz)
+  d__phase_est_i = data_ptr;
+else
+  d__phase_est_c = data_ptr;
+}
+
+@ The phase estimate is written to a file with:
+<<phase estimate pointer>>=
+<<phase estimate to file>>=
+void LMMSE::toFile(const char *filename){
+  dev2file(filename,d__phase_est,NP*NP);
+}
 @
 \subsubsection{Tests}
 \label{sec:tests}
@@ -780,8 +802,3 @@ fid = fopen(filename,"wb");
 //fid = fopen("phaseScreenEst.bin","wb");
 fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
 fclose(fid);
-
-<<phase estimate to file>>=
-void LMMSE::toFile(const char *filename){
-  dev2file(filename,d__phase_est,NP*NP);
-}
