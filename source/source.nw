@@ -34,8 +34,8 @@ struct source {
   void phase2file(const char *filename);
 
   float wavelength(void);
-
   float n_photon(void);
+  float wavenumber(void);
 };
 #endif // __SOURCE_H__
 @
@@ -62,8 +62,8 @@ struct source {
 <<info>>
 
 <<wavelength>>
-   
 <<number of photons>>
+<<wavenumber>>
 @
 \subsection{Parameters}
 \label{sec:params}
@@ -171,6 +171,28 @@ float source::n_photon(void) {
   if (strcmp(photometric_band,"Na")==0)
     zero_point =3.3e12 ;
   return zero_point*powf(10 , -0.4*magnitude );
+}
+@ The wave number is given by
+<<wavenumber>>=
+float source::wavenumber(void) {
+  float lambda;
+  if (strcmp(photometric_band,"V")==0)
+    lambda = 0.550;
+  if (strcmp(photometric_band,"R")==0)
+    lambda = 0.640;
+  if (strcmp(photometric_band,"I")==0)
+    lambda = 0.790;
+  if (strcmp(photometric_band,"J")==0)
+    lambda = 1.215;
+  if (strcmp(photometric_band,"H")==0)
+    lambda = 1.654;
+  if (strcmp(photometric_band,"K")==0)
+    lambda = 2.179;
+  if (strcmp(photometric_band,"Ks")==0)
+    lambda = 2.157;
+  if (strcmp(photometric_band,"Na")==0)
+    lambda = 0.589;
+  return 1E6*2*PI/lambda;
 }
 @ Sources are initialized with the setup function:
 \begin{itemize}
@@ -287,6 +309,9 @@ void complex_amplitude::setup(int n_pixel) {
     HANDLE_ERROR( cudaMalloc( (void**)&amplitude,  sizeof(float)*N_PX ) );
     HANDLE_ERROR( cudaMalloc( (void**)&phase,      sizeof(float)*N_PX ) );
     HANDLE_ERROR( cudaMalloc( (void**)&pupil_mask, sizeof(char)*N_PX ) );
+    dim3 blockDim(16,1);
+    dim3 gridDim(N_PX/16+1,1);
+    squarePupil LLL gridDim,blockDim RRR (amplitude, phase, N_PX);
   } else {
     amplitude  = NULL;
     phase      = NULL;
@@ -312,10 +337,10 @@ void source::cleanup(void) {
 @ 
 The amplitude and phase are initialized to respectively 1 and 0:
 <<square geometry>>=
-__global__ void squarePupil(float* amplitude, float *phase) {
+  __global__ void squarePupil(float* amplitude, float *phase, const int N) {
   int id;
   id = blockIdx.x * blockDim.x + threadIdx.x;
-  if (id<_SOURCE_N_PX_) {
+  if (id<N) {
     amplitude[id] = 1.0;
     phase[id]     = 0.0;
   }

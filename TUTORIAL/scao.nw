@@ -10,6 +10,8 @@ All programs must include the following headers which also contains the headers 
 #include "ceo.h"
 #endif
 
+#define N_SIDE_LENSLET 60
+#define _N_LENSLET_ (N_SIDE_LENSLET*N_SIDE_LENSLET)
 @
 And the main function of each program is:
 <<scao.bin>>=
@@ -48,7 +50,7 @@ ngs.cleanup();
 @ \item the LGS
 <<setup>>=
 source lgs;
-lgs.setup(ARCSEC(0) , 0, 90e3, "LGS");
+lgs.setup(ARCSEC(0) , 0, 90e3, (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1), "LGS");
 <<cleanup>>=
 lgs.cleanup();
 @ \end{itemize}
@@ -113,6 +115,7 @@ printf("\n NGS WF RMS: %7.2fnm",wf_rms);
 atm.get_phase_screen(&lgs,d,NP,d,NP,0);
 wf_rms = 1E9*S.std(lgs.wavefront.phase, lgs.wavefront.pupil_mask, NP2);
 printf("\n LGS WF RMS: %7.2fnm\n",wf_rms);
+//lgs.phase2file("lgsPhaseScreen.bin");
 @  We also compute the wavefronts gradient:
 <<NGS wavefront>>=
 atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&ngs,0);
@@ -131,7 +134,7 @@ In the following, the wavefront is reconstructed from the centroids:
 <<NGS wavefront estimation>>=
 printf("\n___ ON-AXIS WAVEFRONT ESTIMATE FROM NGS ___\n");
 LMMSE ngs_lmmse;
-ngs_lmmse.setup(&atm,&ngs,1,&ngs,1,d,_N_LENSLET_*2,"MINRES");
+ngs_lmmse.setup(&atm,&ngs,1,&ngs,1,d,N_SIDE_LENSLET,"MINRES");
 ngs_lmmse.estimation(&cog);
 //ngs_lmmse.aa.toFile("ngs_aa.bin");
 //ngs_lmmse.pa.toFile("ngs_pa.bin");
@@ -145,7 +148,7 @@ printf("------------------------------\n");
 <<LGS wavefront estimation>>=
 printf("\n___ ON-AXIS WAVEFRONT ESTIMATE FROM LGS ___\n");
 LMMSE lgs_lmmse;
-lgs_lmmse.setup(&atm,&lgs,1,&src,1,d,_N_LENSLET_*2,"MINRES");
+lgs_lmmse.setup(&atm,&lgs,1,&src,1,d,N_SIDE_LENSLET,"MINRES");
 lgs_lmmse.estimation(&cog);
 //lgs_lmmse.aa.toFile("ngs-lgs_aa.bin");
 //lgs_lmmse.pa.toFile("ngs-lgs_pa.bin");
@@ -203,7 +206,7 @@ atm.get_phase_screen_gradient(&gs_ast_cog,N_SIDE_LENSLET,d,&gs_ast,N_GS,0);
 <<LTAO wavefront estimation>>=
 printf("\n___ ON-AXIS WAVEFRONT ESTIMATE FROM LGS ASTERISM ___\n");
 LMMSE gs_ast_lmmse;
-gs_ast_lmmse.setup(&atm,&gs_ast,N_GS,&src,1,d,_N_LENSLET_*2,"MINRES");
+gs_ast_lmmse.setup(&atm,&gs_ast,N_GS,&src,1,d,N_SIDE_LENSLET,"MINRES");
 //gs_ast_lmmse.aa.toFile("gs_ast_aaCovariance.bin");
 //gs_ast_lmmse.pa.toFile("gs_ast_paCovariance.bin");
 gs_ast_lmmse.estimation(&gs_ast_cog);
