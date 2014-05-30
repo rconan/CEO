@@ -29,6 +29,10 @@ struct imaging {
    
   void propagate(source *src);
 
+  void info(void);
+
+  void frame2file(const char *filename);
+
 };
 
 #endif  // __IMAGING_H__
@@ -45,8 +49,13 @@ struct imaging {
 <<setup>>
 
 <<cleanup>>
+
+<<info>>
    
 <<propagation>>
+
+<<frame to file>>
+
 @
 \subsection{Parameters}
 \label{sec:parameters}
@@ -77,8 +86,8 @@ A [[setup]] routine is defined to initialize any required variables:
 void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET, 
 		    int DFT_osf, float IMAGE_osf, float CAMERA_osf) {
   N_PX_PUPIL  = __N_PX_PUPIL;
-  N_DFT       = DFT_osf*N_PX_PUPIL;
-  N_PX_IMAGE  = IMAGE_osf*N_DFT;
+  N_DFT       = DFT_osf*round_up_to_nhp2(N_PX_PUPIL);
+  N_PX_IMAGE  = IMAGE_osf*N_PX_PUPIL;
   N_PX_CAMERA = CAMERA_osf*N_PX_IMAGE;
   _N_SIDE_LENSLET_ = __N_SIDE_LENSLET;
   N_LENSLET   = _N_SIDE_LENSLET_*_N_SIDE_LENSLET_;
@@ -89,6 +98,7 @@ void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
   cudaMalloc( (void**)&d__frame , 
 	      sizeof(float) *N_PX_CAMERA*N_PX_CAMERA*N_LENSLET*N_SOURCE );
   <<imaging CUFFT plan creation>>
+  info();
 }
 @ 
 As we are considering only the case of imaging sources at infinity, the wavefront propagation is performed with the Fraunhofer approximation meaning that the image in the focal plane is simply the Fourier transform of the complex amplitude in the pupil plane.
@@ -308,7 +318,29 @@ __global__ void binning(float *frame, const float2 *wave, int N_DFT, int N_SOURC
     }
 
 }
+@
+\subsubsection{Input/Output}
+\label{sec:inputoutput}
 
+The main parameters are displayed with:
+<<info>>=
+void imaging::info(void)
+{
+  printf("\n\x1B[1;42m@(CEO)>imaging:\x1B[;42m\n");
+  printf(" . imaging device    : %4d\n",N_LENSLET);
+  printf(" . pupil sampling    : %4d\n",N_PX_PUPIL);
+  printf(" . DFT sampling      : %4d\n",N_DFT);
+  printf(" . imagelet sampling : %4d\n",N_PX_IMAGE);
+  printf(" . frame sampling    : %4d\n",N_PX_CAMERA);
+  printf("----------------------------------------------------\x1B[0m\n");
+ 
+}
+@ 
+The frame is saved to a file with:
+<<frame to file>>=
+void imaging::frame2file(const char *filename){
+  dev2file(filename,d__frame,N_PX_CAMERA*N_PX_CAMERA*N_SOURCE);
+}
 @
 \subsection{Tests}
 \label{sec:tests}
@@ -326,23 +358,28 @@ Test suite:
 <<imaging.bin>>=
 <<main header>>
 int main(int argc,char *argv[]) {
+
+  int nLenslet, nLenslet2, nPxLenslet;
+  nLenslet = nLenslet2 = 1;
+  nLenslet2 *= nLenslet;
+  nPxLenslet = 61;
+
   <<test setup>>
 
   dev2file("amplitude.bin",src.wavefront.amplitude,src.wavefront.N_PX);
 
-  float wf_rms, d;
-  d = 0.04;
-
-  atm.get_phase_screen(&src,d,NPX,d,NPX,0);
-  wf_rms = 1E9*S.std(src.wavefront.phase, NPX2);
-  printf("\n NGS WF RMS: %7.2fnm\n",wf_rms);
-  src.phase2file("phaseScreen.bin");
+  /* float wf_rms, d; */
+  /* d = 0.04; */
+  /* atm.get_phase_screen(&src,d,NPX,d,NPX,0); */
+  /* wf_rms = 1E9*S.std(src.wavefront.phase, NPX2); */
+  /* printf("\n NGS WF RMS: %7.2fnm\n",wf_rms); */
+  /* src.phase2file("phaseScreen.bin"); */
 
   src.photometric_band = "V";
   printf(" . SRC wavelength %.2E\n",src.wavelength());
 
   lenslet_array.propagate(&src);
-  dev2file("frame.bin",lenslet_array.d__frame,lenslet_array.N_PX_CAMERA*lenslet_array.N_PX_CAMERA*_N_LENSLET_*_N_SOURCE_);
+  lenslet_array.frame2file("frame.bin");
 
   printf(" __ TERMINATING ... __\n");
   <<test cleanup>>
@@ -350,7 +387,7 @@ int main(int argc,char *argv[]) {
 @ Source:
 <<test setup>>=
 int NPX, NPX2;
-NPX = N_SIDE_LENSLET*_N_PX_PUPIL_;
+NPX = nLenslet*nPxLenslet;
 NPX2 = NPX*NPX;
 source src;
 src.setup(ARCSEC(0) , 0, INFINITY, NPX2, "SRC");
@@ -371,8 +408,8 @@ S.cleanup();
 @ Lenslet array:
 <<test setup>>=
 imaging lenslet_array;
-lenslet_array.setup(_N_PX_PUPIL_,N_SIDE_LENSLET,
-		    2,0.5,1);
+lenslet_array.setup(nPxLenslet,nLenslet,
+		    2,1,1);
 <<test cleanup>>=
 lenslet_array.cleanup();
 

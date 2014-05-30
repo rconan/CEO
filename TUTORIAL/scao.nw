@@ -39,6 +39,7 @@ Lets define the sources first:
 <<setup>>=
 source src;
 src.setup(ARCSEC(0) , 0, INFINITY,(N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1), "SRC");
+src.photometric_band = "V";
 <<cleanup>>=
 src.cleanup();
 @ \item the NGS
@@ -95,7 +96,14 @@ float threshold = 0.5;
 cog.MASK_SET = fried_geometry_setup(cog.lenslet_mask, src.wavefront.pupil_mask, 
 				    N_SIDE_LENSLET, 16, threshold);
 dev2file("A_mask.bin",src.wavefront.pupil_mask,src.wavefront.N_PX);
-
+@ Defining an imager:
+<<setup>>=
+imaging imager;
+imager.setup(N_SIDE_LENSLET+1,1,4,1,1);
+imager.propagate(&src);
+imager.frame2file("refFrame.bin");
+<<cleanup>>=
+imager.cleanup();
 @
 \subsection{Turbulence wavefront}
 \label{sec:turbulence-wavefront}
@@ -111,6 +119,8 @@ float wf_rms;
 atm.get_phase_screen(&src,d,NP,d,NP,0);
 wf_rms = 1E9*S.std(src.wavefront.phase, src.wavefront.pupil_mask, NP2);
 printf("\n NGS WF RMS: %7.2fnm",wf_rms);
+imager.propagate(&src);
+imager.frame2file("turbFrame.bin");
 // LGS
 atm.get_phase_screen(&lgs,d,NP,d,NP,0);
 wf_rms = 1E9*S.std(lgs.wavefront.phase, lgs.wavefront.pupil_mask, NP2);
