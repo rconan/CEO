@@ -50,4 +50,4 @@ libsrc = lib/libceo.a
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
 	mv $@ $@.cu
 	make -C $(CEOPATH) all
-	$(NVCC) $(INCS) $(LIBS) $@.cu -lceo
+	$(NVCC) $(INCS) $(LIBS) $@.cu -lceo -lcurl -ljsmn

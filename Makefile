@@ -1,7 +1,7 @@
 include common.mk
 
 #ls -d */ | sed -e 's,//$,,' -e 's,doc,,' -e 's,lib,,'  -e 's,include,,' | xargs
-SOURCE_DIR	= utilities source atmosphere imaging centroiding aaStats BTBT GBTBT iterativeSolvers LMMSE
+SOURCE_DIR	= utilities source atmosphere imaging centroiding aaStats BTBT GBTBT iterativeSolvers LMMSE plotly
 TUTORIAL	= scao
 
 all: makefile 
@@ -23,6 +23,12 @@ touch:
 
 makefile:
 	for i in $(SOURCE_DIR); do (cp Makefile.common $$i/Makefile; sed -i -e "s/filename/$$i/g" $$i/Makefile); done
+
+jsmnlib: 
+	make -C jsmn
+	cp -P jsmn/jsmn.h include/
+	cp -P jsmn/libjsmn.a lib/
+
 
 clean_makefile:
 	for i in $(SOURCE_DIR); do (rm -f $$i/Makefile); done

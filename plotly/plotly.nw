@@ -1,0 +1,315 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+
+The plotly structure is used to display CEO graphics using \url{plot.ly}.
+
+\subsection{The files}
+\label{sec:files}
+
+\subsubsection{Header}
+\label{sec:header}
+
+<<plotly.h>>=
+#ifndef __PLOTLY_H__
+#define __PLOTLY_H__
+
+#ifndef __PTHREAD_H__
+#include <pthread.h>
+#endif
+
+#ifndef __CURL_H__
+#include <curl/curl.h>
+#endif
+
+#ifndef __UTILITIES_H__
+#include "utilities.h"
+#endif
+
+#ifndef __JSMN_H__
+#include "jsmn.h"
+#endif
+
+#define USERNAME "rconan"
+#define KEY "qdk3pryvnp"
+
+struct plotly_properties{
+  <<properties parameters>>
+};
+	
+void imagesc(plotly_properties *p);
+
+struct plotly_resp {
+  char url[256];
+  char message[256];
+  char warning[256];
+  char filename[256];
+  char error[256];
+};
+
+void curlplotly(void *json);
+size_t write_data(void *ptr, size_t size, size_t count, void *stream);
+
+#endif // __PLOTLY_H__
+
+@
+\subsubsection{Source}
+\label{sec:source}
+
+<<plotly.cu>>=
+#include "plotly.h"
+
+<<imagesc>>
+<<post json>>
+<<plotly response>>
+
+@
+\subsection{Parameters}
+\label{sec:parameters}
+
+The [[plotly_properties]] structure gathers the property of the graph.The properties are:
+\begin{itemize}
+\item the graph file name used when exporting the file
+<<properties parameters>>=
+char *filename;
+@ \item the graph type: \emph{scatter} for a plot, \emph{heatmap} for an image
+<<properties parameters>>=
+char *type;
+@ \item  the title of the graph
+<<properties parameters>>=
+char *title;
+@ \item the X axis data
+<<properties parameters>>=
+int xdata_size[2];
+float *xdata;
+@ \item the label of the X axis
+<<properties parameters>>=
+char *xtitle;
+@ \item the Y axis data
+<<properties parameters>>=
+int ydata_size[2];
+float *ydata;
+@ \item the label of the Y axis
+<<properties parameters>>=
+char *ytitle;
+@ \item the Z axis data
+<<properties parameters>>=
+int zdata_size[2];
+float *zdata;
+@ \item the label of the Z axis
+<<properties parameters>>=
+char *ztitle;
+@  \end{itemize}
+
+@ 
+\subsection{Functions}
+\label{sec:functions}
+
+@  
+\subsubsection{imagesc}
+\label{sec:imagesc}
+
+<<imagesc>>=
+void imagesc(plotly_properties *p)
+{
+<<post graph with thread>>
+}
+@ The [[buffer]] array is of size $[[size[0]]]\times[[size[1]]]$  written into a json structure:
+<<buffer to json>>=
+int N, M, nel, zDataLen, ii, jj;
+char *zData, *data;
+N = p->zdata_size[0];
+M = p->zdata_size[1];
+nel = N*M;
+zData = (char *)malloc(8*nel*sizeof(char)*2);
+zDataLen = 0;
+zDataLen += sprintf( zData + zDataLen,    "{\"z\":[ ");
+for (ii=0; ii<N; ii++) {
+  zDataLen += sprintf( zData + zDataLen,            "[");
+  for (jj=0; jj<M; jj++) {
+    zDataLen += sprintf( zData + zDataLen,            "%6.4f",p->zdata[ii*M+jj]);
+    if (jj<(M-1))
+      zDataLen += sprintf( zData + zDataLen,                ",");	
+  }
+  zDataLen += sprintf( zData + zDataLen,            "]");
+  if (ii<(N-1))
+    zDataLen += sprintf( zData + zDataLen,            ",");	
+ }
+zDataLen += sprintf( zData + zDataLen,          " ],");
+zDataLen += sprintf( zData + zDataLen,          "\"zauto\": %s," ,"true");
+zDataLen += sprintf( zData + zDataLen,          "\"colorbar\": {");
+zDataLen += sprintf( zData + zDataLen,             "\"autotick\": %s," ,"true");
+zDataLen += sprintf( zData + zDataLen,             "\"title\": \"%s\"",p->ztitle);
+zDataLen += sprintf( zData + zDataLen,          "}");
+zDataLen += sprintf( zData + zDataLen,    "}");
+<<de-allocation>>=
+free(zData);
+@ The whole json file is now written in the string [[data]]:
+<<write json>>=
+data = (char *)malloc((zDataLen+2048)*sizeof(char));
+int len=0;
+len += sprintf(data + len,"un=%s&",      USERNAME);
+len += sprintf(data + len,"key=%s&",     KEY);
+len += sprintf(data + len,"origin=%s&",  "plot");
+len += sprintf(data + len,"platform=%s&","lisp");
+len += sprintf(data + len,"args=[%s]&",zData);
+// kwargs >
+len += sprintf(data + len,"kwargs={"); 
+len += sprintf(data + len,   "\"filename\": \"CEO/%s\",",p->filename);
+len += sprintf(data + len,   "\"fileopt\": \"%s\"," ,"overwrite");
+// style >
+len += sprintf(data + len,   "\"style\": {"); 
+len += sprintf(data + len,      "\"type\": \"%s\"","heatmap");
+len += sprintf(data + len,   "},"); 
+// < style
+// layout >
+len += sprintf(data + len,   "\"layout\": {"); 
+len += sprintf(data + len,      "\"title\": \"%s\",",p->title);
+// xaxis >
+len += sprintf(data + len,      "\"xaxis\": {");
+len += sprintf(data + len,         "\"title\": \"%s\"",p->xtitle);
+len += sprintf(data + len,      "},"); 
+// < xaxis
+// yaxis >
+len += sprintf(data + len,      "\"yaxis\": {");
+len += sprintf(data + len,         "\"title\": \"%s\"",p->ytitle);
+len += sprintf(data + len,      "},"); 
+// < yaxis
+len += sprintf(data + len,      "\"width\": %d,"    ,600);
+len += sprintf(data + len,      "\"height\": %d,"   ,580);
+len += sprintf(data + len,      "\"autosize\": %s," ,"false");
+// margin >
+len += sprintf(data + len,      "\"margin\": {"); 
+len += sprintf(data + len,         "\"l\": %d,"         ,80);
+len += sprintf(data + len,         "\"r\": %d,"         ,100);
+len += sprintf(data + len,         "\"t\": %d,"         ,80);
+len += sprintf(data + len,         "\"b\": %d,"         ,80);
+len += sprintf(data + len,         "\"pad\": %d,"       ,0);
+len += sprintf(data + len,         "\"autoexpand\": %s" ,"false");
+len += sprintf(data + len,      "}"); 
+// < margin
+len += sprintf(data + len,   "},"); 
+// < layout
+len += sprintf(data + len,   "\"world_readable\": %s" ,"true");
+len += sprintf(data + len,"}"); 
+
+FILE *fp;
+fp=fopen("plotly.data", "wb");
+fprintf(fp,"%s\n",data);
+fclose(fp);
+
+<<de-allocation>>=
+free(data);
+@  The json string is sent to plotly server using libcurl:
+<<post json>>=
+void curlplotly(void *json)
+{
+
+  char dataIn[1024];
+  char *data;
+  CURLcode ret;
+  CURL *hnd;
+  int len;
+
+  data = (char *) json;
+  len = strlen(data);
+
+  hnd = curl_easy_init();
+  curl_easy_setopt(hnd, CURLOPT_URL, "https://plot.ly/clientresp");
+  curl_easy_setopt(hnd, CURLOPT_WRITEFUNCTION, write_data);
+  curl_easy_setopt(hnd, CURLOPT_WRITEDATA, dataIn);
+  curl_easy_setopt(hnd, CURLOPT_POSTFIELDSIZE_LARGE, len);
+  curl_easy_setopt(hnd, CURLOPT_POSTFIELDS, data);
+  curl_easy_setopt(hnd, CURLOPT_MAXREDIRS, 50L);
+  curl_easy_setopt(hnd, CURLOPT_POST, 1);
+ 
+  ret = curl_easy_perform(hnd);
+  if (ret!=0)
+    fprintf(stderr,"CURL FAILED WITH: %s\n",curl_easy_strerror(ret));
+
+  jsmn_parser parser;
+  jsmn_init(&parser);
+  jsmntok_t tokens[256];
+  //  jsmnerr_t r;
+  jsmn_parse(&parser, dataIn, strlen(dataIn), tokens, 200);
+
+  plotly_resp resp;
+  char *resp_ptr[5];
+  resp_ptr[0] = resp.url;
+  resp_ptr[1] = resp.message;
+  resp_ptr[2] = resp.warning;
+  resp_ptr[3] = resp.filename;
+  resp_ptr[4] = resp.error;
+
+  int k, idx;
+  for (k=0;k<5;k++) {
+    idx = 2*(k+1);
+    sprintf(resp_ptr[k],"%.*s", (tokens[idx]).end-(tokens[idx]).start, dataIn + (tokens[idx]).start);
+  }
+
+  if (strlen(resp.error)==0) {
+   /* char command[50]; */
+   /* sprintf( command, "firefox %s&", resp.url); */
+   /* system(command); */
+    fprintf(stdout,"plot.ly url: %s\n",resp.url);
+    if (strlen(resp.message)!=0)
+      fprintf(stdout,"message: %s\n",resp.message);
+  }  else
+    fprintf(stderr,"error: %s\n",resp.error);
+    
+
+  curl_easy_cleanup(hnd);
+  hnd = NULL;
+}
+@  The response of the plotly server is capture with:
+<<plotly response>>=
+size_t write_data(void *ptr, size_t size, size_t count, void *stream)
+{
+  memcpy(stream, ptr, size * count+1);
+  return count*size;
+}
+@  For each graph a thread is created:
+<<post graph with thread>>=
+ <<buffer to json>>
+ <<write json>>
+ curlplotly( (void *) data);
+ <<de-allocation>>
+
+@ 
+\subsection{Test}
+\label{sec:test}
+
+<<plotly.bin>>=
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+
+void graph( int N, char * filename)
+{
+  int ii, nel;
+  float *z;
+  nel = N;
+  nel *= nel;
+  z = (float *)malloc(nel*sizeof(float));
+  srand(time(NULL));
+  for (ii=0;ii<nel;ii++)
+    z[ii] = (float) rand() / RAND_MAX ;
+  
+  plotly_properties prop;
+  prop.xtitle = "X axis";
+  prop.ytitle = "Y axis";
+  prop.ztitle = "Z axis";
+  prop.title  = "plotly test";
+  prop.filename = filename;
+  prop.zdata = z;
+  prop.zdata_size[0] = N;
+  prop.zdata_size[1] = N;
+  imagesc(&prop); 
+  free(z);
+}
+int main(int argc,char *argv[]) {
+  
+  graph( 100, "plotly test 1"); 
+  graph( 30, "plotly test 2");
+  graph( 61, "plotly test 3");
+  graph( 512, "plotly test 4");
+ 
+}
