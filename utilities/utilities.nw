@@ -79,6 +79,7 @@ int round_up_to_nhp2(int n);
 
 void CUBLAS_ERROR(cublasStatus_t status);
 
+<<mask structure>>
 <<statistics definition>>
 
 <<lenslet 2 actuator>>
@@ -123,9 +124,10 @@ int round_up_to_nhp2(int n) {
 
 <<cublas error>>
 
-<<mask filter>>
 <<fill ones>>
+<<fill ones filtered>>
 <<statistics functions>>
+<<mask functions>>
 
 __global__ void centroiding(float *cx, float *cy, float *flux, const float *frame)
 {
@@ -184,7 +186,10 @@ __global__ void centroiding(float *cx, float *cy, float *flux, const float *fram
 
 <<device to file>>
 @
-\subsection{Mapping to lenslet array}
+\subsection{Functions}
+\label{sec:functions}
+
+\subsubsection{Mapping to lenslet array}
 \label{sec:mapp-lensl-array}
 
 When dealing with lenslet arrays, a thread in a given thread block correspond to a pixel coordinate $[i,j]$ in a given lenslet $[i_l,j_L]$.
@@ -324,7 +329,7 @@ where $N_s$ is the number of sources.
   \label{fig:3}
 \end{figure}
 
-\subsection{Stopwatch}
+\subsubsection{Stopwatch}
 \label{sec:stopwatch}
 
 In the following, a structure to time a chunk of CUDA code is defined:
@@ -375,7 +380,7 @@ struct stopwatch{
   }
 };
 @
-\subsection{Statistics definitions}
+\subsubsection{Statistics definitions}
 \label{sec:stat-defin}
 
 Statistical moment are computed with the structure [[stats]]
@@ -386,14 +391,15 @@ struct stats {
   void setup(void);
   void cleanup(void);
   float mean(const float *data, int n_data);
+  float mean(const float *data, mask *M, int n_data);
   float var(const float *data, int n_data);
   float std(const float *data, int n_data);
   float diff_var(const float *data_1, const float *data_2, int n_data);
   float diff_std(const float *data_1, const float *data_2, int n_data);
-  float var(const float *data1, const char *mask, int n_data);
-  float std(const float *data1, const char *mask, int n_data);
-  float diff_var(const float *data1, const float *data2, const char *mask, int n_data);
-  float diff_std(const float *data1, const float *data2, const char *mask, int n_data);
+  float var(const float *data1, mask *M, int n_data);
+  float std(const float *data1, mask *M, int n_data);
+  float diff_var(const float *data1, const float *data2, mask *M, int n_data);
+  float diff_std(const float *data1, const float *data2, mask *M, int n_data);
 };
 <<statistics functions>>=
 void stats::setup(void) {
@@ -403,6 +409,7 @@ void stats::cleanup(void) {
   cublasDestroy(handle);
 }
 <<mean>> 
+<<mean filtered data>>
 <<variance>> 
 <<differential variance>> 
 <<standart deviation>>
@@ -435,6 +442,15 @@ i = blockIdx.x * blockDim.x + threadIdx.x;
 }
 
 @  
+Computing the mean of a vector [[data]]$=x\times f$, $\bar xf = \langle xf \rangle$ where $f$ is a filtering vector the same size than $x$ and made of 0 and 1:
+<<mean filtered data>>=
+float stats::mean(const float *data, mask *M, int n_data) {
+  float results;
+  CUBLAS_ERROR( cublasSdot(handle, n_data, data, 1, M->f, 1, &results) );
+  return results/M->nnz;
+}
+
+@  
 Computing the variance of a vector [[data]]$=x$, $\sigma^2_x=\langle x^2 \rangle - \langle x \rangle^2$:
 <<variance>>=
 float stats::var(const float *data, int n_data) {
@@ -464,21 +480,15 @@ float stats::std(const float *data, int n_data) {
 @  
 Computing the variance of a vector [[data]]$=x\times f$, $\sigma^2_{xf}=\langle (xf)^2 \rangle - \langle xf \rangle^2$ where $f$ is a filtering vector the same size than $x$ and made of 0 and 1:
 <<variance filtered data>>=
-float stats::var(const float *data1, const char *mask, int n_data) {
-  float n_data_mask;
-  float results, mean_data, *data, *filter;
-  HANDLE_ERROR( cudaMalloc((void**)&data, sizeof(float)*n_data ) );
-  HANDLE_ERROR( cudaMalloc((void**)&filter, sizeof(float)*n_data ) );
-  CUBLAS_ERROR( cublasScopy(handle, n_data, data1, 1, data, 1) );
+float stats::var(const float *data, mask *M, int n_data) {
+  float results, mean_data;
   <<variance filtered data steps>>
   return results;
 }
 <<differential variance filtered data>>=
-float stats::diff_var(const float *data1, const float *data2, const char *mask, int n_data) {
-  float n_data_mask;
-  float results, mean_data, *data, *filter;
+float stats::diff_var(const float *data1, const float *data2, mask *M, int n_data) {
+  float results, mean_data, *data;
   HANDLE_ERROR( cudaMalloc((void**)&data, sizeof(float)*n_data ) );
-  HANDLE_ERROR( cudaMalloc((void**)&filter, sizeof(float)*n_data ) );
   float alpha = -1;
   CUBLAS_ERROR( cublasScopy(handle, n_data, data1, 1, data, 1) );
   CUBLAS_ERROR( cublasSaxpy(handle, n_data, &alpha, data2, 1, data, 1) );
@@ -486,58 +496,28 @@ float stats::diff_var(const float *data1, const float *data2, const char *mask, 
   return results;
 }
 <<differential standard deviation filtered data>>=
-float stats::diff_std(const float *data1, const float *data2, const char *mask, int n_data) {
-  float n_data_mask;
-  float results, mean_data, *data, *filter;
+float stats::diff_std(const float *data1, const float *data2, mask *M, int n_data) {
+  float results, mean_data, *data;
   HANDLE_ERROR( cudaMalloc((void**)&data, sizeof(float)*n_data ) );
-  HANDLE_ERROR( cudaMalloc((void**)&filter, sizeof(float)*n_data ) );
   float alpha = -1;
   CUBLAS_ERROR( cublasScopy(handle, n_data, data1, 1, data, 1) );
   CUBLAS_ERROR( cublasSaxpy(handle, n_data, &alpha, data2, 1, data, 1) );
   <<variance filtered data steps>>
   return sqrtf(results);
 }
-@  Lets compute the area of the filter [[n_data_mask]] and the filtered data:
-<<variance filtered data steps>>=
-dim3 blockDim(256);
-dim3 gridDim(n_data/256+1);
-mask_filter LLL gridDim,blockDim RRR (data, filter, mask, n_data);
-CUBLAS_ERROR( cublasSasum(handle, n_data, filter, 1, &n_data_mask) );
-@ with the kernel:
-<<mask filter>>=
-__global__ void mask_filter(float *data, float *filter, const char *mask, int n_data) 
-{
-int i;
-i = blockIdx.x * blockDim.x + threadIdx.x;
- if (i<n_data)
-   if (mask[i]>0) {
-     filter[i] = 1;
-   } else {
-     data[i] = 0;
-     filter[i] = 0;
-   }
-}
 @ the variance algorithm can now be applied on the filtered data
 <<variance filtered data steps>>=
-CUBLAS_ERROR( cublasSdot(handle, n_data, data, 1, filter, 1, &mean_data) );
-mean_data /= n_data_mask;
+CUBLAS_ERROR( cublasSdot(handle, n_data, data, 1, M->f, 1, &mean_data) );
+mean_data /= M->nnz;
 CUBLAS_ERROR( cublasSdot(handle, n_data, data, 1, data, 1, &results) );
-results /= n_data_mask;
+results /= M->nnz;
 results -= (mean_data*mean_data);
-@ finally the allocated memory is freed
-<<variance filtered data steps>>=
-HANDLE_ERROR( cudaFree( filter ) );
-HANDLE_ERROR( cudaFree( data ) );
 
 @  
 Computing the standard deviation of a vector [[data]]$=x\times f$, $\sigma_{xf}=\left(\langle (xf)^2 \rangle - \langle xf \rangle^2\right)^{1/2}$ where $f$ is a filtering vector the same size than $x$ and made of 0 and 1:
 <<standart deviation filtered data>>=
-float stats::std(const float *data1, const char *mask, int n_data) {
-  float n_data_mask;
-  float results, mean_data, *data, *filter;
-  HANDLE_ERROR( cudaMalloc((void**)&data, sizeof(float)*n_data ) );
-  HANDLE_ERROR( cudaMalloc((void**)&filter, sizeof(float)*n_data ) );
-  CUBLAS_ERROR( cublasScopy(handle, n_data, data1, 1, data, 1) );
+float stats::std(const float *data, mask *M, int n_data) {
+  float results, mean_data;
   <<variance filtered data steps>>
   return sqrtf(results);
 }
@@ -585,7 +565,7 @@ void CUBLAS_ERROR(cublasStatus_t status) {
 }
 
 @ 
-\subsection{Pupil definition}
+\subsubsection{Pupil definition}
 \label{sec:pup-def}
 
 In the following, a circular pupil is computed:
@@ -723,8 +703,70 @@ __device__ inline int lenset2actuator(int iL, int jL, int NL, int io, int jo)
 
 }
 
+@ 
+
+\subsubsection{Mask structure}
+\label{sec:mask-structure}
+
+Lets define a mask structure with the following parameters:
+\begin{itemize}
+\item the mask [[m]] has a type of char and contains 0 and 1,
+<<mask parameters>>=
+char *m;  
+@ \item the filter [[f]] has a type of float and contains 0 and 1,
+<<mask parameters>>=
+float *f;  
+@ \item the total number of element [[nel]],
+<<mask parameters>>=
+int nel;  
+@ \item the number of non zeros elements [[nnz]].
+<<mask parameters>>=
+float nnz;  
+@ \end{itemize}
+
+The mask structure definition is:
+<<mask structure>>=
+struct mask {
+  <<mask parameters>>
+  void setup(int n);
+  void set_filter(void);
+  void cleanup(void);
+};
+@ 
+The mask functions are:
+<<mask functions>>=
+void mask::setup(int n) {
+  nel = n;
+  HANDLE_ERROR( cudaMalloc((void**)&m, sizeof(char)*nel ) );
+  HANDLE_ERROR( cudaMalloc((void**)&f, sizeof(float)*nel ) );
+  HANDLE_ERROR( cudaMemset( f, 0, sizeof(float)*nel) );
+}
+void mask::set_filter(void) {
+  dim3 blockDim(256);
+  dim3 gridDim(nel/256+1);
+  fill_ones_filtered LLL gridDim,blockDim RRR (f, m, nel);
+  cublasHandle_t handle;
+  cublasCreate(&handle);
+  CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
+  printf("@(CEO)>mask: nnz = %.0f\n",nnz);
+  cublasDestroy(handle);
+}
+void mask::cleanup(void) {
+  HANDLE_ERROR( cudaFree( m ) );
+  HANDLE_ERROR( cudaFree( f ) );
+}
+@  with the kernel
+<<fill ones filtered>>=
+__global__ void fill_ones_filtered(float *ones, const char* mask, int n_data) 
+{
+int i;
+i = blockIdx.x * blockDim.x + threadIdx.x;
+ if ( (i<n_data) && (mask[i]) )
+       ones[i] = 1;
+}
+
 @
-\subsection{Input/Output}
+\subsubsection{Input/Output}
 \label{sec:inputoutput}
 
 In the following, the routines to write data on the device into a file are described.

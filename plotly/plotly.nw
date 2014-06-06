@@ -28,11 +28,15 @@ The plotly structure is used to display CEO graphics using \url{plot.ly}.
 #include "jsmn.h"
 #endif
 
-#define USERNAME "rconan"
-#define KEY "qdk3pryvnp"
+#include "rconan.credentials"
+
+#define P_LEN 64
 
 struct plotly_properties{
   <<properties parameters>>
+  int set(char *param, char *value);
+  int set(char *param, float *value);
+  int set(char *param, int *value);
 };
 	
 void imagesc(plotly_properties *p);
@@ -60,6 +64,9 @@ size_t write_data(void *ptr, size_t size, size_t count, void *stream);
 <<imagesc>>
 <<post json>>
 <<plotly response>>
+<<set plotly char properties>>
+<<set plotly float properties>>
+<<set plotly int properties>>
 
 @
 \subsection{Parameters}
@@ -69,39 +76,99 @@ The [[plotly_properties]] structure gathers the property of the graph.The proper
 \begin{itemize}
 \item the graph file name used when exporting the file
 <<properties parameters>>=
-char *filename;
+char filename[64];
 @ \item the graph type: \emph{scatter} for a plot, \emph{heatmap} for an image
 <<properties parameters>>=
-char *type;
+char type[64];
 @ \item  the title of the graph
 <<properties parameters>>=
-char *title;
+char title[64];
 @ \item the X axis data
 <<properties parameters>>=
 int xdata_size[2];
 float *xdata;
 @ \item the label of the X axis
 <<properties parameters>>=
-char *xtitle;
+char xtitle[64];
 @ \item the Y axis data
 <<properties parameters>>=
 int ydata_size[2];
 float *ydata;
 @ \item the label of the Y axis
 <<properties parameters>>=
-char *ytitle;
+char ytitle[64];
 @ \item the Z axis data
 <<properties parameters>>=
 int zdata_size[2];
 float *zdata;
 @ \item the label of the Z axis
 <<properties parameters>>=
-char *ztitle;
+char ztitle[64];
 @  \end{itemize}
 
 @ 
 \subsection{Functions}
 \label{sec:functions}
+
+\subsubsection{Set plotly properties}
+\label{sec:set-plotly-prop}
+
+<<set plotly char properties>>=
+int plotly_properties::set(char *param, char *value)
+{
+  int s = -1;
+  s = strcmp("filename",param);
+  if (s==0) {
+    strcpy(filename,value);
+    return s;
+  }
+  s = strcmp("title",param);
+  if (s==0) {
+    strcpy(title,value);
+    return s;
+  }
+  s = strcmp("xtitle",param);
+  if (s==0) {
+    strcpy(xtitle,value);
+    return s;
+  }
+  s = strcmp("ytitle",param);
+  if (s==0) {
+    strcpy(ytitle,value);
+    return s;
+  }
+  s = strcmp("ztitle",param);
+  if (s==0) {
+    strcpy(ztitle,value);
+    return s;
+  }
+  return s;
+}
+
+<<set plotly float properties>>=
+int plotly_properties::set(char *param, float *value)
+{
+  int s = -1;
+  s = strcmp("zdata",param);
+  if (s==0) {
+    zdata = value;
+    return s;
+  }
+  return s;
+}
+
+<<set plotly int properties>>=
+int plotly_properties::set(char *param, int *value)
+{
+  int s = -1;
+  s = strcmp("zdata_size",param);
+  if (s==0) {
+    zdata_size[0] = value[0];
+    zdata_size[1] = value[1];
+    return s;
+  }
+  return s;
+}
 
 @  
 \subsubsection{imagesc}
@@ -125,7 +192,7 @@ zDataLen += sprintf( zData + zDataLen,    "{\"z\":[ ");
 for (ii=0; ii<N; ii++) {
   zDataLen += sprintf( zData + zDataLen,            "[");
   for (jj=0; jj<M; jj++) {
-    zDataLen += sprintf( zData + zDataLen,            "%6.4f",p->zdata[ii*M+jj]);
+    zDataLen += sprintf( zData + zDataLen,            "%.2f",p->zdata[ii+jj*N]);
     if (jj<(M-1))
       zDataLen += sprintf( zData + zDataLen,                ",");	
   }
@@ -249,11 +316,11 @@ void curlplotly(void *json)
    /* char command[50]; */
    /* sprintf( command, "firefox %s&", resp.url); */
    /* system(command); */
-    fprintf(stdout,"plot.ly url: %s\n",resp.url);
+    fprintf(stdout,"@(CEO)>plotly: plot.ly url: %s\n",resp.url);
     if (strlen(resp.message)!=0)
-      fprintf(stdout,"message: %s\n",resp.message);
+      fprintf(stdout,"@(CEO)>plotly: message: %s\n",resp.message);
   }  else
-    fprintf(stderr,"error: %s\n",resp.error);
+    fprintf(stderr,"@(CEO)>plotly: error: %s\n",resp.error);
     
 
   curl_easy_cleanup(hnd);
@@ -284,8 +351,11 @@ size_t write_data(void *ptr, size_t size, size_t count, void *stream)
 
 void graph( int N, char * filename)
 {
-  int ii, nel;
+  int ii, nel, size[2];
   float *z;
+  printf("=> matrix size:%d^2\n",N);
+  size[0] = N;
+  size[1] = N;
   nel = N;
   nel *= nel;
   z = (float *)malloc(nel*sizeof(float));
@@ -294,22 +364,22 @@ void graph( int N, char * filename)
     z[ii] = (float) rand() / RAND_MAX ;
   
   plotly_properties prop;
-  prop.xtitle = "X axis";
-  prop.ytitle = "Y axis";
-  prop.ztitle = "Z axis";
-  prop.title  = "plotly test";
-  prop.filename = filename;
-  prop.zdata = z;
-  prop.zdata_size[0] = N;
-  prop.zdata_size[1] = N;
+  prop.set("xtitle","X axis");
+  prop.set("ytitle","Y axis");
+  prop.set("ztitle","Z axis");
+  prop.set("title","plotly test");
+  prop.set("filename",filename);
+  prop.set("zdata",z);
+  prop.set("zdata_size",size);
   imagesc(&prop); 
   free(z);
 }
+# define RANDU() ( (int) ( 3 + ( (float) rand() / RAND_MAX )*497 ) )
 int main(int argc,char *argv[]) {
   
-  graph( 100, "plotly test 1"); 
-  graph( 30, "plotly test 2");
-  graph( 61, "plotly test 3");
-  graph( 512, "plotly test 4");
+  graph( RANDU(), "plotly test 1"); 
+  graph( RANDU(), "plotly test 2");
+  graph( RANDU(), "plotly test 3");
+  graph( RANDU(), "plotly test 4");
  
 }

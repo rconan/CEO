@@ -37,6 +37,10 @@ struct LMMSE {
   void setup(atmosphere *atm, source *guide_star, int N_guide_star, 
 	     source *mmse_star, int N_mmse_star,
 	     float sampling, int N, char *solver_id);
+  void setup(atmosphere *atm, source *guide_star, int N_guide_star, 
+	     source *mmse_star, int N_mmse_star,
+	     float sampling, int N, 
+	     mask *pupil, char *solver_id);
 
   void cleanup(void);
 
@@ -57,8 +61,10 @@ struct LMMSE {
 #endif
 
 <<sparse matrix kernel>>
+<<sparse matrix kernel with pupil mask>>
 
 <<setup>>
+<<setup with pupil>>
 
 <<cleanup>>
 
@@ -353,7 +359,57 @@ void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star,
      PS_E_N_PX = paCov.MT2_TOTAL;
 
      NI = NP;
+     nnz = 4*NI*NI*_N_LAYER_;
      <<sparse setup>>
+  }
+
+  int N = N_SIDE_LENSLET_*N_SIDE_LENSLET_*2;
+  if (strcmp(solver_id,"CG")==0)
+    iSolve.cg_setup(N*N_guide_star);
+  if (strcmp(solver_id,"MINRES")==0)
+    iSolve.minres_setup(N*N_guide_star);
+
+  iSolve.RTOL = 5E-2;
+
+d__idx = 0;
+d__ce  = 0;
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est_c, sizeof(float)*PS_E_N_PX ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
+HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* _N_LENSLET_*2*N_guide_star ) );
+}
+<<setup with pupil>>=
+void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star, 
+                        source *mmse_star, int N_mmse_star,
+		       float sampling, int N_SIDE_LENSLET_,
+                       mask *pupil, char *solver_id)
+{
+  N_guide_star = _N_guide_star;
+
+  <<setup: AA covariance>>
+
+  osf = 1; // The wavefront over-sampling factor (1 means the same sampling that the WFS)
+  NP = osf*N_SIDE_LENSLET_+1; // The number of wavefront sample
+
+  pa.setup(NP,N_SIDE_LENSLET_,osf,atm,sampling,
+           mmse_star, N_mmse_star, guide_star, N_guide_star);
+
+  if (mmse_star[0].height==guide_star[0].height) {
+
+     paCov.setup(N_mmse_star,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET_,pa.d__cov);
+     paCov.mask = pupil->m;
+
+     PS_E_N_PX = paCov.MT2_TOTAL;
+     nnz = 0;
+
+  } else {
+ 
+     paCov.setup(N_mmse_star*_N_LAYER_,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET_,pa.d__cov);
+  
+     PS_E_N_PX = paCov.MT2_TOTAL;
+
+     NI = NP;
+     nnz = 4*_N_LAYER_*pupil->nnz;
+     <<sparse setup with pupil mask>>
   }
 
   int N = N_SIDE_LENSLET_*N_SIDE_LENSLET_*2;
@@ -538,6 +594,57 @@ __global__ void bilinearSparseOperator(float *csrValH, int *csrColIndH, int *csr
     csrRowPtrH[k+1] = _N_LAYER_*4*(k+1);
   }
 }
+@ The sparse matrix is modified to take into account the pupil mask.
+Where the pupil mask is zero, the corresponding row in the sparse matrix must be filled with zeros.
+<<sparse matrix kernel with pupil mask>>=
+__global__ void bilinearSparseOperatorMask(float *csrValH, int *csrColIndH, int *csrRowPtrH,
+				  int* MT, int NI, profile *turb, float z, 
+                                  const char *mask, int nnz)
+{
+  int i, j, k, idx, ndx, NP, k_LAYER, offset, l, pos;
+  float scale, s, t, fs, ft, onemt, onems, delta, delta_p;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<NI) && (j<(NI)) ) {
+    delta   = 1.0;
+    k = i*NI + j;
+    if (mask[k]>0) {
+       <<nnz position>>
+       idx =  _N_LAYER_*4*(pos-1) - 1;
+       offset = 0;
+       for (k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
+         delta_p = 1 - turb->altitude[k_LAYER]/z;
+         NP = MT[k_LAYER];
+         <<bilinear interpolation>>
+         offset += NP*NP;
+       }	
+       csrRowPtrH[k] = _N_LAYER_*4*(pos-1);
+       <<csrRowPtrH for empty rows>>
+       if ( k==(NI*NI-1) )
+          csrRowPtrH[k+1] = _N_LAYER_*4*nnz;
+    } else { 
+         if ( k==(NI*NI-1) ) {
+           ++k;
+           csrRowPtrH[k] = _N_LAYER_*4*nnz;
+           <<csrRowPtrH for empty rows>>
+        } 
+     }
+   }
+ }
+@  For a given location in the pupil, the position of the non--zero values in the non-zero value vector is given but the sum of the mask up to that point:
+<<nnz position>>=
+pos = 0;
+for (l=0;l<=k;l++)
+    pos += (mask[l]) ? 1 : 0;
+@ This position is saved in [[csrRowPtrH]].
+The consecutive rows above the current row corresponding to zero values in the pupil mask must have their [[csrRowPtrH]] value set to the same as the current row.
+<<csrRowPtrH for empty rows>>=
+l = k-1;
+ while ( (l>=0) && (!mask[l]) )
+    csrRowPtrH[l--] = csrRowPtrH[k];
+
+
+
 @ Lets define new parameters for the sparse matrix:
 <<parameters>>=
 int nnz, NI;
@@ -548,8 +655,20 @@ cudaError_t cudaStat;
 cusparseStatus_t status;
 cusparseHandle_t handle;
 cusparseMatDescr_t descr;
+
 @ and they are setup with:
 <<sparse setup>>=
+<<sparse memory allocation>>
+<<sparse making>>
+<<sparse to dense>>
+@ or with the pupil mask:
+<<sparse setup with pupil mask>>=
+<<sparse memory allocation>>
+<<sparse making with pupil mask>>
+<<sparse to dense>>
+
+@ Memory allocation:
+<<sparse memory allocation>>=
 alpha = 1;
 beta  = 0;
 HANDLE_ERROR_CUSPARSE( cusparseCreate(&handle), 
@@ -560,23 +679,36 @@ HANDLE_ERROR_CUSPARSE( cusparseCreateMatDescr(&descr),
 cusparseSetMatType(descr,CUSPARSE_MATRIX_TYPE_GENERAL);
 cusparseSetMatIndexBase(descr,CUSPARSE_INDEX_BASE_ZERO);
 
-nnz = 4*NI*NI*_N_LAYER_;
 HANDLE_ERROR( cudaMalloc((void**)&csrValH,    sizeof(float)*nnz ) );
 HANDLE_ERROR( cudaMalloc((void**)&csrColIndH, sizeof(int)*nnz ) );
 HANDLE_ERROR( cudaMalloc((void**)&csrRowPtrH, sizeof(int)*(NI*NI+1) ) );
 HANDLE_ERROR( cudaMemset(csrRowPtrH, 0, sizeof(int)*(NI*NI+1) ) );
 
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est_i, sizeof(float)*NI*NI ) );
+
+@ Creation of the sparse matrix:
+<<sparse making>>=
 dim3 blockDim(16,16);
 dim3 gridDim(NI/16+1,NI/16+1);
 bilinearSparseOperator LLL gridDim,blockDim RRR 
-  (csrValH, csrColIndH, csrRowPtrH, paCov.d__MT, NI, atm->d__turbulence, guide_star[0].height);
+  (csrValH, csrColIndH, csrRowPtrH, paCov.d__MT, NI, 
+   atm->d__turbulence, guide_star[0].height);
+@ Creation of the sparse matrix with the pupil mask:
+<<sparse making with pupil mask>>=
+dim3 blockDim(16,16);
+dim3 gridDim(NI/16+1,NI/16+1);
+bilinearSparseOperatorMask LLL gridDim,blockDim RRR 
+  (csrValH, csrColIndH, csrRowPtrH, paCov.d__MT, NI, 
+   atm->d__turbulence, guide_star[0].height, pupil->m, pupil->nnz);
 
+@ Conversion sparse to dense matrix:
+<<sparse to dense>>=
 // For debugging purposes:
-/*
+
 dev2file("csrValH.bin",csrValH,nnz);
 dev2file("csrColIndH.bin",csrColIndH,nnz);
 dev2file("csrRowPtrH.bin",csrRowPtrH,NI*NI+1);
-
+/*
 float *H;
 HANDLE_ERROR( cudaMalloc( (void**)&H, sizeof(float)*NI*NI*paCov.MT2_TOTAL ) );
 HANDLE_ERROR_CUSPARSE(cusparseScsr2dense(handle, NI*NI, paCov.MT2_TOTAL, descr, 
@@ -586,8 +718,6 @@ HANDLE_ERROR_CUSPARSE(cusparseScsr2dense(handle, NI*NI, paCov.MT2_TOTAL, descr,
 dev2file("H.bin",H,NI*NI*paCov.MT2_TOTAL);
 HANDLE_ERROR( cudaFree( H ) );
 */
-
-HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est_i, sizeof(float)*NI*NI ) );
 
 @ and then cleanup with:
 <<sparse cleanup>>=
