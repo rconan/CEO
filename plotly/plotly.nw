@@ -76,34 +76,37 @@ The [[plotly_properties]] structure gathers the property of the graph.The proper
 \begin{itemize}
 \item the graph file name used when exporting the file
 <<properties parameters>>=
-char filename[64];
+char filename[P_LEN];
 @ \item the graph type: \emph{scatter} for a plot, \emph{heatmap} for an image
 <<properties parameters>>=
-char type[64];
+char type[P_LEN];
 @ \item  the title of the graph
 <<properties parameters>>=
-char title[64];
+char title[P_LEN];
 @ \item the X axis data
 <<properties parameters>>=
 int xdata_size[2];
 float *xdata;
 @ \item the label of the X axis
 <<properties parameters>>=
-char xtitle[64];
+char xtitle[P_LEN];
 @ \item the Y axis data
 <<properties parameters>>=
 int ydata_size[2];
 float *ydata;
 @ \item the label of the Y axis
 <<properties parameters>>=
-char ytitle[64];
+char ytitle[P_LEN];
 @ \item the Z axis data
 <<properties parameters>>=
 int zdata_size[2];
 float *zdata;
 @ \item the label of the Z axis
 <<properties parameters>>=
-char ztitle[64];
+char ztitle[P_LEN];
+@ \item the color map
+<<properties parameters>>=
+char colorscale[P_LEN];
 @  \end{itemize}
 
 @ 
@@ -140,6 +143,11 @@ int plotly_properties::set(char *param, char *value)
   s = strcmp("ztitle",param);
   if (s==0) {
     strcpy(ztitle,value);
+    return s;
+  }
+  s = strcmp("colorscale",param);
+  if (s==0) {
+    strcpy(colorscale,value);
     return s;
   }
   return s;
@@ -224,7 +232,8 @@ len += sprintf(data + len,   "\"filename\": \"CEO/%s\",",p->filename);
 len += sprintf(data + len,   "\"fileopt\": \"%s\"," ,"overwrite");
 // style >
 len += sprintf(data + len,   "\"style\": {"); 
-len += sprintf(data + len,      "\"type\": \"%s\"","heatmap");
+len += sprintf(data + len,      "\"type\": \"%s\",","heatmap");
+len += sprintf(data + len,      "\"colorscale\": \"%s\"",p->colorscale);
 len += sprintf(data + len,   "},"); 
 // < style
 // layout >
@@ -316,7 +325,7 @@ void curlplotly(void *json)
    /* char command[50]; */
    /* sprintf( command, "firefox %s&", resp.url); */
    /* system(command); */
-    fprintf(stdout,"@(CEO)>plotly: plot.ly url: %s\n",resp.url);
+    fprintf(stdout,"\x1B[36m@(CEO)>plotly: %s\x1B[0m\n",resp.url);
     if (strlen(resp.message)!=0)
       fprintf(stdout,"@(CEO)>plotly: message: %s\n",resp.message);
   }  else

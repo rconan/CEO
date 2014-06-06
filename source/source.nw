@@ -465,9 +465,9 @@ void complex_amplitude::show_phase(char *filename)
   dim3 gridDim(N_PX/256+1);
   remove_piston LLL gridDim,blockDim RRR (d__data, M->m, N_PX, piston);
 
-  data = (float*)malloc(sizeof(float)*N_PX);
-  HANDLE_ERROR( cudaMemcpy( data, d__data,
-			    sizeof(float)*N_PX,
+  HANDLE_ERROR( cudaMallocHost( (void**)&data, sizeof(float)*N_PX ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__data, sizeof(float)*N_PX) );
+  HANDLE_ERROR( cudaMemcpy( data, d__data, sizeof(float)*N_PX,
 			    cudaMemcpyDeviceToHost ) );
 
   prop.set("xtitle","X");
@@ -477,13 +477,14 @@ void complex_amplitude::show_phase(char *filename)
   prop.set("title",title);
   prop.set("filename",filename);
   prop.set("zdata",data);
+  prop.set("colorscale","Portland");
   size[0] = size[1] = (int) sqrtf(N_PX);
   prop.set("zdata_size",size);
   imagesc(&prop); 
 
   S.cleanup();
   HANDLE_ERROR( cudaFree( d__data ) );
-  free(data);
+  HANDLE_ERROR( cudaFreeHost( data ) );
 }
 @  with the kernel
 <<piston removal>>=
