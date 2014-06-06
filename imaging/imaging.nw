@@ -33,6 +33,7 @@ struct imaging {
 
   void frame2file(const char *filename);
 
+  void show_frame(char *filename);
 };
 
 #endif  // __IMAGING_H__
@@ -56,6 +57,7 @@ struct imaging {
 
 <<frame to file>>
 
+<<plot frame>>
 @
 \subsection{Parameters}
 \label{sec:parameters}
@@ -65,7 +67,7 @@ The parameters are:
 \item the linear size of the pupil in pixel [[N_PX_PUPIL]],
 \item the linear size of the discrete Fourier transform $[[N_DFT]]=2*[[N_PX_PUPIL]]$,
 \item the linear size of the lenslet array [[_N_SIDE_LENSLET_]],
-\item the linear size of the imagelet [[N_PX_IMAGE],
+\item the linear size of the imagelet [[N_PX_IMAGE]],
 \item the linear size of the frame [[N_PX_CAMERA]],
 \item the number of sources [[N_SOURCE]].
 \end{itemize}
@@ -341,6 +343,32 @@ The frame is saved to a file with:
 void imaging::frame2file(const char *filename){
   dev2file(filename,d__frame,N_PX_CAMERA*N_PX_CAMERA*N_SOURCE);
 }
+
+@ The frame is plotted with the plot.ly
+<<plot frame>>=
+void imaging::show_frame(char *filename)
+{
+  int size[2], nbyte;
+  float *data;
+  plotly_properties prop;
+
+  nbyte = sizeof(float)*N_PX_CAMERA*N_PX_CAMERA;
+  data = (float*)malloc(nbyte);
+  HANDLE_ERROR( cudaMemcpy( data, d__frame,nbyte,
+			    cudaMemcpyDeviceToHost ) );
+
+  prop.set("xtitle","X");
+  prop.set("ytitle","Y");
+  prop.set("ztitle","[au]");
+  //  sprintf(title,"RMS=%.2fnm",S.std(d__data,M,N_PX));
+  prop.set("title","");
+  prop.set("filename",filename);
+  prop.set("zdata",data);
+  size[0] = size[1] = N_PX_CAMERA;
+  prop.set("zdata_size",size);
+  imagesc(&prop); 
+}
+
 @
 \subsection{Tests}
 \label{sec:tests}
