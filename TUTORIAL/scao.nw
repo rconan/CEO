@@ -135,10 +135,10 @@ int main(int argc,char *argv[]) {
 \label{sec:ngs-ao}
 
 The natural guide star (NGS) is given by:
-<<ngsao>>=
+<<setup>>=
 source ngs;
 ngs.setup(ARCSEC(0) , 0, INFINITY, "NGS");
-<<ngsao cleanup>>=
+<<cleanup>>=
 ngs.cleanup();
 
 @  The NGS wavefronts gradients from the turbulence are generated from a dedicated slopes turbulence generator.
@@ -147,9 +147,10 @@ atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&ngs,0);
 
 @ 
 In the following, the wavefront is reconstructed from the NGS centroids:
-<<ngsao>>=
+<<setup>>=
 LMMSE ngs_lmmse;
 ngs_lmmse.setup(&atm,&ngs,1,&src,1,d,N_SIDE_LENSLET,&pupil_mask,"MINRES");
+<<ngsao>>=
 ngs_lmmse.estimation(&cog);
 @ The estimated wavefront is removed from the science wavefront
 <<ngsao>>=
@@ -158,25 +159,22 @@ src.wavefront.show_phase("SCAO/phases/residual from LMMSE NGS AO");
 float ngsao_wfe_rms;
 ngsao_wfe_rms = 1E9*S.std(src.wavefront.phase, 
 		   &pupil_mask, NP2);
-<<ngsao cleanup>>=
+<<cleanup>>=
 ngs_lmmse.cleanup();
 @ and the residual wavefront corresponding image is computed.
 <<ngsao>>=
 imager.propagate(&src);
 imager.show_frame("SCAO/frames/LMMSE NGS AO");
 
-<<ngsao>>=
-<<ngsao cleanup>>
-
 @ 
 \subsection{Laser guide star adaptive optics}
 \label{sec:lgs-ao}
  
 The laser guide star (LGS) is given by:
-<<lgsao>>=
+<<setup>>=
 source lgs;
 lgs.setup(ARCSEC(0) , 0, 90e3, (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1), "LGS");
-<<lgsao cleanup>>=
+<<cleanup>>=
 lgs.cleanup();
 
 @  The LGS turbulence wavefront and wavefront gradient are computed with:
@@ -207,9 +205,10 @@ imager.show_frame("SCAO/frames/LGS AO");
 
 @ 
 The wavefront is reconstructed from the LGS centroids:
-<<lgsao>>=
+<<setup>>=
 LMMSE lgs_lmmse;
 lgs_lmmse.setup(&atm,&lgs,1,&src,1,d,N_SIDE_LENSLET,&pupil_mask,"MINRES");
+<<lgsao>>=
 lgs_lmmse.estimation(&cog);
 @ The LMMMSE LGS wavefront estimate is subtracted from the science wavefront:
 <<lgsao>>=
@@ -220,7 +219,7 @@ float lgs_wfe_rms_lmmse;
 lgs_wfe_rms_lmmse = 1E9*S.std(src.wavefront.phase, 
 		   &pupil_mask, NP2);
 //lgs_lmmse.toFile("phaseEstLgsItp.bin");
-<<lgsao cleanup>>=
+<<cleanup>>=
 lgs_lmmse.cleanup();
 @ and the residual wavefront corresponding image is computed.
 <<lgsao>>=
@@ -228,16 +227,13 @@ imager.propagate(&src);
 //imager.frame2file("lgsLmmseFrame.bin");
 imager.show_frame("SCAO/frames/LMMSE LGS AO");
 
-<<lgsao>>=
-<<lgsao cleanup>>
-
 @ 
 \subsection{Laser tomography adaptive optics}
 \label{sec:ltao}
 
 For the LTAO wavefront estimation, the LGS constellation is defined first.
 We will use 3 LGSs on a 30 arcsec radius ring.
-<<ltao>>=
+<<setup>>=
 int N_GS = 6;
 float gs_radius = 30;
 // 3 LGS on a ring
@@ -249,17 +245,17 @@ float zenith[] = {ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(
 
 source gs_ast;
 gs_ast.setup(zenith,azimuth,90e3,N_GS,NP2);
-<<ltao cleanup>>=
+<<cleanup>>=
 gs_ast.cleanup();
 
 @ The wavefront sensor of the LGS asterism are setup next
-<<ltao>>=
+<<setup>>=
 centroiding gs_ast_cog;
 gs_ast_cog.setup(_N_LENSLET_,N_GS);
 gs_ast_cog.MASK_SET = fried_geometry_setup(gs_ast_cog.lenslet_mask, 
 					   pupil_mask.m, 
 					   N_SIDE_LENSLET, 16, threshold);
-<<ltao cleanup>>=
+<<cleanup>>=
 gs_ast_cog.cleanup();
 
 @ The 3 source are propagated through the atmosphere to the wavefront sensor.
@@ -269,9 +265,10 @@ atm.get_phase_screen(&gs_ast,N_GS,d,NP,d,NP,0);
 atm.get_phase_screen_gradient(&gs_ast_cog,N_SIDE_LENSLET,d,&gs_ast,N_GS,0);
 
 @ The science wavefront is reconstructed with the tomographic estimator:
-<<ltao>>=
+<<setup>>=
 LMMSE gs_ast_lmmse;
 gs_ast_lmmse.setup(&atm,&gs_ast,N_GS,&src,1,d,N_SIDE_LENSLET,&pupil_mask,"MINRES");
+<<ltao>>=
 gs_ast_lmmse.estimation(&gs_ast_cog);
 @  The tomographic wavefront is subtracted from the science wavefront:
 <<ltao>>=
@@ -281,15 +278,12 @@ src.wavefront.show_phase("SCAO/phases/residual from LMMSE LTAO");
 float ltao_wfe_rms;
 ltao_wfe_rms = 1E9*S.std(src.wavefront.phase,
 		   &pupil_mask, NP2);
-<<ltao cleanup>>=
+<<cleanup>>=
 gs_ast_lmmse.cleanup();
 @ and the residual wavefront corresponding image is computed.
 <<ltao>>=
 imager.propagate(&src);
 imager.show_frame("SCAO/frames/LMMSE LTAO");
-
-<<ltao>>=
-<<ltao cleanup>>
 
 @ 
 \subsection{Results}
