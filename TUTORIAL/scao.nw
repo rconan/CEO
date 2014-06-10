@@ -48,12 +48,42 @@ centroiding cog;
 cog.setup();
 <<cleanup>>=
 cog.cleanup();
-@ \item the science imager.
+@ \item the diffraction limited science imager,
 <<setup>>=
 imaging imager;
 imager.setup(N_SIDE_LENSLET+1,1,4,1,1);
 <<cleanup>>=
 imager.cleanup();
+@ \item the turbulence limited science imager,
+<<setup>>=
+imaging imager_turb;
+imager_turb.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup>>=
+imager_turb.cleanup();
+@ \item the science imager for NGSAO,
+<<setup>>=
+imaging imager_ngsao;
+imager_ngsao.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup>>=
+imager_ngsao.cleanup();
+@ \item the science imager for LGSAO,
+<<setup>>=
+imaging imager_lgsao;
+imager_lgsao.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup>>=
+imager_lgsao.cleanup();
+@ \item the science imager for LGSAO LMMSE,
+<<setup>>=
+imaging imager_lgsao_lmmse;
+imager_lgsao_lmmse.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup>>=
+imager_lgsao_lmmse.cleanup();
+@ \item the science imager for LTAO,
+<<setup>>=
+imaging imager_ltao;
+imager_ltao.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup>>=
+imager_ltao.cleanup();
 @ \item the statistical tool.
 <<setup>>=
 stats S;
@@ -83,23 +113,27 @@ imager.show_frame("SCAO/frames/diffraction limited");
 
 @ A few useful variables are defined here:
 <<setup>>=
-int NP, NP2;
+int NP, NP2, k_SAMPLE;
 NP = N_SIDE_LENSLET+1;
 NP2 = NP*NP;
-
+k_SAMPLE = 0;
 @
 The science wavefront is propagated through the atmosphere from [[src]] to [[pupil_mask]].
 <<science wavefront>>=
 atm.get_phase_screen(&src,d,NP,d,NP,0);
 src.wavefront.masked();
-src.wavefront.show_phase("SCAO/phases/science phase screen");
-float science_wf_rms;
-science_wf_rms = 1E9*S.std(src.wavefront.phase, &pupil_mask, NP2);
+if (k_SAMPLE==(N_SAMPLE-1))
+  src.wavefront.show_phase("SCAO/phases/science phase screen");
+<<setup>>=
+float science_wf_rms=0.;
+<<science wavefront>>=
+science_wf_rms += S.var(src.wavefront.phase, &pupil_mask, NP2);
 
 @  and then propagated to the focal plane of the imager:
 <<science wavefront>>=
-imager.propagate(&src);
-imager.show_frame("SCAO/frames/turbulence limited");
+imager_turb.propagate(&src);
+if (k_SAMPLE==(N_SAMPLE-1))
+  imager_turb.show_frame("SCAO/frames/turbulence limited");
 @ The turbulence wavefront is saved apart for later use:
 <<science wavefront>>=
 complex_amplitude phase_screen;
@@ -116,16 +150,25 @@ All CEO programs must include the following headers which also contains the head
 <<main header>>=
 #define N_SIDE_LENSLET 60
 #define _N_LENSLET_ (N_SIDE_LENSLET*N_SIDE_LENSLET)
+@ The number of atmosphere sample
+<<main header>>=
+#define N_SAMPLE 10
 @
 The main function is:
 <<scao.bin>>=
 <<main header>>
 int main(int argc,char *argv[]) {
 <<setup>>
+fprintf(stderr," Samples: %d:\n",N_SAMPLE);
+for (k_SAMPLE=0;k_SAMPLE<N_SAMPLE;k_SAMPLE++) {
+  fprintf(stderr,"\r%4d",k_SAMPLE);
+  atm.reset();
 <<science wavefront>>
 <<ngsao>>
 <<lgsao>>
 <<ltao>>
+    }
+ fprintf(stderr,"\n");
 <<results>>
 <<cleanup>>
 }
@@ -155,16 +198,20 @@ ngs_lmmse.estimation(&cog);
 @ The estimated wavefront is removed from the science wavefront
 <<ngsao>>=
 src.wavefront.add_phase(-1,ngs_lmmse.d__phase_est);
-src.wavefront.show_phase("SCAO/phases/residual from LMMSE NGS AO");
-float ngsao_wfe_rms;
-ngsao_wfe_rms = 1E9*S.std(src.wavefront.phase, 
+if (k_SAMPLE==(N_SAMPLE-1))
+  src.wavefront.show_phase("SCAO/phases/residual from LMMSE NGS AO");
+<<setup>>=
+float ngsao_wfe_rms=0.;
+<<ngsao>>=
+ngsao_wfe_rms += S.var(src.wavefront.phase, 
 		   &pupil_mask, NP2);
 <<cleanup>>=
 ngs_lmmse.cleanup();
 @ and the residual wavefront corresponding image is computed.
 <<ngsao>>=
-imager.propagate(&src);
-imager.show_frame("SCAO/frames/LMMSE NGS AO");
+imager_ngsao.propagate(&src);
+if (k_SAMPLE==(N_SAMPLE-1))
+  imager_ngsao.show_frame("SCAO/frames/LMMSE NGS AO",&imager);
 
 @ 
 \subsection{Laser guide star adaptive optics}
@@ -182,9 +229,12 @@ lgs.cleanup();
 atm.get_phase_screen(&lgs,d,NP,d,NP,0);
 lgs.wavefront.M = &pupil_mask;
 lgs.wavefront.masked();
-lgs.wavefront.show_phase("SCAO/phases/LGS phase screen");
-float lgs_wf_rms;
-lgs_wf_rms = 1E9*S.std(lgs.wavefront.phase, &pupil_mask, NP2);
+if (k_SAMPLE==(N_SAMPLE-1))
+  lgs.wavefront.show_phase("SCAO/phases/LGS phase screen");
+<<setup>>=
+float lgs_wf_rms=0.;
+<<lgsao>>=
+lgs_wf_rms += S.var(lgs.wavefront.phase, &pupil_mask, NP2);
 @ and with:
 <<lgsao>>=
 atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&lgs,0);
@@ -194,14 +244,18 @@ The LGS wavefront is subtracted from the science wavefront:
 <<lgsao>>=
 src.wavefront.reset(phase_screen);
 src.wavefront.add_phase(-1,lgs.wavefront.phase);
-src.wavefront.show_phase("SCAO/phases/residual from LGS AO");
-float lgs_wfe_rms;
-lgs_wfe_rms = 1E9*S.std(src.wavefront.phase, 
+if (k_SAMPLE==(N_SAMPLE-1))
+  src.wavefront.show_phase("SCAO/phases/residual from LGS AO");
+<<setup>>=
+float lgs_wfe_rms=0.;
+<<lgsao>>=
+lgs_wfe_rms += S.var(src.wavefront.phase, 
 		   &pupil_mask, NP2);
 @  and the residual wavefront corresponding image is computed.
 <<lgsao>>=
-imager.propagate(&src);
-imager.show_frame("SCAO/frames/LGS AO");
+imager_lgsao.propagate(&src);
+if (k_SAMPLE==(N_SAMPLE-1))
+  imager_lgsao.show_frame("SCAO/frames/LGS AO",&imager);
 
 @ 
 The wavefront is reconstructed from the LGS centroids:
@@ -214,18 +268,22 @@ lgs_lmmse.estimation(&cog);
 <<lgsao>>=
 src.wavefront.reset(phase_screen);
 src.wavefront.add_phase(-1,lgs_lmmse.d__phase_est);
-src.wavefront.show_phase("SCAO/phases/residual from LMMSE LGS AO");
-float lgs_wfe_rms_lmmse;
-lgs_wfe_rms_lmmse = 1E9*S.std(src.wavefront.phase, 
+if (k_SAMPLE==(N_SAMPLE-1))
+  src.wavefront.show_phase("SCAO/phases/residual from LMMSE LGS AO");
+<<setup>>=
+float lgs_wfe_rms_lmmse=0.;
+<<lgsao>>=
+lgs_wfe_rms_lmmse += S.var(src.wavefront.phase, 
 		   &pupil_mask, NP2);
 //lgs_lmmse.toFile("phaseEstLgsItp.bin");
 <<cleanup>>=
 lgs_lmmse.cleanup();
 @ and the residual wavefront corresponding image is computed.
 <<lgsao>>=
-imager.propagate(&src);
+imager_lgsao_lmmse.propagate(&src);
 //imager.frame2file("lgsLmmseFrame.bin");
-imager.show_frame("SCAO/frames/LMMSE LGS AO");
+if (k_SAMPLE==(N_SAMPLE-1))
+  imager_lgsao_lmmse.show_frame("SCAO/frames/LMMSE LGS AO",&imager);
 
 @ 
 \subsection{Laser tomography adaptive optics}
@@ -274,22 +332,32 @@ gs_ast_lmmse.estimation(&gs_ast_cog);
 <<ltao>>=
 src.wavefront.reset(phase_screen);
 src.wavefront.add_phase(-1,gs_ast_lmmse.d__phase_est);
-src.wavefront.show_phase("SCAO/phases/residual from LMMSE LTAO");
-float ltao_wfe_rms;
-ltao_wfe_rms = 1E9*S.std(src.wavefront.phase,
+if (k_SAMPLE==(N_SAMPLE-1))
+  src.wavefront.show_phase("SCAO/phases/residual from LMMSE LTAO");
+<<setup>>=
+float ltao_wfe_rms=0.;
+<<ltao>>=
+ltao_wfe_rms += S.var(src.wavefront.phase,
 		   &pupil_mask, NP2);
 <<cleanup>>=
 gs_ast_lmmse.cleanup();
 @ and the residual wavefront corresponding image is computed.
 <<ltao>>=
-imager.propagate(&src);
-imager.show_frame("SCAO/frames/LMMSE LTAO");
+imager_ltao.propagate(&src);
+if (k_SAMPLE==(N_SAMPLE-1))
+  imager_ltao.show_frame("SCAO/frames/LMMSE LTAO",&imager);
 
 @ 
 \subsection{Results}
 \label{sec:results}
 
 <<results>>=
+science_wf_rms    = 1E9*sqrtf(science_wf_rms/N_SAMPLE);
+ngsao_wfe_rms     = 1E9*sqrtf(ngsao_wfe_rms/N_SAMPLE);
+lgs_wf_rms        = 1E9*sqrtf(lgs_wf_rms/N_SAMPLE);
+lgs_wfe_rms       = 1E9*sqrtf(lgs_wfe_rms/N_SAMPLE);
+lgs_wfe_rms_lmmse = 1E9*sqrtf(lgs_wfe_rms_lmmse/N_SAMPLE);
+ltao_wfe_rms      = 1E9*sqrtf(ltao_wfe_rms/N_SAMPLE);
 printf("------------------------------\n");
 printf("___  TURBULENCE WAVEFRONT ___\n");
 printf("\n NGS WF RMS: %7.2fnm\n", science_wf_rms);

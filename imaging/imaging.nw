@@ -26,14 +26,19 @@ struct imaging {
 	     int DFT_osf, float IMAGE_osf, float CAMERA_osf);
 
   void cleanup(void);
+
+  void reset(void);
    
   void propagate(source *src);
+
+  float strehl_ratio(imaging *ref);
 
   void info(void);
 
   void frame2file(const char *filename);
 
   void show_frame(char *filename);
+  void show_frame(char *filename, imaging *ref);
 };
 
 #endif  // __IMAGING_H__
@@ -51,13 +56,18 @@ struct imaging {
 
 <<cleanup>>
 
+<<reset>>
+
 <<info>>
    
 <<propagation>>
 
+<<strehl ratio>>
+
 <<frame to file>>
 
 <<plot frame>>
+<<plot frame with Strehl ratio>>
 @
 \subsection{Parameters}
 \label{sec:parameters}
@@ -73,7 +83,8 @@ The parameters are:
 \end{itemize}
 
 <<parameters>>=
-int N_PX_PUPIL, N_DFT, _N_SIDE_LENSLET_, N_LENSLET, N_SOURCE, N_PX_IMAGE, N_PX_CAMERA;
+int N_PX_PUPIL, N_DFT, _N_SIDE_LENSLET_, N_LENSLET, 
+  N_SOURCE, N_PX_IMAGE, N_PX_CAMERA, N_FRAME;
 cufftHandle plan;
 float2 *d__wave_PUPIL;
 float  *d__frame;
@@ -83,6 +94,10 @@ float  *d__frame;
 \label{sec:functions}
 
 In this section, we are dealing with the process of computing images from wavefronts in the pupil.
+
+\subsubsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
 A [[setup]] routine is defined to initialize any required variables:
 <<setup>>=
 void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET, 
@@ -94,15 +109,21 @@ void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
   _N_SIDE_LENSLET_ = __N_SIDE_LENSLET;
   N_LENSLET   = _N_SIDE_LENSLET_*_N_SIDE_LENSLET_;
   N_SOURCE    = 1;
+  N_FRAME     = 0;
   printf("@(CEO)>imaging: Device memory allocation\n");
   int N_DFT_bytes = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
   cudaMalloc( (void**)&d__wave_PUPIL , sizeof(float2) * N_DFT_bytes);
   cudaMalloc( (void**)&d__frame , 
 	      sizeof(float) *N_PX_CAMERA*N_PX_CAMERA*N_LENSLET*N_SOURCE );
+  reset();
   <<imaging CUFFT plan creation>>
   info();
 }
 @ 
+
+\subsubsection{Propagation}
+\label{sec:propagation}
+
 As we are considering only the case of imaging sources at infinity, the wavefront propagation is performed with the Fraunhofer approximation meaning that the image in the focal plane is simply the Fourier transform of the complex amplitude in the pupil plane.
 The propagation is computing with a call to the [[propagate]] routine:
 <<propagation>>=
@@ -115,12 +136,10 @@ void imaging::propagate(source *src) {
 					      src->wavenumber(),
 					      N_PX_PUPIL, N_PX_IMAGE,
 					      _N_SIDE_LENSLET_, N_SOURCE);
-  if (cudaThreadSynchronize() != cudaSuccess){
-    fprintf(stderr, "Cuda error: Failed to synchronize\n");
-  }    
   <<imaging CUFFT execution>>
   binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT, N_SOURCE,
 				     N_PX_IMAGE, N_PX_CAMERA, _N_SIDE_LENSLET_);
+  ++N_FRAME;
 }
 @ 
 The Fourier transform is done with the CUFFT library:
@@ -150,6 +169,12 @@ void imaging::cleanup(void) {
   cufftDestroy(plan);
   cudaFree( d__wave_PUPIL );
   cudaFree( d__frame );
+}
+
+@ The camera frame is continuously accumulating images and can be reset with:
+<<reset>>=
+void imaging::reset(void) {
+  HANDLE_ERROR( cudaMemset(d__frame, 0, sizeof(float)*N_PX_CAMERA*N_PX_CAMERA*N_LENSLET*N_SOURCE) );
 }
 
 @ The rank of the DFT [[NRANK]] is always 2 and the size of each DFT is $[[N_DFT]]\times[[N_DFT]]$.
@@ -316,11 +341,37 @@ __global__ void binning(float *frame, const float2 *wave, int N_DFT, int N_SOURC
       	}
       ij_CAM = lenslet2array(u,v,N_PX_CAMERA,
 			     iLenslet,jLenslet,_N_SIDE_LENSLET_,iSource,N_SOURCE);
-      frame[ij_CAM] =   bin[ii][jj]/(N_DFT*N_DFT);
+      frame[ij_CAM] +=   bin[ii][jj]/(N_DFT*N_DFT);
     }
 
 }
 @
+
+\subsubsection{Image analysis}
+\label{sec:image-analysis}
+
+The following routines are used to evaluate image properties: Strehl ratio, entrapped energy and full width at half maximum.
+
+\paragraph{Strehl ratio}
+\label{sec:strehl-ratio}
+
+The Strehl ratio is given by the ratio between the PSF at frequency 0 and a reference PSF a frequency 0.
+<<strehl ratio>>=
+float imaging::strehl_ratio(imaging *ref)
+{
+  int idx;
+  idx = (N_PX_CAMERA - 1)/2;
+  float psf0, ref_psf0, sr;
+  HANDLE_ERROR( cudaMemcpy( &psf0, d__frame+idx*(1+N_PX_CAMERA),sizeof(float),
+			    cudaMemcpyDeviceToHost ) );
+  HANDLE_ERROR( cudaMemcpy( &ref_psf0, ref->d__frame+idx*(1+N_PX_CAMERA),sizeof(float),
+			    cudaMemcpyDeviceToHost ) );
+
+  sr = (psf0*ref->N_FRAME)/(ref_psf0*N_FRAME);
+  return sr;
+}
+
+@ 
 \subsubsection{Input/Output}
 \label{sec:inputoutput}
 
@@ -363,6 +414,34 @@ void imaging::show_frame(char *filename)
   prop.set("ztitle","[au]");
   //  sprintf(title,"RMS=%.2fnm",S.std(d__data,M,N_PX));
   prop.set("title","");
+  prop.set("filename",filename);
+  prop.set("zdata",data);
+  size[0] = size[1] = N_PX_CAMERA;
+  prop.set("zdata_size",size);
+  prop.set("colorscale","YIGnBu");
+  imagesc(&prop); 
+
+  HANDLE_ERROR( cudaFreeHost( data ) );
+}
+<<plot frame with Strehl ratio>>=
+void imaging::show_frame(char *filename, imaging *ref)
+{
+  int size[2], nbyte;
+  char title[32];
+  float *data;
+  plotly_properties prop;
+
+  nbyte = sizeof(float)*N_PX_CAMERA*N_PX_CAMERA;
+  HANDLE_ERROR( cudaHostAlloc( (void**)&data, nbyte, 
+			       cudaHostAllocDefault ) );
+  HANDLE_ERROR( cudaMemcpy( data, d__frame,nbyte,
+			    cudaMemcpyDeviceToHost ) );
+
+  prop.set("xtitle","X");
+  prop.set("ytitle","Y");
+  prop.set("ztitle","[au]");
+  sprintf(title,"Strehl ratio=%.2f%%",strehl_ratio(ref)*100);
+  prop.set("title",title);
   prop.set("filename",filename);
   prop.set("zdata",data);
   size[0] = size[1] = N_PX_CAMERA;

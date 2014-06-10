@@ -480,8 +480,10 @@ float stats::std(const float *data, int n_data) {
 @  
 Computing the variance of a vector [[data]]$=x\times f$, $\sigma^2_{xf}=\langle (xf)^2 \rangle - \langle xf \rangle^2$ where $f$ is a filtering vector the same size than $x$ and made of 0 and 1:
 <<variance filtered data>>=
-float stats::var(const float *data, mask *M, int n_data) {
-  float results, mean_data;
+float stats::var(const float *data1, mask *M, int n_data) {
+  float results, mean_data, *data;
+  HANDLE_ERROR( cudaMalloc((void**)&data, sizeof(float)*n_data ) );
+  CUBLAS_ERROR( cublasScopy(handle, n_data, data1, 1, data, 1) );
   <<variance filtered data steps>>
   return results;
 }
@@ -512,12 +514,14 @@ mean_data /= M->nnz;
 CUBLAS_ERROR( cublasSdot(handle, n_data, data, 1, data, 1, &results) );
 results /= M->nnz;
 results -= (mean_data*mean_data);
-
+HANDLE_ERROR( cudaFree( data ) );
 @  
 Computing the standard deviation of a vector [[data]]$=x\times f$, $\sigma_{xf}=\left(\langle (xf)^2 \rangle - \langle xf \rangle^2\right)^{1/2}$ where $f$ is a filtering vector the same size than $x$ and made of 0 and 1:
 <<standart deviation filtered data>>=
-float stats::std(const float *data, mask *M, int n_data) {
-  float results, mean_data;
+float stats::std(const float *data1, mask *M, int n_data) {
+  float results, mean_data, *data;
+  HANDLE_ERROR( cudaMalloc((void**)&data, sizeof(float)*n_data ) );
+  CUBLAS_ERROR( cublasScopy(handle, n_data, data1, 1, data, 1) );
   <<variance filtered data steps>>
   return sqrtf(results);
 }
