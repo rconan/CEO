@@ -31,6 +31,7 @@ libsrc = $(CEOPATH)/lib/libceo.a
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
 	sed -i -e "s/label{eq:/label{$*.eq:/g" -e "s/ref{eq:/ref{$*.eq:/g" $@
 	sed -i -e "s/label{fig:/label{$*.fig:/g" -e "s/ref{fig:/ref{$*.fig:/g" $@
+	sed -i -e "s/label{tab:/label{$*.fig:/g" -e "s/ref{tab:/ref{$*.fig:/g" $@
 	sed -i -e "s/label{sec:/label{$*.sec:/g" -e "s/ref{sec:/ref{$*.sec:/g" $@
 .nw.h:
 	$(TANGLE) -R$@ $< | $(CPIF) $@  

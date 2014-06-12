@@ -377,6 +377,8 @@ int N_LENSLET = N_SIDE_LENSLET_*N_SIDE_LENSLET_;
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est_c, sizeof(float)*PS_E_N_PX ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* N_LENSLET*2*N_guide_star ) );
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* N_LENSLET*2*N_guide_star ) );
+HANDLE_ERROR( cudaEventCreate( &start ) );
+HANDLE_ERROR( cudaEventCreate( &stop ) );
 }
 <<setup with pupil>>=
 void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star, 
@@ -427,6 +429,8 @@ int N_LENSLET = N_SIDE_LENSLET_*N_SIDE_LENSLET_;
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est_c, sizeof(float)*PS_E_N_PX ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* N_LENSLET*2*N_guide_star ) );
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* N_LENSLET*2*N_guide_star ) );
+HANDLE_ERROR( cudaEventCreate( &start ) );
+HANDLE_ERROR( cudaEventCreate( &stop ) );
 }
 @ 
 The slope covariance matrix is computed first:
@@ -453,6 +457,9 @@ void LMMSE::cleanup(void)
   fprintf(stderr," |-");
   iSolve.cleanup();
 
+  HANDLE_ERROR( cudaEventDestroy( start ) );
+  HANDLE_ERROR( cudaEventDestroy( stop ) );
+
   if (d__idx) HANDLE_ERROR( cudaFree( d__idx ) );
   if (d__ce)  HANDLE_ERROR( cudaFree( d__ce ) );
   HANDLE_ERROR( cudaFree( d__phase_est_c ) );
@@ -469,7 +476,7 @@ void LMMSE::cleanup(void)
 <<wavefront estimation>>=
 void LMMSE::estimation(const centroiding *cog)
 {
-  //tid.tic();
+HANDLE_ERROR( cudaEventRecord( start, 0 ) );
 
 <<wavefront estimation (solver and projection)>>
 
@@ -489,6 +496,10 @@ d__phase_est = d__phase_est_i;
 
 //printf("Solver residue norm           : %.2E\n",iSolve.rnorm);
 //printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+
+HANDLE_ERROR( cudaEventRecord( stop, 0 ) );
+HANDLE_ERROR( cudaEventSynchronize( stop ) );
+HANDLE_ERROR( cudaEventElapsedTime( &elapsed_time, start, stop ) );
 }
 
 <<wavefront estimation (solver and projection)>>=
@@ -654,11 +665,12 @@ l = k-1;
 int nnz, NI;
 float *csrValH;
 int *csrColIndH, *csrRowPtrH;
-float alpha, beta;
+float alpha, beta, elapsed_time;
 cudaError_t cudaStat;
 cusparseStatus_t status;
 cusparseHandle_t handle;
 cusparseMatDescr_t descr;
+cudaEvent_t start, stop;
 
 @ and they are setup with:
 <<sparse setup>>=
