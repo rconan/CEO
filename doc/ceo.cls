@@ -4,7 +4,8 @@
 
 \RequirePackage{ifthen}
 \RequirePackage[dvips]{graphicx}
-\RequirePackage{color,amsmath,amssymb,lastpage,booktabs,xspace}
+%\RequirePackage{color,amsmath,amssymb,lastpage,booktabs,xspace}
+\RequirePackage{color,amsmath,amssymb,xspace}
 \RequirePackage{tikz}
 \DeclareOption*{\PassOptionsToClass{\CurrentOption}{report}}
 \ProcessOptions

@@ -6,7 +6,7 @@ nLenslet_ = [20 40 64 84 150];
 D_        = [3.6 8 5 42 30];
 ceodir = '~/CEO';
 
-for kRun = 1:length(D_)
+for kRun = 2:length(D_)
     
 D = D_(kRun);
 

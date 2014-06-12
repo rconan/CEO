@@ -84,7 +84,7 @@ void CUBLAS_ERROR(cublasStatus_t status);
 
 <<lenslet 2 actuator>>
 __global__ void circular_pupil(int *pupil, int N);
-__global__ void valid_lenslet(char *mask, int N_pupil, float threshold);
+//__global__ void valid_lenslet(char *mask, int N_pupil, float threshold);
 __global__ void fried_geometry(char *lenslet_mask, char *actuator_mask, 
                                int NL, int n, float threshold);
 char fried_geometry_setup(char *lenslet_mask, char *actuator_mask, 
@@ -128,59 +128,8 @@ int round_up_to_nhp2(int n) {
 <<fill ones filtered>>
 <<statistics functions>>
 <<mask functions>>
-
-__global__ void centroiding(float *cx, float *cy, float *flux, const float *frame)
-{
-  int u, k, i, ij, ij_inc, iLenslet,jLenslet;
-  u = threadIdx.x;
-  iLenslet = blockIdx.x;
-  jLenslet = blockIdx.y;
-  /* kLenslet = iLenslet*NSIDE_LENSLET + jLenslet; */
-  k = blockIdx.x*N_SIDE_LENSLET*_N_SOURCE_ + blockIdx.y;
-  
-  __shared__ float buffer[_N_PX_CAMERA_][3];
-
-  // CENTROIDING
-  if (u<_N_PX_CAMERA_)
-    {
-      buffer[u][0] = buffer[u][1] = buffer[u][2] = 0.0;
-      // ij = iLenslet*_N_PX_CAMERA_ + u;
-      // ij *= N_SIDE_LENSLET*_N_PX_CAMERA_*_N_SOURCE_;
-      // ij += jLenslet*_N_PX_CAMERA_;
-      //      ij = (u+k*_N_PX_CAMERA_)*_N_PX_CAMERA_;
-      ij = lenslet2array(u, 0, _N_PX_CAMERA_, 
-			 iLenslet, jLenslet, N_SIDE_LENSLET, 
-			 0, _N_SOURCE_);
-      for (i=0;i<_N_PX_CAMERA_;i++)
-	{
-	  ij_inc = ij + i;
-	  buffer[u][0]  += frame[ij_inc];
-	  buffer[u][1]  += u*frame[ij_inc];
-	  buffer[u][2]  += i*frame[ij_inc];
-	}
-    }
-  
-  __syncthreads();
-
-  if (u<1)
-  {
-      flux[k]  = cx[k] = cy[k] = 0.0;
-      for (i=0;i<_N_PX_CAMERA_;i++)
-      {
-          flux[k] += buffer[i][0];
-          cx[k]   += buffer[i][1];
-          cy[k]   += buffer[i][2];
-      }
-      if (flux[k]>0)
-      {
-          cx[k] /= flux[k];
-          cy[k] /= flux[k];
-      }
-  }
-}
-
 <<circular pupil>>
-<<valid lenslet>>
+
 <<Fried geometry masks>>
 <<Fried geometry>>
 

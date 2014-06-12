@@ -1,9 +1,10 @@
 % -*- mode: Noweb; noweb-code-mode: c-mode -*-
 
-\section{Geometric adaptive optics}
-\label{sec:open-loop-geometric}
+\section{Laser guide star adaptive optics}
+\label{sec:lgsao}
 
-In this section, the performances of several AO systems are compared.
+In this section, the performance of LGS AO systems are computed.
+The on--axis wavefront is eithe derived straight from the LGS or estimated with a LGS LMMSE.
 All the systems employ geometric Shack--Hartmann wavefront sensors (SH--WFS).
 For each system, the on--axis wavefront is estimated several times with a different random draw of the phase screens.
 
@@ -32,7 +33,7 @@ atm.setup(20e-2,30,altitude, xi0, wind_speed, wind_direction);
 atm.cleanup();
 @ \item @ the diameter of the telescope,
 <<setup>>=
-float D = 25; // telescope diameter in meter
+float D = 8; // telescope diameter in meter
 @ leading to a lenslet size of:
 <<setup>>=
 float d = D/N_SIDE_LENSLET;
@@ -45,7 +46,7 @@ pupil_mask.cleanup();
 @ \item the wavefront sensor centroid container,
 <<setup>>=
 centroiding cog;
-cog.setup();
+cog.setup(N_SIDE_LENSLET,1);
 <<cleanup>>=
 cog.cleanup();
 @ \item the diffraction limited science imager,
@@ -60,12 +61,6 @@ imaging imager_turb;
 imager_turb.setup(N_SIDE_LENSLET+1,1,4,1,1);
 <<cleanup>>=
 imager_turb.cleanup();
-@ \item the science imager for NGSAO,
-<<setup>>=
-imaging imager_ngsao;
-imager_ngsao.setup(N_SIDE_LENSLET+1,1,4,1,1);
-<<cleanup>>=
-imager_ngsao.cleanup();
 @ \item the science imager for LGSAO,
 <<setup>>=
 imaging imager_lgsao;
@@ -78,12 +73,6 @@ imaging imager_lgsao_lmmse;
 imager_lgsao_lmmse.setup(N_SIDE_LENSLET+1,1,4,1,1);
 <<cleanup>>=
 imager_lgsao_lmmse.cleanup();
-@ \item the science imager for LTAO,
-<<setup>>=
-imaging imager_ltao;
-imager_ltao.setup(N_SIDE_LENSLET+1,1,4,1,1);
-<<cleanup>>=
-imager_ltao.cleanup();
 @ \item the statistical tool.
 <<setup>>=
 stats S;
@@ -109,7 +98,10 @@ src.wavefront.M = &pupil_mask;
 src.wavefront.masked();
 imager.propagate(&src);
 //imager.frame2file("refFrame.bin");
-imager.show_frame("SCAO/frames/diffraction limited");
+char plotly_name[64], plotly_dir[64];
+sprintf(plotly_dir,"LGSAO/D=%.1fm, N=%d/",D,N_SIDE_LENSLET);
+SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/diffraction limited");
+imager.show_frame(plotly_name);
 
 @ A few useful variables are defined here:
 <<setup>>=
@@ -123,8 +115,10 @@ The science wavefront is propagated through the atmosphere from [[src]] to [[pup
 <<science wavefront>>=
 atm.get_phase_screen(&src,d,NP,d,NP,tau);
 src.wavefront.masked();
-if (k_SAMPLE==(N_SAMPLE-1))
-  src.wavefront.show_phase("SCAO/phases/science phase screen");
+if (k_SAMPLE==(N_SAMPLE-1)) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/science phase screen");
+  src.wavefront.show_phase(plotly_name);
+ }
 <<setup>>=
 float science_wf_rms=0.;
 <<science wavefront>>=
@@ -133,8 +127,10 @@ science_wf_rms += S.var(src.wavefront.phase, &pupil_mask, NP2);
 @  and then propagated to the focal plane of the imager:
 <<science wavefront>>=
 imager_turb.propagate(&src);
-if (k_SAMPLE==(N_SAMPLE-1))
-  imager_turb.show_frame("SCAO/frames/turbulence limited");
+if (k_SAMPLE==(N_SAMPLE-1)) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/turbulence limited");
+  imager_turb.show_frame(plotly_name);
+ }
 @ The turbulence wavefront is saved apart for later use:
 <<science wavefront>>=
 complex_amplitude phase_screen;
@@ -149,7 +145,7 @@ All CEO programs must include the following headers which also contains the head
 #endif
 @ The size of the lenslet array is defined in the header:
 <<main header>>=
-#define N_SIDE_LENSLET 60
+#define N_SIDE_LENSLET 20
 #define _N_LENSLET_ (N_SIDE_LENSLET*N_SIDE_LENSLET)
 @ The number of atmosphere sample
 <<main header>>=
@@ -157,65 +153,26 @@ All CEO programs must include the following headers which also contains the head
 #define PLOTLY_LIM (N_SAMPLE-1) // (N_SAMPLE-1) for plotting, higher for disabling plotting
 @
 The main function is:
-<<scao.bin>>=
+<<lgsao.bin>>=
 <<main header>>
+void SET_PLOTLY_NAME(char *name,char *dir,char *path)
+{
+strcpy(name, dir);
+strcat(name,path);
+}
 int main(int argc,char *argv[]) {
-cudaSetDevice(1);
 <<setup>>
 fprintf(stderr," Samples: %d:\n",N_SAMPLE);
 for (k_SAMPLE=0;k_SAMPLE<N_SAMPLE;k_SAMPLE++) {
   fprintf(stderr,"\r%4d",k_SAMPLE);
-//  tau = k_SAMPLE*1e-3;
   atm.reset();
 <<science wavefront>>
-<<ngsao>>
 <<lgsao>>
-<<ltao>>
     }
  fprintf(stderr,"\n");
 <<results>>
 <<cleanup>>
 }
-
-@ 
-\subsection{Natural guide star adaptive optics}
-\label{sec:ngs-ao}
-
-The natural guide star (NGS) is given by:
-<<setup>>=
-source ngs;
-ngs.setup(ARCSEC(0) , 0, INFINITY, "NGS");
-<<cleanup>>=
-ngs.cleanup();
-
-@  The NGS wavefronts gradients from the turbulence are generated from a dedicated slopes turbulence generator.
-<<ngsao>>=
-atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&ngs,tau);
-
-@ 
-In the following, the wavefront is reconstructed from the NGS centroids:
-<<setup>>=
-LMMSE ngs_lmmse;
-ngs_lmmse.setup(&atm,&ngs,1,&src,1,d,N_SIDE_LENSLET,&pupil_mask,"MINRES");
-<<ngsao>>=
-ngs_lmmse.estimation(&cog);
-@ The estimated wavefront is removed from the science wavefront
-<<ngsao>>=
-src.wavefront.add_phase(-1,ngs_lmmse.d__phase_est);
-if (k_SAMPLE==PLOTLY_LIM)
-  src.wavefront.show_phase("SCAO/phases/residual from LMMSE NGS AO");
-<<setup>>=
-float ngsao_wfe_rms=0.;
-<<ngsao>>=
-ngsao_wfe_rms += S.var(src.wavefront.phase, 
-		   &pupil_mask, NP2);
-<<cleanup>>=
-ngs_lmmse.cleanup();
-@ and the residual wavefront corresponding image is computed.
-<<ngsao>>=
-imager_ngsao.propagate(&src);
-if (k_SAMPLE==PLOTLY_LIM)
-  imager_ngsao.show_frame("SCAO/frames/LMMSE NGS AO",&imager);
 
 @ 
 \subsection{Laser guide star adaptive optics}
@@ -233,8 +190,10 @@ lgs.cleanup();
 atm.get_phase_screen(&lgs,d,NP,d,NP,0);
 lgs.wavefront.M = &pupil_mask;
 lgs.wavefront.masked();
-if (k_SAMPLE==PLOTLY_LIM)
-  lgs.wavefront.show_phase("SCAO/phases/LGS phase screen");
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/LGS phase screen");
+  lgs.wavefront.show_phase(plotly_name);
+ }
 <<setup>>=
 float lgs_wf_rms=0.;
 <<lgsao>>=
@@ -248,8 +207,10 @@ The LGS wavefront is subtracted from the science wavefront:
 <<lgsao>>=
 src.wavefront.reset(phase_screen);
 src.wavefront.add_phase(-1,lgs.wavefront.phase);
-if (k_SAMPLE==PLOTLY_LIM)
-  src.wavefront.show_phase("SCAO/phases/residual from LGS AO");
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/LGS AO");
+  src.wavefront.show_phase(plotly_name);
+ }
 <<setup>>=
 float lgs_wfe_rms=0.;
 <<lgsao>>=
@@ -258,9 +219,10 @@ lgs_wfe_rms += S.var(src.wavefront.phase,
 @  and the residual wavefront corresponding image is computed.
 <<lgsao>>=
 imager_lgsao.propagate(&src);
-if (k_SAMPLE==PLOTLY_LIM)
-  imager_lgsao.show_frame("SCAO/frames/LGS AO",&imager);
-
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/LGS AO");
+  imager_lgsao.show_frame(plotly_name,&imager);
+ }
 @ 
 The wavefront is reconstructed from the LGS centroids:
 <<setup>>=
@@ -272,8 +234,10 @@ lgs_lmmse.estimation(&cog);
 <<lgsao>>=
 src.wavefront.reset(phase_screen);
 src.wavefront.add_phase(-1,lgs_lmmse.d__phase_est);
-if (k_SAMPLE==PLOTLY_LIM)
-  src.wavefront.show_phase("SCAO/phases/residual from LMMSE LGS AO");
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/LMMSE LGS AO");
+  src.wavefront.show_phase(plotly_name);
+ }
 <<setup>>=
 float lgs_wfe_rms_lmmse=0.;
 <<lgsao>>=
@@ -286,70 +250,10 @@ lgs_lmmse.cleanup();
 <<lgsao>>=
 imager_lgsao_lmmse.propagate(&src);
 //imager.frame2file("lgsLmmseFrame.bin");
-if (k_SAMPLE==PLOTLY_LIM)
-  imager_lgsao_lmmse.show_frame("SCAO/frames/LMMSE LGS AO",&imager);
-
-@ 
-\subsection{Laser tomography adaptive optics}
-\label{sec:ltao}
-
-For the LTAO wavefront estimation, the LGS constellation is defined first.
-We will use 3 LGSs on a 30 arcsec radius ring.
-<<setup>>=
-int N_GS = 6;
-float gs_radius = 30;
-// 3 LGS on a ring
-/* float zenith[] = {ARCSEC(gs_radius),ARCSEC(gs_radius),ARCSEC(gs_radius)}, */
-/*   azimuth[] = {0,2.*PI/3.,4.*PI/3.}; */
-// 6 LGS on a ring
-float zenith[] = {ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30)},
-  azimuth[] = {0,2.*PI/6.,4.*PI/6.,6.*PI/6.,8.*PI/6.,10.*PI/6.,12.*PI/6.};
-
-source gs_ast;
-gs_ast.setup(zenith,azimuth,90e3,N_GS,NP2);
-<<cleanup>>=
-gs_ast.cleanup();
-
-@ The wavefront sensor of the LGS asterism are setup next
-<<setup>>=
-centroiding gs_ast_cog;
-gs_ast_cog.setup(_N_LENSLET_,N_GS);
-gs_ast_cog.MASK_SET = fried_geometry_setup(gs_ast_cog.lenslet_mask, 
-					   pupil_mask.m, 
-					   N_SIDE_LENSLET, 16, threshold);
-<<cleanup>>=
-gs_ast_cog.cleanup();
-
-@ The 3 source are propagated through the atmosphere to the wavefront sensor.
-<<ltao>>=
-atm.get_phase_screen(&gs_ast,N_GS,d,NP,d,NP,0);
-//gs_ast.phase2file("gsAstWavefronts.bin");
-atm.get_phase_screen_gradient(&gs_ast_cog,N_SIDE_LENSLET,d,&gs_ast,N_GS,tau);
-
-@ The science wavefront is reconstructed with the tomographic estimator:
-<<setup>>=
-LMMSE gs_ast_lmmse;
-gs_ast_lmmse.setup(&atm,&gs_ast,N_GS,&src,1,d,N_SIDE_LENSLET,&pupil_mask,"MINRES");
-<<ltao>>=
-gs_ast_lmmse.estimation(&gs_ast_cog);
-@  The tomographic wavefront is subtracted from the science wavefront:
-<<ltao>>=
-src.wavefront.reset(phase_screen);
-src.wavefront.add_phase(-1,gs_ast_lmmse.d__phase_est);
-if (k_SAMPLE==PLOTLY_LIM)
-  src.wavefront.show_phase("SCAO/phases/residual from LMMSE LTAO");
-<<setup>>=
-float ltao_wfe_rms=0.;
-<<ltao>>=
-ltao_wfe_rms += S.var(src.wavefront.phase,
-		   &pupil_mask, NP2);
-<<cleanup>>=
-gs_ast_lmmse.cleanup();
-@ and the residual wavefront corresponding image is computed.
-<<ltao>>=
-imager_ltao.propagate(&src);
-if (k_SAMPLE==PLOTLY_LIM)
-  imager_ltao.show_frame("SCAO/frames/LMMSE LTAO",&imager);
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/LMMSE LGS AO");
+  imager_lgsao_lmmse.show_frame(plotly_name,&imager);
+ }
 
 @ 
 \subsection{Results}
@@ -357,21 +261,15 @@ if (k_SAMPLE==PLOTLY_LIM)
 
 <<results>>=
 science_wf_rms    = 1E9*sqrtf(science_wf_rms/N_SAMPLE);
-ngsao_wfe_rms     = 1E9*sqrtf(ngsao_wfe_rms/N_SAMPLE);
 lgs_wf_rms        = 1E9*sqrtf(lgs_wf_rms/N_SAMPLE);
 lgs_wfe_rms       = 1E9*sqrtf(lgs_wfe_rms/N_SAMPLE);
 lgs_wfe_rms_lmmse = 1E9*sqrtf(lgs_wfe_rms_lmmse/N_SAMPLE);
-ltao_wfe_rms      = 1E9*sqrtf(ltao_wfe_rms/N_SAMPLE);
 printf("------------------------------\n");
 printf("___  TURBULENCE WAVEFRONT ___\n");
 printf("\n NGS WF RMS: %7.2fnm\n", science_wf_rms);
 printf("\n LGS WF RMS: %7.2fnm\n", lgs_wf_rms);
-printf("\n___ ON-AXIS WAVEFRONT ESTIMATE FROM NGS ___\n");
-printf("\n NGSAO WFE RMS: %8.3fnm\n",ngsao_wfe_rms);
 printf("\n___ ON-AXIS WAVEFRONT ESTIMATE FROM LGS ___\n");
 printf("\n NGS-LGS WFE RMS : %8.3fnm\n",lgs_wfe_rms);
 printf("\n LGS MMSE WFE RMS: %8.3fnm\n",lgs_wfe_rms_lmmse);
-printf("\n___ ON-AXIS WAVEFRONT ESTIMATE FROM LGS ASTERISM ___\n");
-printf("\n WFE RMS: %8.3fnm\n",ltao_wfe_rms);
 printf("------------------------------\n");
 

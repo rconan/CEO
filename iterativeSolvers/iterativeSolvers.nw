@@ -437,7 +437,13 @@ fprintf(stderr,"beta=%.2E\n",beta);
 cublasSdot(handle, N, nu_i, 1, nu_i, 1, &beta);
 beta = sqrtf(beta);
 rnorm = beta;
-rnorm0 = rnorm;
+//rnorm0 = rnorm;
+cublasSnrm2(handle, N, b, 1, &rnorm0);
+rel_rnorm = rnorm/rnorm0;
+if (VERBOSE)
+  fprintf(stderr,"#%3d: r norm=%6.2E - rel. tol.=%6.2E\n",0,rnorm,rnorm/rnorm0);
+if ( (rnorm<ATOL) || (rel_rnorm<=RTOL) )
+  return;
 #ifdef MINRES_DEBUG
 fprintf(stderr,"beta=%.2E\n",beta);
 #endif
@@ -871,6 +877,7 @@ printf("\ndelta_e=%.4f\n",delta_e);
 
 source src, gs;
 atmosphere atm;
+mask pupil_mask;
 imaging lenslet_array;
 centroiding cog;
 aaStats aa;
@@ -898,8 +905,10 @@ float altitude[] = {0},
 atm.gmt_setup(r0,30);
 //atm.reset();
 
+pupil_mask.setup( (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1) );
+
 // SH WFS
-lenslet_array.setup();
+lenslet_array.setup(_N_PX_PUPIL_,N_SIDE_LENSLET,2,1,1);
 
 // Centroid
 cog.setup();
@@ -934,11 +943,14 @@ valid_lenslet LLL gridDim_vl,blockDim_vl RRR (d__mask,N_SIDE_LENSLET*_N_PX_PUPIL
 /* HANDLE_ERROR( cudaFree( A_mask) ); */
 
 char MASK_SET;
-MASK_SET = fried_geometry_setup(cog.lenslet_mask, src.wavefront.pupil_mask, N_SIDE_LENSLET, 16, 0.5);
+MASK_SET = fried_geometry_setup(cog.lenslet_mask, pupil_mask.m, N_SIDE_LENSLET, 16, 0.5);
 //printf("MASK_SET = %d\n",MASK_SET);
+pupil_mask.set_filter();
+src.wavefront.M = &pupil_mask;
+src.wavefront.masked();
 char A_mask_filename[32];
 sprintf(A_mask_filename,"A_mask_%03d.bin",N_SIDE_LENSLET);
-dev2file(A_mask_filename,src.wavefront.pupil_mask,PS_E_N_PX);
+dev2file(A_mask_filename,pupil_mask.m,PS_E_N_PX);
 
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est           , sizeof(float)*PS_E_N_PX ) );
 
@@ -1082,7 +1094,7 @@ The [[hot convergence test]] reconstructs the wavefront with MINRES re-using the
 <<hot convergence test>>=
 
 LMMSE lmmse;
-lmmse.setup(&atm,&gs,1,&src,1,d,N_SIDE_LENSLET,"MINRES");
+lmmse.setup(&atm,&gs,1,&src,1,d,N_SIDE_LENSLET,&pupil_mask,"MINRES");
 
 int n_step = 200;
 
@@ -1091,7 +1103,7 @@ float *d__gs_phase_screen_low_res;
 HANDLE_ERROR( cudaMalloc( (void**)&d__gs_phase_screen_low_res, sizeof(float)*PS_E_N_PX*n_step ) );
 HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_est,     sizeof(float)*PS_E_N_PX*n_step ) );
 
-if (cog.MASK_SET) aaCov.mask = cog.lenslet_mask;
+//if (cog.MASK_SET) aaCov.mask = cog.lenslet_mask;
 
 HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
@@ -1111,7 +1123,7 @@ tid.toc(&tau0,"WAVEFRONT ESTIMATION");
 tau = tau0;
 
 //lmmse.iSolve.N_ITERATION = 5;
-lmmse.iSolve.ATOL = lmmse.iSolve.rnorm;
+//lmmse.iSolve.ATOL = lmmse.iSolve.rnorm;
 
 // MINRES
 for (k=1;k<=n_step;k++) {
