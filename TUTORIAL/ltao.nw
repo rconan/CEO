@@ -1,0 +1,243 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+
+\section{Laser tomography adaptive optics}
+\label{sec:open-loop-geometric}
+
+In this section, the performances of several AO systems are compared.
+All the systems employ geometric Shack--Hartmann wavefront sensors (SH--WFS).
+For each system, the on--axis wavefront is estimated several times with a different random draw of the phase screens.
+
+The components common to all the systems are defined first:
+\begin{itemize}
+\item the science source,
+<<setup>>=
+source src;
+src.setup(ARCSEC(0) , 0, INFINITY,(N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1), "SRC");
+src.photometric_band = "K";
+<<cleanup>>=
+src.cleanup();
+@ \item the atmosphere,
+<<setup>>=
+atmosphere atm;
+//atm.setup(20e-2,30,10e3,10,0);
+atm.gmt_setup(15e-2,60);
+/*
+float altitude[] = {0, 10e3},
+xi0[] = {0.5, 0.5},
+wind_speed[] = {10, 10},
+wind_direction[] = {0, 0};
+atm.setup(20e-2,30,altitude, xi0, wind_speed, wind_direction);
+*/
+<<cleanup>>=
+atm.cleanup();
+@ \item the diameter of the telescope,
+<<setup>>=
+float D = 25; // telescope diameter in meter
+@ leading to a lenslet size of:
+<<setup>>=
+float d = D/N_SIDE_LENSLET;
+@ \item the pupil mask.
+<<setup>>=
+mask pupil_mask;
+pupil_mask.setup( (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1) );
+<<cleanup>>=
+pupil_mask.cleanup();
+@ \item the diffraction limited science imager,
+<<setup>>=
+imaging imager;
+imager.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup>>=
+imager.cleanup();
+@ \item the turbulence limited science imager,
+<<setup>>=
+imaging imager_turb;
+imager_turb.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup>>=
+imager_turb.cleanup();
+@ \item the science imager for LTAO,
+<<setup>>=
+imaging imager_ltao;
+imager_ltao.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup>>=
+imager_ltao.cleanup();
+@ \item the statistical tool.
+<<setup>>=
+stats S;
+S.setup();
+<<cleanup>>=
+S.cleanup();
+@  \end{itemize}
+
+The wavefront sensor of the LGS asterism are setup next with the Fried geometry for a circular pupil with the intensity [[threshold]] enforced:
+<<setup>>=
+float threshold = 0.5;
+centroiding gs_ast_cog;
+int N_GS = 6;
+gs_ast_cog.setup(N_SIDE_LENSLET,N_GS);
+gs_ast_cog.MASK_SET = fried_geometry_setup(gs_ast_cog.lenslet_mask, 
+					   pupil_mask.m, 
+					   N_SIDE_LENSLET, 16, threshold);
+<<cleanup>>=
+gs_ast_cog.cleanup();
+
+@ 
+The filtering properties associated with the pupil are set with:
+<<setup>>=
+pupil_mask.set_filter();
+@ 
+The science is propagated through the [[pupil_mask]] to the focal plane of the [[imager]]:
+<<setup>>=
+src.wavefront.M = &pupil_mask;
+src.wavefront.masked();
+imager.propagate(&src);
+char plotly_name[64], plotly_dir[64];
+sprintf(plotly_dir,"LTAO/D=%.1fm, N=%d/",D,N_SIDE_LENSLET);
+SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/diffraction limited");
+imager.show_frame(plotly_name);
+
+@ A few useful variables are defined here:
+<<setup>>=
+int NP, NP2, k_SAMPLE;
+float tau=0.;
+NP = N_SIDE_LENSLET+1;
+NP2 = NP*NP;
+k_SAMPLE = 0;
+@
+The science wavefront is propagated through the atmosphere from [[src]] to [[pupil_mask]].
+<<science wavefront>>=
+atm.get_phase_screen(&src,d,NP,d,NP,tau);
+src.wavefront.masked();
+if (k_SAMPLE==(N_SAMPLE-1)) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/science phase screen");
+  src.wavefront.show_phase(plotly_name);
+ }
+<<setup>>=
+float science_wf_rms=0.;
+<<science wavefront>>=
+science_wf_rms += S.var(src.wavefront.phase, &pupil_mask, NP2);
+
+@  and then propagated to the focal plane of the imager:
+<<science wavefront>>=
+imager_turb.propagate(&src);
+if (k_SAMPLE==(N_SAMPLE-1)) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/turbulence limited");
+  imager_turb.show_frame(plotly_name);
+ }
+@ The turbulence wavefront is saved apart for later use:
+<<science wavefront>>=
+complex_amplitude phase_screen;
+phase_screen.setup((N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1));
+phase_screen.add_phase(1,src.wavefront.phase);
+
+@ 
+All CEO programs must include the following headers which also contains the headers for all the CEO library modules.
+<<main header>>=
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+@ The size of the lenslet array is defined in the header:
+<<main header>>=
+#define N_SIDE_LENSLET 60
+#define _N_LENSLET_ (N_SIDE_LENSLET*N_SIDE_LENSLET)
+@ The number of atmosphere sample
+<<main header>>=
+#define N_SAMPLE 1
+#define PLOTLY_LIM (N_SAMPLE-1) // (N_SAMPLE-1) for plotting, higher for disabling plotting
+@
+The main function is:
+<<ltao.bin>>=
+void SET_PLOTLY_NAME(char *name,char *dir,char *path)
+{
+strcpy(name, dir);
+strcat(name,path);
+}
+<<main header>>
+int main(int argc,char *argv[]) {
+cudaSetDevice(1);
+<<setup>>
+fprintf(stderr," Samples: %d:\n",N_SAMPLE);
+for (k_SAMPLE=0;k_SAMPLE<N_SAMPLE;k_SAMPLE++) {
+  fprintf(stderr,"\r%4d",k_SAMPLE);
+//  tau = k_SAMPLE*1e-3;
+  atm.reset();
+<<science wavefront>>
+<<ltao>>
+    }
+ fprintf(stderr,"\n");
+<<results>>
+<<cleanup>>
+}
+
+@
+For the LTAO wavefront estimation, the LGS constellation is defined first.
+We will use 3 LGSs on a 30 arcsec radius ring.
+<<setup>>=
+float gs_radius = 30;
+// 3 LGS on a ring
+/* float zenith[] = {ARCSEC(gs_radius),ARCSEC(gs_radius),ARCSEC(gs_radius)}, */
+/*   azimuth[] = {0,2.*PI/3.,4.*PI/3.}; */
+// 6 LGS on a ring
+float zenith[] = {ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30)},
+  azimuth[] = {0,2.*PI/6.,4.*PI/6.,6.*PI/6.,8.*PI/6.,10.*PI/6.,12.*PI/6.};
+
+source gs_ast;
+gs_ast.setup(zenith,azimuth,90e3,N_GS,NP2);
+<<cleanup>>=
+gs_ast.cleanup();
+
+@ The 3 source are propagated through the atmosphere to the wavefront sensor.
+<<ltao>>=
+atm.get_phase_screen(&gs_ast,N_GS,d,NP,d,NP,0);
+//gs_ast.phase2file("gsAstWavefronts.bin");
+atm.get_phase_screen_gradient(&gs_ast_cog,N_SIDE_LENSLET,d,&gs_ast,N_GS,tau);
+
+@ The science wavefront is reconstructed with the tomographic estimator:
+<<setup>>=
+LMMSE gs_ast_lmmse;
+gs_ast_lmmse.setup(&atm,&gs_ast,N_GS,&src,1,d,N_SIDE_LENSLET,&pupil_mask,"MINRES");
+int cvgce_iteration=0;
+float elapsed_time=0.;
+<<ltao>>=
+gs_ast_lmmse.estimation(&gs_ast_cog);
+elapsed_time += gs_ast_lmmse.elapsed_time;
+cvgce_iteration += gs_ast_lmmse.iSolve.cvgce_iteration;
+@  The tomographic wavefront is subtracted from the science wavefront:
+<<ltao>>=
+src.wavefront.reset(phase_screen);
+src.wavefront.add_phase(-1,gs_ast_lmmse.d__phase_est);
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/LMMSE LTAO");
+  src.wavefront.show_phase(plotly_name);
+ }
+<<setup>>=
+float ltao_wfe_rms=0.;
+<<ltao>>=
+ltao_wfe_rms += S.var(src.wavefront.phase,
+		   &pupil_mask, NP2);
+<<cleanup>>=
+gs_ast_lmmse.cleanup();
+@ and the residual wavefront corresponding image is computed.
+<<ltao>>=
+imager_ltao.propagate(&src);
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/LMMSE LTAO");
+  imager_ltao.show_frame(plotly_name,&imager);
+ }
+
+@ 
+\subsection{Results}
+\label{sec:results}
+
+<<results>>=
+science_wf_rms    = 1E9*sqrtf(science_wf_rms/N_SAMPLE);
+ltao_wfe_rms      = 1E9*sqrtf(ltao_wfe_rms/N_SAMPLE);
+elapsed_time /= N_SAMPLE;
+cvgce_iteration /= N_SAMPLE;
+printf("------------------------------\n");
+printf("___  TURBULENCE WAVEFRONT ___\n");
+printf("\n NGS WF RMS: %7.2fnm\n", science_wf_rms);
+printf("\n___ ON-AXIS WAVEFRONT ESTIMATE FROM LGS ASTERISM ___\n");
+printf("\n WFE RMS: %8.3fnm in %.2fms with %d iterations\n",
+       ltao_wfe_rms,elapsed_time,cvgce_iteration);
+printf("------------------------------\n");
+

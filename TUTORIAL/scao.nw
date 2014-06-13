@@ -30,7 +30,7 @@ atm.setup(20e-2,30,altitude, xi0, wind_speed, wind_direction);
 */
 <<cleanup>>=
 atm.cleanup();
-@ \item the diameter of the telescope,
+@ \item @ the diameter of the telescope,
 <<setup>>=
 float D = 25; // telescope diameter in meter
 @ leading to a lenslet size of:
@@ -45,7 +45,7 @@ pupil_mask.cleanup();
 @ \item the wavefront sensor centroid container,
 <<setup>>=
 centroiding cog;
-cog.setup(N_SIDE_LENSLET,1);
+cog.setup();
 <<cleanup>>=
 cog.cleanup();
 @ \item the diffraction limited science imager,
@@ -109,27 +109,21 @@ src.wavefront.M = &pupil_mask;
 src.wavefront.masked();
 imager.propagate(&src);
 //imager.frame2file("refFrame.bin");
-char plotly_name[64], plotly_dir[64];
-sprintf(plotly_dir,"GEAOS/D=%.1fm, N=%d/",D,N_SIDE_LENSLET);
-SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/diffraction limited");
-imager.show_frame("GEAOS/frames/diffraction limited");
+imager.show_frame("SCAO/frames/diffraction limited");
 
 @ A few useful variables are defined here:
 <<setup>>=
 int NP, NP2, k_SAMPLE;
-float tau=0.;
 NP = N_SIDE_LENSLET+1;
 NP2 = NP*NP;
 k_SAMPLE = 0;
 @
 The science wavefront is propagated through the atmosphere from [[src]] to [[pupil_mask]].
 <<science wavefront>>=
-atm.get_phase_screen(&src,d,NP,d,NP,tau);
+atm.get_phase_screen(&src,d,NP,d,NP,0);
 src.wavefront.masked();
-if (k_SAMPLE==(N_SAMPLE-1)) {
-  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/science phase screen");
-  src.wavefront.show_phase(plotly_name);
- }
+if (k_SAMPLE==(N_SAMPLE-1))
+  src.wavefront.show_phase("SCAO/phases/science phase screen");
 <<setup>>=
 float science_wf_rms=0.;
 <<science wavefront>>=
@@ -138,10 +132,8 @@ science_wf_rms += S.var(src.wavefront.phase, &pupil_mask, NP2);
 @  and then propagated to the focal plane of the imager:
 <<science wavefront>>=
 imager_turb.propagate(&src);
-if (k_SAMPLE==(N_SAMPLE-1)) {
-  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/turbulence limited");
-  imager_turb.show_frame(plotly_name);
- }
+if (k_SAMPLE==(N_SAMPLE-1))
+  imager_turb.show_frame("SCAO/frames/turbulence limited");
 @ The turbulence wavefront is saved apart for later use:
 <<science wavefront>>=
 complex_amplitude phase_screen;
@@ -160,24 +152,16 @@ All CEO programs must include the following headers which also contains the head
 #define _N_LENSLET_ (N_SIDE_LENSLET*N_SIDE_LENSLET)
 @ The number of atmosphere sample
 <<main header>>=
-#define N_SAMPLE 1000
-#define PLOTLY_LIM (N_SAMPLE-1) // (N_SAMPLE-1) for plotting, higher for disabling plotting
+#define N_SAMPLE 10
 @
 The main function is:
-<<geaos.bin>>=
+<<scao.bin>>=
 <<main header>>
-void SET_PLOTLY_NAME(char *name,char *dir,char *path)
-{
-strcpy(name, dir);
-strcat(name,path);
-}
 int main(int argc,char *argv[]) {
-cudaSetDevice(1);
 <<setup>>
 fprintf(stderr," Samples: %d:\n",N_SAMPLE);
 for (k_SAMPLE=0;k_SAMPLE<N_SAMPLE;k_SAMPLE++) {
   fprintf(stderr,"\r%4d",k_SAMPLE);
-//  tau = k_SAMPLE*1e-3;
   atm.reset();
 <<science wavefront>>
 <<ngsao>>
@@ -202,26 +186,20 @@ ngs.cleanup();
 
 @  The NGS wavefronts gradients from the turbulence are generated from a dedicated slopes turbulence generator.
 <<ngsao>>=
-atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&ngs,tau);
+atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&ngs,0);
 
 @ 
 In the following, the wavefront is reconstructed from the NGS centroids:
 <<setup>>=
 LMMSE ngs_lmmse;
 ngs_lmmse.setup(&atm,&ngs,1,&src,1,d,N_SIDE_LENSLET,&pupil_mask,"MINRES");
-int ngsao_cvgce_iteration=0;
-float ngsao_elapsed_time=0.;
 <<ngsao>>=
 ngs_lmmse.estimation(&cog);
-ngsao_elapsed_time += ngs_lmmse.elapsed_time;
-ngsao_cvgce_iteration += ngs_lmmse.iSolve.cvgce_iteration;
 @ The estimated wavefront is removed from the science wavefront
 <<ngsao>>=
 src.wavefront.add_phase(-1,ngs_lmmse.d__phase_est);
-if (k_SAMPLE==PLOTLY_LIM) {
-  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/LMMSE NGS AO");
-  src.wavefront.show_phase(plotly_name);
- }
+if (k_SAMPLE==(N_SAMPLE-1))
+  src.wavefront.show_phase("SCAO/phases/residual from LMMSE NGS AO");
 <<setup>>=
 float ngsao_wfe_rms=0.;
 <<ngsao>>=
@@ -232,10 +210,8 @@ ngs_lmmse.cleanup();
 @ and the residual wavefront corresponding image is computed.
 <<ngsao>>=
 imager_ngsao.propagate(&src);
-if (k_SAMPLE==PLOTLY_LIM) {
-  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/LMMSE NGS AO");
-  imager_ngsao.show_frame(plotly_name,&imager);
- }
+if (k_SAMPLE==(N_SAMPLE-1))
+  imager_ngsao.show_frame("SCAO/frames/LMMSE NGS AO",&imager);
 
 @ 
 \subsection{Laser guide star adaptive optics}
@@ -253,27 +229,23 @@ lgs.cleanup();
 atm.get_phase_screen(&lgs,d,NP,d,NP,0);
 lgs.wavefront.M = &pupil_mask;
 lgs.wavefront.masked();
-if (k_SAMPLE==PLOTLY_LIM) {
-  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/LGS phase screen");
-  lgs.wavefront.show_phase(plotly_name);
- }
+if (k_SAMPLE==(N_SAMPLE-1))
+  lgs.wavefront.show_phase("SCAO/phases/LGS phase screen");
 <<setup>>=
 float lgs_wf_rms=0.;
 <<lgsao>>=
 lgs_wf_rms += S.var(lgs.wavefront.phase, &pupil_mask, NP2);
 @ and with:
 <<lgsao>>=
-atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&lgs,tau);
+atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&lgs,0);
 
 @  
 The LGS wavefront is subtracted from the science wavefront:
 <<lgsao>>=
 src.wavefront.reset(phase_screen);
 src.wavefront.add_phase(-1,lgs.wavefront.phase);
-if (k_SAMPLE==PLOTLY_LIM) {
-  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/LGS AO");
-  src.wavefront.show_phase(plotly_name);
- }
+if (k_SAMPLE==(N_SAMPLE-1))
+  src.wavefront.show_phase("SCAO/phases/residual from LGS AO");
 <<setup>>=
 float lgs_wfe_rms=0.;
 <<lgsao>>=
@@ -282,28 +254,22 @@ lgs_wfe_rms += S.var(src.wavefront.phase,
 @  and the residual wavefront corresponding image is computed.
 <<lgsao>>=
 imager_lgsao.propagate(&src);
-if (k_SAMPLE==PLOTLY_LIM) {
-  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/LGS AO");
-  imager_lgsao.show_frame(plotly_name,&imager);
- }
+if (k_SAMPLE==(N_SAMPLE-1))
+  imager_lgsao.show_frame("SCAO/frames/LGS AO",&imager);
 
 @ 
 The wavefront is reconstructed from the LGS centroids:
 <<setup>>=
 LMMSE lgs_lmmse;
 lgs_lmmse.setup(&atm,&lgs,1,&src,1,d,N_SIDE_LENSLET,&pupil_mask,"MINRES");
-int lgsao_cvgce_iteration=0;
-float lgsao_elapsed_time=0.;
 <<lgsao>>=
 lgs_lmmse.estimation(&cog);
-lgsao_elapsed_time += lgs_lmmse.elapsed_time;
-lgsao_cvgce_iteration += lgs_lmmse.iSolve.cvgce_iteration;
 @ The LMMMSE LGS wavefront estimate is subtracted from the science wavefront:
 <<lgsao>>=
 src.wavefront.reset(phase_screen);
 src.wavefront.add_phase(-1,lgs_lmmse.d__phase_est);
-if (k_SAMPLE==PLOTLY_LIM)
-  src.wavefront.show_phase("GEAOS/phases/residual from LMMSE LGS AO");
+if (k_SAMPLE==(N_SAMPLE-1))
+  src.wavefront.show_phase("SCAO/phases/residual from LMMSE LGS AO");
 <<setup>>=
 float lgs_wfe_rms_lmmse=0.;
 <<lgsao>>=
@@ -316,8 +282,8 @@ lgs_lmmse.cleanup();
 <<lgsao>>=
 imager_lgsao_lmmse.propagate(&src);
 //imager.frame2file("lgsLmmseFrame.bin");
-if (k_SAMPLE==PLOTLY_LIM)
-  imager_lgsao_lmmse.show_frame("GEAOS/frames/LMMSE LGS AO",&imager);
+if (k_SAMPLE==(N_SAMPLE-1))
+  imager_lgsao_lmmse.show_frame("SCAO/frames/LMMSE LGS AO",&imager);
 
 @ 
 \subsection{Laser tomography adaptive optics}
@@ -343,7 +309,7 @@ gs_ast.cleanup();
 @ The wavefront sensor of the LGS asterism are setup next
 <<setup>>=
 centroiding gs_ast_cog;
-gs_ast_cog.setup(N_SIDE_LENSLET,N_GS);
+gs_ast_cog.setup(_N_LENSLET_,N_GS);
 gs_ast_cog.MASK_SET = fried_geometry_setup(gs_ast_cog.lenslet_mask, 
 					   pupil_mask.m, 
 					   N_SIDE_LENSLET, 16, threshold);
@@ -354,26 +320,20 @@ gs_ast_cog.cleanup();
 <<ltao>>=
 atm.get_phase_screen(&gs_ast,N_GS,d,NP,d,NP,0);
 //gs_ast.phase2file("gsAstWavefronts.bin");
-atm.get_phase_screen_gradient(&gs_ast_cog,N_SIDE_LENSLET,d,&gs_ast,N_GS,tau);
+atm.get_phase_screen_gradient(&gs_ast_cog,N_SIDE_LENSLET,d,&gs_ast,N_GS,0);
 
 @ The science wavefront is reconstructed with the tomographic estimator:
 <<setup>>=
 LMMSE gs_ast_lmmse;
 gs_ast_lmmse.setup(&atm,&gs_ast,N_GS,&src,1,d,N_SIDE_LENSLET,&pupil_mask,"MINRES");
-int ltao_cvgce_iteration=0;
-float ltao_elapsed_time=0.;
 <<ltao>>=
 gs_ast_lmmse.estimation(&gs_ast_cog);
-ltao_elapsed_time += gs_ast_lmmse.elapsed_time;
-ltao_cvgce_iteration += gs_ast_lmmse.iSolve.cvgce_iteration;
 @  The tomographic wavefront is subtracted from the science wavefront:
 <<ltao>>=
 src.wavefront.reset(phase_screen);
 src.wavefront.add_phase(-1,gs_ast_lmmse.d__phase_est);
-if (k_SAMPLE==PLOTLY_LIM) {
-  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/LMMSE LTAO");
-  src.wavefront.show_phase(plotly_name);
- }
+if (k_SAMPLE==(N_SAMPLE-1))
+  src.wavefront.show_phase("SCAO/phases/residual from LMMSE LTAO");
 <<setup>>=
 float ltao_wfe_rms=0.;
 <<ltao>>=
@@ -384,10 +344,8 @@ gs_ast_lmmse.cleanup();
 @ and the residual wavefront corresponding image is computed.
 <<ltao>>=
 imager_ltao.propagate(&src);
-if (k_SAMPLE==PLOTLY_LIM) {
-  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/LMMSE LTAO");
-  imager_ltao.show_frame(plotly_name,&imager);
- }
+if (k_SAMPLE==(N_SAMPLE-1))
+  imager_ltao.show_frame("SCAO/frames/LMMSE LTAO",&imager);
 
 @ 
 \subsection{Results}
@@ -400,25 +358,16 @@ lgs_wf_rms        = 1E9*sqrtf(lgs_wf_rms/N_SAMPLE);
 lgs_wfe_rms       = 1E9*sqrtf(lgs_wfe_rms/N_SAMPLE);
 lgs_wfe_rms_lmmse = 1E9*sqrtf(lgs_wfe_rms_lmmse/N_SAMPLE);
 ltao_wfe_rms      = 1E9*sqrtf(ltao_wfe_rms/N_SAMPLE);
-ngsao_elapsed_time /= N_SAMPLE;
-ngsao_cvgce_iteration /= N_SAMPLE;
-lgsao_elapsed_time /= N_SAMPLE;
-lgsao_cvgce_iteration /= N_SAMPLE;
-ltao_elapsed_time /= N_SAMPLE;
-ltao_cvgce_iteration /= N_SAMPLE;
 printf("------------------------------\n");
 printf("___  TURBULENCE WAVEFRONT ___\n");
 printf("\n NGS WF RMS: %7.2fnm\n", science_wf_rms);
 printf("\n LGS WF RMS: %7.2fnm\n", lgs_wf_rms);
 printf("\n___ ON-AXIS WAVEFRONT ESTIMATE FROM NGS ___\n");
-printf("\n NGSAO WFE RMS: %8.3fnm in %.2fms with %d iterations\n",
-       ngsao_wfe_rms,ngsao_elapsed_time,ngsao_cvgce_iteration);
+printf("\n NGSAO WFE RMS: %8.3fnm\n",ngsao_wfe_rms);
 printf("\n___ ON-AXIS WAVEFRONT ESTIMATE FROM LGS ___\n");
 printf("\n NGS-LGS WFE RMS : %8.3fnm\n",lgs_wfe_rms);
-printf("\n LGS MMSE WFE RMS: %8.3fnm in %.2fms with %d iterations\n",
-       lgs_wfe_rms_lmmse,lgsao_elapsed_time,lgsao_cvgce_iteration);
+printf("\n LGS MMSE WFE RMS: %8.3fnm\n",lgs_wfe_rms_lmmse);
 printf("\n___ ON-AXIS WAVEFRONT ESTIMATE FROM LGS ASTERISM ___\n");
-printf("\n WFE RMS: %8.3fnm in %.2fms with %d iterations\n",
-       ltao_wfe_rms,ltao_elapsed_time,ltao_cvgce_iteration);
+printf("\n WFE RMS: %8.3fnm\n",ltao_wfe_rms);
 printf("------------------------------\n");
 
