@@ -15,8 +15,12 @@ The components common to all the systems are defined first:
 source src;
 src.setup(ARCSEC(0) , 0, INFINITY,(N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1), "SRC");
 src.photometric_band = "K";
+source src_lgs;
+src_lgs.setup(ARCSEC(0) , 0, 90e3,(N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1), "SRC_LGS");
+src_lgs.photometric_band = "K";
 <<cleanup>>=
 src.cleanup();
+src_lgs.cleanup();
 @ \item the atmosphere,
 <<setup>>=
 atmosphere atm;
@@ -99,9 +103,12 @@ src.wavefront.masked();
 imager.propagate(&src);
 //imager.frame2file("refFrame.bin");
 char plotly_name[64], plotly_dir[64];
-sprintf(plotly_dir,"LGSAO/D=%.1fm, N=%d/",D,N_SIDE_LENSLET);
-SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/diffraction limited");
-imager.show_frame(plotly_name);
+sprintf(plotly_dir,"LGSAO/D=%.1fm, N=%d, z_lgs=%2.0fkm (%d samples)/",
+        D,N_SIDE_LENSLET,src_lgs.height*1e-3,N_SAMPLE);
+if (PLOTLY_LIM<N_SAMPLE) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/diffraction limited");
+  imager.show_frame(plotly_name);
+ }
 
 @ A few useful variables are defined here:
 <<setup>>=
@@ -115,7 +122,7 @@ The science wavefront is propagated through the atmosphere from [[src]] to [[pup
 <<science wavefront>>=
 atm.get_phase_screen(&src,d,NP,d,NP,tau);
 src.wavefront.masked();
-if (k_SAMPLE==(N_SAMPLE-1)) {
+if (k_SAMPLE==PLOTLY_LIM) {
   SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/science phase screen");
   src.wavefront.show_phase(plotly_name);
  }
@@ -127,7 +134,7 @@ science_wf_rms += S.var(src.wavefront.phase, &pupil_mask, NP2);
 @  and then propagated to the focal plane of the imager:
 <<science wavefront>>=
 imager_turb.propagate(&src);
-if (k_SAMPLE==(N_SAMPLE-1)) {
+if (k_SAMPLE==PLOTLY_LIM) {
   SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/turbulence limited");
   imager_turb.show_frame(plotly_name);
  }
@@ -161,16 +168,17 @@ strcpy(name, dir);
 strcat(name,path);
 }
 int main(int argc,char *argv[]) {
-cudaSetDevice(1);
+cudaSetDevice(0);
 <<setup>>
-fprintf(stderr," Samples: %d:\n",N_SAMPLE);
+fprintf(stdout," [    ] of %d samples",N_SAMPLE);
 for (k_SAMPLE=0;k_SAMPLE<N_SAMPLE;k_SAMPLE++) {
-  fprintf(stderr,"\r%4d",k_SAMPLE);
+  fprintf(stdout,"\r [%4d]",k_SAMPLE);
+  fflush(stdout);
   atm.reset();
-<<science wavefront>>
-<<lgsao>>
-    }
- fprintf(stderr,"\n");
+  <<science wavefront>>
+  <<lgsao>>
+      }
+ fprintf(stdout,"\n");
 <<results>>
 <<cleanup>>
 }
@@ -179,7 +187,7 @@ for (k_SAMPLE=0;k_SAMPLE<N_SAMPLE;k_SAMPLE++) {
 The laser guide star (LGS) is given by:
 <<setup>>=
 source lgs;
-lgs.setup(ARCSEC(0) , 0, 90e3, (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1), "LGS");
+lgs.setup(ARCSEC(0) , 0, src_lgs.height, (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1), "LGS");
 <<cleanup>>=
 lgs.cleanup();
 
@@ -202,9 +210,13 @@ atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&lgs,tau);
 
 @  
 The LGS wavefront is subtracted from the science wavefront:
+<<setup>>=
+LMMSE lgs_lgs_lmmse;
+lgs_lgs_lmmse.setup(&atm,&lgs,1,&src_lgs,1,d,N_SIDE_LENSLET,&pupil_mask,"MINRES");
 <<lgsao>>=
+lgs_lgs_lmmse.estimation(&cog);
 src.wavefront.reset(phase_screen);
-src.wavefront.add_phase(-1,lgs.wavefront.phase);
+src.wavefront.add_phase(-1,lgs_lgs_lmmse.d__phase_est);
 if (k_SAMPLE==PLOTLY_LIM) {
   SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/LGS AO");
   src.wavefront.show_phase(plotly_name);
