@@ -1,9 +1,9 @@
 % -*- mode: Noweb; noweb-code-mode: c-mode -*-
 
-\section{Laser tomography adaptive optics}
+\subsection{Optimal LGS asterism}
 \label{sec:open-loop-geometric}
 
-In this section, the performances of several AO systems are compared.
+In this section, the LTAO WFE is computed for 25m telescope with several LGS asterisms.
 All the systems employ geometric Shack--Hartmann wavefront sensors (SH--WFS).
 For each system, the on--axis wavefront is estimated several times with a different random draw of the phase screens.
 
@@ -72,7 +72,8 @@ The wavefront sensor of the LGS asterism are setup next with the Fried geometry 
 <<setup>>=
 float threshold = 0.5;
 centroiding gs_ast_cog;
-int N_GS = 6;
+int N_GS;
+N_GS = atoi( argv[1] );
 gs_ast_cog.setup(N_SIDE_LENSLET,N_GS);
 gs_ast_cog.MASK_SET = fried_geometry_setup(gs_ast_cog.lenslet_mask, 
 					   pupil_mask.m, 
@@ -137,7 +138,7 @@ All CEO programs must include the following headers which also contains the head
 #define _N_LENSLET_ (N_SIDE_LENSLET*N_SIDE_LENSLET)
 @ The number of atmosphere sample
 <<main header>>=
-#define N_SAMPLE 10
+#define N_SAMPLE 200
 #define PLOTLY_LIM (N_SAMPLE) // (N_SAMPLE-1) for plotting, higher for disabling plotting
 @
 The main function is:
@@ -247,3 +248,15 @@ for (k_gs_radius=0;k_gs_radius<n_gs_radius;k_gs_radius++) {
   science_wf_rms[k_gs_radius],ltao_wfe_rms[k_gs_radius]);
 }
 printf("------------------------------\n");
+plotly_properties prop;
+prop.set("xtitle","LGS radius [arcsec]");
+prop.set("ytitle","WFE [nm]");
+prop.set("title","");
+prop.set("filename","LTAO/WFE vs. LGS asterisms");
+prop.set("xdata",gs_radius,n_gs_radius);
+prop.set("ydata",ltao_wfe_rms,n_gs_radius);
+char name[32];
+sprintf(name,"%d LGSs",N_GS);
+prop.set("name",name);
+sprintf(prop.fileopt,"%s",argv[2]);
+plot(&prop); 
