@@ -34,6 +34,7 @@ The plotly structure is used to display CEO graphics using \url{plot.ly}.
 
 struct plotly_properties{
   <<properties parameters>>
+  <<properties default>>
   int set(char *param, char *value);
   int set(char *param, float *value, int N);
   int set(char *param, float *value, int N, int M);
@@ -123,6 +124,22 @@ char fileopt[P_LEN];
 \subsection{Functions}
 \label{sec:functions}
 
+The default properties are loaded with:
+<<properties default>>=
+plotly_properties(void) 
+{
+  strcpy(title,"");
+  strcpy(xtitle,"");
+  strcpy(ytitle,"");
+  strcpy(ztitle,"");
+  strcpy(colorscale,"Portland");
+  strcpy(name,"");
+  xData = NULL;
+  yData = NULL;
+  zData = NULL;
+}
+
+@
 \subsubsection{Set plotly properties}
 \label{sec:set-plotly-prop}
 
@@ -193,6 +210,7 @@ int plotly_properties::set(char *param, float *value, int N, int M)
   int s = -1, nel;
   s = strcmp("zdata",param);
   if (s==0) {
+    free( zData );
     nel = N*M;
     zData = (char *)malloc(8*nel*sizeof(char)*2);
     s = z2json(zData, value, N, M);
@@ -262,6 +280,10 @@ len += sprintf(data + len,"key=%s&",     KEY);
 len += sprintf(data + len,"origin=%s&",  "plot");
 len += sprintf(data + len,"platform=%s&","lisp");
 len += sprintf(data + len,"args=[{");
+if (p->xData!=NULL)
+   len += sprintf(data + len,"%s,",p->xData);
+if (p->yData!=NULL)
+   len += sprintf(data + len,"%s,",p->yData);
 len += sprintf(data + len,"%s,",p->zData);
 len += sprintf( data + len,          "\"zauto\": %s," ,"true");
 len += sprintf( data + len,          "\"colorbar\": {");
@@ -496,6 +518,7 @@ void graph( int N, char * filename)
     z[ii] = (float) rand() / RAND_MAX ;
   
   plotly_properties prop;
+  //prop.set_default();
   prop.set("xtitle","X axis");
   prop.set("ytitle","Y axis");
   prop.set("title","plotly test");
