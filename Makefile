@@ -21,7 +21,7 @@ doc: tex
 touch: 
 	find . -name \*.nw -exec touch {} \;
 
-makefile:
+makefile: Makefile.common
 	for i in $(SOURCE_DIR); do (cp Makefile.common $$i/Makefile; sed -i -e "s/filename/$$i/g" $$i/Makefile); done
 
 jsmnlib: 
@@ -38,3 +38,5 @@ clean:
 	rm -f *.*~
 	rm -f lib/libceo.a
 
+cleanbins: makefile
+	for i in $(SOURCE_DIR); do (make -C $$i cleanbins); done
