@@ -19,21 +19,24 @@ texsrc = $(nwsrc:%.nw=%.tex)
 header = $(nwsrc:%.nw=%.h)
 obj    = $(nwsrc:%.nw=%.o)
 cusrc  = $(nwsrc:.%nw=%.cu)
-libsrc = lib/libceo.a 
+libsrc = $(CEOPATH)/lib/libceo.a 
 
 .SUFFIXES: .nw .tex .cu .mex .bin
 
-.cu.o:
+.cu.o: 
 	$(NVCC) $(INCS) $(NVCCFLAGS) -o $@ -c $<
 
 .nw.tex:
 	$(WEAVE) -delay -index $< > $@
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
 	sed -i -e "s/label{eq:/label{$*.eq:/g" -e "s/ref{eq:/ref{$*.eq:/g" $@
+	sed -i -e "s/label{fig:/label{$*.fig:/g" -e "s/ref{fig:/ref{$*.fig:/g" $@
+	sed -i -e "s/label{tab:/label{$*.fig:/g" -e "s/ref{tab:/ref{$*.fig:/g" $@
+	sed -i -e "s/label{sec:/label{$*.sec:/g" -e "s/ref{sec:/ref{$*.sec:/g" $@
 .nw.h:
-	$(TANGLE) -R$@ $< > $@  
+	$(TANGLE) -R$@ $< | $(CPIF) $@  
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
-	mv $@ ../include/
+	cp $@ ../include/
 .nw.cu: 
 	$(TANGLE) -L -R$@ $< > $@
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
@@ -48,4 +51,4 @@ libsrc = lib/libceo.a
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
 	mv $@ $@.cu
 	make -C $(CEOPATH) all
-	$(NVCC) $(INCS) $(LIBS) $@.cu -lceo
+	$(NVCC) $(INCS) $(LIBS) $@.cu -lceo -lcurl -ljsmn

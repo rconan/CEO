@@ -1,0 +1,556 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+
+The plotly structure is used to display CEO graphics using \url{plot.ly}.
+
+\subsection{The files}
+\label{sec:files}
+
+\subsubsection{Header}
+\label{sec:header}
+
+<<plotly.h>>=
+#ifndef __PLOTLY_H__
+#define __PLOTLY_H__
+
+#ifndef __PTHREAD_H__
+#include <pthread.h>
+#endif
+
+#ifndef __CURL_H__
+#include <curl/curl.h>
+#endif
+
+#ifndef __UTILITIES_H__
+#include "utilities.h"
+#endif
+
+#ifndef __JSMN_H__
+#include "jsmn.h"
+#endif
+
+#include "rconan.credentials"
+
+#define P_LEN 64
+
+struct plotly_properties{
+  <<properties parameters>>
+  <<properties default>>
+  int set(char *param, char *value);
+  int set(char *param, float *value, int N);
+  int set(char *param, float *value, int N, int M);
+};
+	
+void imagesc(plotly_properties *p);
+void plot(plotly_properties *p);
+
+struct plotly_resp {  char url[256];
+  char message[256];
+  char warning[256];
+  char filename[256];
+  char error[256];
+};
+
+int x2json(char *zData, float *zdata, int N);
+int y2json(char *zData, float *zdata, int N);
+int z2json(char *zData, float *zdata, int N, int M);
+void curlplotly(void *json);
+size_t write_data(void *ptr, size_t size, size_t count, void *stream);
+
+#endif // __PLOTLY_H__
+
+@
+\subsubsection{Source}
+\label{sec:source}
+
+<<plotly.cu>>=
+#include "plotly.h"
+
+<<x buffer to json function>>
+<<y buffer to json function>>
+<<z buffer to json function>>
+<<imagesc>>
+<<plot>>
+<<post json>>
+<<plotly response>>
+<<set plotly char properties>>
+<<set plotly float properties>>
+<<set plotly 2D float properties>>
+
+@
+\subsection{Parameters}
+\label{sec:parameters}
+
+The [[plotly_properties]] structure gathers the property of the graph.The properties are:
+\begin{itemize}
+\item the graph file name used when exporting the file
+<<properties parameters>>=
+char filename[P_LEN];
+@ \item the graph type: \emph{scatter} for a plot, \emph{heatmap} for an image
+<<properties parameters>>=
+char type[P_LEN];
+@ \item  the title of the graph
+<<properties parameters>>=
+char title[P_LEN];
+@ \item the X axis data
+<<properties parameters>>=
+char *xData;
+@ \item the label of the X axis
+<<properties parameters>>=
+char xtitle[P_LEN];
+@ \item the Y axis data
+<<properties parameters>>=
+char *yData;
+@ \item the label of the Y axis
+<<properties parameters>>=
+char ytitle[P_LEN];
+@ \item the Z axis data
+<<properties parameters>>=
+char *zData;
+@ \item the label of the Z axis
+<<properties parameters>>=
+char ztitle[P_LEN];
+@ \item the color map
+<<properties parameters>>=
+char colorscale[P_LEN];
+@ \item the plot name
+<<properties parameters>>=
+char name[P_LEN];
+@ \item the file option
+<<properties parameters>>=
+char fileopt[P_LEN];
+@  \end{itemize}
+
+@ 
+\subsection{Functions}
+\label{sec:functions}
+
+The default properties are loaded with:
+<<properties default>>=
+plotly_properties(void) 
+{
+  strcpy(title,"");
+  strcpy(xtitle,"");
+  strcpy(ytitle,"");
+  strcpy(ztitle,"");
+  strcpy(colorscale,"Portland");
+  strcpy(name,"");
+  xData = NULL;
+  yData = NULL;
+  zData = NULL;
+}
+
+@
+\subsubsection{Set plotly properties}
+\label{sec:set-plotly-prop}
+
+<<set plotly char properties>>=
+int plotly_properties::set(char *param, char *value)
+{
+  int s = -1;
+  s = strcmp("filename",param);
+  if (s==0) {
+    strcpy(filename,value);
+    return s;
+  }
+  s = strcmp("title",param);
+  if (s==0) {
+    strcpy(title,value);
+    return s;
+  }
+  s = strcmp("xtitle",param);
+  if (s==0) {
+    strcpy(xtitle,value);
+    return s;
+  }
+  s = strcmp("ytitle",param);
+  if (s==0) {
+    strcpy(ytitle,value);
+    return s;
+  }
+  s = strcmp("ztitle",param);
+  if (s==0) {
+    strcpy(ztitle,value);
+    return s;
+  }
+  s = strcmp("colorscale",param);
+  if (s==0) {
+    strcpy(colorscale,value);
+    return s;
+  }
+  s = strcmp("name",param);
+  if (s==0) {
+    strcpy(name,value);
+    return s;
+  }
+  return s;
+}
+
+<<set plotly float properties>>=
+int plotly_properties::set(char *param, float *value, int N)
+{
+  int s = -1;
+  s = strcmp("xdata",param);
+  if (s==0) {
+    xData = (char *)malloc(8*N*sizeof(char)*2);
+    s = x2json(xData, value, N);
+    return s;
+  }
+  s = strcmp("ydata",param);
+  if (s==0) {
+    yData = (char *)malloc(8*N*sizeof(char)*2);
+    s = y2json(yData, value, N);
+    return s;
+  }
+  return s;
+}
+
+<<set plotly 2D float properties>>=
+int plotly_properties::set(char *param, float *value, int N, int M)
+{
+  int s = -1, nel;
+  s = strcmp("zdata",param);
+  if (s==0) {
+    free( zData );
+    nel = N*M;
+    zData = (char *)malloc(8*nel*sizeof(char)*2);
+    s = z2json(zData, value, N, M);
+    return s;
+  }
+  return s;
+}
+
+@ 
+\subsubsection{JSON}
+
+@ The [[buffer]] array is of size $[[size[0]]]\times[[size[1]]]$  written into a json structure:
+<<z buffer to json function>>=
+int z2json(char *zData, float *zdata, int N, int M)
+{
+  int zDataLen, ii, jj;
+  zDataLen = 0;
+  zDataLen += sprintf( zData + zDataLen,    "\"z\":[ ");
+  for (ii=0; ii<N; ii++) {
+    zDataLen += sprintf( zData + zDataLen,            "[");
+    for (jj=0; jj<M; jj++) {
+      zDataLen += sprintf( zData + zDataLen,            "%.2f",zdata[ii+jj*N]);
+      if (jj<(M-1))
+      zDataLen += sprintf( zData + zDataLen,                ",");	
+    }
+    zDataLen += sprintf( zData + zDataLen,            "]");
+    if (ii<(N-1))
+    zDataLen += sprintf( zData + zDataLen,            ",");	
+  }
+  zDataLen += sprintf( zData + zDataLen,          " ]");
+  return zDataLen;
+}
+<<x buffer to json function>>=
+int x2json(char *zData, float *zdata, int N)
+{
+  int zDataLen, ii;
+  zDataLen = 0;
+  zDataLen += sprintf( zData + zDataLen,    "\"x\":[ ");
+  for (ii=0; ii<N; ii++) {
+    zDataLen += sprintf( zData + zDataLen,            "%.2f",zdata[ii]);
+    if (ii<(N-1))
+    zDataLen += sprintf( zData + zDataLen,            ",");	
+  }
+  zDataLen += sprintf( zData + zDataLen,          " ]");
+  return zDataLen;
+}
+<<y buffer to json function>>=
+int y2json(char *zData, float *zdata, int N)
+{
+  int zDataLen, ii;
+  zDataLen = 0;
+  zDataLen += sprintf( zData + zDataLen,    "\"y\":[ ");
+  for (ii=0; ii<N; ii++) {
+    zDataLen += sprintf( zData + zDataLen,            "%.2f",zdata[ii]);
+    if (ii<(N-1))
+    zDataLen += sprintf( zData + zDataLen,            ",");	
+  }
+  zDataLen += sprintf( zData + zDataLen,          " ]");
+  return zDataLen;
+}
+@ The whole json file is now written in the string [[data]]:
+<<write json heatmap>>=
+data = (char *)malloc((strlen(p->zData)+2048)*sizeof(char));
+int len=0;
+len += sprintf(data + len,"un=%s&",      USERNAME);
+len += sprintf(data + len,"key=%s&",     KEY);
+len += sprintf(data + len,"origin=%s&",  "plot");
+len += sprintf(data + len,"platform=%s&","lisp");
+len += sprintf(data + len,"args=[{");
+if (p->xData!=NULL)
+   len += sprintf(data + len,"%s,",p->xData);
+if (p->yData!=NULL)
+   len += sprintf(data + len,"%s,",p->yData);
+len += sprintf(data + len,"%s,",p->zData);
+len += sprintf( data + len,          "\"zauto\": %s," ,"true");
+len += sprintf( data + len,          "\"colorbar\": {");
+len += sprintf( data + len,             "\"autotick\": %s," ,"true");
+len += sprintf( data + len,             "\"title\": \"%s\"",p->ztitle);
+len += sprintf( data + len,          "}");
+len += sprintf( data + len,    "}]&");
+// kwargs >
+len += sprintf(data + len,"kwargs={"); 
+len += sprintf(data + len,   "\"filename\": \"CEO/%s\",",p->filename);
+len += sprintf(data + len,   "\"fileopt\": \"%s\"," ,"overwrite");
+// style >
+len += sprintf(data + len,   "\"style\": {"); 
+len += sprintf(data + len,      "\"type\": \"%s\",","heatmap");
+len += sprintf(data + len,      "\"colorscale\": \"%s\"",p->colorscale);
+len += sprintf(data + len,   "},"); 
+// < style
+// layout >
+len += sprintf(data + len,   "\"layout\": {"); 
+len += sprintf(data + len,      "\"title\": \"%s\",",p->title);
+// xaxis >
+len += sprintf(data + len,      "\"xaxis\": {");
+len += sprintf(data + len,         "\"title\": \"%s\"",p->xtitle);
+len += sprintf(data + len,      "},"); 
+// < xaxis
+// yaxis >
+len += sprintf(data + len,      "\"yaxis\": {");
+len += sprintf(data + len,         "\"title\": \"%s\"",p->ytitle);
+len += sprintf(data + len,      "},"); 
+// < yaxis
+len += sprintf(data + len,      "\"width\": %d,"    ,600);
+len += sprintf(data + len,      "\"height\": %d,"   ,580);
+len += sprintf(data + len,      "\"autosize\": %s," ,"false");
+// margin >
+len += sprintf(data + len,      "\"margin\": {"); 
+len += sprintf(data + len,         "\"l\": %d,"         ,80);
+len += sprintf(data + len,         "\"r\": %d,"         ,100);
+len += sprintf(data + len,         "\"t\": %d,"         ,80);
+len += sprintf(data + len,         "\"b\": %d,"         ,80);
+len += sprintf(data + len,         "\"pad\": %d,"       ,0);
+len += sprintf(data + len,         "\"autoexpand\": %s" ,"false");
+len += sprintf(data + len,      "}"); 
+// < margin
+len += sprintf(data + len,   "},"); 
+// < layout
+len += sprintf(data + len,   "\"world_readable\": %s" ,"true");
+len += sprintf(data + len,"}"); 
+/*
+FILE *fp;
+fp=fopen("plotly.json", "wb");
+fprintf(fp,"%s\n",data);
+fclose(fp);
+*/
+<<write json scatter>>=
+data = (char *)malloc((strlen(p->xData)+strlen(p->yData)+2048)*sizeof(char));
+int len=0;
+len += sprintf(data + len,"un=%s&",      USERNAME);
+len += sprintf(data + len,"key=%s&",     KEY);
+len += sprintf(data + len,"origin=%s&",  "plot");
+len += sprintf(data + len,"platform=%s&","lisp");
+len += sprintf(data + len,"args=[{");
+len += sprintf(data + len,"%s,",p->xData);
+len += sprintf(data + len,"%s,",p->yData);
+len += sprintf( data + len,"\"name\": \"%s\"" ,p->name);
+len += sprintf( data + len,    "}]&");
+// kwargs >
+len += sprintf(data + len,"kwargs={"); 
+len += sprintf(data + len,   "\"filename\": \"CEO/%s\",",p->filename);
+len += sprintf(data + len,   "\"fileopt\": \"%s\"," ,p->fileopt);
+// style >
+len += sprintf(data + len,   "\"style\": {"); 
+len += sprintf(data + len,      "\"type\": \"%s\"","scatter");
+len += sprintf(data + len,   "},"); 
+// < style
+// layout >
+len += sprintf(data + len,   "\"layout\": {"); 
+len += sprintf(data + len,      "\"title\": \"%s\",",p->title);
+// xaxis >
+len += sprintf(data + len,      "\"xaxis\": {");
+len += sprintf(data + len,         "\"title\": \"%s\"",p->xtitle);
+len += sprintf(data + len,      "},"); 
+// < xaxis
+// yaxis >
+len += sprintf(data + len,      "\"yaxis\": {");
+len += sprintf(data + len,         "\"title\": \"%s\"",p->ytitle);
+len += sprintf(data + len,      "},"); 
+// < yaxis
+len += sprintf(data + len,      "\"width\": %d,"    ,900);
+len += sprintf(data + len,      "\"height\": %d,"   ,500);
+len += sprintf(data + len,      "\"autosize\": %s," ,"false");
+// margin >
+len += sprintf(data + len,      "\"margin\": {"); 
+len += sprintf(data + len,         "\"l\": %d,"         ,80);
+len += sprintf(data + len,         "\"r\": %d,"         ,250);
+len += sprintf(data + len,         "\"t\": %d,"         ,80);
+len += sprintf(data + len,         "\"b\": %d,"         ,80);
+len += sprintf(data + len,         "\"pad\": %d,"       ,0);
+len += sprintf(data + len,         "\"autoexpand\": %s" ,"false");
+len += sprintf(data + len,      "}"); 
+// < margin
+len += sprintf(data + len,   "},"); 
+// < layout
+len += sprintf(data + len,   "\"world_readable\": %s" ,"true");
+len += sprintf(data + len,"}"); 
+/*
+FILE *fp;
+fp=fopen("plotly.json", "wb");
+fprintf(fp,"%s\n",data);
+fclose(fp);
+*/
+<<de-allocation>>=
+free(data);
+@  The json string is sent to plotly server using libcurl:
+<<post json>>=
+void curlplotly(void *json)
+{
+
+  char dataIn[1024];
+  char *data;
+  CURLcode ret;
+  CURL *hnd;
+  int len;
+
+  data = (char *) json;
+  len = strlen(data);
+
+  hnd = curl_easy_init();
+  curl_easy_setopt(hnd, CURLOPT_URL, "https://plot.ly/clientresp");
+  curl_easy_setopt(hnd, CURLOPT_WRITEFUNCTION, write_data);
+  curl_easy_setopt(hnd, CURLOPT_WRITEDATA, dataIn);
+  curl_easy_setopt(hnd, CURLOPT_POSTFIELDSIZE_LARGE, len);
+  curl_easy_setopt(hnd, CURLOPT_POSTFIELDS, data);
+  curl_easy_setopt(hnd, CURLOPT_MAXREDIRS, 50L);
+  curl_easy_setopt(hnd, CURLOPT_POST, 1);
+ 
+  ret = curl_easy_perform(hnd);
+  if (ret!=0)
+    fprintf(stderr,"CURL FAILED WITH: %s\n",curl_easy_strerror(ret));
+
+  jsmn_parser parser;
+  jsmn_init(&parser);
+  jsmntok_t tokens[256];
+  //  jsmnerr_t r;
+  jsmn_parse(&parser, dataIn, strlen(dataIn), tokens, 200);
+
+  plotly_resp resp;
+  char *resp_ptr[5];
+  resp_ptr[0] = resp.url;
+  resp_ptr[1] = resp.message;
+  resp_ptr[2] = resp.warning;
+  resp_ptr[3] = resp.filename;
+  resp_ptr[4] = resp.error;
+
+  int k, idx;
+  for (k=0;k<5;k++) {
+    idx = 2*(k+1);
+    sprintf(resp_ptr[k],"%.*s", (tokens[idx]).end-(tokens[idx]).start, dataIn + (tokens[idx]).start);
+  }
+
+  if (strlen(resp.error)==0) {
+   /* char command[50]; */
+   /* sprintf( command, "firefox %s&", resp.url); */
+   /* system(command); */
+    fprintf(stdout,"\x1B[36m >>> %s\x1B[0m\n",resp.url);
+    if (strlen(resp.message)!=0)
+      fprintf(stdout,"@(CEO)>plotly: message: %s\n",resp.message);
+  }  else
+    fprintf(stderr,"@(CEO)>plotly: error: %s\n",resp.error);
+    
+
+  curl_easy_cleanup(hnd);
+  hnd = NULL;
+}
+@  The response of the plotly server is capture with:
+<<plotly response>>=
+size_t write_data(void *ptr, size_t size, size_t count, void *stream)
+{
+  memcpy(stream, ptr, size * count+1);
+  return count*size;
+}
+
+@  
+\subsubsection{imagesc}
+\label{sec:imagesc}
+
+<<imagesc>>=
+void imagesc(plotly_properties *p)
+{
+fprintf(stdout,"\x1B[36m@(CEO)>plotly: %s\x1B[0m",p->filename);
+<<post graph with thread>>
+}
+@  For each graph a thread is created:
+<<post graph with thread>>=
+char *data;
+ <<write json heatmap>>
+ curlplotly( (void *) data);
+ <<de-allocation>>
+
+@  
+\subsubsection{plot}
+\label{sec:plot}
+
+<<plot>>=
+void plot(plotly_properties *p)
+{
+  fprintf(stdout,"\x1B[36m@(CEO)>plotly: %s\x1B[0m",p->filename);
+  char *data;
+  <<write json scatter>>
+  curlplotly( (void *) data);
+  <<de-allocation>>
+}
+
+@ 
+\subsection{Test}
+\label{sec:test}
+
+<<plotly.bin>>=
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+
+void graph( int N, char * filename)
+{
+  int ii, nel;
+  float *z;
+  printf("=> matrix size:%d^2\n",N);
+  nel = N;
+  nel *= nel;
+  z = (float *)malloc(nel*sizeof(float));
+  srand(time(NULL));
+  for (ii=0;ii<nel;ii++)
+    z[ii] = (float) rand() / RAND_MAX ;
+  
+  plotly_properties prop;
+  //prop.set_default();
+  prop.set("xtitle","X axis");
+  prop.set("ytitle","Y axis");
+  prop.set("title","plotly test");
+  prop.set("filename",filename);
+  prop.set("zdata",z,N,N);
+  prop.set("colorscale","Portland");
+  imagesc(&prop); 
+  free(z);
+}
+# define RANDU() ( (int) ( 3 + ( (float) rand() / RAND_MAX )*97 ) )
+int main(int argc,char *argv[]) {
+  
+// IMAGES
+  graph( RANDU(), "plotly test 1"); 
+  graph( RANDU(), "plotly test 2");
+  graph( RANDU(), "plotly test 3");
+  graph( RANDU(), "plotly test 4");
+
+// PLOT
+  int N = 5;
+  float x[] = {0,1,2,3,4};
+  float y[] = {0,-1,2,-3,4};
+  plotly_properties prop;
+  prop.set("xtitle","X axis");
+  prop.set("ytitle","Y axis");
+  prop.set("ztitle","Z axis");
+  prop.set("title","plotly test");
+  prop.set("filename","plotly test plot 1");
+  prop.set("xdata",x,N);
+  prop.set("ydata",y,N);
+  prop.set("name","CEO plot test");
+  sprintf(prop.fileopt,"%s","overwrite");
+  plot(&prop); 
+
+}

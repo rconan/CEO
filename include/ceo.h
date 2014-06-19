@@ -41,5 +41,9 @@
 #include "LMMSE.h"
 #endif
 
+#ifndef __PLOTLY_H__
+#include "plotly.h"
+#endif
+
 #endif  // __CEO_H__
 

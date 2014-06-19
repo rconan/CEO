@@ -15,6 +15,10 @@ The source structure contains all the data associated with a remote optical emit
 #include "utilities.h"
 #endif
 
+#ifndef __PLOTLY_H__
+#include "plotly.h"
+#endif
+
 <<complex amplitude structure>>
 
 struct source {
@@ -34,8 +38,9 @@ struct source {
   void phase2file(const char *filename);
 
   float wavelength(void);
-
   float n_photon(void);
+  float wavenumber(void);
+
 };
 #endif // __SOURCE_H__
 @
@@ -45,9 +50,15 @@ struct source {
 #include "source.h"
 
 <<square geometry>>
+<<apply mask>>
+<<piston removal>>
 
 <<complex amplitude setup>>
 <<complex amplitude cleanup>>
+<<resetting the wavefront>>
+<<resetting the wavefront to new wavefront>>
+<<adding wavefront phase>>
+<<masking wavefront amplitude>>
 
 <<phase to file>>
 
@@ -62,8 +73,9 @@ struct source {
 <<info>>
 
 <<wavelength>>
-   
 <<number of photons>>
+<<wavenumber>>
+<<plot phase>>
 @
 \subsection{Parameters}
 \label{sec:params}
@@ -86,7 +98,11 @@ struct complex_amplitude {
 
   void setup(int n_pixel);
   void cleanup(void);
-
+  void reset(void);
+  void reset(complex_amplitude wavefront_prime);
+  void add_phase(float alpha, float *phase_prime);
+  void masked(void);
+  void show_phase(char *filename);
 };
 @ with the parameters: 
 <<complex amplitude parameters>>=
@@ -94,7 +110,7 @@ int N_PX;
 float *amplitude, *phase;
 @ The physical extent of the amplitude is set by the pupil mask:
 <<complex amplitude parameters>>=
-char *pupil_mask;
+mask *M;
 @ The magnitude at a given photometric band are set with:
 <<source parameters>>=
 char *photometric_band;float magnitude;
@@ -102,7 +118,7 @@ char *photometric_band;float magnitude;
 <<source parameters>>=
 float *irradiance, *irradiance_ft;
 @ The irradiance is normalized such as is sum is equal to 1. The Fourier transform of the irradiance map must be given too.
-The wavefront is added to the source
+The wavefront is addegd to the source
 <<source parameters>>=
 complex_amplitude wavefront;
 @ Source structures will be allocated on the device:
@@ -115,70 +131,17 @@ char tag[8];
 \subsection{Functions}
 \label{sec:functions}
 
-The main parameters of the source are displayed with the [[info]] routine:
-<<info>>=
-  void source::info(void)
-{
-  printf("\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
-  printf(" zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
-  printf(" %5.2f      %6.2f    %8.2f\n",
-	 zenith*RADIAN2ARCSEC,
-	 azimuth*180.0/PI,height);
-  if (wavefront.N_PX>0)
-    printf(" wavefront pixel sampling: %d\n",wavefront.N_PX);
-  printf("----------------------------------------------------\x1B[0m\n");
-}
+@
+\subsubsection{Setup \& cleanup}
+\label{sec:setup--cleanup}
 
-@  The [[wavelength]] in \textsl{micron} corresponding to the photometric band is given by
-<<wavelength>>=
-float source::wavelength(void) {
-  if (strcmp(photometric_band,"V")==0)
-    return 0.550;
-  if (strcmp(photometric_band,"R")==0)
-    return 0.640;
-  if (strcmp(photometric_band,"I")==0)
-    return 0.790;
-  if (strcmp(photometric_band,"J")==0)
-    return 1.215;
-  if (strcmp(photometric_band,"H")==0)
-    return 1.654;
-  if (strcmp(photometric_band,"K")==0)
-    return 2.179;
-  if (strcmp(photometric_band,"Ks")==0)
-    return 2.157;
-  if (strcmp(photometric_band,"Na")==0)
-    return 0.589;
-  return 0;
-}
-@ The number of photon in $m^{-2}.s^{-1}$ is derived with
-<<number of photons>>=
-float source::n_photon(void) {
-  float zero_point;
-  if (strcmp(photometric_band,"V")==0)
-    zero_point = 3.3e12;
-  if (strcmp(photometric_band,"R")==0)
-    zero_point = 4.0e12 ;
-  if (strcmp(photometric_band,"I")==0)
-    zero_point = 2.7e12;
-  if (strcmp(photometric_band,"J")==0)
-    zero_point = 1.9e12;
-  if (strcmp(photometric_band,"H")==0)
-    zero_point = 1.1e12;
-  if (strcmp(photometric_band,"K")==0)
-    zero_point = 7.0e11;
-  if (strcmp(photometric_band,"Ks")==0)
-    zero_point = 5.5e11;
-  if (strcmp(photometric_band,"Na")==0)
-    zero_point =3.3e12 ;
-  return zero_point*powf(10 , -0.4*magnitude );
-}
-@ Sources are initialized with the setup function:
+Sources are initialized with the setup function:
 \begin{itemize}
 \item for a single source:
 <<setup>>=
 void source::setup(float _zenith, float _azimuth, float _height) {
   <<setup single source contents>>
-  wavefront.setup(_SOURCE_N_PX_);
+  wavefront.setup(0);
   strcpy(tag,"source");
   info();
 }
@@ -194,7 +157,7 @@ void source::setup(float _zenith, float _azimuth, float _height, int resolution)
 <<setup with tag>>=
 void source::setup(float _zenith, float _azimuth, float _height, char *tag_in) {
   <<setup single source contents>>
-  wavefront.setup(_SOURCE_N_PX_);
+  wavefront.setup(0);
   strcpy(tag,tag_in);
   info();
 }
@@ -214,6 +177,7 @@ void source::setup(float *_zenith, float *_azimuth, float _height, int _N_SRC) {
   height = _height;
   source __src;
   HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
+  strcpy(tag,"sources");
   printf("\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   printf(" zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
   for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
@@ -230,7 +194,7 @@ void source::setup(float *_zenith, float *_azimuth, float _height, int _N_SRC) {
                         _azimuth[i_SRC]*180/PI,_height);
   }
   printf("----------------------------------------------------\x1B[0m\n");
-  wavefront.setup(_SOURCE_N_PX_*N_SRC);
+  wavefront.setup(0);
 }
 @  \item for multiple sourcese with wavefront resolution:
 <<setup for multiple sources with wavefront resolution>>=
@@ -240,6 +204,7 @@ void source::setup(float *_zenith, float *_azimuth, float _height,
   height = _height;
   source __src;
   HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
+  strcpy(tag,"sources");
   printf("\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   printf(" zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
   for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
@@ -283,14 +248,14 @@ The complex amplitude structure is initialized with
 <<complex amplitude setup>>=
 void complex_amplitude::setup(int n_pixel) {
   N_PX = n_pixel;
+  M = NULL;
   if (N_PX>0) {
     HANDLE_ERROR( cudaMalloc( (void**)&amplitude,  sizeof(float)*N_PX ) );
     HANDLE_ERROR( cudaMalloc( (void**)&phase,      sizeof(float)*N_PX ) );
-    HANDLE_ERROR( cudaMalloc( (void**)&pupil_mask, sizeof(char)*N_PX ) );
-  } else {
+    reset();
+   } else {
     amplitude  = NULL;
     phase      = NULL;
-    pupil_mask = NULL;
   }
 }
 @ and memory is de--allocated with:
@@ -299,7 +264,6 @@ void complex_amplitude::cleanup(void) {
   if (N_PX>0) {
     HANDLE_ERROR( cudaFree( amplitude ) );
     HANDLE_ERROR( cudaFree( phase ) );
-    HANDLE_ERROR( cudaFree( pupil_mask ) );
   }
 }
 @ Allocated variable are freed with the [[cleanup]] routine
@@ -309,19 +273,223 @@ void source::cleanup(void) {
   HANDLE_ERROR( cudaFree( dev_ptr) );
   wavefront.cleanup();
 }
+
 @ 
 The amplitude and phase are initialized to respectively 1 and 0:
 <<square geometry>>=
-__global__ void squarePupil(float* amplitude, float *phase) {
+  __global__ void squarePupil(float* amplitude, float *phase, const int N) {
   int id;
   id = blockIdx.x * blockDim.x + threadIdx.x;
-  if (id<_SOURCE_N_PX_) {
+  if (id<N) {
     amplitude[id] = 1.0;
     phase[id]     = 0.0;
   }
 }
+
+@
+
+\subsubsection{Photometry}
+\label{sec:photometry}
+
+The [[wavelength]] in \textsl{micron} corresponding to the photometric band is given by
+<<wavelength>>=
+float source::wavelength(void) {
+  if (strcmp(photometric_band,"V")==0)
+    return 0.550;
+  if (strcmp(photometric_band,"R")==0)
+    return 0.640;
+  if (strcmp(photometric_band,"I")==0)
+    return 0.790;
+  if (strcmp(photometric_band,"J")==0)
+    return 1.215;
+  if (strcmp(photometric_band,"H")==0)
+    return 1.654;
+  if (strcmp(photometric_band,"K")==0)
+    return 2.179;
+  if (strcmp(photometric_band,"Ks")==0)
+    return 2.157;
+  if (strcmp(photometric_band,"Na")==0)
+    return 0.589;
+  return 0;
+}
+@ The number of photon in $m^{-2}.s^{-1}$ is derived with
+<<number of photons>>=
+float source::n_photon(void) {
+  float zero_point;
+  if (strcmp(photometric_band,"V")==0)
+    zero_point = 3.3e12;
+  if (strcmp(photometric_band,"R")==0)
+    zero_point = 4.0e12 ;
+  if (strcmp(photometric_band,"I")==0)
+    zero_point = 2.7e12;
+  if (strcmp(photometric_band,"J")==0)
+    zero_point = 1.9e12;
+  if (strcmp(photometric_band,"H")==0)
+    zero_point = 1.1e12;
+  if (strcmp(photometric_band,"K")==0)
+    zero_point = 7.0e11;
+  if (strcmp(photometric_band,"Ks")==0)
+    zero_point = 5.5e11;
+  if (strcmp(photometric_band,"Na")==0)
+    zero_point =3.3e12 ;
+  return zero_point*powf(10 , -0.4*magnitude );
+}
+@ The wave number is given by
+<<wavenumber>>=
+float source::wavenumber(void) {
+  float lambda;
+  if (strcmp(photometric_band,"V")==0)
+    lambda = 0.550;
+  if (strcmp(photometric_band,"R")==0)
+    lambda = 0.640;
+  if (strcmp(photometric_band,"I")==0)
+    lambda = 0.790;
+  if (strcmp(photometric_band,"J")==0)
+    lambda = 1.215;
+  if (strcmp(photometric_band,"H")==0)
+    lambda = 1.654;
+  if (strcmp(photometric_band,"K")==0)
+    lambda = 2.179;
+  if (strcmp(photometric_band,"Ks")==0)
+    lambda = 2.157;
+  if (strcmp(photometric_band,"Na")==0)
+    lambda = 0.589;
+  return 1E6*2*PI/lambda;
+}
+
+@
+\subsubsection{Wavefront manipulation}
+\label{sec:wavefr-manip}
+
+\paragraph{Resetting the wavefront}
+\label{sec:resetting-wavefront}
+The following resets the wavefront amplitude to zero and phase to 1:
+<<resetting the wavefront>>=
+void complex_amplitude::reset(void)
+{
+  dim3 blockDim(16,1);
+  dim3 gridDim(N_PX/16+1,1);
+  squarePupil LLL gridDim,blockDim RRR (amplitude, phase, N_PX);
+  if (M!=NULL)
+    apply_mask LLL gridDim,blockDim RRR (amplitude, phase, M->m, N_PX);  
+}
+@  masked following resets the wavefront phase to the phase of the new wavefront:
+<<resetting the wavefront to new wavefront>>=
+void complex_amplitude::reset(complex_amplitude wavefront_prime)
+{
+  reset();
+  add_phase(1, wavefront_prime.phase);
+}
+
+@ 
+\paragraph{Adding wavefront phase}
+\label{sec:adding-wavefr-phase}
+The following adds a phase aberration to the wavefront phase $$\varphi = \varphi + \alpha \varphi^\prime$$:
+<<adding wavefront phase>>=
+void complex_amplitude::add_phase(float alpha, float *phase_prime)
+{
+  cublasHandle_t handle;
+  cublasCreate(&handle);
+  CUBLAS_ERROR( cublasSaxpy(handle, N_PX, &alpha, phase_prime, 1, phase, 1) );
+  cublasDestroy(handle);
+}
+
+@
+\paragraph{Masking wavefront amplitude}
+\label{sec:mask-wavefr-ampl}
+The following applies the pupil mask to the wavefront:
+<<masking wavefront amplitude>>=
+void complex_amplitude::masked(void)
+{
+  dim3 blockDim(16,1);
+  dim3 gridDim(N_PX/16+1,1);
+  apply_mask LLL gridDim,blockDim RRR (amplitude, phase, M->m, N_PX);  
+}
+@  with the kernel:
+<<apply mask>>=
+__global__ void apply_mask(float* amplitude, float* phase, char *pupil_mask, const int N) {
+  int id;
+  id = blockIdx.x * blockDim.x + threadIdx.x;
+  if ( (id<N) && (pupil_mask[id]==0) ) {
+    amplitude[id] = 0.0;
+    phase[id]     = 0.0;
+  }
+}
+
+@ 
+\subsubsection{Input/Output}
+\label{sec:inputoutput}
+
+The main parameters of the source are displayed with the [[info]] routine:
+<<info>>=
+void source::info(void)
+{
+  printf("\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  printf(" zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  printf(" %5.2f      %6.2f    %8.2f\n",
+	 zenith*RADIAN2ARCSEC,
+	 azimuth*180.0/PI,height);
+  if (wavefront.N_PX>0)
+    printf(" wavefront pixel sampling: %d\n",wavefront.N_PX);
+  printf("----------------------------------------------------\x1B[0m\n");
+}
+
 @ The wavefront phase is save to a file with
 <<phase to file>>=
 void source::phase2file(const char *filename) {
   dev2file(filename,wavefront.phase,wavefront.N_PX,wavefront.N_PX/N_SRC,N_SRC);
+}
+
+@ The wavefront phase is plotted with the plot.ly
+<<plot phase>>=
+void complex_amplitude::show_phase(char *filename)
+{
+  char title[32];
+  float *data, *d__data, alpha, piston;
+  plotly_properties prop;
+  stats S;
+
+  HANDLE_ERROR( cudaMalloc((void**)&d__data, sizeof(float)*N_PX) );
+  HANDLE_ERROR( cudaMemcpy( d__data, phase,
+			    sizeof(float)*N_PX,
+			    cudaMemcpyDeviceToDevice ) );
+
+  S.setup();
+  alpha = 1E9;
+  CUBLAS_ERROR( cublasSscal(S.handle, N_PX, &alpha, d__data, 1) );
+
+  piston = S.mean(d__data, M, N_PX);
+
+  dim3 blockDim(256);
+  dim3 gridDim(N_PX/256+1);
+  remove_piston LLL gridDim,blockDim RRR (d__data, M->m, N_PX, piston);
+
+  HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
+			       cudaHostAllocDefault) );
+  HANDLE_ERROR( cudaMemcpy( data, d__data, sizeof(float)*N_PX,
+			    cudaMemcpyDeviceToHost ) );
+
+  prop.set("xtitle","X");
+  prop.set("ytitle","Y");
+  prop.set("ztitle","[nm]");
+  sprintf(title,"RMS=%.2fnm",S.std(d__data,M,N_PX));
+  prop.set("title",title);
+  prop.set("filename",filename);
+  int n = (int) sqrtf(N_PX);
+  prop.set("zdata",data,n,n);
+  prop.set("colorscale","Portland");
+  imagesc(&prop); 
+
+  S.cleanup();
+  HANDLE_ERROR( cudaFree( d__data ) );
+  HANDLE_ERROR( cudaFreeHost( data ) );
+}
+@  with the kernel
+<<piston removal>>=
+__global__ void remove_piston(float *data, const char* mask, int n_data, float p) 
+{
+int i;
+i = blockIdx.x * blockDim.x + threadIdx.x;
+ if ( (i<n_data) && (mask[i]>0) )
+       data[i] -= p;
 }
