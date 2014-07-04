@@ -144,11 +144,12 @@ int round_up_to_nhp2(int n) {
 When dealing with lenslet arrays, a thread in a given thread block correspond to a pixel coordinate $[i,j]$ in a given lenslet $[i_l,j_L]$.
 The following function computes the coordinates $[i,j]$ and $[i_l,j_L]$ based on the thread and block index, the block size and the number of pixel per lenslet [[n_px_lenslet]].
 <<threads2lenslet>>=
-__device__ inline void threads2lenslet(dim3 threadIdx, dim3 blockIdx, dim3 blockDim, 
+__device__ inline char threads2lenslet(dim3 threadIdx, dim3 blockIdx, dim3 blockDim, 
 				      int *i_px_lenslet, int *j_px_lenslet, int n_px_lenslet, 
-				      int *i_lenslet, int *j_lenslet) 
+				       int *i_lenslet, int *j_lenslet, int n_lenslet) 
 {
   <<from threads to lenslet coordinates>>
+  return 1;
 }
 @ The pixel coordinate in the image is given by
 <<from threads to lenslet coordinates>>=
@@ -157,7 +158,11 @@ __device__ inline void threads2lenslet(dim3 threadIdx, dim3 blockIdx, dim3 block
 @ Then the lenslet coordinate $[i_l,j_L]$ are derived from
 <<from threads to lenslet coordinates>>=
 *i_lenslet = *i_px_lenslet/n_px_lenslet;
+if (*i_lenslet>=n_lenslet)
+  return 0;
 *j_lenslet = *j_px_lenslet/n_px_lenslet;
+if (*j_lenslet>=n_lenslet)
+  return 0;
 @ and finally the pixel coordinate $[i,j]$ in lenslet $[i_l,j_L]$ is
 <<from threads to lenslet coordinates>>=
 *i_px_lenslet -=  *i_lenslet*n_px_lenslet;

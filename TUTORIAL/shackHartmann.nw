@@ -1,0 +1,103 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+
+\section{Shack--Hartmann wavefront sensor}
+\label{sec:ngsao}
+
+In this section, the generation of the imagelets and slopes of a Shack--Hartmann WFS are described.
+
+All CEO programs must include the following headers which also contains the headers for all the CEO library modules.
+<<main header>>=
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+@
+The main function is:
+<<shackHartmann.bin>>=
+<<main header>>
+<<square tiled geometry>>
+int main(int argc,char *argv[]) {
+cudaSetDevice(0);
+<<setup>>
+tid.tic();
+wfs.propagate(&gs);
+cog.get_data(wfs.d__frame,wfs.N_PX_CAMERA);
+tid.toc();
+wfs.show_frame("Shack-Hartmann/frame");
+cog.show_centroids("Shack-Hartmann/centroids");
+cog.show_flux("Shack-Hartmann/flux");
+<<cleanup>>
+}
+@
+The input parameters are
+\begin{itemize}
+\item the size of the lenslet array [[N_SIDE_LENSLET]]$\times$[[N_SIDE_LENSLET]],
+<<setup>>=
+int N_SIDE_LENSLET;
+N_SIDE_LENSLET = atoi( argv[1] );
+printf("__ SHACK-HARTMANN __\n");
+printf(" . %dX%d lenslets: \n", N_SIDE_LENSLET, N_SIDE_LENSLET);
+@ \item the number of pixel per lenslet [[N_PX_LENSLET]]$\times$[[N_PX_LENSLET]]
+<<setup>>=
+int N_PX_LENSLET;
+N_PX_LENSLET = atoi( argv[2] );
+printf(" . %dX%d pixels per lenslet: \n", N_PX_LENSLET, N_PX_LENSLET);
+@ \item the number of sources,
+<<setup>>=
+int N_GS;
+N_GS = atoi( argv[3] );
+printf(" . source #: %d\n", N_GS);
+@ \end{itemize}
+The total number of pixel is given by
+<<setup>>=
+int N_PX, N_PX2;
+N_PX  = N_SIDE_LENSLET*N_PX_LENSLET;
+N_PX2 = N_PX*N_PX;
+@ 
+The guide star is defined with
+<<setup>>=
+float zenith[] = {ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30)},
+  azimuth[] = {0,2.*PI/6.,4.*PI/6.,6.*PI/6.,8.*PI/6.,10.*PI/6.,12.*PI/6.};
+source gs;
+gs.setup( zenith, azimuth, INFINITY, N_GS, N_PX2);
+gs.photometric_band = "R";
+<<cleanup>>=
+gs.cleanup();
+@ 
+The wavefront sensor is defined with the [[imaging]] structure:
+<<setup>>=
+imaging wfs;
+wfs.setup(N_PX_LENSLET,N_SIDE_LENSLET,2,1,1,N_GS);
+<<cleanup>>=
+wfs.cleanup();
+@ 
+The centroiding container and computation engine is created with
+<<setup>>=
+centroiding cog;
+cog.setup(N_SIDE_LENSLET,N_GS);
+<<cleanup>>=
+cog.cleanup();
+@ 
+The timing is done with the [[stopwatch]] structure:
+<<setup>>=
+stopwatch tid;
+@ 
+The square pupil is made of tiles [[N_PX_LENSLET]]$\times$[[N_PX_LENSLET]] pixels with intensity equal to lenslet index
+<<setup opt-out>>=
+dim3 blockDim(16,16);
+dim3 gridDim(1+N_PX_LENSLET*N_SIDE_LENSLET/16,1+N_PX_LENSLET*N_SIDE_LENSLET/16,N_GS);
+squareTiledPupil LLL gridDim,blockDim RRR (gs.wavefront.amplitude, N_PX_LENSLET, N_SIDE_LENSLET, N_GS);
+gs.wavefront.show_amplitude("Shack-Hartmann/amplitude",N_PX,N_PX*N_GS);
+<<square tiled geometry>>=
+  __global__ void squareTiledPupil(float* amplitude, const int N_PX_LENSLET, const int N_SIDE_LENSLET, const int N_GS) {
+  int i, j, iLenslet, jLenslet, ij_PUPIL, iSource, kLenslet;
+  iSource = blockIdx.z;
+  if ( threads2lenslet(threadIdx, blockIdx, blockDim, 
+		       &i, &j, N_PX_LENSLET, 
+		       &iLenslet, &jLenslet, N_SIDE_LENSLET) ) {
+    ij_PUPIL = lenslet2array(i,j,N_PX_LENSLET,iLenslet,jLenslet,N_SIDE_LENSLET,iSource,N_GS);
+    kLenslet = iLenslet*N_SIDE_LENSLET + jLenslet;
+    amplitude[ij_PUPIL] = ((float) (kLenslet + 1)) + iSource*0.5;
+  }
+}
+
+

@@ -76,6 +76,8 @@ struct source {
 <<number of photons>>
 <<wavenumber>>
 <<plot phase>>
+<<plot amplitude I>>
+<<plot amplitude II>>
 @
 \subsection{Parameters}
 \label{sec:params}
@@ -103,6 +105,8 @@ struct complex_amplitude {
   void add_phase(float alpha, float *phase_prime);
   void masked(void);
   void show_phase(char *filename);
+  void show_amplitude(char *filename);
+  void show_amplitude(char *filename, int N, int M);
 };
 @ with the parameters: 
 <<complex amplitude parameters>>=
@@ -492,4 +496,48 @@ int i;
 i = blockIdx.x * blockDim.x + threadIdx.x;
  if ( (i<n_data) && (mask[i]>0) )
        data[i] -= p;
+}
+
+@ The wavefront amplitude is plotted with the plot.ly
+<<plot amplitude I>>=
+void complex_amplitude::show_amplitude(char *filename)
+{
+  float *data;
+  plotly_properties prop;
+
+  HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
+			       cudaHostAllocDefault) );
+  HANDLE_ERROR( cudaMemcpy( data, amplitude, sizeof(float)*N_PX,
+			    cudaMemcpyDeviceToHost ) );
+
+  prop.set("xtitle","X");
+  prop.set("ytitle","Y");
+  prop.set("ztitle","[au]");
+  prop.set("filename",filename);
+  int n = (int) sqrtf(N_PX);
+  prop.set("zdata",data,n,n);
+  imagesc(&prop); 
+
+  HANDLE_ERROR( cudaFreeHost( data ) );
+}
+<<plot amplitude II>>=
+  void complex_amplitude::show_amplitude(char *filename, int N, int M)
+{
+  float *data;
+  plotly_properties prop;
+
+  HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
+			       cudaHostAllocDefault) );
+  HANDLE_ERROR( cudaMemcpy( data, amplitude, sizeof(float)*N_PX,
+			    cudaMemcpyDeviceToHost ) );
+
+  prop.set("xtitle","X");
+  prop.set("ytitle","Y");
+  prop.set("ztitle","[au]");
+  prop.set("filename",filename);
+  prop.aspect_ratio = M/N;
+  prop.set("zdata",data,N,M);
+  imagesc(&prop); 
+
+  HANDLE_ERROR( cudaFreeHost( data ) );
 }

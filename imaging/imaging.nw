@@ -24,6 +24,8 @@ struct imaging {
 
   void setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
 	     int DFT_osf, float IMAGE_osf, float CAMERA_osf);
+  void setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
+	     int DFT_osf, float IMAGE_osf, float CAMERA_osf, int __N_SOURCE);
 
   void cleanup(void);
 
@@ -52,7 +54,8 @@ struct imaging {
 
 <<binning>>
 
-<<setup>>
+<<setup I>>
+<<setup II>>
 
 <<cleanup>>
 
@@ -99,26 +102,35 @@ In this section, we are dealing with the process of computing images from wavefr
 \label{sec:setup--cleanup}
 
 A [[setup]] routine is defined to initialize any required variables:
-<<setup>>=
+<<setup I>>=
 void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET, 
 		    int DFT_osf, float IMAGE_osf, float CAMERA_osf) {
-  N_PX_PUPIL  = __N_PX_PUPIL;
-  N_DFT       = DFT_osf*round_up_to_nhp2(N_PX_PUPIL);
-  N_PX_IMAGE  = IMAGE_osf*N_PX_PUPIL;
-  N_PX_CAMERA = CAMERA_osf*N_PX_IMAGE;
-  _N_SIDE_LENSLET_ = __N_SIDE_LENSLET;
-  N_LENSLET   = _N_SIDE_LENSLET_*_N_SIDE_LENSLET_;
   N_SOURCE    = 1;
-  N_FRAME     = 0;
-  printf("@(CEO)>imaging: Device memory allocation\n");
-  int N_DFT_bytes = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
-  cudaMalloc( (void**)&d__wave_PUPIL , sizeof(float2) * N_DFT_bytes);
-  cudaMalloc( (void**)&d__frame , 
-	      sizeof(float) *N_PX_CAMERA*N_PX_CAMERA*N_LENSLET*N_SOURCE );
-  reset();
-  <<imaging CUFFT plan creation>>
-  info();
+  <<setup common>>
 }
+<<setup II>>=
+void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET, 
+		    int DFT_osf, float IMAGE_osf, float CAMERA_osf,
+		    int __N_SOURCE) {
+  N_SOURCE    = __N_SOURCE;
+  <<setup common>>
+}
+<<setup common>>=
+N_PX_PUPIL  = __N_PX_PUPIL;
+N_DFT       = DFT_osf*round_up_to_nhp2(N_PX_PUPIL);
+N_PX_IMAGE  = IMAGE_osf*N_PX_PUPIL;
+N_PX_CAMERA = CAMERA_osf*N_PX_IMAGE;
+_N_SIDE_LENSLET_ = __N_SIDE_LENSLET;
+N_LENSLET   = _N_SIDE_LENSLET_*_N_SIDE_LENSLET_;
+N_FRAME     = 0;
+printf("@(CEO)>imaging: Device memory allocation\n");
+int N_DFT_bytes = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
+cudaMalloc( (void**)&d__wave_PUPIL , sizeof(float2) * N_DFT_bytes);
+cudaMalloc( (void**)&d__frame , 
+	    sizeof(float) *N_PX_CAMERA*N_PX_CAMERA*N_LENSLET*N_SOURCE );
+reset();
+<<imaging CUFFT plan creation>>
+info();
 @ 
 
 \subsubsection{Propagation}
@@ -232,17 +244,16 @@ __global__ void complexAmplitude(float2 *wave_PUPIL, int N_DFT,
 {
   int i, j, iLenslet, jLenslet, ij_PUPIL, ij_DFT, iSource;
   float c ,s, phasor;
-@ The  pixel coordinates ([[i]],[[j]]) in the lenslet ([[iLenslet]],[[jLenslet]]) is derrived from the thread blocks:
-<<imaging complex amplitude>>=
-  //  wave pixel coordinate (N_DFTLxN_SIDE_LENSLET)^2
-  threads2lenslet(threadIdx, blockIdx, blockDim, 
-		   &i, &j, N_DFT, 
-		  &iLenslet, &jLenslet);
 @ The source index is given by the third coordinates of the thread block
 <<imaging complex amplitude>>=
   // source index
   iSource = blockIdx.z;
-  if ((iLenslet<_N_SIDE_LENSLET_) & (jLenslet<_N_SIDE_LENSLET_) ) {
+@ The  pixel coordinates ([[i]],[[j]]) in the lenslet ([[iLenslet]],[[jLenslet]]) is derrived from the thread blocks:
+<<imaging complex amplitude>>=
+  //  wave pixel coordinate (N_DFTLxN_SIDE_LENSLET)^2
+  if ( threads2lenslet(threadIdx, blockIdx, blockDim, 
+		       &i, &j, N_DFT, 
+		       &iLenslet, &jLenslet, _N_SIDE_LENSLET_) ) {
 @ The linear index of the vertically concatenated lenslet array is computed
 <<imaging complex amplitude>>=
     ij_DFT = lenslet2row(i,j,N_DFT,iLenslet,jLenslet,_N_SIDE_LENSLET_,iSource);
@@ -250,8 +261,8 @@ __global__ void complexAmplitude(float2 *wave_PUPIL, int N_DFT,
       {
 @ The linear index in the square lenslet array is computed
 <<imaging complex amplitude>>=
-	ij_PUPIL = lenslet2array(i,j,N_PX_PUPIL,iLenslet,jLenslet,_N_SIDE_LENSLET_,0,1);
- ij_PUPIL += iSource*_N_SIDE_LENSLET_*_N_SIDE_LENSLET_*N_PX_PUPIL*N_PX_PUPIL*N_SOURCE;
+ij_PUPIL = lenslet2array(i,j,N_PX_PUPIL,iLenslet,jLenslet,_N_SIDE_LENSLET_,iSource,N_SOURCE);
+// ij_PUPIL += iSource*_N_SIDE_LENSLET_*_N_SIDE_LENSLET_*N_PX_PUPIL*N_PX_PUPIL;//*N_SOURCE;
 @ The phase shift is applied on the wavefront
 <<imaging complex amplitude>>=
         phasor = PI*(i+j)*(1-N_DFT + (N_PX_IMAGE & 1))/N_DFT;
@@ -306,13 +317,13 @@ __global__ void binning(float *frame, const float2 *wave, int N_DFT, int N_SOURC
   int u, v, iLenslet, jLenslet, ij_DFT, 
     M, offset, iPxL, jPxL, i, j, ij_CAM, ii, jj,iSource;
 
-  threads2lenslet(threadIdx, blockIdx, blockDim, 
-		   &u, &v, N_PX_CAMERA, 
-		  &iLenslet, &jLenslet);
   // source index
   iSource = blockIdx.z;
+  
   // BINNING
-  if ( (iLenslet<_N_SIDE_LENSLET_) && (jLenslet<_N_SIDE_LENSLET_) )
+  if ( threads2lenslet(threadIdx, blockIdx, blockDim, 
+		       &u, &v, N_PX_CAMERA, 
+		       &iLenslet, &jLenslet, _N_SIDE_LENSLET_) )
     {
 
       M = N_PX_IMAGE/N_PX_CAMERA;
@@ -385,6 +396,7 @@ void imaging::info(void)
   printf(" . DFT sampling      : %4d\n",N_DFT);
   printf(" . imagelet sampling : %4d\n",N_PX_IMAGE);
   printf(" . frame sampling    : %4d\n",N_PX_CAMERA);
+  printf(" . source #          : %4d\n",N_SOURCE);
   printf("----------------------------------------------------\x1B[0m\n");
  
 }
@@ -403,7 +415,7 @@ void imaging::show_frame(char *filename)
   float *data;
   plotly_properties prop;
 
-  nbyte = sizeof(float)*N_PX_CAMERA*N_PX_CAMERA;
+  nbyte = sizeof(float) *N_PX_CAMERA*N_PX_CAMERA*N_LENSLET*N_SOURCE;
   HANDLE_ERROR( cudaHostAlloc( (void**)&data, nbyte, 
 			       cudaHostAllocDefault ) );
   HANDLE_ERROR( cudaMemcpy( data, d__frame,nbyte,
@@ -415,7 +427,10 @@ void imaging::show_frame(char *filename)
   //  sprintf(title,"RMS=%.2fnm",S.std(d__data,M,N_PX));
   prop.set("title","");
   prop.set("filename",filename);
-  prop.set("zdata",data,N_PX_CAMERA,N_PX_CAMERA);
+  prop.aspect_ratio = N_SOURCE;
+  prop.set("zdata",data,
+	   N_PX_CAMERA*_N_SIDE_LENSLET_,
+	   N_PX_CAMERA*_N_SIDE_LENSLET_*N_SOURCE);
   prop.set("colorscale","YIGnBu");
   imagesc(&prop); 
 
