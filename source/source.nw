@@ -458,17 +458,24 @@ void complex_amplitude::show_phase(char *filename)
 			    sizeof(float)*N_PX,
 			    cudaMemcpyDeviceToDevice ) );
 
-  S.setup();
-  alpha = 1E9;
-  CUBLAS_ERROR( cublasSscal(S.handle, N_PX, &alpha, d__data, 1) );
+    S.setup();
+    alpha = 1E9;
+    CUBLAS_ERROR( cublasSscal(S.handle, N_PX, &alpha, d__data, 1) );
 
-  piston = S.mean(d__data, M, N_PX);
+  if (M!=NULL) {
+    piston = S.mean(d__data, M, N_PX);
 
-  dim3 blockDim(256);
-  dim3 gridDim(N_PX/256+1);
-  remove_piston LLL gridDim,blockDim RRR (d__data, M->m, N_PX, piston);
+    dim3 blockDim(256);
+    dim3 gridDim(N_PX/256+1);
+    remove_piston LLL gridDim,blockDim RRR (d__data, M->m, N_PX, piston);
 
-  HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
+    sprintf(title,"RMS=%.2fnm",S.std(d__data,M,N_PX));
+    prop.set("title",title);
+  }
+    
+    S.cleanup();
+ 
+ HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
 			       cudaHostAllocDefault) );
   HANDLE_ERROR( cudaMemcpy( data, d__data, sizeof(float)*N_PX,
 			    cudaMemcpyDeviceToHost ) );
@@ -476,15 +483,12 @@ void complex_amplitude::show_phase(char *filename)
   prop.set("xtitle","X");
   prop.set("ytitle","Y");
   prop.set("ztitle","[nm]");
-  sprintf(title,"RMS=%.2fnm",S.std(d__data,M,N_PX));
-  prop.set("title",title);
   prop.set("filename",filename);
   int n = (int) sqrtf(N_PX);
   prop.set("zdata",data,n,n);
   prop.set("colorscale","Portland");
   imagesc(&prop); 
 
-  S.cleanup();
   HANDLE_ERROR( cudaFree( d__data ) );
   HANDLE_ERROR( cudaFreeHost( data ) );
 }

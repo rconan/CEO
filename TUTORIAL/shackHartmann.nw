@@ -18,13 +18,30 @@ The main function is:
 int main(int argc,char *argv[]) {
 cudaSetDevice(0);
 <<setup>>
+pixel_scale = 1E-6*gs.wavelength()/p/N_PX;
+c0 = 0.5*(wfs.N_PX_CAMERA-1);
+
 tid.tic();
+atm.get_phase_screen(&gs,p,N_PX,p,N_PX,0);
 wfs.propagate(&gs);
-cog.get_data(wfs.d__frame,wfs.N_PX_CAMERA);
+cog.get_data(wfs.d__frame,wfs.N_PX_CAMERA,c0,c0,pixel_scale);
+lmmse.estimation(&cog);
+phase_screen.add_phase(1,lmmse.d__phase_est);
 tid.toc();
+
+gs.wavefront.show_phase("Shack-Hartmann/wavefront");
 wfs.show_frame("Shack-Hartmann/frame");
 cog.show_centroids("Shack-Hartmann/centroids");
 cog.show_flux("Shack-Hartmann/flux");
+phase_screen.show_phase("Shack-Hartmann/recon. wavefront");
+
+atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&gs,0);
+lmmse.estimation(&cog);
+phase_screen.reset();
+phase_screen.add_phase(1,lmmse.d__phase_est);
+cog.show_centroids("Shack-Hartmann/geometric centroids");
+phase_screen.show_phase("Shack-Hartmann/geom. recon. wavefront");
+
 <<cleanup>>
 }
 @
@@ -52,6 +69,9 @@ The total number of pixel is given by
 int N_PX, N_PX2;
 N_PX  = N_SIDE_LENSLET*N_PX_LENSLET;
 N_PX2 = N_PX*N_PX;
+float p, d, pixel_scale, c0;
+p = 1.0/N_PX;
+d = 1.0/N_SIDE_LENSLET;
 @ 
 The guide star is defined with
 <<setup>>=
@@ -59,7 +79,7 @@ float zenith[] = {ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(
   azimuth[] = {0,2.*PI/6.,4.*PI/6.,6.*PI/6.,8.*PI/6.,10.*PI/6.,12.*PI/6.};
 source gs;
 gs.setup( zenith, azimuth, INFINITY, N_GS, N_PX2);
-gs.photometric_band = "R";
+gs.photometric_band = "K";
 <<cleanup>>=
 gs.cleanup();
 @ 
@@ -99,5 +119,23 @@ gs.wavefront.show_amplitude("Shack-Hartmann/amplitude",N_PX,N_PX*N_GS);
     amplitude[ij_PUPIL] = ((float) (kLenslet + 1)) + iSource*0.5;
   }
 }
-
-
+@
+The atmosphere model is created with:
+<<setup>>=
+atmosphere atm;
+atm.gmt_setup(10e-2,30);
+<<cleanup>>=
+atm.cleanup();
+@ 
+The wavefront is reconstructed from the centroids:
+<<setup>>=
+LMMSE lmmse;
+lmmse.setup(&atm,&gs,1,&gs,1,d,N_SIDE_LENSLET,"MINRES");
+<<cleanup>>=
+lmmse.cleanup();
+@ The reconstructed wavefront is saved in:
+<<setup>>=
+complex_amplitude phase_screen;
+phase_screen.setup((N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1));
+<<cleanup>>=
+phase_screen.cleanup();
