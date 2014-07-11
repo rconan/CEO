@@ -79,14 +79,14 @@ The parameters are:
 \begin{itemize}
 \item the linear size of the pupil in pixel [[N_PX_PUPIL]],
 \item the linear size of the discrete Fourier transform $[[N_DFT]]=2*[[N_PX_PUPIL]]$,
-\item the linear size of the lenslet array [[_N_SIDE_LENSLET_]],
+\item the linear size of the lenslet array [[N_SIDE_LENSLET]],
 \item the linear size of the imagelet [[N_PX_IMAGE]],
 \item the linear size of the frame [[N_PX_CAMERA]],
 \item the number of sources [[N_SOURCE]].
 \end{itemize}
 
 <<parameters>>=
-int N_PX_PUPIL, N_DFT, _N_SIDE_LENSLET_, N_LENSLET, 
+int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_LENSLET, 
   N_SOURCE, N_PX_IMAGE, N_PX_CAMERA, N_FRAME;
 cufftHandle plan;
 float2 *d__wave_PUPIL;
@@ -120,8 +120,8 @@ N_PX_PUPIL  = __N_PX_PUPIL;
 N_DFT       = DFT_osf*round_up_to_nhp2(N_PX_PUPIL);
 N_PX_IMAGE  = IMAGE_osf*N_PX_PUPIL;
 N_PX_CAMERA = CAMERA_osf*N_PX_IMAGE;
-_N_SIDE_LENSLET_ = __N_SIDE_LENSLET;
-N_LENSLET   = _N_SIDE_LENSLET_*_N_SIDE_LENSLET_;
+N_SIDE_LENSLET = __N_SIDE_LENSLET;
+N_LENSLET   = N_SIDE_LENSLET*N_SIDE_LENSLET;
 N_FRAME     = 0;
 printf("@(CEO)>imaging: Device memory allocation\n");
 int N_DFT_bytes = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
@@ -140,17 +140,17 @@ As we are considering only the case of imaging sources at infinity, the wavefron
 The propagation is computing with a call to the [[propagate]] routine:
 <<propagation>>=
 void imaging::propagate(source *src) {
-  dim3 gridDim(N_DFT*_N_SIDE_LENSLET_/16,N_DFT*_N_SIDE_LENSLET_/16,N_SOURCE);
+  dim3 gridDim(N_DFT*N_SIDE_LENSLET/16,N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
   dim3 blockDim(16,16);
   complexAmplitude LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT, 
 					      src->wavefront.amplitude, 
 					      src->wavefront.phase,
 					      src->wavenumber(),
 					      N_PX_PUPIL, N_PX_IMAGE,
-					      _N_SIDE_LENSLET_, N_SOURCE);
+					      N_SIDE_LENSLET, N_SOURCE);
   <<imaging CUFFT execution>>
   binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT, N_SOURCE,
-				     N_PX_IMAGE, N_PX_CAMERA, _N_SIDE_LENSLET_);
+				     N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
   ++N_FRAME;
 }
 @ 
@@ -186,7 +186,8 @@ void imaging::cleanup(void) {
 @ The camera frame is continuously accumulating images and can be reset with:
 <<reset>>=
 void imaging::reset(void) {
-  HANDLE_ERROR( cudaMemset(d__frame, 0, sizeof(float)*N_PX_CAMERA*N_PX_CAMERA*N_LENSLET*N_SOURCE) );
+  HANDLE_ERROR( cudaMemset(d__frame, 0, 
+			   sizeof(float)*N_PX_CAMERA*N_PX_CAMERA*N_LENSLET*N_SOURCE) );
 }
 
 @ The rank of the DFT [[NRANK]] is always 2 and the size of each DFT is $[[N_DFT]]\times[[N_DFT]]$.
@@ -197,7 +198,7 @@ The memory allocate for the plan is freed with
 <<imaging CUFFT plan destruction>>=
 cufftDestroy(plan);
 @
-The imaging routine is modeling the propagation of [[N_SOURCE]] sources through a square lenslet array of length $[[_N_SIDE_LENSLET_]]\geq 1$ to the lenslet focal plane.
+The imaging routine is modeling the propagation of [[N_SOURCE]] sources through a square lenslet array of length $[[N_SIDE_LENSLET]]\geq 1$ to the lenslet focal plane.
 For a given lenslet, the wave $\Psi=[[wave_PUPIL]]$ is sampled with $N_{pupil}\times N_{pupil}$ pixels.
 The complex amplitude in the image plane $\Psi^\prime=[[wave_IMAGE]]$ is given by
 \begin{equation}
@@ -221,7 +222,7 @@ and
 $$\Psi_{ij} \leftarrow \Psi_{ij}\exp\left[\iota\pi{(i+j)(1 - N_{DFT} + w) \over N_{DFT} }\right].$$
 
 When the pupil is mapped with a lenslet array, the complex amplitude of each lenslet must be stacked in a row.
-A pixel $(i_p,j_p)$ in the lenslet $(i_L,j_L)$ of a square lenslet array of side length [[_N_SIDE_LENSLET_]] is at coordinates $(i,j)$ in the lenslet array and at coordinates $(i^\prime,j^\prime)$ in the row of lenslets with 
+A pixel $(i_p,j_p)$ in the lenslet $(i_L,j_L)$ of a square lenslet array of side length [[N_SIDE_LENSLET]] is at coordinates $(i,j)$ in the lenslet array and at coordinates $(i^\prime,j^\prime)$ in the row of lenslets with 
 \begin{eqnarray}
   \label{eq:1}
   i &=& i_LN_{pupil} + i_p \\
@@ -233,14 +234,14 @@ and
   i^\prime &=& k_LN_{pupil} + i_p \\
   j^\prime &=& j_p
 \end{eqnarray}
-with $k_L= i_L[[_N_SIDE_LENSLET_]] + j_L$.
+with $k_L= i_L[[N_SIDE_LENSLET]] + j_L$.
 <<imaging complex amplitude>>=
 __global__ void complexAmplitude(float2 *wave_PUPIL, int N_DFT,
                                  float *wavefront_amplitude,
 				 float *wavefront_phase,
 				 float wavenumber,
 				 int N_PX_PUPIL, int N_PX_IMAGE,
-				 int _N_SIDE_LENSLET_, int N_SOURCE)
+				 int N_SIDE_LENSLET, int N_SOURCE)
 {
   int i, j, iLenslet, jLenslet, ij_PUPIL, ij_DFT, iSource;
   float c ,s, phasor;
@@ -253,16 +254,16 @@ __global__ void complexAmplitude(float2 *wave_PUPIL, int N_DFT,
   //  wave pixel coordinate (N_DFTLxN_SIDE_LENSLET)^2
   if ( threads2lenslet(threadIdx, blockIdx, blockDim, 
 		       &i, &j, N_DFT, 
-		       &iLenslet, &jLenslet, _N_SIDE_LENSLET_) ) {
+		       &iLenslet, &jLenslet, N_SIDE_LENSLET) ) {
 @ The linear index of the vertically concatenated lenslet array is computed
 <<imaging complex amplitude>>=
-    ij_DFT = lenslet2row(i,j,N_DFT,iLenslet,jLenslet,_N_SIDE_LENSLET_,iSource);
+    ij_DFT = lenslet2row(i,j,N_DFT,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
     if ((i<N_PX_PUPIL) && (j<N_PX_PUPIL))
       {
 @ The linear index in the square lenslet array is computed
 <<imaging complex amplitude>>=
-ij_PUPIL = lenslet2array(i,j,N_PX_PUPIL,iLenslet,jLenslet,_N_SIDE_LENSLET_,iSource,N_SOURCE);
-// ij_PUPIL += iSource*_N_SIDE_LENSLET_*_N_SIDE_LENSLET_*N_PX_PUPIL*N_PX_PUPIL;//*N_SOURCE;
+ij_PUPIL = lenslet2array(i,j,N_PX_PUPIL,iLenslet,jLenslet,N_SIDE_LENSLET,iSource,N_SOURCE);
+// ij_PUPIL += iSource*N_SIDE_LENSLET*N_SIDE_LENSLET*N_PX_PUPIL*N_PX_PUPIL;//*N_SOURCE;
 @ The phase shift is applied on the wavefront
 <<imaging complex amplitude>>=
         phasor = PI*(i+j)*(1-N_DFT + (N_PX_IMAGE & 1))/N_DFT;
@@ -312,7 +313,7 @@ ij_PUPIL = lenslet2array(i,j,N_PX_PUPIL,iLenslet,jLenslet,_N_SIDE_LENSLET_,iSour
 The imagelets are binned into framelets on the detector frame:
 <<binning>>=
 __global__ void binning(float *frame, const float2 *wave, int N_DFT, int N_SOURCE,
-			int N_PX_IMAGE, int N_PX_CAMERA, int _N_SIDE_LENSLET_)
+			int N_PX_IMAGE, int N_PX_CAMERA, int N_SIDE_LENSLET)
 {
   int u, v, iLenslet, jLenslet, ij_DFT, 
     M, offset, iPxL, jPxL, i, j, ij_CAM, ii, jj,iSource;
@@ -323,7 +324,7 @@ __global__ void binning(float *frame, const float2 *wave, int N_DFT, int N_SOURC
   // BINNING
   if ( threads2lenslet(threadIdx, blockIdx, blockDim, 
 		       &u, &v, N_PX_CAMERA, 
-		       &iLenslet, &jLenslet, _N_SIDE_LENSLET_) )
+		       &iLenslet, &jLenslet, N_SIDE_LENSLET) )
     {
 
       M = N_PX_IMAGE/N_PX_CAMERA;
@@ -344,14 +345,14 @@ __global__ void binning(float *frame, const float2 *wave, int N_DFT, int N_SOURC
       		if ( jPxL>=0 && jPxL<N_DFT)
       		  {
       		    ij_DFT = lenslet2row(iPxL,jPxL,N_DFT,
-					 iLenslet,jLenslet,_N_SIDE_LENSLET_,iSource);
+					 iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
       		    bin[ii][jj] += 
 		      wave[ij_DFT].x*wave[ij_DFT].x + wave[ij_DFT].y*wave[ij_DFT].y;
       		  }
       	      }
       	}
       ij_CAM = lenslet2array(u,v,N_PX_CAMERA,
-			     iLenslet,jLenslet,_N_SIDE_LENSLET_,iSource,N_SOURCE);
+			     iLenslet,jLenslet,N_SIDE_LENSLET,iSource,N_SOURCE);
       frame[ij_CAM] +=   bin[ii][jj]/(N_DFT*N_DFT);
     }
 
@@ -429,8 +430,8 @@ void imaging::show_frame(char *filename)
   prop.set("filename",filename);
   prop.aspect_ratio = N_SOURCE;
   prop.set("zdata",data,
-	   N_PX_CAMERA*_N_SIDE_LENSLET_,
-	   N_PX_CAMERA*_N_SIDE_LENSLET_*N_SOURCE);
+	   N_PX_CAMERA*N_SIDE_LENSLET,
+	   N_PX_CAMERA*N_SIDE_LENSLET*N_SOURCE);
   prop.set("colorscale","YIGnBu");
   imagesc(&prop); 
 

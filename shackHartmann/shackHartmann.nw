@@ -33,6 +33,7 @@ struct shackHartmann {
 	     int DFT_osf_, int N_PX_IMAGE, int BIN_IMAGE, int N_GS);
   void cleanup(void);
   void analyze(source *gs);
+  void calibrate(source *src, float threshold);
 
 };
 
@@ -45,8 +46,11 @@ struct shackHartmann {
 <<shackHartmann.cu>>=
 #include "shackHartmann.h"
 
+<<valid lenslet>>
+
 <<setup>>
 <<cleanup>>
+<<WFS calibration>>
 <<wavefront processing>>
 
 @ 
@@ -55,12 +59,24 @@ struct shackHartmann {
 
 The parameters of the [[shackHartmann]] structure are:
 \begin{itemize}
-\item the reference slopes:
+\item the total number of lenslets:
+<<parameters>>=
+int N_LENSLET;
+@ \item the total number of actuators in the Fried geometry:
+<<parameters>>=
+int N_ACTUATOR;
+@ \item the total number of slopes:
+<<parameters>>=
+int N_SLOPE;
+@ \item the reference slopes:
 <<parameters>>=
 float *d__c0, *d__cx0, *d__cy0;
 @ \item the valid lenslet mask:
 <<parameters>>=
 mask valid_lenslet;
+@ \item the valid actuator mask for a Fried geometry:
+<<parameters>>=
+mask valid_actuator;
 @ \item the imager which combines a lenslet array with a camera:
 <<parameters>>=
 imaging optics_relay;
@@ -76,6 +92,9 @@ float lenslet_pitch;
 @ \item the pixel scale:
 <<parameters>>=
 float pixel_scale;
+@ \item the lenslet intensity threshold:
+<<parameters>>=
+float intensity_threshold;
 @ \end{itemize}
 
 \subsection{Functions}
@@ -92,13 +111,22 @@ The [[shackHartmann]] structure is initialized with:
 \item the pixel size of the image plane [[N_PX_IMAGE]],
 \item the binning factor of the image plane [[BIN_IMAGE]]$\geq 1$,
 \item the number of guide stars [[N_GS]].
-\end{itemize}@
+\end{itemize}
 <<setup>>=
 void shackHartmann::setup(int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
 			  int DFT_osf_, int N_PX_IMAGE, int BIN_IMAGE, int N_GS)
 {
   lenslet_pitch = d;
   DFT_osf = DFT_osf_;
+  N_LENSLET  = N_SIDE_LENSLET*N_SIDE_LENSLET;
+  N_ACTUATOR = (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1);
+  N_SLOPE   = N_LENSLET*N_GS*2;
+  HANDLE_ERROR( cudaMalloc( (void**)&d__c0 , sizeof(float) *N_SLOPE ) );
+  HANDLE_ERROR( cudaMemset( d__c0, 0, sizeof(float)*N_SLOPE ) ); 
+  d__cx0 = d__c0;
+  d__cy0 = d__c0 + N_LENSLET;
+  valid_lenslet.setup(N_LENSLET);
+  valid_actuator.setup(N_ACTUATOR);
   optics_relay.setup(N_PX_LENSLET, N_SIDE_LENSLET, DFT_osf,
 	    (float)N_PX_IMAGE/N_PX_LENSLET, 
 	    1.0/BIN_IMAGE, N_GS);
@@ -109,19 +137,103 @@ void shackHartmann::cleanup(void)
 {
   fprintf(stderr,"@(CEO)>shackHartmann: freeing memory!\n");
   fprintf(stderr," |-");
+  valid_lenslet.cleanup();
+  fprintf(stderr," |-");
+  valid_actuator.cleanup();
+  fprintf(stderr," |-");
   optics_relay.cleanup();
   fprintf(stderr," |-");
   data_proc.cleanup();
 }
+@
+The wavefront sensor need first to be calibrated with a reference calibration source.
+<<WFS calibration source propagation>>=
+optics_relay.propagate(src);
 @ 
+The slopes derived from the calibration wavefront will be set a the reference slopes.
+<<WFS calibration reference slopes>>=
+pixel_scale = 1E-6*src->wavelength()/(lenslet_pitch*DFT_osf);
+data_proc.get_data(optics_relay.d__frame,optics_relay.N_PX_CAMERA);
+HANDLE_ERROR( cudaMemcpy( d__c0, data_proc.d__c, N_SLOPE*sizeof(float), 
+			  cudaMemcpyDeviceToDevice ) ); 
+HANDLE_ERROR( cudaMemset( data_proc.d__c, 0, sizeof(float)*N_SLOPE ) ); 
+@
+The total intensity per lenslet is used to compute the valid lenslet.
+The valid lenslet and actuator masks are first set to 0. 
+<<WFS calibration valid lenslet>>=
+HANDLE_ERROR( cudaMemset(valid_lenslet.m,  0, sizeof(char)*N_LENSLET  ) );
+HANDLE_ERROR( cudaMemset(valid_actuator.m, 0, sizeof(char)*N_ACTUATOR ) );
+@
+The maximum lenslet intensity is sought:
+<<WFS calibration valid lenslet>>=
+cublasHandle_t handle;
+cublasCreate(&handle);
+int idx;
+CUBLAS_ERROR( cublasIsamax(handle, N_LENSLET, data_proc.d__mass, 1, &idx) );
+cublasDestroy(handle);
+@
+The masks are computed with the [[set_valid_lenslet]] kernel:
+<<WFS calibration valid lenslet>>=
+int NL = optics_relay.N_SIDE_LENSLET;
+dim3 blockDim(16,16);
+dim3 gridDim(NL/16+1,NL/16+1);
+set_valid_lenslet LLL gridDim,blockDim RRR (valid_lenslet.m, valid_actuator.m, 
+                                            NL, data_proc.d__mass,
+                                            idx, threshold);
+@ with the kernel:
+<<valid lenslet>>=
+__global__ void set_valid_lenslet(char *lenslet_mask, char *actuator_mask, 
+				    int NL, float *lenslet_intensity_map,
+				    int max_idx, float threshold)
+{
+  int iL, jL, kL, kA;
+  // lenslet index
+  iL = blockIdx.x * blockDim.x + threadIdx.x;
+  jL = blockIdx.y * blockDim.y + threadIdx.y;
+  kL = iL*NL + jL;
+  float max_intensity_threshold;
+  max_intensity_threshold = lenslet_intensity_map[max_idx];
+  max_intensity_threshold *= threshold;
+  if ( (iL<NL) && (jL<NL) )
+    {
+      if (lenslet_intensity_map[kL]>=max_intensity_threshold)
+	{
+	
+	  lenslet_mask[kL] = 1;
+	
+	  kA = lenset2actuator(iL,jL,NL, 1, 1);     
+	  actuator_mask[kA] = 1;
+	  kA = lenset2actuator(iL,jL,NL,-1, 1);     
+	  actuator_mask[kA] = 1;
+	  kA = lenset2actuator(iL,jL,NL,-1,-1);     
+	  actuator_mask[kA] = 1;
+	  kA = lenset2actuator(iL,jL,NL, 1,-1);     
+	  actuator_mask[kA] = 1;
+	
+	}
+      else
+	lenslet_intensity_map[kL] = 0.0;
+    }
+}
+@
+The WFS calibration routine is:
+<<WFS calibration>>= 
+void shackHartmann::calibrate(source *src, float threshold) {
+  <<WFS calibration source propagation>>
+  <<WFS calibration reference slopes>>
+  <<WFS calibration valid lenslet>>
+  optics_relay.reset();
+}
+
+@
 The wavefront of the guide star is processed with:
 <<wavefront processing>>=
 void shackHartmann::analyze(source *gs) {
   pixel_scale = 1E-6*gs->wavelength()/(lenslet_pitch*DFT_osf);
   optics_relay.propagate(gs);
-  float c0;
-  c0 = 0.5*(optics_relay.N_PX_CAMERA-1);
-  data_proc.get_data(optics_relay.d__frame,optics_relay.N_PX_CAMERA,c0,c0,pixel_scale);
+  data_proc.get_data(optics_relay.d__frame,optics_relay.N_PX_CAMERA,
+		     d__cx0,d__cy0,pixel_scale,
+		     valid_lenslet.m);
 }
 @ 
 \subsubsection{Input/Output}
@@ -147,7 +259,12 @@ int main(int argc,char *argv[]) {
 cudaSetDevice(0);
 <<test setup>>
 pixel_scale = 1E-6*gs.wavelength()/d/2;
+printf("pixel scale=%.2E\n",pixel_scale);
 c0 = 0.5*(wfs.optics_relay.N_PX_CAMERA-1);
+
+wfs.calibrate(&gs,0.5);
+wfs.analyze(&gs);
+wfs.optics_relay.reset();
 
 tid.tic();
 atm.get_phase_screen(&gs,p,N_PX,p,N_PX,0);
@@ -158,12 +275,6 @@ gs_dm.wavefront.masked();
 tid.toc("phase screen");
 tid.tic();
 wfs.analyze(&gs);
-/*
-wfs.optics_relay.propagate(&gs);
-tid.toc("propagation");
-tid.tic();
-wfs.data_proc.get_data(wfs.optics_relay.d__frame,wfs.optics_relay.N_PX_CAMERA,c0,c0,pixel_scale);
-*/
 tid.toc("centroiding");
 tid.tic();
 lmmse.estimation(&wfs.data_proc);

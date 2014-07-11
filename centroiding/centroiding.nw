@@ -26,7 +26,11 @@ struct centroiding {
    
   void get_data(imaging *wfs);
   void get_data(float *frame, int N);
-  void get_data(float *frame, int N, float cx0, float cy0, float units);
+  void get_data(float *frame, int N, 
+		float cx0, float cy0, float units);
+  void get_data(float *frame, int N, 
+		float *cx0, float *cy0, float units,
+		char *valid_lenset);
 
   void show_centroids(char *filename);
   void show_flux(char *filename);
@@ -41,7 +45,8 @@ struct centroiding {
 <<centroiding.cu>>=
 #include "centroiding.h"
 
-<<centroiding>>
+<<centroiding I>>
+<<centroiding II>>
 
 <<setup>>
 
@@ -50,6 +55,7 @@ struct centroiding {
 <<data Ia>>
 <<data Ib>>
 <<data II>>
+<<data III>>
 
 <<display centroids>>
 <<display flux>>
@@ -134,65 +140,40 @@ void centroiding::get_data(float *frame, int N_PX_CAMERA, float cx0, float cy0, 
      _N_SIDE_LENSLET_, N_SOURCE,
      N_PX_CAMERA);
 }
+<<data III>>=
+void centroiding::get_data(float *frame, int N_PX_CAMERA, 
+			   float *cx0, float *cy0, float units,
+			   char *valid_lenslet) {
+  dim3 blockGrid(_N_SIDE_LENSLET_,_N_SIDE_LENSLET_,N_SOURCE);
+  dim3 threadGrid(N_PX_CAMERA,1);
+  int N_PX_CAMERA_BYTE = sizeof(float)*N_PX_CAMERA*N_PX_CAMERA*3;
+  centroidingEngineGT LLL blockGrid , threadGrid , N_PX_CAMERA_BYTE RRR 
+    (d__cx, d__cy,
+     d__mass, frame,
+     cx0, cy0, units,
+     _N_SIDE_LENSLET_, N_SOURCE,
+     N_PX_CAMERA, valid_lenslet);
+}
 @ 
 The framelets are processed with the kernel:
-<<centroiding>>=
+<<centroiding I>>=
 __global__ void centroidingEngine(float *cx, float *cy,
 				  float *flux, const float *frame,
 				  float cx0, float cy0, float units,
 				  int _N_SIDE_LENSLET_, int N_SOURCE,
 				  int N_PX_CAMERA)
 {
-  int u, k, kp, i, ij, ij_inc, iLenslet,jLenslet, N_PX_CAMERA2, iSource, kSource;
-  float *buffer0, *buffer1, *buffer2;
-  u = threadIdx.x;
-  iLenslet = blockIdx.x;
-  jLenslet = blockIdx.y;
-  iSource  = blockIdx.z;
-  /* kLenslet = iLenslet*NSIDE_LENSLET + jLenslet; */
-  
-  extern __shared__ float shared[];
-  N_PX_CAMERA2 = N_PX_CAMERA*N_PX_CAMERA;
-  buffer0 = shared;
-  buffer1 = shared + N_PX_CAMERA2;
-  buffer2 = shared + N_PX_CAMERA2*2;
+  <<centroiding task 1>>
+  <<centroiding task 2>>
 
   // CENTROIDING
-  if (u<N_PX_CAMERA)
-    {
-      buffer0[u] = buffer1[u] = buffer2[u] = 0.0;
-      // ij = iLenslet*N_PX_CAMERA + u;
-      // ij *= _N_SIDE_LENSLET_*N_PX_CAMERA*N_SOURCE;
-      // ij += jLenslet*N_PX_CAMERA;
-      //      ij = (u+k*N_PX_CAMERA)*N_PX_CAMERA;
-      ij = lenslet2array(u, 0, N_PX_CAMERA, 
-			 iLenslet, jLenslet, _N_SIDE_LENSLET_, 
-			 iSource, N_SOURCE);
-      for (i=0;i<N_PX_CAMERA;i++)
-	{
-	  ij_inc = ij + i;
-	  buffer0[u]  += frame[ij_inc];
-	  buffer1[u]  += u*frame[ij_inc];
-	  buffer2[u]  += i*frame[ij_inc];
-	}
-    }
-  
+  <<centroiding task 3>>  
   __syncthreads();
 
   if (u<1)
   {
-    k = kp = blockIdx.x*_N_SIDE_LENSLET_ + blockIdx.y;
-    kSource = iSource*_N_SIDE_LENSLET_*_N_SIDE_LENSLET_;
-    k  += 2*kSource;
-    kp +=   kSource;
-    flux[kp]  = cx[k] = cy[k] = 0.0;
-    for (i=0;i<N_PX_CAMERA;i++)
-      {
-	flux[kp] += buffer0[i];
-	cx[k]   += buffer1[i];
-	cy[k]   += buffer2[i];
-      }
-    if (flux[kp]>0)
+    <<centroiding task 4>>
+    if (flux[kp]>0) // NORMALIZATION
       {
 	cx[k] /= flux[kp];
 	cx[k] -= cx0;
@@ -203,7 +184,88 @@ __global__ void centroidingEngine(float *cx, float *cy,
       }
   }
 }
+<<centroiding II>>=
+__global__ void centroidingEngineGT(float *cx, float *cy,
+float *flux, const float *frame,
+float *cx0, float *cy0, float units,
+int _N_SIDE_LENSLET_, int N_SOURCE,
+int N_PX_CAMERA, char *valid_lenslet)
+{
+  <<centroiding task 1>>
+  int kLenslet;
+  kLenslet = iLenslet*_N_SIDE_LENSLET_ + jLenslet;
+  if (valid_lenslet[kLenslet]) 
+  {
+    <<centroiding task 2>>
+
+    // CENTROIDING
+    <<centroiding task 3>>  
+    __syncthreads();
+
+    if (u<1)
+    {
+      <<centroiding task 4>>
+      if (flux[kp]>0) // NORMALIZATION
+      {
+	cx[k] /= flux[kp];
+	cx[k] -= cx0[k];
+	cx[k] *= units;
+	cy[k] /= flux[kp];
+	cy[k] -= cy0[k];
+	cy[k] *= units;
+      }
+    }
+  }
+}
 @ 
+The centroiding engine is performing the following tasks:
+\begin{enumerate}
+\item variables definition and allocation
+<<centroiding task 1>>=
+int u, k, kp, i, ij, ij_inc, iLenslet,jLenslet, N_PX_CAMERA2, iSource, kSource;
+float *buffer0, *buffer1, *buffer2;
+u = threadIdx.x;
+iLenslet = blockIdx.x;
+jLenslet = blockIdx.y;
+iSource  = blockIdx.z;
+@ \item shared memory allocation
+<<centroiding task 2>>=
+extern __shared__ float shared[];
+N_PX_CAMERA2 = N_PX_CAMERA*N_PX_CAMERA;
+buffer0 = shared;
+buffer1 = shared + N_PX_CAMERA2;
+buffer2 = shared + N_PX_CAMERA2*2;
+@ \item summing pixels along rows
+<<centroiding task 3>>=
+if (u<N_PX_CAMERA)
+{
+  buffer0[u] = buffer1[u] = buffer2[u] = 0.0;
+  ij = lenslet2array(u, 0, N_PX_CAMERA, 
+  iLenslet, jLenslet, _N_SIDE_LENSLET_, 
+  iSource, N_SOURCE);
+  for (i=0;i<N_PX_CAMERA;i++)
+  {
+    ij_inc = ij + i;
+    buffer0[u]  += frame[ij_inc];
+    buffer1[u]  += u*frame[ij_inc];
+    buffer2[u]  += i*frame[ij_inc];
+  }
+}
+@ \item summing pixels along columns
+<<centroiding task 4>>=
+k = kp = blockIdx.x*_N_SIDE_LENSLET_ + blockIdx.y;
+kSource = iSource*_N_SIDE_LENSLET_*_N_SIDE_LENSLET_;
+k  += 2*kSource;
+kp +=   kSource;
+flux[kp]  = cx[k] = cy[k] = 0.0;
+for (i=0;i<N_PX_CAMERA;i++)
+{
+  flux[kp] += buffer0[i];
+  cx[k]   += buffer1[i];
+  cy[k]   += buffer2[i];
+}
+@ \end{enumerate}
+ 
 \subsubsection{Input/Output}
 \label{sec:inputoutput}
 
@@ -230,7 +292,7 @@ void centroiding::show_centroids(char *filename)
 
   prop.set("ztitle","[arcsec]");
   prop.set("filename",filename);
-  prop.aspect_ratio = N_SOURCE*2;
+  prop.aspect_ratio = 0.5/N_SOURCE;
   prop.set("zdata",data,
 	   _N_SIDE_LENSLET_*N_SOURCE*2,
 	   _N_SIDE_LENSLET_);
