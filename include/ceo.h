@@ -21,6 +21,11 @@
 #include "centroiding.h"
 #endif
 
+#ifndef __SHACKHARTMANN__
+#include "shackHartmann.h"
+#define __SHACKHARTMANN__
+#endif
+
 #ifndef __AASTATS_H__
 #include "aaStats.h"
 #endif

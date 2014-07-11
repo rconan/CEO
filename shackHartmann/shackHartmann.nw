@@ -1,0 +1,313 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+@
+\subsection{The files}
+\label{sec:files}
+
+\subsubsection{Header}
+\label{sec:header}
+
+<<shackHartmann.h>>=
+#ifndef __SHACKHARTMANN__
+#define __SHACKHARTMANN__
+
+#ifndef __UTILITIES_H__
+#include "utilities.h"
+#endif
+
+#ifndef __SOURCE_H__
+#include "source.h"
+#endif
+
+#ifndef __IMAGING_H__
+#include "imaging.h"
+#endif
+
+#ifndef __CENTROIDING_H__
+#include "centroiding.h"
+#endif
+
+struct shackHartmann {
+
+  <<parameters>>
+  void setup(int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
+	     int DFT_osf_, int N_PX_IMAGE, int BIN_IMAGE, int N_GS);
+  void cleanup(void);
+  void analyze(source *gs);
+
+};
+
+#endif // __SHACKHARTMANN__
+
+@ 
+\subsubsection{Source}
+\label{sec:source}
+
+<<shackHartmann.cu>>=
+#include "shackHartmann.h"
+
+<<setup>>
+<<cleanup>>
+<<wavefront processing>>
+
+@ 
+\subsection{Parameters}
+\label{sec:parameters}
+
+The parameters of the [[shackHartmann]] structure are:
+\begin{itemize}
+\item the reference slopes:
+<<parameters>>=
+float *d__c0, *d__cx0, *d__cy0;
+@ \item the valid lenslet mask:
+<<parameters>>=
+mask valid_lenslet;
+@ \item the imager which combines a lenslet array with a camera:
+<<parameters>>=
+imaging optics_relay;
+@ \item the data processing algorithm:
+<<parameters>>=
+centroiding data_proc;
+@ \item the oversampling factor of the DFT [[DFT_osf]]:
+<<parameters>>=
+int DFT_osf;
+@ \item the lenslet pitch:
+<<parameters>>=
+float lenslet_pitch;
+@ \item the pixel scale:
+<<parameters>>=
+float pixel_scale;
+@ \end{itemize}
+
+\subsection{Functions}
+\label{sec:functions}
+
+\subsubsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
+The [[shackHartmann]] structure is initialized with:
+\begin{itemize}
+\item the linear size of the lenslet array [[N_SIDE_LENSLET]],
+\item the number of pixels per lenslet [[N_PX_LENSLET]],
+\item the oversampling factor of the DFT [[DFT_osf]]$\geq 2$,
+\item the pixel size of the image plane [[N_PX_IMAGE]],
+\item the binning factor of the image plane [[BIN_IMAGE]]$\geq 1$,
+\item the number of guide stars [[N_GS]].
+\end{itemize}@
+<<setup>>=
+void shackHartmann::setup(int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
+			  int DFT_osf_, int N_PX_IMAGE, int BIN_IMAGE, int N_GS)
+{
+  lenslet_pitch = d;
+  DFT_osf = DFT_osf_;
+  optics_relay.setup(N_PX_LENSLET, N_SIDE_LENSLET, DFT_osf,
+	    (float)N_PX_IMAGE/N_PX_LENSLET, 
+	    1.0/BIN_IMAGE, N_GS);
+  data_proc.setup(N_SIDE_LENSLET, N_GS);
+}
+<<cleanup>>=
+void shackHartmann::cleanup(void)
+{
+  fprintf(stderr,"@(CEO)>shackHartmann: freeing memory!\n");
+  fprintf(stderr," |-");
+  optics_relay.cleanup();
+  fprintf(stderr," |-");
+  data_proc.cleanup();
+}
+@ 
+The wavefront of the guide star is processed with:
+<<wavefront processing>>=
+void shackHartmann::analyze(source *gs) {
+  pixel_scale = 1E-6*gs->wavelength()/(lenslet_pitch*DFT_osf);
+  optics_relay.propagate(gs);
+  float c0;
+  c0 = 0.5*(optics_relay.N_PX_CAMERA-1);
+  data_proc.get_data(optics_relay.d__frame,optics_relay.N_PX_CAMERA,c0,c0,pixel_scale);
+}
+@ 
+\subsubsection{Input/Output}
+\label{sec:inputoutput}
+
+\subsection{Tests}
+\label{sec:tests}
+
+In this section, the generation of the imagelets and slopes of a Shack--Hartmann WFS are described.
+
+All CEO programs must include the following headers which also contains the headers for all the CEO library modules.
+<<main header>>=
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+
+@
+The main function is:
+<<shackHartmann.bin>>=
+<<main header>>
+<<square tiled geometry>>
+int main(int argc,char *argv[]) {
+cudaSetDevice(0);
+<<test setup>>
+pixel_scale = 1E-6*gs.wavelength()/d/2;
+c0 = 0.5*(wfs.optics_relay.N_PX_CAMERA-1);
+
+tid.tic();
+atm.get_phase_screen(&gs,p,N_PX,p,N_PX,0);
+atm.get_phase_screen(&gs_dm,d,N_ACTUATOR,d,N_ACTUATOR,0);
+gs_dm.wavefront.M = &DM_mask;
+phase_screen.M = &DM_mask;
+gs_dm.wavefront.masked();
+tid.toc("phase screen");
+tid.tic();
+wfs.analyze(&gs);
+/*
+wfs.optics_relay.propagate(&gs);
+tid.toc("propagation");
+tid.tic();
+wfs.data_proc.get_data(wfs.optics_relay.d__frame,wfs.optics_relay.N_PX_CAMERA,c0,c0,pixel_scale);
+*/
+tid.toc("centroiding");
+tid.tic();
+lmmse.estimation(&wfs.data_proc);
+tid.toc("estimation");
+phase_screen.add_phase(1,lmmse.d__phase_est);
+phase_screen.add_phase(-1,gs_dm.wavefront.phase);
+
+gs.wavefront.show_phase("Shack-Hartmann/wavefront");
+gs_dm.wavefront.show_phase("Shack-Hartmann/wavefront low res.");
+wfs.optics_relay.show_frame("Shack-Hartmann/frame");
+wfs.data_proc.show_centroids("Shack-Hartmann/centroids");
+wfs.data_proc.show_flux("Shack-Hartmann/flux");
+phase_screen.show_phase("Shack-Hartmann/recon. wavefront");
+
+atm.get_phase_screen_gradient(&wfs.data_proc,N_SIDE_LENSLET,d,&gs,0);
+lmmse.estimation(&wfs.data_proc);
+phase_screen.reset();
+phase_screen.add_phase(1,lmmse.d__phase_est);
+phase_screen.add_phase(-1,gs_dm.wavefront.phase);
+//phase_screen.add_phase(-1,gs_dm.wavefront.phase);
+wfs.data_proc.show_centroids("Shack-Hartmann/geometric centroids");
+phase_screen.show_phase("Shack-Hartmann/geom. recon. wavefront");
+
+<<test cleanup>>
+}
+@
+The input parameters are
+\begin{itemize}
+\item the size of the lenslet array [[N_SIDE_LENSLET]]$\times$[[N_SIDE_LENSLET]],
+<<test setup>>=
+int N_SIDE_LENSLET, N_ACTUATOR, N_ACTUATOR2;
+N_SIDE_LENSLET = atoi( argv[1] );
+N_ACTUATOR     = N_SIDE_LENSLET + 1;
+N_ACTUATOR2    = N_ACTUATOR*N_ACTUATOR;
+printf("__ SHACK-HARTMANN __\n");
+printf(" . %dX%d lenslets: \n", N_SIDE_LENSLET, N_SIDE_LENSLET);
+@ \item the number of pixel per lenslet [[N_PX_LENSLET]]$\times$[[N_PX_LENSLET]]
+<<test setup>>=
+int N_PX_LENSLET;
+N_PX_LENSLET = atoi( argv[2] );
+printf(" . %dX%d pixels per lenslet: \n", N_PX_LENSLET, N_PX_LENSLET);
+@ \item the number of sources,
+<<test setup>>=
+int N_GS;
+N_GS = atoi( argv[3] );
+printf(" . source #: %d\n", N_GS);
+@ \end{itemize}
+The total number of pixel is given by
+<<test setup>>=
+int N_PX, N_PX2;
+N_PX  = N_SIDE_LENSLET*N_PX_LENSLET;
+N_PX2 = N_PX*N_PX;
+float p, d, pixel_scale, c0;
+p = 1.0/N_PX;
+d = 1.0/N_SIDE_LENSLET;
+@ 
+The guide star is defined with
+<<test setup>>=
+float zenith[] = {ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30)},
+  azimuth[] = {0,2.*PI/6.,4.*PI/6.,6.*PI/6.,8.*PI/6.,10.*PI/6.,12.*PI/6.};
+source gs;
+gs.setup( zenith, azimuth, INFINITY, N_GS, N_PX2);
+gs.photometric_band = "K";
+<<test cleanup>>=
+gs.cleanup();
+@ 
+The telescope pupil is defined with the [[mask]] structure:
+<<test setup>>=
+mask telescope;
+telescope.setup_circular(N_PX);
+gs.wavefront.masked(&telescope);
+<<test cleanup>>=
+telescope.cleanup();
+@ 
+The wavefront sampled on the actuators location is from the following guide star:
+<<test setup>>=
+source gs_dm;
+gs_dm.setup( zenith, azimuth, INFINITY, N_GS, N_ACTUATOR2);
+gs_dm.photometric_band = "K";
+<<test cleanup>>=
+gs_dm.cleanup();
+@ 
+The wavefront sensor is defined with:
+<<test setup>>=
+shackHartmann wfs;
+wfs.setup(N_SIDE_LENSLET,N_PX_LENSLET,d,2,N_PX_LENSLET,1,N_GS);
+<<test cleanup>>=
+wfs.cleanup();
+@ 
+The timing is done with the [[stopwatch]] structure:
+<<test setup>>=
+stopwatch tid;
+@ 
+The square pupil is made of tiles [[N_PX_LENSLET]]$\times$[[N_PX_LENSLET]] pixels with intensity equal to lenslet index
+<<setup opt-out>>=
+dim3 blockDim(16,16);
+dim3 gridDim(1+N_PX_LENSLET*N_SIDE_LENSLET/16,1+N_PX_LENSLET*N_SIDE_LENSLET/16,N_GS);
+squareTiledPupil LLL gridDim,blockDim RRR (gs.wavefront.amplitude, N_PX_LENSLET, N_SIDE_LENSLET, N_GS);
+gs.wavefront.show_amplitude("Shack-Hartmann/amplitude",N_PX,N_PX*N_GS);
+<<square tiled geometry>>=
+  __global__ void squareTiledPupil(float* amplitude, const int N_PX_LENSLET, const int N_SIDE_LENSLET, const int N_GS) {
+  int i, j, iLenslet, jLenslet, ij_PUPIL, iSource, kLenslet;
+  iSource = blockIdx.z;
+  if ( threads2lenslet(threadIdx, blockIdx, blockDim, 
+		       &i, &j, N_PX_LENSLET, 
+		       &iLenslet, &jLenslet, N_SIDE_LENSLET) ) {
+    ij_PUPIL = lenslet2array(i,j,N_PX_LENSLET,iLenslet,jLenslet,N_SIDE_LENSLET,iSource,N_GS);
+    kLenslet = iLenslet*N_SIDE_LENSLET + jLenslet;
+    amplitude[ij_PUPIL] = ((float) (kLenslet + 1)) + iSource*0.5;
+  }
+}
+@
+The atmosphere model is created with:
+<<test setup>>=
+atmosphere atm;
+atm.gmt_setup(10e-2,30);
+<<test cleanup>>=
+atm.cleanup();
+@ The reconstructed wavefront is saved in:
+<<test setup>>=
+complex_amplitude phase_screen;
+phase_screen.setup((N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1));
+<<test cleanup>>=
+phase_screen.cleanup();
+@ The DM mask:
+<<test setup>>=
+mask DM_mask;
+DM_mask.setup( (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1) );
+<<test cleanup>>=
+DM_mask.cleanup();
+@ 
+The Fried geometry for a circular pupil with the intensity [[threshold]] is enforced::
+<<test setup>>=
+float threshold = 0.5;
+wfs.data_proc.MASK_SET = fried_geometry_setup(wfs.data_proc.lenslet_mask, DM_mask.m, 
+				    N_SIDE_LENSLET, 16, threshold);
+@ 
+The filtering properties associated with the pupil are set with:
+<<test setup>>=
+DM_mask.set_filter();
+@ 
+The wavefront is reconstructed from the centroids:
+<<test setup>>=
+LMMSE lmmse;
+lmmse.setup(&atm,&gs,1,&gs,1,d,N_SIDE_LENSLET,&DM_mask,"MINRES");
+<<test cleanup>>=
+lmmse.cleanup();

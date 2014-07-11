@@ -10,42 +10,54 @@ All CEO programs must include the following headers which also contains the head
 #ifndef __CEO_H__
 #include "ceo.h"
 #endif
+
 @
 The main function is:
-<<shackHartmann.bin>>=
+<<shackHartmannSCAO.bin>>=
 <<main header>>
 <<square tiled geometry>>
 int main(int argc,char *argv[]) {
 cudaSetDevice(0);
 <<setup>>
 pixel_scale = 1E-6*gs.wavelength()/d/2;
-c0 = 0.5*(wfs.N_PX_CAMERA-1);
+c0 = 0.5*(wfs.optics_relay.N_PX_CAMERA-1);
 
 tid.tic();
 atm.get_phase_screen(&gs,p,N_PX,p,N_PX,0);
+atm.get_phase_screen(&gs_dm,d,N_ACTUATOR,d,N_ACTUATOR,0);
+gs_dm.wavefront.M = &DM_mask;
+phase_screen.M = &DM_mask;
+gs_dm.wavefront.masked();
 tid.toc("phase screen");
 tid.tic();
-wfs.propagate(&gs);
+wfs.analyze(&gs);
+/*
+wfs.optics_relay.propagate(&gs);
 tid.toc("propagation");
 tid.tic();
-cog.get_data(wfs.d__frame,wfs.N_PX_CAMERA,c0,c0,pixel_scale);
+wfs.data_proc.get_data(wfs.optics_relay.d__frame,wfs.optics_relay.N_PX_CAMERA,c0,c0,pixel_scale);
+*/
 tid.toc("centroiding");
 tid.tic();
-lmmse.estimation(&cog);
+lmmse.estimation(&wfs.data_proc);
 tid.toc("estimation");
 phase_screen.add_phase(1,lmmse.d__phase_est);
+phase_screen.add_phase(-1,gs_dm.wavefront.phase);
 
 gs.wavefront.show_phase("Shack-Hartmann/wavefront");
-wfs.show_frame("Shack-Hartmann/frame");
-cog.show_centroids("Shack-Hartmann/centroids");
-cog.show_flux("Shack-Hartmann/flux");
+gs_dm.wavefront.show_phase("Shack-Hartmann/wavefront low res.");
+wfs.optics_relay.show_frame("Shack-Hartmann/frame");
+wfs.data_proc.show_centroids("Shack-Hartmann/centroids");
+wfs.data_proc.show_flux("Shack-Hartmann/flux");
 phase_screen.show_phase("Shack-Hartmann/recon. wavefront");
 
-atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&gs,0);
-lmmse.estimation(&cog);
+atm.get_phase_screen_gradient(&wfs.data_proc,N_SIDE_LENSLET,d,&gs,0);
+lmmse.estimation(&wfs.data_proc);
 phase_screen.reset();
 phase_screen.add_phase(1,lmmse.d__phase_est);
-cog.show_centroids("Shack-Hartmann/geometric centroids");
+phase_screen.add_phase(-1,gs_dm.wavefront.phase);
+//phase_screen.add_phase(-1,gs_dm.wavefront.phase);
+wfs.data_proc.show_centroids("Shack-Hartmann/geometric centroids");
 phase_screen.show_phase("Shack-Hartmann/geom. recon. wavefront");
 
 <<cleanup>>
@@ -55,8 +67,10 @@ The input parameters are
 \begin{itemize}
 \item the size of the lenslet array [[N_SIDE_LENSLET]]$\times$[[N_SIDE_LENSLET]],
 <<setup>>=
-int N_SIDE_LENSLET;
+int N_SIDE_LENSLET, N_ACTUATOR, N_ACTUATOR2;
 N_SIDE_LENSLET = atoi( argv[1] );
+N_ACTUATOR     = N_SIDE_LENSLET + 1;
+N_ACTUATOR2    = N_ACTUATOR*N_ACTUATOR;
 printf("__ SHACK-HARTMANN __\n");
 printf(" . %dX%d lenslets: \n", N_SIDE_LENSLET, N_SIDE_LENSLET);
 @ \item the number of pixel per lenslet [[N_PX_LENSLET]]$\times$[[N_PX_LENSLET]]
@@ -89,19 +103,28 @@ gs.photometric_band = "K";
 <<cleanup>>=
 gs.cleanup();
 @ 
-The wavefront sensor is defined with the [[imaging]] structure:
+The telescope pupil is defined with the [[mask]] structure:
 <<setup>>=
-imaging wfs;
-wfs.setup(N_PX_LENSLET,N_SIDE_LENSLET,2,1,1,N_GS);
+mask telescope;
+telescope.setup_circular(N_PX);
+gs.wavefront.masked(&telescope);
+<<cleanup>>=
+telescope.cleanup();
+@ 
+The wavefront sampled on the actuators location is from the following guide star:
+<<setup>>=
+source gs_dm;
+gs_dm.setup( zenith, azimuth, INFINITY, N_GS, N_ACTUATOR2);
+gs_dm.photometric_band = "K";
+<<cleanup>>=
+gs_dm.cleanup();
+@ 
+The wavefront sensor is defined with:
+<<setup>>=
+shackHartmann wfs;
+wfs.setup(N_SIDE_LENSLET,N_PX_LENSLET,d,2,N_PX_LENSLET,1,N_GS);
 <<cleanup>>=
 wfs.cleanup();
-@ 
-The centroiding container and computation engine is created with
-<<setup>>=
-centroiding cog;
-cog.setup(N_SIDE_LENSLET,N_GS);
-<<cleanup>>=
-cog.cleanup();
 @ 
 The timing is done with the [[stopwatch]] structure:
 <<setup>>=
@@ -148,7 +171,7 @@ DM_mask.cleanup();
 The Fried geometry for a circular pupil with the intensity [[threshold]] is enforced::
 <<setup>>=
 float threshold = 0.5;
-cog.MASK_SET = fried_geometry_setup(cog.lenslet_mask, DM_mask.m, 
+wfs.data_proc.MASK_SET = fried_geometry_setup(wfs.data_proc.lenslet_mask, DM_mask.m, 
 				    N_SIDE_LENSLET, 16, threshold);
 @ 
 The filtering properties associated with the pupil are set with:
