@@ -258,35 +258,28 @@ The main function is:
 int main(int argc,char *argv[]) {
 cudaSetDevice(0);
 <<test setup>>
-pixel_scale = 1E-6*gs.wavelength()/d/2;
-printf("pixel scale=%.2E\n",pixel_scale);
-c0 = 0.5*(wfs.optics_relay.N_PX_CAMERA-1);
-
 wfs.calibrate(&gs,0.5);
 wfs.analyze(&gs);
 wfs.optics_relay.reset();
 
-tid.tic();
-atm.get_phase_screen(&gs,p,N_PX,p,N_PX,0);
-atm.get_phase_screen(&gs_dm,d,N_ACTUATOR,d,N_ACTUATOR,0);
-gs_dm.wavefront.M = &DM_mask;
-phase_screen.M = &DM_mask;
-gs_dm.wavefront.masked();
-tid.toc("phase screen");
-tid.tic();
-wfs.analyze(&gs);
-tid.toc("centroiding");
-tid.tic();
-lmmse.estimation(&wfs.data_proc);
-tid.toc("estimation");
-phase_screen.add_phase(1,lmmse.d__phase_est);
-phase_screen.add_phase(-1,gs_dm.wavefront.phase);
+atm.get_phase_screen(&gs,N_GS,p,N_PX,p,N_PX,0);
+gs.wavefront.masked();
 
+wfs.analyze(&gs);
 gs.wavefront.show_phase("Shack-Hartmann/wavefront");
-gs_dm.wavefront.show_phase("Shack-Hartmann/wavefront low res.");
+ wfs.optics_relay.frame2file("frame.bin");
 wfs.optics_relay.show_frame("Shack-Hartmann/frame");
 wfs.data_proc.show_centroids("Shack-Hartmann/centroids");
 wfs.data_proc.show_flux("Shack-Hartmann/flux");
+
+/*
+lmmse.estimation(&wfs.data_proc);
+atm.get_phase_screen(&gs_dm,N_GS,d,N_ACTUATOR,d,N_ACTUATOR,0);
+gs_dm.wavefront.masked(&DM_mask);
+gs_dm.wavefront.show_phase("Shack-Hartmann/wavefront low res.");
+phase_screen.M = &DM_mask;
+phase_screen.add_phase(1,lmmse.d__phase_est);
+phase_screen.add_phase(-1,gs_dm.wavefront.phase);
 phase_screen.show_phase("Shack-Hartmann/recon. wavefront");
 
 atm.get_phase_screen_gradient(&wfs.data_proc,N_SIDE_LENSLET,d,&gs,0);
@@ -294,9 +287,10 @@ lmmse.estimation(&wfs.data_proc);
 phase_screen.reset();
 phase_screen.add_phase(1,lmmse.d__phase_est);
 phase_screen.add_phase(-1,gs_dm.wavefront.phase);
-//phase_screen.add_phase(-1,gs_dm.wavefront.phase);
+
 wfs.data_proc.show_centroids("Shack-Hartmann/geometric centroids");
 phase_screen.show_phase("Shack-Hartmann/geom. recon. wavefront");
+*/
 
 <<test cleanup>>
 }
@@ -327,7 +321,7 @@ The total number of pixel is given by
 int N_PX, N_PX2;
 N_PX  = N_SIDE_LENSLET*N_PX_LENSLET;
 N_PX2 = N_PX*N_PX;
-float p, d, pixel_scale, c0;
+float p, d;
 p = 1.0/N_PX;
 d = 1.0/N_SIDE_LENSLET;
 @ 
@@ -345,6 +339,7 @@ The telescope pupil is defined with the [[mask]] structure:
 <<test setup>>=
 mask telescope;
 telescope.setup_circular(N_PX);
+telescope.set_filter();
 gs.wavefront.masked(&telescope);
 <<test cleanup>>=
 telescope.cleanup();
