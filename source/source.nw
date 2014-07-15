@@ -472,7 +472,7 @@ void source::phase2file(const char *filename) {
 <<plot phase>>=
 void complex_amplitude::show_phase(char *filename)
 {
-  char title[32];
+  char title[1024];
   float *data, *d__data, alpha, piston;
   plotly_properties prop;
   stats S;
@@ -485,6 +485,7 @@ void complex_amplitude::show_phase(char *filename)
   S.setup();
   alpha = 1E9;
   CUBLAS_ERROR( cublasSscal(S.handle, N_PX, &alpha, d__data, 1) );
+  
   
   if (M!=NULL) {
 
@@ -507,6 +508,7 @@ void complex_amplitude::show_phase(char *filename)
     prop.set("title",title);
   }
   
+
   S.cleanup();
  
   HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
@@ -519,8 +521,8 @@ void complex_amplitude::show_phase(char *filename)
   prop.set("ztitle","[nm]");
   prop.set("filename",filename);
   int n = (int) sqrtf(N_PX/N);
-  prop.aspect_ratio = 1.0/N;
-  prop.set("zdata",data,n*N,n);
+  prop.aspect_ratio = N;
+  prop.set("zdata",data,n,n*N);
   prop.set("colorscale","Portland");
   imagesc(&prop); 
 
@@ -553,8 +555,9 @@ void complex_amplitude::show_amplitude(char *filename)
   prop.set("ytitle","Y");
   prop.set("ztitle","[au]");
   prop.set("filename",filename);
-  int n = (int) sqrtf(N_PX);
-  prop.set("zdata",data,n,n);
+  int n = (int) sqrtf(N_PX/N);
+  prop.aspect_ratio = N;
+  prop.set("zdata",data,n,n*N);
   imagesc(&prop); 
 
   HANDLE_ERROR( cudaFreeHost( data ) );

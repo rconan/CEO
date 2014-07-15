@@ -50,6 +50,8 @@ struct imaging {
 <<imaging.cu>>=
 #include "imaging.h"
 
+<<debug>>
+
 <<imaging complex amplitude>>
 
 <<binning>>
@@ -71,6 +73,7 @@ struct imaging {
 
 <<plot frame>>
 <<plot frame with Strehl ratio>>
+
 @
 \subsection{Parameters}
 \label{sec:parameters}
@@ -152,6 +155,19 @@ void imaging::propagate(source *src) {
   binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT, N_SOURCE,
 				     N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
   ++N_FRAME;
+
+}
+<<debug>>=
+__global__ void mag_eval(float *mag, float2 *data, int N)
+{
+  int id;
+  float x, y;
+  id = blockIdx.x * blockDim.x + threadIdx.x;
+  if (id<N) {
+    x = data[id].x;
+    y = data[id].y;
+    mag[id] = x*x + y*y;
+  }
 }
 @ 
 The Fourier transform is done with the CUFFT library:
@@ -262,8 +278,7 @@ __global__ void complexAmplitude(float2 *wave_PUPIL, int N_DFT,
       {
 @ The linear index in the square lenslet array is computed
 <<imaging complex amplitude>>=
-ij_PUPIL = lenslet2array(i,j,N_PX_PUPIL,iLenslet,jLenslet,N_SIDE_LENSLET,iSource,N_SOURCE);
-// ij_PUPIL += iSource*N_SIDE_LENSLET*N_SIDE_LENSLET*N_PX_PUPIL*N_PX_PUPIL;//*N_SOURCE;
+ij_PUPIL = lenslet2array(i,j,N_PX_PUPIL,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
 @ The phase shift is applied on the wavefront
 <<imaging complex amplitude>>=
         phasor = PI*(i+j)*(1-N_DFT + (N_PX_IMAGE & 1))/N_DFT;
@@ -271,7 +286,7 @@ ij_PUPIL = lenslet2array(i,j,N_PX_PUPIL,iLenslet,jLenslet,N_SIDE_LENSLET,iSource
         sincosf(phasor,&c,&s);
 @ The wavefront in the pupil plane is written in the complex amplitude array ready to be processed by CUFFT
 <<imaging complex amplitude>>=
-        wave_PUPIL[ij_DFT].x = wave_PUPIL[ij_DFT].y = wavefront_amplitude[ij_PUPIL];
+  wave_PUPIL[ij_DFT].x = wave_PUPIL[ij_DFT].y = wavefront_amplitude[ij_PUPIL];
         wave_PUPIL[ij_DFT].x *= c;
         wave_PUPIL[ij_DFT].y *= s;
         return;
@@ -352,7 +367,7 @@ __global__ void binning(float *frame, const float2 *wave, int N_DFT, int N_SOURC
       	      }
       	}
       ij_CAM = lenslet2array(u,v,N_PX_CAMERA,
-			     iLenslet,jLenslet,N_SIDE_LENSLET,iSource,N_SOURCE);
+			     iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
       frame[ij_CAM] +=   bin[ii][jj]/(N_DFT*N_DFT);
     }
 
@@ -429,13 +444,12 @@ void imaging::show_frame(char *filename)
   prop.set("xtitle","X");
   prop.set("ytitle","Y");
   prop.set("ztitle","[au]");
-  //  sprintf(title,"RMS=%.2fnm",S.std(d__data,M,N_PX));
   prop.set("title","");
   prop.set("filename",filename);
-  //  prop.aspect_ratio = 1.0/N_SOURCE;
+  prop.aspect_ratio = N_SOURCE;
   prop.set("zdata",data,
 	   N_PX_CAMERA*N_SIDE_LENSLET,
-	   N_PX_CAMERA*N_SIDE_LENSLET);
+	   N_PX_CAMERA*N_SIDE_LENSLET*N_SOURCE);
   prop.set("colorscale","YIGnBu");
   imagesc(&prop); 
 

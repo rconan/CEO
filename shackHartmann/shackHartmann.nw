@@ -59,7 +59,10 @@ struct shackHartmann {
 
 The parameters of the [[shackHartmann]] structure are:
 \begin{itemize}
-\item the total number of lenslets:
+\item the number of wavefront sensor:
+<<parameters>>=
+int N_WFS;
+@ \item the total number of lenslets:
 <<parameters>>=
 int N_LENSLET;
 @ \item the total number of actuators in the Fried geometry:
@@ -117,16 +120,17 @@ void shackHartmann::setup(int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
 			  int DFT_osf_, int N_PX_IMAGE, int BIN_IMAGE, int N_GS)
 {
   lenslet_pitch = d;
-  DFT_osf = DFT_osf_;
+  DFT_osf    = DFT_osf_;
   N_LENSLET  = N_SIDE_LENSLET*N_SIDE_LENSLET;
   N_ACTUATOR = (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1);
-  N_SLOPE   = N_LENSLET*N_GS*2;
+  N_WFS      = N_GS;
+  N_SLOPE    = N_LENSLET*N_GS*2;
   HANDLE_ERROR( cudaMalloc( (void**)&d__c0 , sizeof(float) *N_SLOPE ) );
   HANDLE_ERROR( cudaMemset( d__c0, 0, sizeof(float)*N_SLOPE ) ); 
   d__cx0 = d__c0;
   d__cy0 = d__c0 + N_LENSLET;
-  valid_lenslet.setup(N_LENSLET);
-  valid_actuator.setup(N_ACTUATOR);
+  valid_lenslet.setup(N_LENSLET*N_WFS);
+  valid_actuator.setup(N_ACTUATOR*N_WFS);
   optics_relay.setup(N_PX_LENSLET, N_SIDE_LENSLET, DFT_osf,
 	    (float)N_PX_IMAGE/N_PX_LENSLET, 
 	    1.0/BIN_IMAGE, N_GS);
@@ -161,8 +165,8 @@ HANDLE_ERROR( cudaMemset( data_proc.d__c, 0, sizeof(float)*N_SLOPE ) );
 The total intensity per lenslet is used to compute the valid lenslet.
 The valid lenslet and actuator masks are first set to 0. 
 <<WFS calibration valid lenslet>>=
-HANDLE_ERROR( cudaMemset(valid_lenslet.m,  0, sizeof(char)*N_LENSLET  ) );
-HANDLE_ERROR( cudaMemset(valid_actuator.m, 0, sizeof(char)*N_ACTUATOR ) );
+HANDLE_ERROR( cudaMemset(valid_lenslet.m,  0, sizeof(char)*N_LENSLET*N_WFS  ) );
+HANDLE_ERROR( cudaMemset(valid_actuator.m, 0, sizeof(char)*N_ACTUATOR*N_WFS ) );
 @
 The maximum lenslet intensity is sought:
 <<WFS calibration valid lenslet>>=
@@ -176,7 +180,7 @@ The masks are computed with the [[set_valid_lenslet]] kernel:
 <<WFS calibration valid lenslet>>=
 int NL = optics_relay.N_SIDE_LENSLET;
 dim3 blockDim(16,16);
-dim3 gridDim(NL/16+1,NL/16+1);
+dim3 gridDim(NL/16+1,NL/16+1,N_WFS);
 set_valid_lenslet LLL gridDim,blockDim RRR (valid_lenslet.m, valid_actuator.m, 
                                             NL, data_proc.d__mass,
                                             idx, threshold);
@@ -186,11 +190,12 @@ __global__ void set_valid_lenslet(char *lenslet_mask, char *actuator_mask,
 				    int NL, float *lenslet_intensity_map,
 				    int max_idx, float threshold)
 {
-  int iL, jL, kL, kA;
+  int iL, jL, kL, kA, iSource;
   // lenslet index
   iL = blockIdx.x * blockDim.x + threadIdx.x;
   jL = blockIdx.y * blockDim.y + threadIdx.y;
-  kL = iL*NL + jL;
+  iSource = blockIdx.z;
+  kL = iL*NL + jL + iSource*NL*NL;
   float max_intensity_threshold;
   max_intensity_threshold = lenslet_intensity_map[max_idx];
   max_intensity_threshold *= threshold;
@@ -202,12 +207,16 @@ __global__ void set_valid_lenslet(char *lenslet_mask, char *actuator_mask,
 	  lenslet_mask[kL] = 1;
 	
 	  kA = lenset2actuator(iL,jL,NL, 1, 1);     
+	  kA += iSource*(1+NL)*(1+NL);
 	  actuator_mask[kA] = 1;
 	  kA = lenset2actuator(iL,jL,NL,-1, 1);     
+	  kA += iSource*(1+NL)*(1+NL);
 	  actuator_mask[kA] = 1;
 	  kA = lenset2actuator(iL,jL,NL,-1,-1);     
+	  kA += iSource*(1+NL)*(1+NL);
 	  actuator_mask[kA] = 1;
-	  kA = lenset2actuator(iL,jL,NL, 1,-1);     
+	  kA = lenset2actuator(iL,jL,NL, 1,-1);  
+	  kA += iSource*(1+NL)*(1+NL);
 	  actuator_mask[kA] = 1;
 	
 	}
@@ -259,15 +268,13 @@ int main(int argc,char *argv[]) {
 cudaSetDevice(0);
 <<test setup>>
 wfs.calibrate(&gs,0.5);
-wfs.analyze(&gs);
-wfs.optics_relay.reset();
 
 atm.get_phase_screen(&gs,N_GS,p,N_PX,p,N_PX,0);
 gs.wavefront.masked();
 
 wfs.analyze(&gs);
+gs.wavefront.show_amplitude("Shack-Hartmann/pupil");
 gs.wavefront.show_phase("Shack-Hartmann/wavefront");
- wfs.optics_relay.frame2file("frame.bin");
 wfs.optics_relay.show_frame("Shack-Hartmann/frame");
 wfs.data_proc.show_centroids("Shack-Hartmann/centroids");
 wfs.data_proc.show_flux("Shack-Hartmann/flux");
@@ -370,13 +377,13 @@ dim3 gridDim(1+N_PX_LENSLET*N_SIDE_LENSLET/16,1+N_PX_LENSLET*N_SIDE_LENSLET/16,N
 squareTiledPupil LLL gridDim,blockDim RRR (gs.wavefront.amplitude, N_PX_LENSLET, N_SIDE_LENSLET, N_GS);
 gs.wavefront.show_amplitude("Shack-Hartmann/amplitude",N_PX,N_PX*N_GS);
 <<square tiled geometry>>=
-  __global__ void squareTiledPupil(float* amplitude, const int N_PX_LENSLET, const int N_SIDE_LENSLET, const int N_GS) {
+__global__ void squareTiledPupil(float* amplitude, const int N_PX_LENSLET, const int N_SIDE_LENSLET, const int N_GS) {
   int i, j, iLenslet, jLenslet, ij_PUPIL, iSource, kLenslet;
   iSource = blockIdx.z;
   if ( threads2lenslet(threadIdx, blockIdx, blockDim, 
 		       &i, &j, N_PX_LENSLET, 
 		       &iLenslet, &jLenslet, N_SIDE_LENSLET) ) {
-    ij_PUPIL = lenslet2array(i,j,N_PX_LENSLET,iLenslet,jLenslet,N_SIDE_LENSLET,iSource,N_GS);
+    ij_PUPIL = lenslet2array(i,j,N_PX_LENSLET,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
     kLenslet = iLenslet*N_SIDE_LENSLET + jLenslet;
     amplitude[ij_PUPIL] = ((float) (kLenslet + 1)) + iSource*0.5;
   }
