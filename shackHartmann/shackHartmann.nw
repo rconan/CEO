@@ -251,22 +251,29 @@ void shackHartmann::analyze(source *gs) {
 \subsection{Tests}
 \label{sec:tests}
 
-In this section, the generation of the imagelets and slopes of a Shack--Hartmann WFS are described.
-
 All CEO programs must include the following headers which also contains the headers for all the CEO library modules.
 <<main header>>=
 #ifndef __CEO_H__
 #include "ceo.h"
 #endif
 
+<<shackHartmann.bin>>=
+<<test 1>>
+
+@ 
+\subsubsection{Test 1}
+\label{sec:test-1}
+
+In this section, the generation of the imagelets and slopes of a Shack--Hartmann WFS are described.
+
 @
 The main function is:
-<<shackHartmann.bin>>=
+<<test 1>>=
 <<main header>>
 <<square tiled geometry>>
 int main(int argc,char *argv[]) {
 cudaSetDevice(0);
-<<test setup>>
+<<test 1 setup>>
 wfs.calibrate(&gs,0.5);
 
 atm.get_phase_screen(&gs,N_GS,p,N_PX,p,N_PX,0);
@@ -300,13 +307,13 @@ phase_screen.add_phase(-1,gs_dm.wavefront.phase);
 phase_screen.show_phase("Shack-Hartmann/geom. recon. wavefront");
 */
 
-<<test cleanup>>
+<<test 1 cleanup>>
 }
 @
 The input parameters are
 \begin{itemize}
 \item the size of the lenslet array [[N_SIDE_LENSLET]]$\times$[[N_SIDE_LENSLET]],
-<<test setup>>=
+<<test 1 setup>>=
 int N_SIDE_LENSLET, N_ACTUATOR, N_ACTUATOR2;
 N_SIDE_LENSLET = atoi( argv[1] );
 N_ACTUATOR     = N_SIDE_LENSLET + 1;
@@ -314,18 +321,18 @@ N_ACTUATOR2    = N_ACTUATOR*N_ACTUATOR;
 printf("__ SHACK-HARTMANN __\n");
 printf(" . %dX%d lenslets: \n", N_SIDE_LENSLET, N_SIDE_LENSLET);
 @ \item the number of pixel per lenslet [[N_PX_LENSLET]]$\times$[[N_PX_LENSLET]]
-<<test setup>>=
+<<test 1 setup>>=
 int N_PX_LENSLET;
 N_PX_LENSLET = atoi( argv[2] );
 printf(" . %dX%d pixels per lenslet: \n", N_PX_LENSLET, N_PX_LENSLET);
 @ \item the number of sources,
-<<test setup>>=
+<<test 1 setup>>=
 int N_GS;
 N_GS = atoi( argv[3] );
 printf(" . source #: %d\n", N_GS);
 @ \end{itemize}
 The total number of pixel is given by
-<<test setup>>=
+<<test 1 setup>>=
 int N_PX, N_PX2;
 N_PX  = N_SIDE_LENSLET*N_PX_LENSLET;
 N_PX2 = N_PX*N_PX;
@@ -334,41 +341,40 @@ p = 1.0/N_PX;
 d = 1.0/N_SIDE_LENSLET;
 @ 
 The guide star is defined with
-<<test setup>>=
+<<test 1 setup>>=
 float zenith[] = {ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30)},
   azimuth[] = {0,2.*PI/6.,4.*PI/6.,6.*PI/6.,8.*PI/6.,10.*PI/6.,12.*PI/6.};
 source gs;
 gs.setup( zenith, azimuth, INFINITY, N_GS, N_PX2);
 gs.photometric_band = "K";
-<<test cleanup>>=
+<<test 1 cleanup>>=
 gs.cleanup();
 @ 
 The telescope pupil is defined with the [[mask]] structure:
-<<test setup>>=
+<<test 1 setup>>=
 mask telescope;
 telescope.setup_circular(N_PX);
-telescope.set_filter();
 gs.wavefront.masked(&telescope);
-<<test cleanup>>=
+<<test 1 cleanup>>=
 telescope.cleanup();
 @ 
 The wavefront sampled on the actuators location is from the following guide star:
-<<test setup>>=
+<<test 1 setup>>=
 source gs_dm;
 gs_dm.setup( zenith, azimuth, INFINITY, N_GS, N_ACTUATOR2);
 gs_dm.photometric_band = "K";
-<<test cleanup>>=
+<<test 1 cleanup>>=
 gs_dm.cleanup();
 @ 
 The wavefront sensor is defined with:
-<<test setup>>=
+<<test 1 setup>>=
 shackHartmann wfs;
 wfs.setup(N_SIDE_LENSLET,N_PX_LENSLET,d,2,N_PX_LENSLET,1,N_GS);
-<<test cleanup>>=
+<<test 1 cleanup>>=
 wfs.cleanup();
 @ 
 The timing is done with the [[stopwatch]] structure:
-<<test setup>>=
+<<test 1 setup>>=
 stopwatch tid;
 @ 
 The square pupil is made of tiles [[N_PX_LENSLET]]$\times$[[N_PX_LENSLET]] pixels with intensity equal to lenslet index
@@ -391,37 +397,37 @@ __global__ void squareTiledPupil(float* amplitude, const int N_PX_LENSLET, const
 }
 @
 The atmosphere model is created with:
-<<test setup>>=
+<<test 1 setup>>=
 atmosphere atm;
 atm.gmt_setup(10e-2,30);
-<<test cleanup>>=
+<<test 1 cleanup>>=
 atm.cleanup();
 @ The reconstructed wavefront is saved in:
-<<test setup>>=
+<<test 1 setup>>=
 complex_amplitude phase_screen;
 phase_screen.setup((N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1));
-<<test cleanup>>=
+<<test 1 cleanup>>=
 phase_screen.cleanup();
 @ The DM mask:
-<<test setup>>=
+<<test 1 setup>>=
 mask DM_mask;
 DM_mask.setup( (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1) );
-<<test cleanup>>=
+<<test 1 cleanup>>=
 DM_mask.cleanup();
 @ 
 The Fried geometry for a circular pupil with the intensity [[threshold]] is enforced::
-<<test setup>>=
+<<test 1 setup>>=
 float threshold = 0.5;
 wfs.data_proc.MASK_SET = fried_geometry_setup(wfs.data_proc.lenslet_mask, DM_mask.m, 
 				    N_SIDE_LENSLET, 16, threshold);
 @ 
 The filtering properties associated with the pupil are set with:
-<<test setup>>=
+<<test 1 setup>>=
 DM_mask.set_filter();
 @ 
 The wavefront is reconstructed from the centroids:
-<<test setup>>=
+<<test 1 setup>>=
 LMMSE lmmse;
 lmmse.setup(&atm,&gs,1,&gs,1,d,N_SIDE_LENSLET,&DM_mask,"MINRES");
-<<test cleanup>>=
+<<test 1 cleanup>>=
 lmmse.cleanup();
