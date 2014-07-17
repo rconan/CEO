@@ -1,7 +1,7 @@
 include common.mk
 
 #ls -d */ | sed -e 's,//$,,' -e 's,doc,,' -e 's,lib,,'  -e 's,include,,' | xargs
-SOURCE_DIR	= utilities source atmosphere imaging centroiding aaStats BTBT GBTBT iterativeSolvers LMMSE plotly
+SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE plotly
 TUTORIAL	= lgsao ngsao ltao ltaoVsAst geaos
 
 all: makefile 
@@ -21,7 +21,7 @@ doc: tex
 touch: 
 	find . -name \*.nw -exec touch {} \;
 
-makefile:
+makefile: Makefile.common
 	for i in $(SOURCE_DIR); do (cp Makefile.common $$i/Makefile; sed -i -e "s/filename/$$i/g" $$i/Makefile); done
 
 jsmnlib: 
@@ -38,3 +38,5 @@ clean:
 	rm -f *.*~
 	rm -f lib/libceo.a
 
+cleanbins: makefile
+	for i in $(SOURCE_DIR); do (make -C $$i cleanbins); done

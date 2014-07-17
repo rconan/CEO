@@ -53,12 +53,14 @@ struct source {
 <<apply mask>>
 <<piston removal>>
 
-<<complex amplitude setup>>
+<<complex amplitude setup I>>
+<<complex amplitude setup II>>
 <<complex amplitude cleanup>>
 <<resetting the wavefront>>
 <<resetting the wavefront to new wavefront>>
 <<adding wavefront phase>>
-<<masking wavefront amplitude>>
+<<masking wavefront amplitude I>>
+<<masking wavefront amplitude II>>
 
 <<phase to file>>
 
@@ -76,6 +78,8 @@ struct source {
 <<number of photons>>
 <<wavenumber>>
 <<plot phase>>
+<<plot amplitude I>>
+<<plot amplitude II>>
 @
 \subsection{Parameters}
 \label{sec:params}
@@ -97,16 +101,21 @@ struct complex_amplitude {
   <<complex amplitude parameters>>
 
   void setup(int n_pixel);
+  void setup(int n_pixel, int n_src);
   void cleanup(void);
   void reset(void);
   void reset(complex_amplitude wavefront_prime);
   void add_phase(float alpha, float *phase_prime);
   void masked(void);
+  void masked(mask *M_in);
   void show_phase(char *filename);
+  void show_phase(char *filename, int N_SRC);
+  void show_amplitude(char *filename);
+  void show_amplitude(char *filename, int N, int M);
 };
 @ with the parameters: 
 <<complex amplitude parameters>>=
-int N_PX;
+int N_PX, N;
 float *amplitude, *phase;
 @ The physical extent of the amplitude is set by the pupil mask:
 <<complex amplitude parameters>>=
@@ -221,7 +230,7 @@ void source::setup(float *_zenith, float *_azimuth, float _height,
                         _azimuth[i_SRC]*180/PI,_height);
   }
   printf("----------------------------------------------------\x1B[0m\n");
-  wavefront.setup(resolution*N_SRC);
+  wavefront.setup(resolution,N_SRC);
 }
 @ \end{itemize}
 
@@ -245,19 +254,28 @@ HANDLE_ERROR( cudaMemcpy( dev_ptr, &__src,
 
 @ 
 The complex amplitude structure is initialized with
-<<complex amplitude setup>>=
+<<complex amplitude setup I>>=
 void complex_amplitude::setup(int n_pixel) {
-  N_PX = n_pixel;
-  M = NULL;
-  if (N_PX>0) {
-    HANDLE_ERROR( cudaMalloc( (void**)&amplitude,  sizeof(float)*N_PX ) );
-    HANDLE_ERROR( cudaMalloc( (void**)&phase,      sizeof(float)*N_PX ) );
-    reset();
-   } else {
-    amplitude  = NULL;
-    phase      = NULL;
-  }
+  N = 1;
+  <<complex amplitude setup common>>
 }
+<<complex amplitude setup II>>=
+void complex_amplitude::setup(int n_pixel, int n_src) {
+  N = n_src;
+  <<complex amplitude setup common>>
+}
+<<complex amplitude setup common>>=
+N_PX = n_pixel*N;
+M = NULL;
+if (N_PX>0) {
+  HANDLE_ERROR( cudaMalloc( (void**)&amplitude,  sizeof(float)*N_PX ) );
+  HANDLE_ERROR( cudaMalloc( (void**)&phase,      sizeof(float)*N_PX ) );
+  reset();
+} else {
+  amplitude  = NULL;
+  phase      = NULL;
+}
+
 @ and memory is de--allocated with:
 <<complex amplitude cleanup>>=
 void complex_amplitude::cleanup(void) {
@@ -398,21 +416,31 @@ void complex_amplitude::add_phase(float alpha, float *phase_prime)
 \paragraph{Masking wavefront amplitude}
 \label{sec:mask-wavefr-ampl}
 The following applies the pupil mask to the wavefront:
-<<masking wavefront amplitude>>=
+<<masking wavefront amplitude I>>=
 void complex_amplitude::masked(void)
 {
-  dim3 blockDim(16,1);
-  dim3 gridDim(N_PX/16+1,1);
-  apply_mask LLL gridDim,blockDim RRR (amplitude, phase, M->m, N_PX);  
+<<masking wavefront common>>
 }
-@  with the kernel:
+@ 
+<<masking wavefront amplitude II>>=
+void complex_amplitude::masked(mask *M_in)
+{
+M = M_in;
+<<masking wavefront common>>
+}
+@ with
+<<masking wavefront common>>=
+dim3 blockDim(16,1);
+dim3 gridDim(N_PX/16+1,N);
+apply_mask LLL gridDim,blockDim RRR (amplitude, phase, M->m, N_PX/N);  
+@ and with the kernel:
 <<apply mask>>=
-__global__ void apply_mask(float* amplitude, float* phase, char *pupil_mask, const int N) {
+__global__ void apply_mask(float* amplitude, float* phase, const char *pupil_mask, const int N) {
   int id;
   id = blockIdx.x * blockDim.x + threadIdx.x;
   if ( (id<N) && (pupil_mask[id]==0) ) {
-    amplitude[id] = 0.0;
-    phase[id]     = 0.0;
+    amplitude[id + blockIdx.y*N] = 0.0;
+    phase[id + blockIdx.y*N]     = 0.0;
   }
 }
 
@@ -444,7 +472,7 @@ void source::phase2file(const char *filename) {
 <<plot phase>>=
 void complex_amplitude::show_phase(char *filename)
 {
-  char title[32];
+  char title[1024];
   float *data, *d__data, alpha, piston;
   plotly_properties prop;
   stats S;
@@ -457,13 +485,32 @@ void complex_amplitude::show_phase(char *filename)
   S.setup();
   alpha = 1E9;
   CUBLAS_ERROR( cublasSscal(S.handle, N_PX, &alpha, d__data, 1) );
+  
+  
+  if (M!=NULL) {
 
-  piston = S.mean(d__data, M, N_PX);
+    int k, nel;
+    char rms[32];
+    nel = N_PX/N;
+    dim3 blockDim(256);
+    dim3 gridDim(N_PX/256+1);
+    sprintf(title,"RMS=");
 
-  dim3 blockDim(256);
-  dim3 gridDim(N_PX/256+1);
-  remove_piston LLL gridDim,blockDim RRR (d__data, M->m, N_PX, piston);
+    for (k=0;k<N;k++) {
+      piston = S.mean(d__data + k*nel, M, nel);
+      
+      remove_piston LLL gridDim,blockDim RRR (d__data + k*nel,
+					      M->m, nel, piston);
+      
+      sprintf(rms,"%.2fnm ",S.std(d__data+ k*nel,M,nel));
+      strcat(title,rms);
+    }
+    prop.set("title",title);
+  }
+  
 
+  S.cleanup();
+ 
   HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
 			       cudaHostAllocDefault) );
   HANDLE_ERROR( cudaMemcpy( data, d__data, sizeof(float)*N_PX,
@@ -472,15 +519,13 @@ void complex_amplitude::show_phase(char *filename)
   prop.set("xtitle","X");
   prop.set("ytitle","Y");
   prop.set("ztitle","[nm]");
-  sprintf(title,"RMS=%.2fnm",S.std(d__data,M,N_PX));
-  prop.set("title",title);
   prop.set("filename",filename);
-  int n = (int) sqrtf(N_PX);
-  prop.set("zdata",data,n,n);
+  int n = (int) sqrtf(N_PX/N);
+  prop.aspect_ratio = N;
+  prop.set("zdata",data,n,n*N);
   prop.set("colorscale","Portland");
   imagesc(&prop); 
 
-  S.cleanup();
   HANDLE_ERROR( cudaFree( d__data ) );
   HANDLE_ERROR( cudaFreeHost( data ) );
 }
@@ -492,4 +537,49 @@ int i;
 i = blockIdx.x * blockDim.x + threadIdx.x;
  if ( (i<n_data) && (mask[i]>0) )
        data[i] -= p;
+}
+
+@ The wavefront amplitude is plotted with the plot.ly
+<<plot amplitude I>>=
+void complex_amplitude::show_amplitude(char *filename)
+{
+  float *data;
+  plotly_properties prop;
+
+  HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
+			       cudaHostAllocDefault) );
+  HANDLE_ERROR( cudaMemcpy( data, amplitude, sizeof(float)*N_PX,
+			    cudaMemcpyDeviceToHost ) );
+
+  prop.set("xtitle","X");
+  prop.set("ytitle","Y");
+  prop.set("ztitle","[au]");
+  prop.set("filename",filename);
+  int n = (int) sqrtf(N_PX/N);
+  prop.aspect_ratio = N;
+  prop.set("zdata",data,n,n*N);
+  imagesc(&prop); 
+
+  HANDLE_ERROR( cudaFreeHost( data ) );
+}
+<<plot amplitude II>>=
+  void complex_amplitude::show_amplitude(char *filename, int N, int M)
+{
+  float *data;
+  plotly_properties prop;
+
+  HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
+			       cudaHostAllocDefault) );
+  HANDLE_ERROR( cudaMemcpy( data, amplitude, sizeof(float)*N_PX,
+			    cudaMemcpyDeviceToHost ) );
+
+  prop.set("xtitle","X");
+  prop.set("ytitle","Y");
+  prop.set("ztitle","[au]");
+  prop.set("filename",filename);
+  prop.aspect_ratio = M/N;
+  prop.set("zdata",data,N,M);
+  imagesc(&prop); 
+
+  HANDLE_ERROR( cudaFreeHost( data ) );
 }

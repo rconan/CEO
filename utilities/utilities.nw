@@ -83,7 +83,7 @@ void CUBLAS_ERROR(cublasStatus_t status);
 <<statistics definition>>
 
 <<lenslet 2 actuator>>
-__global__ void circular_pupil(int *pupil, int N);
+__global__ void circular_pupil(char *pupil, int N);
 //__global__ void valid_lenslet(char *mask, int N_pupil, float threshold);
 __global__ void fried_geometry(char *lenslet_mask, char *actuator_mask, 
                                int NL, int n, float threshold);
@@ -144,11 +144,12 @@ int round_up_to_nhp2(int n) {
 When dealing with lenslet arrays, a thread in a given thread block correspond to a pixel coordinate $[i,j]$ in a given lenslet $[i_l,j_L]$.
 The following function computes the coordinates $[i,j]$ and $[i_l,j_L]$ based on the thread and block index, the block size and the number of pixel per lenslet [[n_px_lenslet]].
 <<threads2lenslet>>=
-__device__ inline void threads2lenslet(dim3 threadIdx, dim3 blockIdx, dim3 blockDim, 
+__device__ inline char threads2lenslet(dim3 threadIdx, dim3 blockIdx, dim3 blockDim, 
 				      int *i_px_lenslet, int *j_px_lenslet, int n_px_lenslet, 
-				      int *i_lenslet, int *j_lenslet) 
+				       int *i_lenslet, int *j_lenslet, int n_lenslet) 
 {
   <<from threads to lenslet coordinates>>
+  return 1;
 }
 @ The pixel coordinate in the image is given by
 <<from threads to lenslet coordinates>>=
@@ -157,7 +158,11 @@ __device__ inline void threads2lenslet(dim3 threadIdx, dim3 blockIdx, dim3 block
 @ Then the lenslet coordinate $[i_l,j_L]$ are derived from
 <<from threads to lenslet coordinates>>=
 *i_lenslet = *i_px_lenslet/n_px_lenslet;
+if (*i_lenslet>=n_lenslet)
+  return 0;
 *j_lenslet = *j_px_lenslet/n_px_lenslet;
+if (*j_lenslet>=n_lenslet)
+  return 0;
 @ and finally the pixel coordinate $[i,j]$ in lenslet $[i_l,j_L]$ is
 <<from threads to lenslet coordinates>>=
 *i_px_lenslet -=  *i_lenslet*n_px_lenslet;
@@ -190,27 +195,27 @@ The third dimension of the block grid gives the source index.
 Once the coordinates $[i,j]$ and $[i_l,j_L]$ have been computed, the linear index in the image is computed with
 <<lenslet2array>>=
 __device__ inline int lenslet2array(int i_px_lenslet, int j_px_lenslet, int n_px_lenslet, 
-			 int i_lenslet, int j_lenslet, int n_lenslet, 
-			 int i_source, int n_source)
+			 int i_lenslet, int j_lenslet, int n_lenslet, int i_source)
 {
   int index;
-  index = i_lenslet*n_px_lenslet + i_px_lenslet;
-  index *= n_lenslet*n_px_lenslet*n_source;
-  index += j_lenslet*n_px_lenslet + j_px_lenslet + i_source*n_px_lenslet*n_lenslet;
+  index =  i_lenslet*n_px_lenslet + i_px_lenslet;
+  index += i_source*n_px_lenslet*n_lenslet;
+  index *= n_lenslet*n_px_lenslet;
+  index += j_lenslet*n_px_lenslet + j_px_lenslet;
   return index;
 }
 @ Fig.~\ref{fig:2} shows the global coordinates of pixel $[i_g,j_g]$ in an image made of the horizontal concatenation of 3 lenslet arrays.
 $i_g$ and $j_g$ are related to the coordinates $[i,j]$ and $[i_l,j_L]$ through the following relation
 \begin{eqnarray}
   \label{eq:4}
-  i_g &=& i_LN_L+i \\
-  j_g &=& i_SN_LN_P + j_LN_L+j \\
+  i_g &=& i_SN_LN_P + i_LN_p+i \\
+  j_g &=& j_LN_p+i \\
 \end{eqnarray}
 where $i_S$ is the source index, $N_L$ is the size of one lenslet array and $N_P$ is the number of pixel per lenslet.
 The linear global index $k_g$ is given by
 \begin{equation}
   \label{eq:5}
-  k_g = i_gN_LN_PN_s + j_g
+  k_g = i_gN_LN_P + j_g
 \end{equation}
 where $N_s$ is the number of sources.
 \begin{figure}
@@ -226,8 +231,8 @@ where $N_s$ is the number of sources.
     \fill[blue!70] (36,16) rectangle (37,17);
     \draw[blue!70] (-2,16.5) -- (36.5,16.5);
     \draw[blue!70] (36.5,-2) -- (36.5,16.5);
-    \node[anchor=east] at (-2,16.5) {$i_LN_L+i$};
-    \node[anchor=north] at (36.5,-2) {$i_SN_LN_P + j_LN_L+j$};
+    \node[anchor=east] at (-2,16.5) {$i_SN_LN_P + i_LN_p+i$};
+    \node[anchor=north] at (36.5,-2) {$j_LN_p+j$};
   \end{tikzpicture}
   \caption{3 $6\times6$ lenslet arrays with $5\times5$ pixels per lenslet}
   \label{fig:2}
@@ -523,7 +528,7 @@ void CUBLAS_ERROR(cublasStatus_t status) {
 
 In the following, a circular pupil is computed:
 <<circular pupil>>=
-__global__ void circular_pupil(int *pupil, int N)
+__global__ void circular_pupil(char *pupil, int N)
 {
   int i, j, k;
   float h,x,y,r;
@@ -682,18 +687,41 @@ The mask structure definition is:
 struct mask {
   <<mask parameters>>
   void setup(int n);
+  void setup_circular(int n);
   void set_filter(void);
   void cleanup(void);
 };
 @ 
 The mask functions are:
+\begin{itemize}
+\item [[setup]]
+  \begin{itemize}
+  \item with the total number of element in the mask [[n]]:
 <<mask functions>>=
 void mask::setup(int n) {
   nel = n;
-  HANDLE_ERROR( cudaMalloc((void**)&m, sizeof(char)*nel ) );
-  HANDLE_ERROR( cudaMalloc((void**)&f, sizeof(float)*nel ) );
-  HANDLE_ERROR( cudaMemset( f, 0, sizeof(float)*nel) );
+  <<setup commom>>
 }
+@ with 
+<<setup commom>>=
+HANDLE_ERROR( cudaMalloc((void**)&m, sizeof(char)*nel ) );
+HANDLE_ERROR( cudaMalloc((void**)&f, sizeof(float)*nel ) );
+HANDLE_ERROR( cudaMemset( m, 0, sizeof(char)*nel) );
+HANDLE_ERROR( cudaMemset( f, 0, sizeof(float)*nel) );
+@ \item with a circular mask inside an [[n]$\times$[[n]] array
+<<mask functions>>=
+void mask::setup_circular(int n) {
+  nel = n*n;
+  <<setup commom>>
+  dim3 blockDim(16,16);
+  dim3 gridDim(n/16+1,n/16+1);
+  circular_pupil LLL gridDim,blockDim RRR ( m , n );
+  set_filter();
+}
+@
+\end{itemize}
+\item set the filter and compute the number of non--zeros elements:
+<<mask functions>>=
 void mask::set_filter(void) {
   dim3 blockDim(256);
   dim3 gridDim(nel/256+1);
@@ -704,7 +732,11 @@ void mask::set_filter(void) {
   printf("@(CEO)>mask: nnz = %.0f\n",nnz);
   cublasDestroy(handle);
 }
+@
+\item [[cleanup]]
+<<mask functions>>=
 void mask::cleanup(void) {
+  fprintf(stderr,"@(CEO)>mask: freeing memory!\n");
   HANDLE_ERROR( cudaFree( m ) );
   HANDLE_ERROR( cudaFree( f ) );
 }
@@ -717,8 +749,9 @@ i = blockIdx.x * blockDim.x + threadIdx.x;
  if ( (i<n_data) && (mask[i]) )
        ones[i] = 1;
 }
-
 @
+\end{itemize}
+
 \subsubsection{Input/Output}
 \label{sec:inputoutput}
 

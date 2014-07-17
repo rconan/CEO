@@ -14,7 +14,7 @@ The components common to all the systems are defined first:
 <<setup>>=
 source src;
 src.setup(ARCSEC(0) , 0, INFINITY,(N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1), "SRC");
-src.photometric_band = "K";
+src.photometric_band = "J";
 <<cleanup>>=
 src.cleanup();
 @ \item the atmosphere,
@@ -33,7 +33,7 @@ atm.setup(20e-2,30,altitude, xi0, wind_speed, wind_direction);
 atm.cleanup();
 @ \item @ the diameter of the telescope,
 <<setup>>=
-float D = 40; // telescope diameter in meter
+float D = 10; // telescope diameter in meter
 @ leading to a lenslet size of:
 <<setup>>=
 float d = D/N_SIDE_LENSLET;
@@ -75,6 +75,42 @@ S.setup();
 S.cleanup();
 @  \end{itemize}
 
+A wide field imager with a set of NGS in a large FOV are also defined:
+\begin{description}
+\item[FOV sources] 
+<<setup>>=
+source *fov_src;
+float z, a;
+int k_FOV_SRC, N_FOV_SRC = 25;
+fov_src = (source *)malloc(sizeof(source)*N_FOV_SRC);
+fov_src[0].setup(ARCSEC(0) , 0, INFINITY,(N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1));
+fov_src[0].photometric_band = "J";
+k_FOV_SRC = 0;
+for (int k_radius=1;k_radius<4;k_radius++) {
+  z = k_radius*10.0;
+  for (int k_angle=0;k_angle<8;k_angle++) {
+    a = 2.0*PI*k_angle/8.0;
+    fov_src[++k_FOV_SRC].setup(ARCSEC(z) , a, INFINITY,(N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1));
+    fov_src[k_FOV_SRC].photometric_band = "J";
+  }
+ }
+<<cleanup>>=
+for (k_FOV_SRC=0;k_FOV_SRC<N_FOV_SRC;k_FOV_SRC++) {
+  fov_src[k_FOV_SRC].cleanup();
+}
+@ \item[wide field imager] 
+<<setup>>=
+imaging fov_imager;
+fov_imager.setup(N_SIDE_LENSLET+1,1,2,251,1,1);
+fov_imager.pixel_scale =
+  1e-6*fov_src[0].wavelength()*N_SIDE_LENSLET/D/2;
+fov_imager.set_pointing_direction(0.0,0.0);
+printf("FOV IMAGER PIXEL SCALE %6.2farcsec\n",
+       fov_imager.pixel_scale*RADIAN2ARCSEC);
+<<cleanup>>=
+fov_imager.cleanup();
+@ \end{description}
+
 @ 
 The Fried geometry for a circular pupil with the intensity [[threshold]] is enforced::
 <<setup>>=
@@ -88,8 +124,7 @@ pupil_mask.set_filter();
 @ 
 The science is propagated through the [[pupil_mask]] to the focal plane of the [[imager]]:
 <<setup>>=
-src.wavefront.M = &pupil_mask;
-src.wavefront.masked();
+src.wavefront.masked(&pupil_mask);
 imager.propagate(&src);
 //imager.frame2file("refFrame.bin");
 char plotly_name[64], plotly_dir[64];
@@ -139,11 +174,11 @@ All CEO programs must include the following headers which also contains the head
 #endif
 @ The size of the lenslet array is defined in the header:
 <<main header>>=
-#define N_SIDE_LENSLET 300
+#define N_SIDE_LENSLET 20
 #define _N_LENSLET_ (N_SIDE_LENSLET*N_SIDE_LENSLET)
 @ The number of atmosphere sample
 <<main header>>=
-#define N_SAMPLE 250
+#define N_SAMPLE 100
 #define PLOTLY_LIM (N_SAMPLE-1) // (N_SAMPLE-1) for plotting, higher for disabling plotting
 @
 The main function is:
@@ -216,6 +251,18 @@ if (k_SAMPLE==PLOTLY_LIM) {
   SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/LMMSE NGS AO");
   imager_ngsao_lmmse.show_frame(plotly_name,&imager);
  }
+@ wide field imaging:
+<<ngsao>>=
+for (k_FOV_SRC=0;k_FOV_SRC<N_FOV_SRC;k_FOV_SRC++) {
+  atm.get_phase_screen(fov_src + k_FOV_SRC,d,NP,d,NP,tau);
+  fov_src[k_FOV_SRC].wavefront.masked(&pupil_mask);
+  fov_src[k_FOV_SRC].wavefront.add_phase(-1,ngs_lmmse.d__phase_est);
+  fov_imager.propagate(fov_src + k_FOV_SRC);  
+}
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/LMMSE NGS AO WIDE FIELD");
+  fov_imager.show_frame(plotly_name);
+}
 
 @ 
 \subsection{Results}

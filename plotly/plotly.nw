@@ -118,7 +118,10 @@ char name[P_LEN];
 @ \item the file option
 <<properties parameters>>=
 char fileopt[P_LEN];
-@  \end{itemize}
+@ \item heatmap aspect ratio
+<<properties parameters>>=
+float aspect_ratio;
+@ \end{itemize}
 
 @ 
 \subsection{Functions}
@@ -137,6 +140,7 @@ plotly_properties(void)
   xData = NULL;
   yData = NULL;
   zData = NULL;
+  aspect_ratio = 1.0;
 }
 
 @
@@ -314,13 +318,20 @@ len += sprintf(data + len,      "\"yaxis\": {");
 len += sprintf(data + len,         "\"title\": \"%s\"",p->ytitle);
 len += sprintf(data + len,      "},"); 
 // < yaxis
-len += sprintf(data + len,      "\"width\": %d,"    ,600);
-len += sprintf(data + len,      "\"height\": %d,"   ,580);
+int width, height;
+width = 600;
+height = 580;
+if (p->aspect_ratio>1)
+  width = (int) ( 200. + 420.*p->aspect_ratio);
+if (p->aspect_ratio<1)
+  height = (int) ( 160. + 420./p->aspect_ratio );
+len += sprintf(data + len,      "\"width\": %d,"    ,width);
+len += sprintf(data + len,      "\"height\": %d,"   ,height);
 len += sprintf(data + len,      "\"autosize\": %s," ,"false");
 // margin >
 len += sprintf(data + len,      "\"margin\": {"); 
 len += sprintf(data + len,         "\"l\": %d,"         ,80);
-len += sprintf(data + len,         "\"r\": %d,"         ,100);
+len += sprintf(data + len,         "\"r\": %d,"         ,120);
 len += sprintf(data + len,         "\"t\": %d,"         ,80);
 len += sprintf(data + len,         "\"b\": %d,"         ,80);
 len += sprintf(data + len,         "\"pad\": %d,"       ,0);
@@ -331,12 +342,6 @@ len += sprintf(data + len,   "},");
 // < layout
 len += sprintf(data + len,   "\"world_readable\": %s" ,"true");
 len += sprintf(data + len,"}"); 
-/*
-FILE *fp;
-fp=fopen("plotly.json", "wb");
-fprintf(fp,"%s\n",data);
-fclose(fp);
-*/
 <<write json scatter>>=
 data = (char *)malloc((strlen(p->xData)+strlen(p->yData)+2048)*sizeof(char));
 int len=0;
@@ -450,8 +455,13 @@ void curlplotly(void *json)
     fprintf(stdout,"\x1B[36m >>> %s\x1B[0m\n",resp.url);
     if (strlen(resp.message)!=0)
       fprintf(stdout,"@(CEO)>plotly: message: %s\n",resp.message);
-  }  else
+  }  else {
     fprintf(stderr,"@(CEO)>plotly: error: %s\n",resp.error);
+    FILE *fp;
+    fp=fopen("plotly.json", "wb");
+    fprintf(fp,"%s\n",data);
+    fclose(fp);
+  }
     
 
   curl_easy_cleanup(hnd);
