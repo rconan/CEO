@@ -88,7 +88,8 @@ struct atmosphere {
 				 float const d, source *src, int N_SRC, float time);
   void get_phase_screen_gradient(centroiding *cog, int NL, char *valid_lenslet,
 				 float const d, source *src, int N_SRC, float time);
-
+  void get_phase_screen_circ_centroids(centroiding *cog, const float R, 
+				       source *src, int N_SRC, float time);
 };
 
 #endif // __ATMOSPHERE_H__
@@ -99,6 +100,7 @@ struct atmosphere {
 #include "atmosphere.h"
 
 <<sinc (atm)>>
+<<phase screen circular centroids kernel>>
 
 <<init random variates>>
 
@@ -136,6 +138,7 @@ struct atmosphere {
 <<phase screen gradient III>>
 <<phase screen gradient IV>>
 <<phase screen gradient (masked)>>
+<<phase screen circular centroids>>
 @
 \subsection{Parameters}
 \label{sec:prms}
@@ -676,6 +679,18 @@ y_kl0 = j*delta_y - (N_y-1)*delta_y*0.5;
 \subsubsection{Phase screen gradient}
 \label{sec:phase-scre-grad}
 
+For a given wavefront $\varphi(x,y)$ and the corresponding image through the aperture $A(x,y)$, the centroids are given by
+\begin{equation}
+  \label{eq:1}
+  s_{x,y} = {\lambda\over2\pi} {1\over S} \iint {\mathrm d\vec r} A(x,y) {\partial \varphi(x,y)\over\partial_{x,y}}
+\end{equation}
+with $$S=\iint {\mathrm d\vec r} A(x,y)$$.
+Integration by parts leads to the equivalent expression:
+\begin{equation}
+  \label{eq:2}
+  s_{x,y} = -{\lambda\over2\pi} {1\over S} \iint {\mathrm d\vec r} {\partial A(x,y) \over\partial_{x,y}} \varphi(x,y)
+\end{equation}
+
 The centroids corresponding to a wavefront on a square pupil of size $d$ is written:
 \begin{equation}
   \label{eq:14}
@@ -893,6 +908,63 @@ sum_l_y += red0*( red1*sin_freq_ang + red2*cos_freq_ang);
 __device__ float sinc_atm(float x) {
   return (x==0) ? 1.0 : sin(x) / (x) ; 
 }
+@ 
+
+For a circular pupil of radius $R$, the centroids are given by:
+\begin{eqnarray}
+  \label{eq:3}
+  s_x &=& {\lambda\over2\pi} {1 \over \pi R} \int_0^{2\pi} {\mathrm d}\theta \cos(\theta) \varphi(R,\theta)
+  s_y &=& {\lambda\over2\pi} {1 \over \pi R} \int_0^{2\pi} {\mathrm d}\theta \sin(\theta) \varphi(R,\theta)
+\end{eqnarray}
+@
+<<phase screen circular centroids>>=
+void atmosphere::get_phase_screen_circ_centroids(centroiding *cog, const float R, 
+                                                 source *src, int N_SRC, float time)
+{
+
+  float *cos_o, *sin_o, *phase_rim, *x, *y, c;
+  int N_o = 180, n_byte;
+  n_byte = N_o*sizeof(float);
+  cublasHandle_t handle;
+  cublasCreate(&handle);
+
+  HANDLE_ERROR( cudaMalloc( (void**)&cos_o, n_byte ) );
+  HANDLE_ERROR( cudaMalloc( (void**)&sin_o, n_byte ) );
+  HANDLE_ERROR( cudaMalloc( (void**)&x, n_byte ) );
+  HANDLE_ERROR( cudaMalloc( (void**)&y, n_byte ) );
+  HANDLE_ERROR( cudaMalloc( (void**)&phase_rim, n_byte ) );
+
+  init_theta LLL 1 , N_o RRR (cos_o, sin_o, x, y, N_o, R);
+
+  get_phase_screen(phase_rim, x, y, N_o, src, time);
+
+  CUBLAS_ERROR( cublasSdot(handle, N_o, cos_o, 1, phase_rim, 1, cog->d__cx) );
+  CUBLAS_ERROR( cublasSdot(handle, N_o, sin_o, 1, phase_rim, 1, cog->d__cy) );
+  c = 1e-6*src->wavelength()/(PI*R*N_o);
+  cog->d__cx[0] *= c;
+  cog->d__cy[0] *= c;
+
+  cublasDestroy(handle);
+  HANDLE_ERROR( cudaFree( cos_o ) );
+  HANDLE_ERROR( cudaFree( sin_o ) );
+  HANDLE_ERROR( cudaFree( x ) );
+  HANDLE_ERROR( cudaFree( y ) );
+  HANDLE_ERROR( cudaFree( phase_rim ) );
+}
+<<phase screen circular centroids kernel>>=
+__global__ void init_theta(float *co, float *so, float *x, float *y, int N_o, const float R) 
+{
+  int id;
+  float o;
+  id =  threadIdx.x;
+  if (id<N_o) {
+    o = 2*PI*id/N_o;
+    sincosf(o,so+id,co+id);
+    x[id] = R*co[id];
+    y[id] = R*so[id];
+  }
+}
+
 @ 
 \subsection{Tests}
 \label{sec:tests}
