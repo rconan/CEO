@@ -913,7 +913,7 @@ __device__ float sinc_atm(float x) {
 For a circular pupil of radius $R$, the centroids are given by:
 \begin{eqnarray}
   \label{eq:3}
-  s_x &=& {\lambda\over2\pi} {1 \over \pi R} \int_0^{2\pi} {\mathrm d}\theta \cos(\theta) \varphi(R,\theta)
+  s_x &=& {\lambda\over2\pi} {1 \over \pi R} \int_0^{2\pi} {\mathrm d}\theta \cos(\theta) \varphi(R,\theta)\\
   s_y &=& {\lambda\over2\pi} {1 \over \pi R} \int_0^{2\pi} {\mathrm d}\theta \sin(\theta) \varphi(R,\theta)
 \end{eqnarray}
 @
@@ -923,7 +923,7 @@ void atmosphere::get_phase_screen_circ_centroids(centroiding *cog, const float R
 {
 
   float *cos_o, *sin_o, *phase_rim, *x, *y, c;
-  int N_o = 180, n_byte;
+  int N_o = 360, n_byte;
   n_byte = N_o*sizeof(float);
   cublasHandle_t handle;
   cublasCreate(&handle);
@@ -936,20 +936,17 @@ void atmosphere::get_phase_screen_circ_centroids(centroiding *cog, const float R
 
   init_theta LLL 1 , N_o RRR (cos_o, sin_o, x, y, N_o, R);
 
-  get_phase_screen(phase_rim, x, y, N_o, src, time);
+  get_phase_screen(phase_rim, x, y, N_o, src->dev_ptr, time);
+  
+  c = 2.0/(R*N_o);
+  dot LLL 1 , 1 RRR (cog->d__cx, cog->d__cy, cos_o, sin_o, phase_rim, N_o, c);
 
-  CUBLAS_ERROR( cublasSdot(handle, N_o, cos_o, 1, phase_rim, 1, cog->d__cx) );
-  CUBLAS_ERROR( cublasSdot(handle, N_o, sin_o, 1, phase_rim, 1, cog->d__cy) );
-  c = 1e-6*src->wavelength()/(PI*R*N_o);
-  cog->d__cx[0] *= c;
-  cog->d__cy[0] *= c;
-
-  cublasDestroy(handle);
   HANDLE_ERROR( cudaFree( cos_o ) );
   HANDLE_ERROR( cudaFree( sin_o ) );
   HANDLE_ERROR( cudaFree( x ) );
   HANDLE_ERROR( cudaFree( y ) );
   HANDLE_ERROR( cudaFree( phase_rim ) );
+  cublasDestroy(handle);
 }
 <<phase screen circular centroids kernel>>=
 __global__ void init_theta(float *co, float *so, float *x, float *y, int N_o, const float R) 
@@ -964,10 +961,108 @@ __global__ void init_theta(float *co, float *so, float *x, float *y, int N_o, co
     y[id] = R*so[id];
   }
 }
+__global__ void dot(float *cx, float *cy, float *co, float *so, float *phase_rim, int N_o, const float c) {
+  int k;
+  cx[0] = cy[0] = 0.0;
+  for (k=0;k<N_o;k++) {
+    cx[0] += c*co[k]*phase_rim[k];
+    cy[0] += c*so[k]*phase_rim[k];
+  }
+}
 
 @ 
 \subsection{Tests}
 \label{sec:tests}
+
+\subsubsection{C tests}
+\label{sec:c-tests}
+
+This test compares the centroids derived from an image through a circular aperture for both the geometric model and the diffractive model.
+<<atmosphere.bin>>=
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+int main(int argc,char *argv[]) {
+<<test setup>>
+atm.get_phase_screen_circ_centroids(&cog, R, &gs, 1, 0.0);
+float *data;
+ HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float),
+			      cudaHostAllocDefault ) );
+ HANDLE_ERROR( cudaMemcpy( data, cog.d__cx, sizeof(float),
+			   cudaMemcpyDeviceToHost ) );
+ printf(" CX = %5.2E\n",data[0]*RADIAN2ARCSEC);
+ HANDLE_ERROR( cudaMemcpy( data, cog.d__cy, sizeof(float),
+			   cudaMemcpyDeviceToHost ) );
+ printf(" CY = %5.2E\n",data[0]*RADIAN2ARCSEC);
+
+ 
+float p = 2*R/N_PX;
+atm.get_phase_screen(&gs,1,p,N_PX,p,N_PX,0);
+gs.wavefront.masked();
+
+wfs.analyze(&gs);
+wfs.optics_relay.show_frame("atmosphere/frame");
+wfs.data_proc.show_centroids("atmosphere/centroids");
+
+ HANDLE_ERROR( cudaMemcpy( data, wfs.d__cx0, sizeof(float),
+			   cudaMemcpyDeviceToHost ) );
+ printf(" CX = %5.2E\n",data[0]*RADIAN2ARCSEC);
+ HANDLE_ERROR( cudaMemcpy( data, wfs.d__cy0, sizeof(float),
+			   cudaMemcpyDeviceToHost ) );
+ printf(" CY = %5.2E\n",data[0]*RADIAN2ARCSEC);
+
+<<test cleanup>>
+}
+@ 
+The parameters are
+\begin{itemize}
+\item the telescope radius [[R]]:
+<<test setup>>=
+float R = 5.0;
+@ \item the pupil pixel sampling [[N_PX]]:
+<<test setup>>=
+int N_PX, N_PX2;
+N_PX = N_PX2 = 64;
+N_PX2 *= N_PX;
+@ \item the guide star:
+<<test setup>>=
+source gs;
+gs.setup(0.0,0.0,INFINITY,N_PX2);
+gs.photometric_band = "K";
+<<test cleanup>>=
+gs.cleanup();
+@ \item the atmosphere
+<<test setup>>=
+atmosphere atm;
+atm.gmt_setup(20e-2,30);
+<<test cleanup>>=
+atm.cleanup();
+@ \item the centroiding container:
+<<test setup>>=
+centroiding cog;
+cog.setup(1,1);
+<<test cleanup>>=
+cog.cleanup();
+@ \item the Shack--Hartmann wavefront sensor:
+<<test setup>>=
+shackHartmann wfs;
+wfs.setup(1,N_PX,2*R,2,N_PX*2,1,1);
+<<test cleanup>>=
+wfs.cleanup();
+@ \item the telescope pupil:
+<<test setup>>=
+mask telescope;
+telescope.setup_circular(N_PX);
+gs.wavefront.masked(&telescope);
+wfs.calibrate(&gs,1.0);
+<<test cleanup>>=
+telescope.cleanup();
+@ \end{itemize}
+
+
+\subsubsection{Matlab tests}
+\label{sec:matlab-tests}
+
 
 The test suite is a Matlab script.
 It calls the mex function:
@@ -1508,7 +1603,7 @@ hold all
 h_num = plot(tau_,C(2:8,:)','.','MarkerSize',15);
 hold off
 @ 
-<<atmosphere.bin>>=
+<<atmosphere.bin.old>>=
 #ifndef __CEO_H__
 #include "ceo.h"
 #endif
