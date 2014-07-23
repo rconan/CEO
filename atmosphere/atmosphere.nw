@@ -921,51 +921,15 @@ For a circular pupil of radius $R$, the centroids are given by:
 void atmosphere::get_phase_screen_circ_centroids(centroiding *cog, const float R, 
                                                  source *src, int N_SRC, float time)
 {
-
-  float *cos_o, *sin_o, *phase_rim, *x, *y, c;
-  int N_o = 360, n_byte;
-  n_byte = N_o*sizeof(float);
-
-  HANDLE_ERROR( cudaMalloc( (void**)&cos_o, n_byte ) );
-  HANDLE_ERROR( cudaMalloc( (void**)&sin_o, n_byte ) );
-  HANDLE_ERROR( cudaMalloc( (void**)&x, n_byte ) );
-  HANDLE_ERROR( cudaMalloc( (void**)&y, n_byte ) );
-  HANDLE_ERROR( cudaMalloc( (void**)&phase_rim, n_byte ) );
-
-  init_theta LLL 1 , N_o RRR (cos_o, sin_o, x, y, N_o, R);
-
-  get_phase_screen(phase_rim, x, y, N_o, src->dev_ptr, time);
-  
-  c = -2.0/(R*N_o);
-  dot LLL 1 , 1 RRR (cog->d__cx, cog->d__cy, cos_o, sin_o, phase_rim, N_o, c);
-
-  HANDLE_ERROR( cudaFree( cos_o ) );
-  HANDLE_ERROR( cudaFree( sin_o ) );
-  HANDLE_ERROR( cudaFree( x ) );
-  HANDLE_ERROR( cudaFree( y ) );
-  HANDLE_ERROR( cudaFree( phase_rim ) );
+  int N_o = 360;
+  dim3 blockDim(16,16);
+  dim3 gridDim( ceilf(sqrt(N_o)/16) , ceilf(sqrt(N_o)/16));
+  circ_centroids_kernel LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy,  N_o, R,
+						    d__turbulence, wavenumber*powf(r0,-5.0/6.0),
+						    zeta1, eta1, zeta2, eta2,
+						    src->dev_ptr, time);
 }
 <<phase screen circular centroids kernel>>=
-__global__ void init_theta(float *co, float *so, float *x, float *y, int N_o, const float R) 
-{
-  int id;
-  float o;
-  id =  threadIdx.x;
-  if (id<N_o) {
-    o = 2*PI*id/N_o;
-    sincosf(o,so+id,co+id);
-    x[id] = R*co[id];
-    y[id] = R*so[id];
-  }
-}
-__global__ void dot(float *cx, float *cy, float *co, float *so, float *phase_rim, int N_o, const float c) {
-  int k;
-  cx[0] = cy[0] = 0.0;
-  for (k=0;k<N_o;k++) {
-    cx[0] += c*co[k]*phase_rim[k];
-    cy[0] += c*so[k]*phase_rim[k];
-  }
-}
 __global__ void circ_centroids_kernel(float *cx, float *cy, int N_xy, 
 				      const float R,
 				      profile *turb, float r0,
@@ -985,12 +949,14 @@ __global__ void circ_centroids_kernel(float *cx, float *cy, int N_xy,
     {
 
       <<variables>>
-	float o, so, co, c, _cx_, _cy_, phase_screen;
+
+      float o, so, co, c, _cx_, _cy_, phase_screen;
       c = -2.0/(R*N_xy);
       o = 2*PI*kl/N_xy;
       sincosf(o,&so,&co);
       x_kl0 = R*co;
       y_kl0 = R*so;
+      cx[0] = cy[0] = 0.0;
 
       for (i=0;i<turb->N_k;i++)
 	{
@@ -1029,7 +995,7 @@ int main(int argc,char *argv[]) {
 <<test setup>>
 /* float *data; */
  float p = 2*R/N_PX, *cx, *cy, *cgx, *cgy, *tau, elapsed_time, buf;
- int k_SAMPLE, N_SAMPLE = 100;
+ int k_SAMPLE, N_SAMPLE = 200;
  stopwatch tid;
 tau = (float*)malloc(sizeof(float)*N_SAMPLE);
 cx = (float*)malloc(sizeof(float)*N_SAMPLE);
