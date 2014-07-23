@@ -966,6 +966,52 @@ __global__ void dot(float *cx, float *cy, float *co, float *so, float *phase_rim
     cy[0] += c*so[k]*phase_rim[k];
   }
 }
+__global__ void circ_centroids_kernel(float *cx, float *cy, int N_xy, 
+				      const float R,
+				      profile *turb, float r0,
+				      float *zeta1, float *eta1, float *zeta2, float *eta2,
+				      source *src, float time)
+{
+  <<declarations>>
+
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  i_source = blockIdx.z;
+  kl = j * gridDim.x * blockDim.x + i + i_source*N_xy;
+
+  sum = 0;
+  
+  if (kl<N_xy)
+    {
+
+      <<variables>>
+	float o, so, co, c, _cx_, _cy_, phase_screen;
+      c = -2.0/(R*N_xy);
+      o = 2*PI*kl/N_xy;
+      sincosf(o,&so,&co);
+      x_kl0 = R*co;
+      y_kl0 = R*so;
+
+      for (i=0;i<turb->N_k;i++)
+	{
+	  <<frequency magnitude sum>>
+          for (j=0;j<turb->N_a;j++)
+	    {
+	      <<frequency angle sum>>
+	      for (l=0;l<_N_LAYER_;l++)
+		{
+		  <<layer sum>>
+		}
+	      sum += sqrt_spectrum_kernel*sum_l;
+	    }
+	}
+      phase_screen = 1.4*r0*sum;
+      _cx_ = c*co*phase_screen;
+      _cy_ = c*so*phase_screen;
+      atomicAdd(&cx[0], _cx_);
+      atomicAdd(&cy[0], _cy_);
+    }
+}
 
 @ 
 \subsection{Tests}
@@ -982,8 +1028,9 @@ This test compares the centroids derived from an image through a circular apertu
 int main(int argc,char *argv[]) {
 <<test setup>>
 /* float *data; */
- float p = 2*R/N_PX, *cx, *cy, *cgx, *cgy, *tau;
+ float p = 2*R/N_PX, *cx, *cy, *cgx, *cgy, *tau, elapsed_time, buf;
  int k_SAMPLE, N_SAMPLE = 100;
+ stopwatch tid;
 tau = (float*)malloc(sizeof(float)*N_SAMPLE);
 cx = (float*)malloc(sizeof(float)*N_SAMPLE);
 cy = (float*)malloc(sizeof(float)*N_SAMPLE);
@@ -992,12 +1039,15 @@ cgy = (float*)malloc(sizeof(float)*N_SAMPLE);
 
  /* HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float), */
  /* 			      cudaHostAllocDefault ) ); */
-
+ elapsed_time = 0.0;
  for (k_SAMPLE=0;k_SAMPLE<N_SAMPLE;k_SAMPLE++) {
    
    tau[k_SAMPLE] = k_SAMPLE*1e-2;
    
+   tid.tic();
    atm.get_phase_screen_circ_centroids(&cog, R, &gs, 1, tau[k_SAMPLE]);
+   tid.toc(&buf);
+   elapsed_time += buf;
    HANDLE_ERROR( cudaMemcpy( cgx+k_SAMPLE, cog.d__cx, sizeof(float),
 			     cudaMemcpyDeviceToHost ) );
  /* printf(" CX = %5.2E\n",data[0]*RADIAN2ARCSEC); */
@@ -1026,6 +1076,8 @@ cgy = (float*)malloc(sizeof(float)*N_SAMPLE);
    /* printf(" CX = %5.2E\n",cx[k_SAMPLE]); */
    /* printf(" CY = %5.2E\n",cy[k_SAMPLE]); */
  }
+
+ printf(" Geom slopes time: %5.2fms\n",elapsed_time/N_SAMPLE);
 
   plotly_properties prop;
   prop.set("xtitle","Time [s]");
@@ -1100,7 +1152,7 @@ wfs.cleanup();
 mask telescope;
 telescope.setup_circular(N_PX);
 gs.wavefront.masked(&telescope);
-gs.wavefront.show_amplitude("atmosphere/amplitude");
+//gs.wavefront.show_amplitude("atmosphere/amplitude");
 wfs.calibrate(&gs,1.0);
 <<test cleanup>>=
 telescope.cleanup();
