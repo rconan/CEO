@@ -47,6 +47,8 @@ struct centroiding {
 
 <<centroiding I>>
 <<centroiding II>>
+<<centroiding I (shared)>>
+<<centroiding II (shared)>>
 
 <<setup>>
 
@@ -70,7 +72,7 @@ The lenslet intensity is stored in the vector [[d__mass]] of length [[n_data]].
 int _N_SIDE_LENSLET_, N_LENSLET, N_SOURCE;
 float *d__c, *d__cx, *d__cy, *d__mass;
 char *lenslet_mask, MASK_SET;
-int n_data;
+int n_data, DEV_SHARED_MEM, DEV_MAX_THREADS;
 @ 
 \subsection{Functions}
 \label{sec:functions}
@@ -90,6 +92,7 @@ void centroiding::setup(int _N_SIDE_LENSLET, int _N_SOURCE) {
   HANDLE_ERROR( cudaMalloc( (void**)&d__mass , sizeof(float) *N_LENSLET*N_SOURCE ) );     
   HANDLE_ERROR( cudaMalloc( (void**)&lenslet_mask , sizeof(char) *N_LENSLET ) );     
   MASK_SET = 0;
+  <<check shared memory>>
 }
 @ and de--allocated with the [[cleanup]] routine
 <<cleanup>>=
@@ -99,6 +102,18 @@ void centroiding::cleanup(void) {
   HANDLE_ERROR( cudaFree( d__mass ) );
   HANDLE_ERROR( cudaFree( lenslet_mask ) );
 }
+@ 
+The centroiding device kernel is allocating shared memory. 
+One needs to check that the required shared memory does not exceed the maximum shared memory per block.
+<<check shared memory>>= 
+cudaDeviceProp dev_prop;
+int dev_id;
+HANDLE_ERROR( cudaGetDevice( &dev_id ) );
+HANDLE_ERROR( cudaGetDeviceProperties( &dev_prop, dev_id ) );
+DEV_SHARED_MEM = dev_prop.sharedMemPerBlock;
+DEV_MAX_THREADS = dev_prop.maxThreadsPerBlock;
+//printf("Maximum shared memory:  %d\n",DEV_SHARED_MEM);
+//printf("Maximum threads per block: %d\n",DEV_MAX_THREADS);
 @
 \subsubsection{Data processing}
 \label{sec:data-processing}
@@ -106,33 +121,56 @@ void centroiding::cleanup(void) {
 The framelets are processed to retrieve centroids and flux
 <<data Ia>>=
 void centroiding::get_data(imaging *wfs) {
-  dim3 blockGrid(_N_SIDE_LENSLET_,_N_SIDE_LENSLET_,N_SOURCE);
-  dim3 threadGrid(wfs->N_PX_CAMERA,1);
-  int N_PX_CAMERA_BYTE = sizeof(float)*wfs->N_PX_CAMERA*wfs->N_PX_CAMERA*3;
-  centroidingEngine LLL blockGrid , threadGrid , N_PX_CAMERA_BYTE RRR 
-    (d__cx, d__cy,
-     d__mass, wfs->d__frame,
-     0, 0, 1,
-     _N_SIDE_LENSLET_, N_SOURCE,
-     wfs->N_PX_CAMERA);
+  int N_PX_CAMERA, N_PX_CAMERA_BYTE;
+  float cx0, cy0, units, *frame;
+  cx0 = cy0 = 0.0;
+  units = 1.0;\
+  frame = wfs->d__frame;
+  N_PX_CAMERA = wfs->N_PX_CAMERA;
+  N_PX_CAMERA_BYTE = sizeof(float)*N_PX_CAMERA*N_PX_CAMERA*3;
+  <<shared memory requirement>>
 }
 <<data Ib>>=
 void centroiding::get_data(float *frame, int N_PX_CAMERA) {
-  dim3 blockGrid(_N_SIDE_LENSLET_,_N_SIDE_LENSLET_,N_SOURCE);
-  dim3 threadGrid(N_PX_CAMERA,1);
   int N_PX_CAMERA_BYTE = sizeof(float)*N_PX_CAMERA*N_PX_CAMERA*3;
-  centroidingEngine LLL blockGrid , threadGrid , N_PX_CAMERA_BYTE RRR 
-    (d__cx, d__cy,
-     d__mass, frame,
-     0, 0, 1,
-     _N_SIDE_LENSLET_, N_SOURCE,
-     N_PX_CAMERA);
+  float cx0, cy0, units;
+  cx0 = cy0 = 0.0;
+  units = 1.0;
+  <<shared memory requirement>>
 }
 <<data II>>=
 void centroiding::get_data(float *frame, int N_PX_CAMERA, float cx0, float cy0, float units) {
-  dim3 blockGrid(_N_SIDE_LENSLET_,_N_SIDE_LENSLET_,N_SOURCE);
-  dim3 threadGrid(N_PX_CAMERA,1);
   int N_PX_CAMERA_BYTE = sizeof(float)*N_PX_CAMERA*N_PX_CAMERA*3;
+  <<shared memory requirement>>
+}
+<<data III>>=
+void centroiding::get_data(float *frame, int N_PX_CAMERA, 
+			   float *cx0, float *cy0, float units,
+			   char *valid_lenslet) {
+  int N_PX_CAMERA_BYTE = sizeof(float)*N_PX_CAMERA*N_PX_CAMERA*3;
+  <<shared memory requirement (GT)>>
+}
+@ 
+<<shared memory requirement>>=
+if (N_PX_CAMERA>DEV_MAX_THREADS) {
+  fprintf(stderr,"\n\x1B[31m@(CEO)>centroiding: The required number thread (%d) is larger\n that the maximum number of threads per block (%d)\x1B[0m\n",N_PX_CAMERA,DEV_MAX_THREADS);
+  exit( EXIT_FAILURE );
+  }
+//printf("Required shared memory:  %d\n",N_PX_CAMERA_BYTE);
+dim3 blockGrid(_N_SIDE_LENSLET_,_N_SIDE_LENSLET_,N_SOURCE);
+dim3 threadGrid(N_PX_CAMERA,1);
+if (N_PX_CAMERA_BYTE>DEV_SHARED_MEM) {
+//  fprintf(stderr,"\n\x1B[31m@(CEO)>centroiding: The required shared memory (%dbytes) is larger\n that the maximum shared memory per block (%dbytes)\x1B[0m\n",N_PX_CAMERA_BYTE,DEV_SHARED_MEM);
+  float *shared;
+  HANDLE_ERROR( cudaMalloc( (void**)&shared , N_PX_CAMERA_BYTE ) );    
+  centroidingEngineSh LLL blockGrid , threadGrid RRR 
+    (d__cx, d__cy,
+     d__mass, frame,
+     cx0, cy0, units,
+     _N_SIDE_LENSLET_, N_SOURCE,
+     N_PX_CAMERA, shared);
+  HANDLE_ERROR( cudaFree( shared ));
+} else {
   centroidingEngine LLL blockGrid , threadGrid , N_PX_CAMERA_BYTE RRR 
     (d__cx, d__cy,
      d__mass, frame,
@@ -140,13 +178,27 @@ void centroiding::get_data(float *frame, int N_PX_CAMERA, float cx0, float cy0, 
      _N_SIDE_LENSLET_, N_SOURCE,
      N_PX_CAMERA);
 }
-<<data III>>=
-void centroiding::get_data(float *frame, int N_PX_CAMERA, 
-			   float *cx0, float *cy0, float units,
-			   char *valid_lenslet) {
-  dim3 blockGrid(_N_SIDE_LENSLET_,_N_SIDE_LENSLET_,N_SOURCE);
-  dim3 threadGrid(N_PX_CAMERA,1);
-  int N_PX_CAMERA_BYTE = sizeof(float)*N_PX_CAMERA*N_PX_CAMERA*3;
+@ 
+<<shared memory requirement (GT)>>=
+if (N_PX_CAMERA>DEV_MAX_THREADS) {
+  fprintf(stderr,"\n\x1B[31m@(CEO)>centroiding: The required number thread (%d) is larger\n that the maximum number of threads per block (%d)\x1B[0m\n",N_PX_CAMERA,DEV_MAX_THREADS);
+  exit( EXIT_FAILURE );
+  }
+//printf("Required shared memory:  %d\n",N_PX_CAMERA_BYTE);
+dim3 blockGrid(_N_SIDE_LENSLET_,_N_SIDE_LENSLET_,N_SOURCE);
+dim3 threadGrid(N_PX_CAMERA,1);
+if (N_PX_CAMERA_BYTE>DEV_SHARED_MEM) {
+//  fprintf(stderr,"\n\x1B[31m@(CEO)>centroiding: The required shared memory (%dbytes) is larger\n that the maximum shared memory per block (%dbytes)\x1B[0m\n",N_PX_CAMERA_BYTE,DEV_SHARED_MEM);
+  float *shared;
+  HANDLE_ERROR( cudaMalloc( (void**)&shared , N_PX_CAMERA_BYTE ) );    
+  centroidingEngineGTSh LLL blockGrid , threadGrid RRR 
+    (d__cx, d__cy,
+     d__mass, frame,
+     cx0, cy0, units,
+     _N_SIDE_LENSLET_, N_SOURCE,
+     N_PX_CAMERA, valid_lenslet, shared);
+  HANDLE_ERROR( cudaFree( shared ));
+} else {
   centroidingEngineGT LLL blockGrid , threadGrid , N_PX_CAMERA_BYTE RRR 
     (d__cx, d__cy,
      d__mass, frame,
@@ -162,6 +214,35 @@ __global__ void centroidingEngine(float *cx, float *cy,
 				  float cx0, float cy0, float units,
 				  int _N_SIDE_LENSLET_, int N_SOURCE,
 				  int N_PX_CAMERA)
+{
+  <<centroiding task 1>>
+  extern __shared__ float shared[];
+  <<centroiding task 2>>
+
+  // CENTROIDING
+  <<centroiding task 3>>  
+  __syncthreads();
+
+  if (u<1)
+  {
+    <<centroiding task 4>>
+    if (flux[kp]>0) // NORMALIZATION
+      {
+	cx[k] /= flux[kp];
+	cx[k] -= cx0;
+	cx[k] *= units;
+	cy[k] /= flux[kp];
+	cy[k] -= cy0;
+	cy[k] *= units;
+      }
+  }
+}
+<<centroiding I (shared)>>=
+__global__ void centroidingEngineSh(float *cx, float *cy,
+				  float *flux, const float *frame,
+				  float cx0, float cy0, float units,
+				  int _N_SIDE_LENSLET_, int N_SOURCE,
+				  int N_PX_CAMERA, float *shared)
 {
   <<centroiding task 1>>
   <<centroiding task 2>>
@@ -186,10 +267,45 @@ __global__ void centroidingEngine(float *cx, float *cy,
 }
 <<centroiding II>>=
 __global__ void centroidingEngineGT(float *cx, float *cy,
-float *flux, const float *frame,
-float *cx0, float *cy0, float units,
-int _N_SIDE_LENSLET_, int N_SOURCE,
-int N_PX_CAMERA, char *valid_lenslet)
+				    float *flux, const float *frame,
+				    float *cx0, float *cy0, float units,
+				    int _N_SIDE_LENSLET_, int N_SOURCE,
+				    int N_PX_CAMERA, char *valid_lenslet)
+{
+  <<centroiding task 1>>
+  int kLenslet;
+  kLenslet = iLenslet*_N_SIDE_LENSLET_ + jLenslet;
+  if (valid_lenslet[kLenslet]) 
+  {
+    extern __shared__ float shared[];
+    <<centroiding task 2>>
+
+    // CENTROIDING
+    <<centroiding task 3>>  
+    __syncthreads();
+
+    if (u<1)
+    {
+      <<centroiding task 4>>
+      if (flux[kp]>0) // NORMALIZATION
+      {
+	cx[k] /= flux[kp];
+	cx[k] -= cx0[k];
+	cx[k] *= units;
+	cy[k] /= flux[kp];
+	cy[k] -= cy0[k];
+	cy[k] *= units;
+      }
+    }
+  }
+}
+<<centroiding II (shared)>>=
+__global__ void centroidingEngineGTSh(float *cx, float *cy,
+				    float *flux, const float *frame,
+				    float *cx0, float *cy0, float units,
+				    int _N_SIDE_LENSLET_, int N_SOURCE,
+				    int N_PX_CAMERA, char *valid_lenslet,
+				    float *shared)
 {
   <<centroiding task 1>>
   int kLenslet;
@@ -230,7 +346,6 @@ jLenslet = blockIdx.y;
 iSource  = blockIdx.z;
 @ \item shared memory allocation
 <<centroiding task 2>>=
-extern __shared__ float shared[];
 N_PX_CAMERA2 = N_PX_CAMERA*N_PX_CAMERA;
 buffer0 = shared;
 buffer1 = shared + N_PX_CAMERA2;

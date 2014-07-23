@@ -913,8 +913,8 @@ __device__ float sinc_atm(float x) {
 For a circular pupil of radius $R$, the centroids are given by:
 \begin{eqnarray}
   \label{eq:3}
-  s_x &=& {\lambda\over2\pi} {1 \over \pi R} \int_0^{2\pi} {\mathrm d}\theta \cos(\theta) \varphi(R,\theta)\\
-  s_y &=& {\lambda\over2\pi} {1 \over \pi R} \int_0^{2\pi} {\mathrm d}\theta \sin(\theta) \varphi(R,\theta)
+  s_x &=& -{\lambda\over2\pi} {1 \over \pi R} \int_0^{2\pi} {\mathrm d}\theta \cos(\theta) \varphi(R,\theta)\\
+  s_y &=& -{\lambda\over2\pi} {1 \over \pi R} \int_0^{2\pi} {\mathrm d}\theta \sin(\theta) \varphi(R,\theta)
 \end{eqnarray}
 @
 <<phase screen circular centroids>>=
@@ -925,8 +925,6 @@ void atmosphere::get_phase_screen_circ_centroids(centroiding *cog, const float R
   float *cos_o, *sin_o, *phase_rim, *x, *y, c;
   int N_o = 360, n_byte;
   n_byte = N_o*sizeof(float);
-  cublasHandle_t handle;
-  cublasCreate(&handle);
 
   HANDLE_ERROR( cudaMalloc( (void**)&cos_o, n_byte ) );
   HANDLE_ERROR( cudaMalloc( (void**)&sin_o, n_byte ) );
@@ -938,7 +936,7 @@ void atmosphere::get_phase_screen_circ_centroids(centroiding *cog, const float R
 
   get_phase_screen(phase_rim, x, y, N_o, src->dev_ptr, time);
   
-  c = 2.0/(R*N_o);
+  c = -2.0/(R*N_o);
   dot LLL 1 , 1 RRR (cog->d__cx, cog->d__cy, cos_o, sin_o, phase_rim, N_o, c);
 
   HANDLE_ERROR( cudaFree( cos_o ) );
@@ -946,7 +944,6 @@ void atmosphere::get_phase_screen_circ_centroids(centroiding *cog, const float R
   HANDLE_ERROR( cudaFree( x ) );
   HANDLE_ERROR( cudaFree( y ) );
   HANDLE_ERROR( cudaFree( phase_rim ) );
-  cublasDestroy(handle);
 }
 <<phase screen circular centroids kernel>>=
 __global__ void init_theta(float *co, float *so, float *x, float *y, int N_o, const float R) 
@@ -984,33 +981,82 @@ This test compares the centroids derived from an image through a circular apertu
 #endif
 int main(int argc,char *argv[]) {
 <<test setup>>
-atm.get_phase_screen_circ_centroids(&cog, R, &gs, 1, 0.0);
-float *data;
- HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float),
-			      cudaHostAllocDefault ) );
- HANDLE_ERROR( cudaMemcpy( data, cog.d__cx, sizeof(float),
-			   cudaMemcpyDeviceToHost ) );
- printf(" CX = %5.2E\n",data[0]*RADIAN2ARCSEC);
- HANDLE_ERROR( cudaMemcpy( data, cog.d__cy, sizeof(float),
-			   cudaMemcpyDeviceToHost ) );
- printf(" CY = %5.2E\n",data[0]*RADIAN2ARCSEC);
+/* float *data; */
+ float p = 2*R/N_PX, *cx, *cy, *cgx, *cgy, *tau;
+ int k_SAMPLE, N_SAMPLE = 100;
+tau = (float*)malloc(sizeof(float)*N_SAMPLE);
+cx = (float*)malloc(sizeof(float)*N_SAMPLE);
+cy = (float*)malloc(sizeof(float)*N_SAMPLE);
+cgx = (float*)malloc(sizeof(float)*N_SAMPLE);
+cgy = (float*)malloc(sizeof(float)*N_SAMPLE);
 
- 
-float p = 2*R/N_PX;
-atm.get_phase_screen(&gs,1,p,N_PX,p,N_PX,0);
-gs.wavefront.masked();
+ /* HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float), */
+ /* 			      cudaHostAllocDefault ) ); */
 
-wfs.analyze(&gs);
-wfs.optics_relay.show_frame("atmosphere/frame");
-wfs.data_proc.show_centroids("atmosphere/centroids");
+ for (k_SAMPLE=0;k_SAMPLE<N_SAMPLE;k_SAMPLE++) {
+   
+   tau[k_SAMPLE] = k_SAMPLE*1e-2;
+   
+   atm.get_phase_screen_circ_centroids(&cog, R, &gs, 1, tau[k_SAMPLE]);
+   HANDLE_ERROR( cudaMemcpy( cgx+k_SAMPLE, cog.d__cx, sizeof(float),
+			     cudaMemcpyDeviceToHost ) );
+ /* printf(" CX = %5.2E\n",data[0]*RADIAN2ARCSEC); */
+   HANDLE_ERROR( cudaMemcpy( cgy+k_SAMPLE, cog.d__cy, sizeof(float),
+			     cudaMemcpyDeviceToHost ) );
+   cgx[k_SAMPLE] *= RADIAN2ARCSEC*1e3;
+   cgy[k_SAMPLE] *= RADIAN2ARCSEC*1e3;
+/* printf(" CY = %5.2E\n",data[0]*RADIAN2ARCSEC); */ 
 
- HANDLE_ERROR( cudaMemcpy( data, wfs.d__cx0, sizeof(float),
+   atm.get_phase_screen(&gs,1,p,N_PX,p,N_PX,tau[k_SAMPLE]);
+   gs.wavefront.masked();
+
+/* gs.wavefront.show_phase("atmosphere/phase"); */
+   wfs.analyze(&gs);
+   wfs.optics_relay.reset();
+/* wfs.optics_relay.show_frame("atmosphere/frame"); */
+/* wfs.data_proc.show_centroids("atmosphere/centroids"); */
+/* wfs.data_proc.show_flux("atmosphere/flux"); */
+
+   HANDLE_ERROR( cudaMemcpy( cx+k_SAMPLE, wfs.data_proc.d__cx, sizeof(float),
 			   cudaMemcpyDeviceToHost ) );
- printf(" CX = %5.2E\n",data[0]*RADIAN2ARCSEC);
- HANDLE_ERROR( cudaMemcpy( data, wfs.d__cy0, sizeof(float),
+   HANDLE_ERROR( cudaMemcpy( cy+k_SAMPLE, wfs.data_proc.d__cy, sizeof(float),
 			   cudaMemcpyDeviceToHost ) );
- printf(" CY = %5.2E\n",data[0]*RADIAN2ARCSEC);
+   cx[k_SAMPLE] *= RADIAN2ARCSEC*1e3;
+   cy[k_SAMPLE] *= RADIAN2ARCSEC*1e3;
+   /* printf(" CX = %5.2E\n",cx[k_SAMPLE]); */
+   /* printf(" CY = %5.2E\n",cy[k_SAMPLE]); */
+ }
 
+  plotly_properties prop;
+  prop.set("xtitle","Time [s]");
+  prop.set("ytitle","Centroids [mas]");
+  prop.set("filename","atmosphere/centroids geom. vs. diffr.");
+  prop.set("xdata",tau,N_SAMPLE);
+  prop.set("ydata",cx,N_SAMPLE);
+  prop.set("name","X Diffr.");
+  sprintf(prop.fileopt,"%s","overwrite");
+  plot(&prop); 
+  prop.set("xdata",tau,N_SAMPLE);
+  prop.set("ydata",cgx,N_SAMPLE);
+  prop.set("name","X Geom.");
+  sprintf(prop.fileopt,"%s","append");
+  plot(&prop); 
+  prop.set("xdata",tau,N_SAMPLE);
+  prop.set("ydata",cy,N_SAMPLE);
+  prop.set("name","Y Diffr.");
+  sprintf(prop.fileopt,"%s","append");
+  plot(&prop); 
+  prop.set("xdata",tau,N_SAMPLE);
+  prop.set("ydata",cgy,N_SAMPLE);
+  prop.set("name","Y Geom.");
+  sprintf(prop.fileopt,"%s","append");
+  plot(&prop); 
+
+ free(tau);
+ free(cx);
+ free(cy);
+ free(cgx);
+ free(cgy);
 <<test cleanup>>
 }
 @ 
@@ -1046,7 +1092,7 @@ cog.cleanup();
 @ \item the Shack--Hartmann wavefront sensor:
 <<test setup>>=
 shackHartmann wfs;
-wfs.setup(1,N_PX,2*R,2,N_PX*2,1,1);
+wfs.setup(1,N_PX,10.0,4,4*N_PX,1,1);
 <<test cleanup>>=
 wfs.cleanup();
 @ \item the telescope pupil:
@@ -1054,6 +1100,7 @@ wfs.cleanup();
 mask telescope;
 telescope.setup_circular(N_PX);
 gs.wavefront.masked(&telescope);
+gs.wavefront.show_amplitude("atmosphere/amplitude");
 wfs.calibrate(&gs,1.0);
 <<test cleanup>>=
 telescope.cleanup();
