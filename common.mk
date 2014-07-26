@@ -27,11 +27,11 @@ libsrc = $(CEOPATH)/lib/libceo.a
 	$(NVCC) $(INCS) $(NVCCFLAGS) -o $@ -c $<
 
 ctopy:
-	$(TANGLE) -Rcsource.pxd source.nw > csource.pxd
-	$(TANGLE) -Rsource.pyx source.nw > source.pyx
-	cython --cplus source.pyx -o source.cu
-	$(NVCC) $(INCS) -I/home/rconan/anaconda/include/python2.7/ $(NVCCFLAGS) -o source.o -c source.cu
-	$(NVCC) $(LIBS) -shared source.o -o source.so -lceo -lcurl -ljsmn
+	$(TANGLE) -Rceo.pxd source.nw > ceo.pxd
+	$(TANGLE) -Rceo.pyx source.nw > ceo.pyx
+	cython --cplus ceo.pyx -o ceo.cu
+	$(NVCC) $(INCS) -I/home/rconan/anaconda/include/python2.7/ $(NVCCFLAGS) -o ceo.o -c ceo.cu
+	$(NVCC) $(LIBS) -shared ceo.o -o ceo.so -lceo -lcurl -ljsmn
 
 .nw.tex:
 	$(WEAVE) -delay -index $< > $@
