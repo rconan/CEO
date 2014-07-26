@@ -11,7 +11,7 @@ TANGLE    	= $(NOWEBPATH)/bin/notangle
 CPIF	    	= $(NOWEBPATH)/bin/cpif
 TEXTOPDF  	= pdflatex
 NVCCFLAGS	= -gencode=arch=compute_20,code=\"sm_20,compute_20\" \
-		--compiler-options=-ansi,-D_GNU_SOURCE,-fPIC,-fno-omit-frame-pointer,-pthread -O2
+		--compiler-options=-ansi,-D_GNU_SOURCE,-fwrapv,-fPIC,-fno-omit-frame-pointer,-pthread,-fno-strict-aliasing -O2
 LIBS 		= -L$(CEOPATH)/lib $(CUDALIBPATH:%=-L%) $(CUDALIBS:%=-l%)
 INCS		= -I. -I$(CEOPATH)/include #$(MATLABINCS)
 
@@ -25,6 +25,13 @@ libsrc = $(CEOPATH)/lib/libceo.a
 
 .cu.o: 
 	$(NVCC) $(INCS) $(NVCCFLAGS) -o $@ -c $<
+
+ctopy:
+	$(TANGLE) -Rcsource.pxd source.nw > csource.pxd
+	$(TANGLE) -Rsource.pyx source.nw > source.pyx
+	cython --cplus source.pyx -o source.cu
+	$(NVCC) $(INCS) -I/home/rconan/anaconda/include/python2.7/ $(NVCCFLAGS) -o source.o -c source.cu
+	$(NVCC) $(LIBS) -shared source.o -o source.so -lceo -lcurl -ljsmn
 
 .nw.tex:
 	$(WEAVE) -delay -index $< > $@
@@ -52,3 +59,9 @@ libsrc = $(CEOPATH)/lib/libceo.a
 	mv $@ $@.cu
 	make -C $(CEOPATH) all
 	$(NVCC) $(INCS) $(LIBS) $@.cu -lceo -lcurl -ljsmn
+
+.nw.pxd:
+	$(TANGLE) -R$@ $< > $@
+
+.nw.pyx:
+	$(TANGLE) -R$@ $< > $@
