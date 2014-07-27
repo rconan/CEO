@@ -3,7 +3,7 @@ include common.mk
 #ls -d */ | sed -e 's,//$,,' -e 's,doc,,' -e 's,lib,,'  -e 's,include,,' | xargs
 SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE plotly
 TUTORIAL	= lgsao ngsao ltao ltaoVsAst geaos
-PYTHON_DIR	= source
+PYTHON_DIR	= source atmosphere
 
 all: makefile 
 	mkdir -p include lib
@@ -23,7 +23,7 @@ cython:
 	cp $(CEOPATH)/etc/ceo.pyx $(CEOPATH)/python/ceo.pyx
 	for i in $(PYTHON_DIR); do (make -C $$i python);echo -e "\n"; done
 	cython --cplus $(CEOPATH)/python/ceo.pyx -o $(CEOPATH)/python/ceo.cu
-	$(NVCC) $(INCS) -I/home/rconan/anaconda/include/python2.7/ $(NVCCFLAGS) -o $(CEOPATH)/python/ceo.o -c $(CEOPATH)/python/ceo.cu
+	$(NVCC) $(INCS) -I/home/rconan/anaconda/include/python2.7/ -I/home/rconan/anaconda/pkgs/numpy-1.8.1-py27_0/lib/python2.7/site-packages/numpy/core/include $(NVCCFLAGS) -o $(CEOPATH)/python/ceo.o -c $(CEOPATH)/python/ceo.cu
 	$(NVCC) $(LIBS) -shared $(CEOPATH)/python/ceo.o -o $(CEOPATH)/python/ceo.so -lceo -lcurl -ljsmn
 	rm -f $(CEOPATH)/python/ceo.cu $(CEOPATH)/python/ceo.o
 

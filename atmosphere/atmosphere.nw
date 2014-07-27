@@ -140,6 +140,30 @@ struct atmosphere {
 <<phase screen gradient (masked)>>
 <<phase screen circular centroids>>
 @
+\subsubsection{Python}
+\label{sec:python}
+
+<<ceo.pxd>>=
+cdef extern from "atmosphere.h":
+    cdef cppclass atmosphere:
+        void setup(float , float , float *, float *, float *, float *)
+        void cleanup()
+        void info()
+  
+@ 
+<<ceo.pyx>>=
+cdef class Atmosphere:
+    cdef ceo.atmosphere *_c_atmosphere
+    def __cinit__(self, float r0, float L0, 
+        np.ndarray[float, mode="c"] altitude, 
+        np.ndarray[float, mode="c"] xi0, 
+        np.ndarray[float, mode="c"] wind_speed, 
+        np.ndarray[float, mode="c"] wind_direction):
+	self._c_atmosphere = new ceo.atmosphere()
+        self._c_atmosphere.setup(r0, L0, &altitude[0], &xi0[0], &wind_speed[0], &wind_direction[0])    
+    def __dealloc__(self):
+        self._c_atmosphere.cleanup()
+@
 \subsection{Parameters}
 \label{sec:prms}
 
