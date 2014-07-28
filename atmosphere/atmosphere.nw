@@ -149,6 +149,7 @@ cdef extern from "atmosphere.h":
         void setup(float , float , float *, float *, float *, float *)
         void cleanup()
         void info()
+        void get_phase_screen(source *, int , float , int , float , int , float )
   
 @ 
 <<ceo.pyx>>=
@@ -163,6 +164,8 @@ cdef class Atmosphere:
         np.ndarray[float, mode="c"] wind_direction):
 	self._c_atmosphere = new ceo.atmosphere()
         self._c_atmosphere.setup(r0, L0, &altitude[0], &xi0[0], &wind_speed[0], &wind_direction[0])    
+    def get_phase_screen(self, Source src, int N_SRC, float delta_x, int N_x, float delta_y, int N_y, float time):
+        self._c_atmosphere.get_phase_screen(src._c_source, N_SRC, delta_x, N_x, delta_y, N_y, time)
     def __dealloc__(self):
         self._c_atmosphere.cleanup()
 @
@@ -1167,7 +1170,12 @@ vs  = np.array([10,10,10,10,10,10,10],dtype=np.float32)
 vo  = np.array([0,0,0,0,0,0,0], dtype=np.float32) 
 atm = ceo.Atmosphere(15e-2,30,h,xi0,vs,vo)
 
+n = 1024
+src = ceo.Source(0,0,float("inf"),n**2)
+
+atm.get_phase_screen(src, 1, 0.1, n, 0.1, n, 0.0)
 @ 
+
 \subsubsection{Matlab tests}
 \label{sec:matlab-tests}
 
