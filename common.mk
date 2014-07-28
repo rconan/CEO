@@ -1,5 +1,6 @@
 CEOPATH	        = /home/rconan/CEO
 CUDAPATH	= /opt/local/cuda
+PYTHONPATH      = /home/rconan/anaconda
 NVCC          	= $(CUDAPATH)/bin/nvcc
 CUDALIBPATH   	= $(CUDAPATH)/lib64
 MATLABINCS	= -I/priv/monarcas1/rconan/MATLAB/R2013a/extern/include \
@@ -21,17 +22,10 @@ obj    = $(nwsrc:%.nw=%.o)
 cusrc  = $(nwsrc:.%nw=%.cu)
 libsrc = $(CEOPATH)/lib/libceo.a 
 
-.SUFFIXES: .nw .tex .cu .mex .bin
+.SUFFIXES: .nw .tex .cu .mex .bin .py
 
 .cu.o: 
 	$(NVCC) $(INCS) $(NVCCFLAGS) -o $@ -c $<
-
-ctopy:
-	$(TANGLE) -Rceo.pxd source.nw > ceo.pxd
-	$(TANGLE) -Rceo.pyx source.nw > ceo.pyx
-	cython --cplus ceo.pyx -o ceo.cu
-	$(NVCC) $(INCS) -I/home/rconan/anaconda/include/python2.7/ $(NVCCFLAGS) -o ceo.o -c ceo.cu
-	$(NVCC) $(LIBS) -shared ceo.o -o ceo.so -lceo -lcurl -ljsmn
 
 .nw.tex:
 	$(WEAVE) -delay -index $< > $@
@@ -60,8 +54,5 @@ ctopy:
 	make -C $(CEOPATH) all
 	$(NVCC) $(INCS) $(LIBS) $@.cu -lceo -lcurl -ljsmn
 
-.nw.pxd:
-	$(TANGLE) -R$@ $< > $@
-
-.nw.pyx:
+.nw.py:
 	$(TANGLE) -R$@ $< > $@
