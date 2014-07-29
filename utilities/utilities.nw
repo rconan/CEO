@@ -98,6 +98,7 @@ void dev2file(const char* filename, float* d__data, int n_data,
 void dev2file(const char* filename, int* d__data, int n_data);
 void dev2file(const char* filename, float2* d__data, int n_data);
 void dev2file(const char* filename, char* d__data, int n_data);
+void dev2host( float *host_data, float *dev_data, int N);
 
 #endif  // __UTILITIES_H__
 
@@ -134,6 +135,8 @@ int round_up_to_nhp2(int n) {
 <<Fried geometry>>
 
 <<device to file>>
+
+<<data to host from device>>
 @
 \subsection{Functions}
 \label{sec:functions}
@@ -863,3 +866,21 @@ fwrite(&n_page,sizeof(int),1,fid);
 fclose(fid);
 free(data);
 fprintf(stderr,"@(CEO)>utilities: Data saved to %s!\n",filename);
+@ 
+
+\subsection{Python}
+\label{sec:python}
+
+<<data to host from device>>=
+void dev2host( float *host_data, float *dev_data, int N) {
+     HANDLE_ERROR( cudaMemcpy( host_data, dev_data, N*sizeof(float), cudaMemcpyDeviceToHost ) ) ;
+}
+@
+<<ceo.pxd>>=
+cdef extern from "utilities.h":
+     void dev2host( float *host_data, float *dev_data, int N)
+@ 
+<<ceo.pyx>>=
+cdef fromdev( np.ndarray[float, mode="c"] host_data, float *dev_data, int N):
+    dev2host( &host_data[0], dev_data, N)
+@

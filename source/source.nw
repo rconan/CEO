@@ -86,26 +86,71 @@ struct source {
 
 <<ceo.pxd>>=
 cdef extern from "source.h":
+    cdef cppclass complex_amplitude:
+        float *phase
     cdef cppclass source:
+        complex_amplitude wavefront
         void setup(float , float , float )
 	void setup(float , float , float , int )
+        void setup(float *, float *, float , int , int )
         void cleanup()
         void info()
-  
 @ 
 <<ceo.pyx>>=
+@cython.boundscheck(False)
+@cython.wraparound(False)
 cdef class Source:
+    """ 
+    Create a source
+
+    Parameters
+    ----------
+    zenith: ndarray of floats
+       The sources zenith angles [rd].
+    azimuth: ndarray of floats
+       The sources azimuth angles [rd].
+    height: number
+       The sources altitude [m].
+    resolution: number
+       The sampling in pixel of the source wavefront complex amplitude.
+    
+    Returns
+    -------
+    out: Source
+        A Source object.
+
+    Examples
+    --------
+    import numpy as np
+    import ceo
+
+    n = 1024
+    zen = np.array( [0], dtype=np.float32)
+    azi = np.array( [0], dtype=np.float32)
+    src = ceo.Source(zen,azi,float("inf"),n**2)
+
+    zen = np.arange(3,dtype=np.float32)*1e-6*25
+    azi = np.arange(3,dtype=np.float32)*3.14
+    lgs = ceo.Source(zen,azi,90e3,32**2) 
+
+    """
     cdef ceo.source *_c_source
-    def __cinit__(self, float zenith, float azimuth, float height, resolution = None):
+
+    def __cinit__(self, 
+	np.ndarray[float, mode="c"] zenith, 
+	np.ndarray[float, mode="c"] azimuth, 
+        float height, 
+        np.ndarray[int, mode="c"] resolution):
 	self._c_source = new ceo.source()
-	if resolution is None:
-            self._c_source.setup(zenith, azimuth, height)
-	else:
-            self._c_source.setup(zenith, azimuth, height, resolution)    
+        self._c_source.setup(&zenith[0], &azimuth[0], height, zenith.size, np.prod(resolution))    
+
     def __dealloc__(self):
         self._c_source.cleanup()
 
+    def getphase(self, np.ndarray[float , ndim=2, mode="c"] data):
+        dev2host(&data[0,0],self._c_source.wavefront.phase, data.size)
 @
+
 \subsection{Parameters}
 \label{sec:params}
 

@@ -61,7 +61,51 @@ struct centroiding {
 
 <<display centroids>>
 <<display flux>>
+@
+
+\subsubsection{Python}
+\label{sec:python}
+
+<<ceo.pxd>>=
+cdef extern from "centroiding.h":
+    cdef cppclass centroiding:
+        float *d__c
+        void setup(int, int)
+        void cleanup()
 @ 
+<<ceo.pyx>>=
+cdef class Centroiding:
+    """ 
+    Create a centroiding container
+
+    Parameters
+    ----------
+    N_SIDE_LENSLET: an int number
+       The linear size of the lenslet array (>=1).
+    N_SOURCE: an int number
+       The number of guide stars (>=1).
+    
+    Returns
+    -------
+    out: Centroiding
+        A Centroiding object.
+
+    Examples
+    --------
+
+    """
+    cdef ceo.centroiding *_c_centroiding
+
+    def __cinit__(self, int N_SIDE_LENSLET, int N_SOURCE):
+	self._c_centroiding = new ceo.centroiding()
+        self._c_centroiding.setup(N_SIDE_LENSLET,N_SOURCE)    
+
+    def __dealloc__(self):
+        self._c_centroiding.cleanup()
+
+    def getc(self, np.ndarray[float , ndim=2, mode="c"] data):
+        dev2host(&data[0,0],self._c_centroiding.d__c, data.size)
+@
 \subsection{Parameters}
 \label{sec:prms}
 
