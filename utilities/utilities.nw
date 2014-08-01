@@ -101,8 +101,8 @@ void dev2file(const char* filename, char* d__data, int n_data);
 void dev2host( float *host_data, float *dev_data, int N);
 
 #endif  // __UTILITIES_H__
-
 @
+
 \subsubsection{Source}
 
 <<utilities.cu>>=
@@ -138,6 +138,45 @@ int round_up_to_nhp2(int n) {
 
 <<data to host from device>>
 @
+
+\subsubsection{Python}
+\label{sec:python}
+
+<<ceo.pxd>>=
+cdef extern from "imaging.h":
+    cdef cppclass mask:
+        void setup_circular(int)
+        void cleanup()
+@ 
+<<ceo.pyx>>=
+cdef class Telescope:
+    """ 
+    Creates a mask object.
+
+    Parameters
+    ----------
+    n: an int number
+       The sampling in pixel of the pupil.
+    
+    Returns
+    -------
+    out: Mask
+        A Mask object.
+
+    Examples
+    --------
+
+    """
+    cdef ceo.mask *_c_mask
+
+    def __cinit__(self, int n):
+	self._c_mask = new ceo.mask()
+	self._c_mask.setup_circular(n)    
+
+    def __dealloc__(self):
+        self._c_mask.cleanup()
+@
+
 \subsection{Functions}
 \label{sec:functions}
 
@@ -874,6 +913,7 @@ fprintf(stderr,"@(CEO)>utilities: Data saved to %s!\n",filename);
 <<data to host from device>>=
 void dev2host( float *host_data, float *dev_data, int N) {
      HANDLE_ERROR( cudaMemcpy( host_data, dev_data, N*sizeof(float), cudaMemcpyDeviceToHost ) ) ;
+     HANDLE_ERROR( cudaDeviceSynchronize() );
 }
 @
 <<ceo.pxd>>=

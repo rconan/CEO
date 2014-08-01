@@ -3,7 +3,7 @@ include common.mk
 #ls -d */ | sed -e 's,//$,,' -e 's,doc,,' -e 's,lib,,'  -e 's,include,,' | xargs
 SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE plotly
 TUTORIAL	= lgsao ngsao ltao ltaoVsAst geaos
-PYTHON_DIR	= utilities source atmosphere centroiding
+PYTHON_DIR	= utilities source atmosphere centroiding imaging shackHartmann
 
 all: makefile 
 	mkdir -p include lib

@@ -28,6 +28,8 @@ struct imaging {
 	     int DFT_osf, float IMAGE_osf, float CAMERA_osf, int __N_SOURCE);
   void setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
 	     int DFT_osf, int N_PX_IMAGE_, float CAMERA_osf, int __N_SOURCE);
+  void setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
+	     int DFT_osf, int N_PX_IMAGE_, int BIN_IMAGE, int __N_SOURCE);
 
   void cleanup(void);
 
@@ -61,6 +63,7 @@ struct imaging {
 <<setup I>>
 <<setup II>>
 <<setup III>>
+<<setup IV>>
 
 <<cleanup>>
 
@@ -78,8 +81,70 @@ struct imaging {
 
 <<plot frame>>
 <<plot frame with Strehl ratio>>
-
 @
+
+\subsubsection{Python}
+\label{sec:python}
+
+<<ceo.pxd>>=
+cdef extern from "imaging.h":
+    cdef cppclass imaging:
+        float *d__frame
+        void setup(int , int , int , int , int, int)
+        void cleanup()
+        void propagate(source *)
+        void reset()
+@ 
+<<ceo.pyx>>=
+cdef class Imaging:
+    """ 
+    Creates an imaging object.
+
+    Parameters
+    ----------
+    N_PX_PUPIL: an int number
+       The sampling in pixel of one lenslet.
+    N_SIDE_LENSLET: an int number
+       The linear size of the lenslet array (>=1).
+    DFT_osf: an int number
+       The oversampling factor for the Discrete Fourier Transform (>=1).
+    N_PX_IMAGE: an int number
+       The sampling in pixel of the imagelet (>=1).
+    BIN_IMAGE: an int number
+       The binning factor of the imagelet (>=1).
+    N_SOURCE: an int number
+       The number of guide stars (>=1).
+    
+    Returns
+    -------
+    out: Imaging
+        An Imaging object.
+
+    Examples
+    --------
+    <<imaging.py>>
+
+    """
+    cdef ceo.imaging *_c_imaging
+
+    def __cinit__(self, int N_PX_PUPIL, int N_SIDE_LENSLET, 
+		  int DFT_osf, int N_PX_IMAGE, int BIN_IMAGE, int N_SOURCE):
+	self._c_imaging = new ceo.imaging()
+	self._c_imaging.setup(N_PX_PUPIL, N_SIDE_LENSLET, DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_SOURCE)    
+
+    def __dealloc__(self):
+        self._c_imaging.cleanup()
+
+    def propagate(self, Source src):
+        self._c_imaging.propagate(src._c_source)
+
+    def reset(self):
+        self._c_imaging.reset();
+
+    def getframe(self, np.ndarray[float , ndim=2, mode="c"] data):
+        dev2host(<float *>data.data,self._c_imaging.d__frame, data.size)
+@
+
 \subsection{Parameters}
 \label{sec:parameters}
 
@@ -137,6 +202,7 @@ N_PX_CAMERA = CAMERA_osf*N_PX_IMAGE;
 N_SIDE_LENSLET = __N_SIDE_LENSLET;
 N_LENSLET   = N_SIDE_LENSLET*N_SIDE_LENSLET;
 N_FRAME     = 0;
+@ 
 <<setup III>>=
 void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET, 
 		    int DFT_osf, int N_PX_IMAGE_, float CAMERA_osf,
@@ -153,6 +219,24 @@ N_PX_CAMERA = CAMERA_osf*N_PX_IMAGE;
 N_SIDE_LENSLET = __N_SIDE_LENSLET;
 N_LENSLET   = N_SIDE_LENSLET*N_SIDE_LENSLET;
 N_FRAME     = 0;
+@ 
+<<setup IV>>=
+void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET, 
+		    int DFT_osf, int N_PX_IMAGE_, int BIN_IMAGE,
+		    int __N_SOURCE) {
+  N_SOURCE    = __N_SOURCE;
+  <<setup common IV>>
+  <<setup common>>
+}
+<<setup common IV>>=
+N_PX_PUPIL  = __N_PX_PUPIL;
+N_DFT       = DFT_osf*N_PX_PUPIL;//round_up_to_nhp2(N_PX_PUPIL);
+N_PX_IMAGE  = N_PX_IMAGE_;
+N_PX_CAMERA = N_PX_IMAGE/BIN_IMAGE;
+N_SIDE_LENSLET = __N_SIDE_LENSLET;
+N_LENSLET   = N_SIDE_LENSLET*N_SIDE_LENSLET;
+N_FRAME     = 0;
+@ 
 <<setup common>>=
 zenith = -1.0;
 pixel_scale = 0.0;
@@ -196,10 +280,11 @@ void imaging::propagate(source *src) {
   dim3 gridDim;
   dim3 blockDim(16,16);
   gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
-  complexAmplitude LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT, 
-					      src->wavefront.amplitude, 
+  src->photometric_band = "R";
+  complexAmplitude LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
+					      src->wavefront.amplitude,
 					      src->wavefront.phase,
-					      src->wavenumber(),
+                                              src->wavenumber(),
 					      N_PX_PUPIL, N_PX_IMAGE, M,
 					      N_SIDE_LENSLET, src->dev_ptr,
                                               pixel_scale, theta_x, theta_y);
@@ -210,7 +295,6 @@ void imaging::propagate(source *src) {
 				     src->dev_ptr, pixel_scale, theta_x, theta_y,
 				     N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
   ++N_FRAME;
-
 }
 @ 
 The Fourier transform is done with the CUFFT library:
@@ -680,8 +764,57 @@ lenslet_array.setup(nPxLenslet,nLenslet,
 		    2,1,1);
 <<test cleanup>>=
 lenslet_array.cleanup();
-
 @
+
+\subsubsection{Python tests}
+\label{sec:python-tests}
+
+<<imaging.py>>=
+#!/usr/bin/env python
+
+import sys
+sys.path.append("/home/rconan/CEO/python")
+from pylab import *
+from ceo import *
+
+n = 256
+nn = array([n,n],dtype=int32)
+zen = array( [0], dtype=float32)
+azi = array( [0], dtype=float32)
+src = Source(zen,azi,float("inf"),nn)
+
+tel = Telescope(n)
+src.masked(tel)
+
+imgr = Imaging(n, 1, 4, 4*n, 1, 1)
+imgr.propagate(src)
+
+frame0 = zeros( (n*4,n*4), order="c", dtype=float32)
+imgr.getframe(frame0)
+
+figure(1)
+ax = imshow(frame0,interpolation='None') 
+colorbar(ax)
+draw()
+
+atm = GmtAtmosphere(15e-2,30)
+D = 25.0
+p = D/n
+atm.get_phase_screen(src, 1,  p, n, p, n, 0.0)
+src.masked(tel)
+
+imgr.reset()
+imgr.propagate(src)
+
+#frame0 = zeros( (n*4,n*4), order="c", dtype=float32)
+imgr.getframe(frame0)
+
+figure(2)
+ax = imshow(frame0,interpolation='None') 
+colorbar(ax)
+show()
+@ 
+
 \subsubsection{Matlab MEX}
 \label{sec:matlab-mex}
 
