@@ -1222,6 +1222,7 @@ This section gathers the python tests:
 
 import sys
 sys.path.append("/home/rconan/CEO/python")
+import time
 from pylab import *
 from ceo import *
 
@@ -1288,15 +1289,19 @@ wfs.calibrate(src,1.0)
 cog = Centroiding(1,1)
 
 c = zeros( 2, order="c", dtype=float32 )
-nSample = 1
+nSample = 200
 cx_g = zeros( nSample, order="c", dtype=float32 )
 cy_g = zeros( nSample, order="c", dtype=float32 )
 cx_d = zeros( nSample, order="c", dtype=float32 )
 cy_d = zeros( nSample, order="c", dtype=float32 )
 tau = 1e-2
+print "N_SAMPLE: %d\n" % nSample
+elapsed = 0.0
 for k in range(nSample):
 
+    t = time.time()
     atm.get_phase_screen_circ_centroids(cog,R,src,1,k*tau)
+    elapsed += time.time() - t
     cog.getc(c)
     cx_g[k] = c[0]
     cy_g[k] = c[1]
@@ -1308,30 +1313,33 @@ for k in range(nSample):
     wfs.analyze(src)
 
     src.getphase(ps)
-    figure(1)
-    ax1 = imshow(ps*1e6,interpolation='None') 
-    colorbar(ax1)
+#    figure(1)
+#    ax1 = imshow(ps*1e6,interpolation='None') 
+#    colorbar(ax1)
 
     wfs.getframe(frame)
-    figure(2)
-    ax2 = imshow(frame,interpolation='None') 
-    colorbar(ax2)
-    draw()
+#    figure(2)
+#    ax2 = imshow(frame,interpolation='None') 
+#    colorbar(ax2)
+#    draw()
 
     wfs.getc(c)
     cx_d[k] = c[0]
     cy_d[k] = c[1]
   
+elapsed /= nSample
+print "elapsed=%6.2f" % elapsed
+
 u = linspace(0,(nSample-1)*tau,nSample)
 rad2mas = 1e3*180*3600/pi
 cx_g *= rad2mas
 cy_g *= rad2mas
 cx_d *= rad2mas
 cy_d *= rad2mas
-print cx_g
-print cx_d
-print cy_g
-print cy_d
+#print cx_g
+#print cx_d
+#print cy_g
+#print cy_d
 figure(3)
 plot(u,cx_g,label='Cx geom.')
 plot(u,cy_g,label='Cy geom.')
