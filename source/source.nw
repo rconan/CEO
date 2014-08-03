@@ -25,12 +25,12 @@ struct source {
 
   <<source parameters>>
 
-  void setup(float zenith, float azimuth, float height);
-  void setup(float zenith, float azimuth, float height, int resolution);
-  void setup(float zenith, float azimuth, float height, char *tag_in);
-  void setup(float zenith, float azimuth, float height, int resolution, char *tag_in);
-  void setup(float *_zenith, float *_azimuth, float _height, int _N_SRC);
-  void setup(float *_zenith, float *_azimuth, float _height, int _N_SRC, int resolution);
+  void setup(char *_photometric_band, float zenith, float azimuth, float height);
+  void setup(char *_photometric_band, float zenith, float azimuth, float height, int resolution);
+  void setup(char *_photometric_band, float zenith, float azimuth, float height, char *tag_in);
+  void setup(char *_photometric_band, float zenith, float azimuth, float height, int resolution, char *tag_in);
+  void setup(char *_photometric_band, float *_zenith, float *_azimuth, float _height, int _N_SRC);
+  void setup(char *_photometric_band, float *_zenith, float *_azimuth, float _height, int _N_SRC, int resolution);
   void cleanup(void);
 
   void info(void);
@@ -93,9 +93,9 @@ cdef extern from "source.h":
     cdef cppclass source:
         char *photometric_band
         complex_amplitude wavefront
-        void setup(float , float , float )
-	void setup(float , float , float , int )
-        void setup(float *, float *, float , int , int )
+        void setup(char *,float , float , float )
+	void setup(char *,float , float , float , int )
+        void setup(char *,float *, float *, float , int , int )
         void cleanup()
         void info()
 @ 
@@ -139,14 +139,14 @@ cdef class Source:
     """
     cdef ceo.source *_c_source
 
-    def __cinit__(self, 
+    def __cinit__(self,char *_photometric_band,  
 	np.ndarray[float, mode="c"] zenith, 
 	np.ndarray[float, mode="c"] azimuth, 
         float height, 
         np.ndarray[int, mode="c"] resolution):
 	self._c_source = new ceo.source()
-        self._c_source.setup(&zenith[0], &azimuth[0], height, zenith.size, np.prod(resolution))    
-        self._c_source.photometric_band = "K"
+        self._c_source.setup(_photometric_band, 
+        &zenith[0], &azimuth[0], height, zenith.size, np.prod(resolution))    
 
     def __dealloc__(self):
         self._c_source.cleanup()
@@ -228,7 +228,7 @@ Sources are initialized with the setup function:
 \begin{itemize}
 \item for a single source:
 <<setup>>=
-void source::setup(float _zenith, float _azimuth, float _height) {
+void source::setup(char *_photometric_band, float _zenith, float _azimuth, float _height) {
   <<setup single source contents>>
   wavefront.setup(0);
   strcpy(tag,"source");
@@ -236,7 +236,7 @@ void source::setup(float _zenith, float _azimuth, float _height) {
 }
 @ \item for a single source with wavefront resolution:
 <<setup with wavefront resolution>>=
-void source::setup(float _zenith, float _azimuth, float _height, int resolution) {
+void source::setup(char *_photometric_band, float _zenith, float _azimuth, float _height, int resolution) {
   <<setup single source contents>>
   wavefront.setup(resolution);
   strcpy(tag,"source");
@@ -244,7 +244,7 @@ void source::setup(float _zenith, float _azimuth, float _height, int resolution)
 }
 @ \item for a single source with tag:
 <<setup with tag>>=
-void source::setup(float _zenith, float _azimuth, float _height, char *tag_in) {
+void source::setup(char *_photometric_band, float _zenith, float _azimuth, float _height, char *tag_in) {
   <<setup single source contents>>
   wavefront.setup(0);
   strcpy(tag,tag_in);
@@ -252,7 +252,7 @@ void source::setup(float _zenith, float _azimuth, float _height, char *tag_in) {
 }
 @ \item for a single source with wavefront resolution and tag:
 <<setup with wavefront resolution and tag>>=
-void source::setup(float _zenith, float _azimuth, float _height, 
+void source::setup(char *_photometric_band, float _zenith, float _azimuth, float _height, 
 		   int resolution, char *tag_in) {
   <<setup single source contents>>
   wavefront.setup(resolution);
@@ -261,10 +261,10 @@ void source::setup(float _zenith, float _azimuth, float _height,
 }
 @ \item for multiple sources:
 <<setup for multiple sources>>=
-void source::setup(float *_zenith, float *_azimuth, float _height, int _N_SRC) {
+void source::setup(char *_photometric_band, float *_zenith, float *_azimuth, float _height, int _N_SRC) {
   N_SRC = _N_SRC;
   height = _height;
-  photometric_band = "V";
+  photometric_band = _photometric_band;
   source __src;
   HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
   strcpy(tag,"sources");
@@ -281,18 +281,18 @@ void source::setup(float *_zenith, float *_azimuth, float _height, int _N_SRC) {
 			      cudaMemcpyHostToDevice ) );
     printf(" %5.2f      %6.2f    %8.2f    %5.3f\n",
                         _zenith[i_SRC]*RADIAN2ARCSEC,
-	   _azimuth[i_SRC]*180/PI,_height,__src.wavelength());
+	   _azimuth[i_SRC]*180/PI,_height,wavelength());
   }
   printf("----------------------------------------------------\x1B[0m\n");
   wavefront.setup(0);
 }
 @  \item for multiple sourcese with wavefront resolution:
 <<setup for multiple sources with wavefront resolution>>=
-void source::setup(float *_zenith, float *_azimuth, float _height, 
+void source::setup(char *_photometric_band, float *_zenith, float *_azimuth, float _height, 
 		   int _N_SRC, int resolution) {
   N_SRC = _N_SRC;
   height = _height;
-  photometric_band = "V";
+  photometric_band = _photometric_band;
   source __src;
   HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
   strcpy(tag,"sources");
@@ -309,7 +309,7 @@ void source::setup(float *_zenith, float *_azimuth, float _height,
 			      cudaMemcpyHostToDevice ) );
     printf(" %5.2f      %6.2f    %8.2f    %5.3f\n",
                         _zenith[i_SRC]*RADIAN2ARCSEC,
-	   _azimuth[i_SRC]*180/PI,_height,__src.wavelength());
+	   _azimuth[i_SRC]*180/PI,_height,wavelength());
   }
   wavefront.setup(resolution,N_SRC);
   printf(" wavefront pixel sampling: %d\n",wavefront.N_PX);
@@ -324,7 +324,7 @@ azimuth = _azimuth;
 height  = _height;
 theta_x = tanf(zenith)*cosf(azimuth);
 theta_y = tanf(zenith)*sinf(azimuth);
-photometric_band = "V";
+photometric_band = _photometric_band;
 source __src;
 __src.zenith  = zenith;
 __src.azimuth = azimuth;
