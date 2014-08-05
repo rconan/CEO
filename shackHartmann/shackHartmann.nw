@@ -121,7 +121,7 @@ cdef class ShackHartmann:
     def reset(self):
         self._c_shackHartmann.optics_relay.reset();
 
-    def getframe(self, np.ndarray[float , ndim=2, mode="c"] data):
+    def getframe(self, np.ndarray[float, ndim=2 ,mode="c"] data):
         dev2host(&data[0,0],self._c_shackHartmann.optics_relay.d__frame, data.size)
 
     def getc(self, np.ndarray[float , mode="c"] data):
@@ -527,22 +527,24 @@ sys.path.append("/home/rconan/CEO/python")
 from pylab import *
 from ceo import *
 
-nLenslet = 1
-D = 25.0
-n = 256
-nn = array([n,n],dtype=int32)
-zen = array( [0], dtype=float32)
-azi = array( [0], dtype=float32)
-src = Source(zen,azi,float("inf"),nn)
+nLenslet = 20
+D = 10.0
+n = 7
+nPx = n*nLenslet
+nn = array([nPx,nPx],dtype=int32)
+nSrc = 3
+zen = zeros( nSrc, dtype=float32)
+azi = zeros( nSrc, dtype=float32)
+src = Source("K",zen,azi,float("inf"),nn)
 
-tel = Telescope(n)
+tel = Telescope(n*nLenslet)
 src.masked(tel)
 
-wfs = ShackHartmann(nLenslet, n, D/nLenslet, 4, 4*n, 1, 1)
+wfs = ShackHartmann(nLenslet, n, D/nLenslet, 2, n, 1, nSrc)
 wfs.calibrate(src,0.5)
 wfs.analyze(src)
 
-frame0 = zeros( (4*n*nLenslet,4*n*nLenslet), order="c", dtype=float32)
+frame0 = zeros( (nPx*nSrc,nPx), order="c", dtype=float32)
 wfs.getframe(frame0)
 
 figure(1)
@@ -551,20 +553,29 @@ colorbar(ax)
 draw()
 
 atm = GmtAtmosphere(15e-2,30)
-D = 25.0
-p = D/n
-atm.get_phase_screen(src, 1,  p, n, p, n, 0.0)
+p = D/nPx
+atm.get_phase_screen(src, nSrc,  p, nPx, p, nPx, 0.0)
 src.masked(tel)
+ps = zeros( (nPx*nSrc,nPx), order="c", dtype=float32)
+src.getphase(ps)
+
+figure(2)
+subplot(1, 3, 1)
+ax = imshow(ps,interpolation='None') 
+colorbar(ax)
 
 wfs.reset()
 wfs.analyze(src)
 wfs.getframe(frame0)
 
-c = zeros( 2, order="c", dtype=float32 )
-wfs.getc(c)
-print c
-
-figure(2)
+subplot(1, 3, 2)
 ax = imshow(frame0,interpolation='None') 
+colorbar(ax)
+
+c = zeros( nSrc*2*nLenslet**2, order="c", dtype=float32 )
+wfs.getc(c)
+
+subplot(1, 3, 3)
+ax = imshow(reshape(c,[nSrc*nLenslet*2,nLenslet]),interpolation='None') 
 colorbar(ax)
 show()
