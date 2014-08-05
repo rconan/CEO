@@ -140,6 +140,95 @@ struct atmosphere {
 <<phase screen gradient (masked)>>
 <<phase screen circular centroids>>
 @
+\subsubsection{Python}
+\label{sec:python}
+
+<<ceo.pxd>>=
+cdef extern from "atmosphere.h":
+    cdef cppclass atmosphere:
+        void setup(float , float , float *, float *, float *, float *)
+        void gmt_setup(float , float)
+        void cleanup()
+        void info()
+        void get_phase_screen(source *, int , float , int , float , int , float )
+        void get_phase_screen_gradient(centroiding *, int , float , source *, int , float )
+        void get_phase_screen_circ_centroids(centroiding *,  float, source *, int , float )
+  
+@ 
+<<ceo.pyx>>=
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef class Atmosphere:
+    """ 
+    Create an atmosphere
+
+    Parameters
+    ----------
+    r0: number
+       The Fried parameter [m].
+    L0: number
+       The outer scale of turbulence [m].
+    altitude: ndarray of floats
+       The atmosphere layer altitudes [m].
+    xi0: ndarray of floats
+       The atmosphere layer weights 0<=xi0<=1, the sum must equal 1.
+    wind_speed: ndarray of floats
+       The atmosphere layer wind speeds [m/s].
+    wind_speed: ndarray of floats
+       The atmosphere layer wind directions [rd].
+    
+    Returns
+    -------
+    out: Atmosphere
+        An Atmosphere object.
+
+    Examples
+    --------
+    import numpy as np
+    import ceoN_SRC
+    h   = np.array([0,1,2.5,5,8,10,12],dtype=np.float32)*1e3
+    xi0 = np.array([0.3,0.15,0.25,0.1,0.1,0.05,0.05], dtype=np.float32)
+    vs  = np.array([10,10,10,10,10,10,10],dtype=np.float32)   
+    vo  = np.array([0,0,0,0,0,0,0], dtype=np.float32) 
+    atm = ceo.Atmosphere(15e-2,30,h,xi0,vs,vo)
+
+    """
+
+    cdef ceo.atmosphere *_c_atmosphere
+
+    def __cinit__(self, float r0, float L0, 
+        np.ndarray[float, mode="c"] altitude, 
+        np.ndarray[float, mode="c"] xi0, 
+        np.ndarray[float, mode="c"] wind_speed, 
+        np.ndarray[float, mode="c"] wind_direction):
+	self._c_atmosphere = new ceo.atmosphere()
+        self._c_atmosphere.setup(r0, L0, &altitude[0], &xi0[0], &wind_speed[0], &wind_direction[0])   
+ 
+    <<python atmosphere methods>>
+
+cdef class GmtAtmosphere:
+    cdef ceo.atmosphere *_c_atmosphere
+
+    def __cinit__(self, float r0, float L0):
+	self._c_atmosphere = new ceo.atmosphere()
+        self._c_atmosphere.gmt_setup(r0, L0)   
+    
+    <<python atmosphere methods>>
+@ 
+<<python atmosphere methods>>=
+def get_phase_screen(self, Source src, int N_SRC, float delta_x, int N_x, float delta_y, int N_y, float time):
+    self._c_atmosphere.get_phase_screen(src._c_source, N_SRC, delta_x, N_x, delta_y, N_y, time)
+
+def get_phase_screen_gradient(self, Centroiding cog, int NL, float d, Source src, int N_SRC, float time):  
+    self._c_atmosphere.get_phase_screen_gradient(cog._c_centroiding, NL, d, src._c_source, N_SRC, time)
+
+def get_phase_screen_circ_centroids(self, Centroiding cog, float R, Source src, int N_SRC, float time):  
+    self._c_atmosphere.get_phase_screen_circ_centroids(cog._c_centroiding, R, src._c_source, N_SRC, time)
+
+def __dealloc__(self):
+    self._c_atmosphere.cleanup()
+@
+
 \subsection{Parameters}
 \label{sec:prms}
 
@@ -1018,31 +1107,31 @@ cgy = (float*)malloc(sizeof(float)*N_SAMPLE);
    elapsed_time += buf;
    HANDLE_ERROR( cudaMemcpy( cgx+k_SAMPLE, cog.d__cx, sizeof(float),
 			     cudaMemcpyDeviceToHost ) );
- /* printf(" CX = %5.2E\n",data[0]*RADIAN2ARCSEC); */
    HANDLE_ERROR( cudaMemcpy( cgy+k_SAMPLE, cog.d__cy, sizeof(float),
 			     cudaMemcpyDeviceToHost ) );
    cgx[k_SAMPLE] *= RADIAN2ARCSEC*1e3;
    cgy[k_SAMPLE] *= RADIAN2ARCSEC*1e3;
-/* printf(" CY = %5.2E\n",data[0]*RADIAN2ARCSEC); */ 
+  // printf(" CX = %6.3E\n",cgx[k_SAMPLE]);
+  // printf(" CY = %6.3E\n",cgy[k_SAMPLE]); 
 
    atm.get_phase_screen(&gs,1,p,N_PX,p,N_PX,tau[k_SAMPLE]);
    gs.wavefront.masked();
 
-/* gs.wavefront.show_phase("atmosphere/phase"); */
+//gs.wavefront.show_phase("atmosphere/phase");
    wfs.optics_relay.reset();
    wfs.analyze(&gs);
-/* wfs.optics_relay.show_frame("atmosphere/frame"); */
-/* wfs.data_proc.show_centroids("atmosphere/centroids"); */
+//wfs.optics_relay.show_frame("atmosphere/frame");
+//wfs.data_proc.show_centroids("atmosphere/centroids");
 /* wfs.data_proc.show_flux("atmosphere/flux"); */
 
    HANDLE_ERROR( cudaMemcpy( cx+k_SAMPLE, wfs.data_proc.d__cx, sizeof(float),
 			   cudaMemcpyDeviceToHost ) );
    HANDLE_ERROR( cudaMemcpy( cy+k_SAMPLE, wfs.data_proc.d__cy, sizeof(float),
 			   cudaMemcpyDeviceToHost ) );
-   cx[k_SAMPLE] *= RADIAN2ARCSEC*1e3;
-   cy[k_SAMPLE] *= RADIAN2ARCSEC*1e3;
-   /* printf(" CX = %5.2E\n",cx[k_SAMPLE]); */
-   /* printf(" CY = %5.2E\n",cy[k_SAMPLE]); */
+   cx[k_SAMPLE] *=  RADIAN2ARCSEC*1e3;
+   cy[k_SAMPLE] *=  RADIAN2ARCSEC*1e3;
+//   printf(" CX = %6.3E\n",cx[k_SAMPLE]);
+//   printf(" CY = %6.3E\n",cy[k_SAMPLE]);
  }
 
  printf("\n Geom slopes time: %5.2fms\n",elapsed_time/N_SAMPLE);
@@ -1091,8 +1180,7 @@ N_PX2 *= N_PX;
 @ \item the guide star:
 <<test setup>>=
 source gs;
-gs.setup(0.0,0.0,INFINITY,N_PX2);
-gs.photometric_band = "K";
+gs.setup("K",0.0,0.0,INFINITY,N_PX2);
 <<test cleanup>>=
 gs.cleanup();
 @ \item the atmosphere
@@ -1124,6 +1212,178 @@ wfs.calibrate(&gs,1.0);
 telescope.cleanup();
 @ \end{itemize}
 
+\subsubsection{Python tests}
+\label{sec:python-test}
+
+This section gathers the python tests:
+<<atmosphere.py>>=
+#!/usr/bin/env python
+
+import sys
+sys.path.append("/home/rconan/CEO/python")
+import time
+from pylab import *
+from ceo import *
+
+<<python test II>>
+@ 
+
+<<python test I>>=
+h   = array([0,1,2.5,5,8,10,12],dtype=float32)*1e3
+xi0 = array([0.3,0.15,0.25,0.1,0.1,0.05,0.05], dtype=float32)
+vs  = array([10,10,10,10,10,10,10],dtype=float32)   
+vo  = array([0,0,0,0,0,0,0], dtype=float32) 
+atm = Atmosphere(15e-2,30,h,xi0,vs,vo)
+
+n = 256
+nn = array([n,n],dtype=int32)
+zen = array( [0], dtype=float32)
+azi = array( [0], dtype=float32)
+src = Source(zen,azi,float("inf"),nn)
+
+tel = Telescope(n)
+src.masked(tel)
+
+atm.get_phase_screen(src, 1, 0.1, n, 0.1, n, 0.0)
+src.masked(tel)
+ps = zeros( (n,n), order="c", dtype=float32 )
+src.getphase(ps)
+
+figure(1)
+ax = imshow(ps*1e6,interpolation='None') 
+colorbar(ax)
+
+nLenslet = 10
+cog = Centroiding(nLenslet,1)
+c = zeros( (nLenslet,nLenslet*2), order="c", dtype=float32 )
+atm.get_phase_screen_gradient(cog,nLenslet,0.2,src,1,0.0)
+cog.getc(c)
+
+figure(2)
+imshow(c,interpolation='None') 
+show()
+@ 
+<<python test II>>=
+R = 12.5
+N_PX = N_PX2 = 256
+N_PX2 *= N_PX
+
+atm = GmtAtmosphere(20e-2,30)
+nn = array([N_PX,N_PX],dtype=int32)
+zen = array( [0], dtype=float32)
+azi = array( [0], dtype=float32)
+src = Source("K",zen,azi,float("inf"),nn)
+
+tel = Telescope(N_PX)
+
+p = 2*R/N_PX
+#atm.get_phase_screen(src, 1,  p, N_PX, p, N_PX, 0.0)
+src.masked(tel)
+ps = zeros( (N_PX,N_PX), order="c", dtype=float32 )
+frame = zeros( (N_PX*4,4*N_PX), order="c", dtype=float32)
+
+wfs = ShackHartmann(1,N_PX,2*R,4,4*N_PX,1,1)
+wfs.calibrate(src,1.0)
+
+cog = Centroiding(1,1)
+
+c = zeros( 2, order="c", dtype=float32 )
+nSample = 200
+cx_g = zeros( nSample, order="c", dtype=float32 )
+cy_g = zeros( nSample, order="c", dtype=float32 )
+cx_d = zeros( nSample, order="c", dtype=float32 )
+cy_d = zeros( nSample, order="c", dtype=float32 )
+tau = 1e-2
+print "N_SAMPLE: %d\n" % nSample
+elapsed = 0.0
+for k in range(nSample):
+
+    t = time.clock()
+    atm.get_phase_screen_circ_centroids(cog,R,src,1,k*tau)
+    elapsed += time.time() - t
+    cog.getc(c)
+    cx_g[k] = c[0]
+    cy_g[k] = c[1]
+
+    atm.get_phase_screen(src, 1,  p, N_PX, p, N_PX, k*tau)
+    src.masked(tel)
+
+    wfs.reset()
+    wfs.analyze(src)
+
+    src.getphase(ps)
+#    figure(1)
+#    ax1 = imshow(ps*1e6,interpolation='None') 
+#    colorbar(ax1)
+
+    wfs.getframe(frame)
+#    figure(2)
+#    ax2 = imshow(frame,interpolation='None') 
+#    colorbar(ax2)
+#    draw()
+
+    wfs.getc(c)
+    cx_d[k] = c[0]
+    cy_d[k] = c[1]
+  
+elapsed /= nSample
+elapsed *= 1e3
+print "elapsed=%6.2f" % elapsed
+
+u = linspace(0,(nSample-1)*tau,nSample)
+rad2mas = 1e3*180*3600/pi
+cx_g *= rad2mas
+cy_g *= rad2mas
+cx_d *= rad2mas
+cy_d *= rad2mas
+#print cx_g
+#print cx_d
+#print cy_g
+#print cy_d
+figure(3)
+plot(u,cx_g,label='Cx geom.')
+plot(u,cy_g,label='Cy geom.')
+plot(u,cx_d,label='Cx diffr.')
+plot(u,cy_d,label='Cy diffr.')
+grid()
+xlabel('Time [s]')
+ylabel('Centroids [mas]')
+legend()
+show()
+@ 
+<<python test III>>=
+n = 256
+nn = array([n,n],dtype=int32)
+zen = array( [0], dtype=float32)
+azi = array( [0], dtype=float32)
+src = Source(zen,azi,float("inf"),nn)
+
+tel = Telescope(n)
+src.masked(tel)
+
+D = 25.0
+wfs = ShackHartmann(1,n,D,4,4*n,1,1)
+wfs.calibrate(src,1.0)
+
+atm = GmtAtmosphere(15e-2,30)
+p = D/n
+atm.get_phase_screen(src, 1,  p, n, p, n, 0.0)
+src.masked(tel)
+
+#imgr = Imaging(n, 1, 4, n*4, 1, 1)
+#imgr.propagate(src)
+
+wfs.analyze(src)
+
+frame = zeros( (n,n*4), order="c", dtype=float32)
+#imgr.getframe(frame)
+wfs.getframe(frame)
+
+figure(1)
+ax = imshow(frame,interpolation='None') 
+colorbar(ax)
+show()
+@
 
 \subsubsection{Matlab tests}
 \label{sec:matlab-tests}
@@ -1154,8 +1414,7 @@ It calls the mex function:
 #endif
 
 static source src, *d__src;
-static atmosphere atm;
-static unsigned int INIT=0;
+static atmosphere atm;static unsigned int INIT=0;
 static void cleanup(void)
 {
     atm.cleanup();
