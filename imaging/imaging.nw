@@ -38,6 +38,7 @@ struct imaging {
   void reset(void);
    
   void propagate(source *src);
+  void propagateThroughFieldStop(source *src, float field_stop_diam);
 
   float strehl_ratio(imaging *ref);
 
@@ -57,6 +58,7 @@ struct imaging {
 #include "imaging.h"
 
 <<imaging complex amplitude>>
+<<apply field stop>>
 
 <<binning>>
 
@@ -74,6 +76,7 @@ struct imaging {
 <<info>>
    
 <<propagation>>
+<<propagation through field stop>>
 
 <<strehl ratio>>
 
@@ -93,6 +96,7 @@ cdef extern from "imaging.h":
         void setup(int , int , int , int , int, int)
         void cleanup()
         void propagate(source *)
+        void propagateThroughFieldStop(source *, float field_stop_diam)
         void reset()
 @ 
 <<ceo.pyx>>=
@@ -137,6 +141,9 @@ cdef class Imaging:
 
     def propagate(self, Source src):
         self._c_imaging.propagate(src._c_source)
+
+    def propagateThroughFieldStop(self, Source src, float field_stop_diam):
+        self._c_imaging.propagateThroughFieldStop(src._c_source, field_stop_diam)
 
     def reset(self):
         self._c_imaging.reset();
@@ -286,7 +293,7 @@ void imaging::propagate(source *src) {
                                               src->wavenumber(),
 					      N_PX_PUPIL, N_PX_IMAGE, M,
 					      N_SIDE_LENSLET, src->dev_ptr,
-                                              pixel_scale, theta_x, theta_y);
+                                              pixel_scale, theta_x, theta_y,1);
   <<imaging CUFFT execution>>
 
   gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,N_SOURCE);
@@ -340,6 +347,82 @@ The memory allocate for the plan is freed with
 <<imaging CUFFT plan destruction>>=
 cufftDestroy(plan);
 @
+
+\paragraph{Propagation through field stop}
+\label{sec:prop-thro-field}
+
+In order to reduce aliasing, a field stop is sometimes introduced in a focal plane.
+The following describes the routine [[propagateThroughFieldStop]] that takes a wavefront from a pupil plane and propagates it to another pupil plane through a focal plane where a field stop is set.
+The angular resolution in the focal plane is given by $\lambda/kD$ with $k=[[N_DFT]]/[[N_PX_PUPIL]]$.
+The angular diameter of the field stop is given as $\beta\lambda/D$ and in pixel it is $k\beta$.
+The pixel coordinate $[i,j]$ in the focal plane are given by $$i,j=\left[ {w-[[N_DFT]]\over 2},\dots,{[[N_DFT]]-2+w\over 2} \right],$$
+with $w=0$ for [[N_DFT]] even or $w=1$ for [[N_DFT]] odd.
+<<propagation through field stop>>=
+void imaging::propagateThroughFieldStop(source *src, float field_stop_diam) {
+  int M = N_PX_IMAGE/N_PX_CAMERA;
+  dim3 gridDim;
+  dim3 blockDim(16,16);
+  gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
+  complexAmplitude LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
+					      src->wavefront.amplitude,
+					      src->wavefront.phase,
+                                              src->wavenumber(),
+					      N_PX_PUPIL, N_PX_IMAGE, M,
+					      N_SIDE_LENSLET, src->dev_ptr,
+                                              pixel_scale, theta_x, theta_y,0);
+  <<imaging CUFFT execution>>
+
+ 
+  field_stop_diam *= N_DFT/N_PX_PUPIL;
+  gridDim = dim3(1+N_DFT/16,1+N_DFT/16);
+  apply_field_stop LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, field_stop_diam);
+
+  <<imaging CUFFT execution>>
+  
+  gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,N_SOURCE);
+  binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
+				     src->dev_ptr, pixel_scale, theta_x, theta_y,
+				     N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
+  ++N_FRAME;
+}
+@
+<<apply field stop>>=
+__global__ void apply_field_stop(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL, float field_stop_diam)
+{
+  int i, j, k, w, half;
+  float xi, yj, rij, l, c, s, phasor, a, b;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<N_DFT) && (j<N_DFT) ) {
+    w = N_DFT & 1;
+    half = (N_DFT-2+w)/2;
+    if (i>half)
+      xi = (float) (i - N_DFT);
+    else
+      xi = (float) i;
+    if (j>half)
+      yj = (float) (j - N_DFT);
+    else
+      yj = (float) j;
+    rij = hypot(xi,yj);
+    l = 0.5*field_stop_diam;
+    k = i*N_DFT + j;
+    if (rij>l) {
+      d__wave_PUPIL[k].x = d__wave_PUPIL[k].y = 0.0;
+    } else {
+      phasor = 2.*PI*(i+j)*(N_PX_PUPIL-1)/N_DFT;
+      sincosf(phasor,&s,&c);
+      a = d__wave_PUPIL[k].x;
+      b = d__wave_PUPIL[k].y;
+      d__wave_PUPIL[k].x = a*c - b*s;
+      d__wave_PUPIL[k].y = b*c + a*s;
+    }
+  } 
+}
+@
+
+\paragraph{Imaging numerical model}
+\label{sec:imag-numer-model}
 
 The imaging routine is modeling the propagation of [[N_SOURCE]] sources through a square lenslet array of length $[[N_SIDE_LENSLET]]\geq 1$ to the lenslet focal plane.
 For a given lenslet, the wave $\Psi=[[wave_PUPIL]]$ is sampled with $N_{pupil}\times N_{pupil}$ pixels.
@@ -408,7 +491,8 @@ __global__ void complexAmplitude(float2 *wave_PUPIL, int N_DFT,
 				 int N_PX_PUPIL, int N_PX_IMAGE, int M,
 				 int N_SIDE_LENSLET, source *src,
 				 float pixel_scale,
-				 float theta_x, float theta_y)
+				 float theta_x, float theta_y,
+				 char DFT_SHIFT)
 {
   int i, j, iLenslet, jLenslet, ij_PUPIL, ij_DFT, iSource;
   float c ,s, phasor, dx, dy, dx_int, dy_int;
@@ -433,7 +517,7 @@ __global__ void complexAmplitude(float2 *wave_PUPIL, int N_DFT,
 ij_PUPIL = lenslet2array(i,j,N_PX_PUPIL,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
 @ The phase shift is applied on the wavefront
 <<imaging complex amplitude>>=
-        phasor = PI*(i+j)*(1-N_DFT + (N_PX_IMAGE & 1))/N_DFT;
+        phasor = (DFT_SHIFT==0) ? 0.0 : PI*(i+j)*(1-N_DFT + (N_PX_IMAGE & 1))/N_DFT;
         <<angular offset>>
 	phasor -= 2*PI*(i*dx+j*dy)/N_DFT;
         phasor += wavefront_phase[ij_PUPIL]*wavenumber;
@@ -777,11 +861,14 @@ sys.path.append("/home/rconan/CEO/python")
 from pylab import *
 from ceo import *
 
+<<field stop test>>
+@ 
+<<main test>>=
 n = 256
 nn = array([n,n],dtype=int32)
 zen = array( [0], dtype=float32)
 azi = array( [0], dtype=float32)
-src = Source(zen,azi,float("inf"),nn)
+src = Source("V",zen,azi,float("inf"),nn)
 
 tel = Telescope(n)
 src.masked(tel)
@@ -814,6 +901,29 @@ ax = imshow(frame0,interpolation='None')
 colorbar(ax)
 show()
 @ 
+<<field stop test>>=
+n = 32
+nn = array([n,n],dtype=int32)
+zen = zeros( 1, dtype=float32)
+azi = zeros( 1, dtype=float32)
+src = Source("V",zen,azi,float("inf"),nn)
+
+tel = Telescope(n)
+src.masked(tel)
+osf = 2
+
+imgr = Imaging(n, 1, osf, osf*n, 1, 1)
+imgr.propagateThroughFieldStop(src,4.0)
+
+frame0 = zeros( (n*osf,n*osf), order="c", dtype=float32)
+imgr.getframe(frame0)
+
+figure(1)
+ax = imshow(sqrt(sqrt(frame0)),interpolation='None') 
+colorbar(ax)
+show()
+
+@
 
 \subsubsection{Matlab MEX}
 \label{sec:matlab-mex}
