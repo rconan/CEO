@@ -39,6 +39,7 @@ struct imaging {
    
   void propagate(source *src);
   void propagateThroughFieldStop(source *src, float field_stop_diam);
+  void propagateThroughPyramid(source *src);
 
   float strehl_ratio(imaging *ref);
 
@@ -59,6 +60,7 @@ struct imaging {
 
 <<imaging complex amplitude>>
 <<apply field stop>>
+<<apply pyramid>>
 
 <<binning>>
 
@@ -77,6 +79,7 @@ struct imaging {
    
 <<propagation>>
 <<propagation through field stop>>
+<<propagation through pyramid>>
 
 <<strehl ratio>>
 
@@ -97,6 +100,7 @@ cdef extern from "imaging.h":
         void cleanup()
         void propagate(source *)
         void propagateThroughFieldStop(source *, float field_stop_diam)
+        void propagateThroughPyramid(source *)
         void reset()
 @ 
 <<ceo.pyx>>=
@@ -144,6 +148,9 @@ cdef class Imaging:
 
     def propagateThroughFieldStop(self, Source src, float field_stop_diam):
         self._c_imaging.propagateThroughFieldStop(src._c_source, field_stop_diam)
+
+    def propagateThroughPyramid(self, Source src):
+        self._c_imaging.propagateThroughPyramid(src._c_source)
 
     def reset(self):
         self._c_imaging.reset();
@@ -375,11 +382,13 @@ void imaging::propagateThroughFieldStop(source *src, float field_stop_diam) {
  
   field_stop_diam *= N_DFT/N_PX_PUPIL;
   gridDim = dim3(1+N_DFT/16,1+N_DFT/16);
-  apply_field_stop LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, field_stop_diam);
+  apply_field_stop LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, 
+					       field_stop_diam);
 
   <<imaging CUFFT execution>>
   
-  gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,N_SOURCE);
+  gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
+		  N_SOURCE);
   binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
 				     src->dev_ptr, pixel_scale, theta_x, theta_y,
 				     N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
@@ -387,7 +396,8 @@ void imaging::propagateThroughFieldStop(source *src, float field_stop_diam) {
 }
 @
 <<apply field stop>>=
-__global__ void apply_field_stop(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL, float field_stop_diam)
+__global__ void apply_field_stop(float2 *d__wave_PUPIL, int N_DFT, 
+				 int N_PX_PUPIL, float field_stop_diam)
 {
   int i, j, k, w, half;
   float xi, yj, rij, l, c, s, phasor, a, b;
@@ -410,13 +420,88 @@ __global__ void apply_field_stop(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPI
     if (rij>l) {
       d__wave_PUPIL[k].x = d__wave_PUPIL[k].y = 0.0;
     } else {
-      phasor = 2.*PI*(i+j)*(N_PX_PUPIL-1)/N_DFT;
-      sincosf(phasor,&s,&c);
+      phasor = 2.*(i+j)*(N_PX_PUPIL-1)/N_DFT;
+      sincospif(phasor,&s,&c);
       a = d__wave_PUPIL[k].x;
       b = d__wave_PUPIL[k].y;
       d__wave_PUPIL[k].x = a*c - b*s;
       d__wave_PUPIL[k].y = b*c + a*s;
     }
+  } 
+}
+@
+
+\paragraph{Propagation through pyramid}
+\label{sec:prop-thro-pym}
+
+The pyramid wavefront sensor is a focal plane wavefront sensor.
+An image is formed on the tip of a glass pyramid and the camera is set behind the pyramid in the next pupil plane.
+The pyramid transmittance function is
+\begin{equation}
+  \label{eq:4}
+  T_{pyr}(x,y) = \exp\left[ -{\pi\over2} \left( \left|x\right| + \left|y\right| \right) \right]
+\end{equation}
+for $x,y=i,j-[[N_DFT]]/2$ with $i,i=0,\dots,[[N_DFT]]-1$.
+For a complex amplitude $\Phi$, the camera image $I$ is given by
+\begin{equation}
+  \label{eq:5}
+  I = \left| \mathcal F \left[ \mathcal F[\Phi] T_{pyr} \right] \right|^2.
+\end{equation}
+
+<<propagation through pyramid>>=
+void imaging::propagateThroughPyramid(source *src) {
+  int M = N_PX_IMAGE/N_PX_CAMERA;
+  dim3 gridDim;
+  dim3 blockDim(16,16);
+  gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
+  complexAmplitude LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
+					      src->wavefront.amplitude,
+					      src->wavefront.phase,
+                                              src->wavenumber(),
+					      N_PX_PUPIL, N_PX_IMAGE, M,
+					      N_SIDE_LENSLET, src->dev_ptr,
+                                              pixel_scale, theta_x, theta_y,0);
+  <<imaging CUFFT execution>>
+ 
+  gridDim = dim3(1+N_DFT/16,1+N_DFT/16);
+  apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL);
+
+  <<imaging CUFFT execution>>
+   
+  gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
+		  N_SOURCE);
+  binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
+				     src->dev_ptr, pixel_scale, theta_x, theta_y,
+				     N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
+  ++N_FRAME;
+}
+@
+<<apply pyramid>>=
+__global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL)
+{
+  int i, j, k, w, half;
+  float xi, yj, c, s, phasor, a, b;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<N_DFT) && (j<N_DFT) ) {
+    w = N_DFT & 1;
+    half = (N_DFT-2+w)/2;
+    if (i>half)
+      xi = (float) (i - N_DFT);
+    else
+      xi = (float) i;
+    if (j>half)
+      yj = (float) (j - N_DFT);
+    else
+      yj = (float) j;
+    k = i*N_DFT + j;
+    phasor = -2.*(i+j)*(N_PX_PUPIL*1.5+1+w)/N_DFT;
+    phasor -= 0.5*(fabs(xi)+fabs(yj));
+    sincospif(phasor,&s,&c);
+    a = d__wave_PUPIL[k].x;
+    b = d__wave_PUPIL[k].y;
+    d__wave_PUPIL[k].x = a*c - b*s;
+    d__wave_PUPIL[k].y = b*c + a*s;
   } 
 }
 @
@@ -910,16 +995,17 @@ src = Source("V",zen,azi,float("inf"),nn)
 
 tel = Telescope(n)
 src.masked(tel)
-osf = 2
+osf = 4
 
 imgr = Imaging(n, 1, osf, osf*n, 1, 1)
-imgr.propagateThroughFieldStop(src,4.0)
+#imgr.propagateThroughFieldStop(src,4.0)
+imgr.propagateThroughPyramid(src)
 
 frame0 = zeros( (n*osf,n*osf), order="c", dtype=float32)
 imgr.getframe(frame0)
 
 figure(1)
-ax = imshow(sqrt(sqrt(frame0)),interpolation='None') 
+ax = imshow(frame0,interpolation='None') 
 colorbar(ax)
 show()
 
