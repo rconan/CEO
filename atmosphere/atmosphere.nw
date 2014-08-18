@@ -90,6 +90,9 @@ struct atmosphere {
 				 float const d, source *src, int N_SRC, float time);
   void get_phase_screen_circ_centroids(centroiding *cog, const float R, 
 				       source *src, int N_SRC, float time);
+  void get_phase_screen_circ_uplink_centroids(centroiding *cog, const float R, 
+					      source *src, int N_SRC, float time, 
+					      char focused);
 };
 
 #endif // __ATMOSPHERE_H__
@@ -101,6 +104,8 @@ struct atmosphere {
 
 <<sinc (atm)>>
 <<phase screen circular centroids kernel>>
+<<phase screen circular uplink centroids kernel>>
+<<phase screen circular focused uplink centroids kernel>>
 
 <<init random variates>>
 
@@ -139,6 +144,7 @@ struct atmosphere {
 <<phase screen gradient IV>>
 <<phase screen gradient (masked)>>
 <<phase screen circular centroids>>
+<<phase screen circular uplink centroids>>
 @
 \subsubsection{Python}
 \label{sec:python}
@@ -150,9 +156,11 @@ cdef extern from "atmosphere.h":
         void gmt_setup(float , float)
         void cleanup()
         void info()
+	void reset()
         void get_phase_screen(source *, int , float , int , float , int , float )
         void get_phase_screen_gradient(centroiding *, int , float , source *, int , float )
         void get_phase_screen_circ_centroids(centroiding *,  float, source *, int , float )
+        void get_phase_screen_circ_uplink_centroids(centroiding *,  float, source *, int , float, char )
   
 @ 
 <<ceo.pyx>>=
@@ -216,6 +224,9 @@ cdef class GmtAtmosphere:
     <<python atmosphere methods>>
 @ 
 <<python atmosphere methods>>=
+def reset(self):
+    self._c_atmosphere.reset()
+
 def get_phase_screen(self, Source src, int N_SRC, float delta_x, int N_x, float delta_y, int N_y, float time):
     self._c_atmosphere.get_phase_screen(src._c_source, N_SRC, delta_x, N_x, delta_y, N_y, time)
 
@@ -224,6 +235,10 @@ def get_phase_screen_gradient(self, Centroiding cog, int NL, float d, Source src
 
 def get_phase_screen_circ_centroids(self, Centroiding cog, float R, Source src, int N_SRC, float time):  
     self._c_atmosphere.get_phase_screen_circ_centroids(cog._c_centroiding, R, src._c_source, N_SRC, time)
+
+def get_phase_screen_circ_uplink_centroids(self, Centroiding cog, float R, 
+					     Source src, int N_SRC, float time, char focused):  
+    self._c_atmosphere.get_phase_screen_circ_uplink_centroids(cog._c_centroiding, R, src._c_source, N_SRC, time,focused)
 
 def __dealloc__(self):
     self._c_atmosphere.cleanup()
@@ -657,17 +672,37 @@ The inner loop is the sum over the frequency angle. It computes $\varphi_j$, $\s
 @ 
 The innest loop is the sum over the layer.
 <<layer sum>>=
+<<layer sum: variable definitions>>
+<<layer sum: cone effect>>
+<<layer sum: angle and time offsets>>
+<<layer sum: PSD quadrature>>
+@ Some new variable definitions:
+<<layer sum: variable definitions>>=
 ijl = ij + l*turb->N_a*turb->N_k;
 gl = 1 - turb->altitude[l]/src[i_source].height;
-x_kl = gl*x_kl0;
-y_kl = gl*y_kl0;
+x_kl = x_kl0;
+y_kl = y_kl0;
+@ The cone effect is applied to the layer coordinates:
+<<layer sum: cone effect>>=
+x_kl *= gl;
+y_kl *= gl;
+@ The source angular and time offset are accounted for in the following:
+<<layer sum: angle and time offsets>>=
 x_kl += turb->altitude[l]*src[i_source].theta_x - turb->vx[l]*time;
 y_kl += turb->altitude[l]*src[i_source].theta_y - turb->vy[l]*time;
+@ The quadrature of the power spectrum density of the turbulent phase:
+<<layer sum: PSD quadrature>>=
 sum_l += sqrt(turb->xi0[l])*
    ( zeta1[ijl]*cosf( eta1[ijl] +
 		     freq_mag*( x_kl*cos_freq_ang + y_kl*sin_freq_ang ) ) +
      zeta2[ijl]*cosf( eta2[ijl] -
 		     freq_mag*( x_kl*sin_freq_ang - y_kl*cos_freq_ang ) ));
+@ 
+A collimated beam can be forced by re--writing the sum over the layer without the cone effect:
+<<layer sum (collimated)>>=
+<<layer sum: variable definitions>>
+<<layer sum: angle and time offsets>>
+<<layer sum: PSD quadrature>>
 @ 
 The next routine compute the phase screen on a square grid of size [[N_x]]$\times$[[N_y]]
 <<phase screen III>>=
@@ -999,6 +1034,9 @@ __device__ float sinc_atm(float x) {
 }
 @ 
 
+\subsubsection{Jitter}
+\label{sec:jitter}
+
 For a circular pupil of radius $R$, the centroids are given by:
 \begin{eqnarray}
   \label{eq:3}
@@ -1067,7 +1105,137 @@ __global__ void circ_centroids_kernel(float *cx, float *cy, int N_xy,
       atomicAdd(&cy[0], _cy_);
     }
 }
+@ 
+The uplink jitter is given by:
+\begin{eqnarray}
+  \label{eq:18}
+  s_x &=& \sum_k^{[[N_LAYER]]} \left( 1 - {z_k\over L} \right) s_x(k) \\
+  s_y &=& \sum_k^{[[N_LAYER]]} \left( 1 - {z_k\over L} \right) s_y(k) \\  
+\end{eqnarray}
+where $L$ is the source height and $z_k$ is the atmosphere layer altitude.
+@
+<<phase screen circular uplink centroids>>=
+void atmosphere::get_phase_screen_circ_uplink_centroids(centroiding *cog, const float R, 
+                                                 source *src, int N_SRC, float time, char focused)
+{
+  int N_o = 360;
+  dim3 blockDim(16,16);
+  dim3 gridDim( ceilf(sqrt(N_o)/16) , ceilf(sqrt(N_o)/16));
+  if (focused==1)
+    circ_focused_uplink_centroids_kernel LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy,  N_o, R,
+								     d__turbulence, wavenumber*powf(r0,-5.0/6.0),
+								     zeta1, eta1, zeta2, eta2,
+								     src->dev_ptr, time);
+  else
+    circ_uplink_centroids_kernel LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy,  N_o, R,
+							     d__turbulence, wavenumber*powf(r0,-5.0/6.0),
+							     zeta1, eta1, zeta2, eta2,
+							     src->dev_ptr, time);
+}
+@
+For a collimated uplink beam, the device kernel is:
+<<phase screen circular uplink centroids kernel>>=
+__global__ void circ_uplink_centroids_kernel(float *cx, float *cy, int N_xy, 
+				      const float R,
+				      profile *turb, float r0,
+				      float *zeta1, float *eta1, float *zeta2, float *eta2,
+				      source *src, float time)
+{
+  <<declarations>>
 
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  i_source = blockIdx.z;
+  kl = j * gridDim.x * blockDim.x + i + i_source*N_xy;
+
+  sum = 0;
+  
+  if (kl<N_xy)
+    {
+
+      <<variables>>
+
+      float o, so, co, c, _cx_, _cy_, phase_screen;
+      c = -2.0/(R*N_xy);
+      o = 2*PI*kl/N_xy;
+      sincosf(o,&so,&co);
+      x_kl0 = R*co;
+      y_kl0 = R*so;
+      cx[0] = cy[0] = 0.0;
+
+      for (i=0;i<turb->N_k;i++)
+	{
+	  <<frequency magnitude sum>>
+          for (j=0;j<turb->N_a;j++)
+	    {
+	      <<frequency angle sum>>
+	      for (l=0;l<_N_LAYER_;l++)
+		{
+		  <<layer sum (collimated)>>
+                  sum_l *= gl;
+		}
+	      sum += sqrt_spectrum_kernel*sum_l;
+	    }
+	}
+      phase_screen = 1.4*r0*sum;
+      _cx_ = c*co*phase_screen;
+      _cy_ = c*so*phase_screen;
+      atomicAdd(&cx[0], _cx_);
+      atomicAdd(&cy[0], _cy_);
+    }
+}
+@
+For a focused uplink beam, the device kernel is:
+<<phase screen circular focused uplink centroids kernel>>=
+__global__ void circ_focused_uplink_centroids_kernel(float *cx, float *cy, int N_xy, 
+				      const float R,
+				      profile *turb, float r0,
+				      float *zeta1, float *eta1, float *zeta2, float *eta2,
+				      source *src, float time)
+{
+  <<declarations>>
+
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  i_source = blockIdx.z;
+  kl = j * gridDim.x * blockDim.x + i + i_source*N_xy;
+
+  sum = 0;
+  
+  if (kl<N_xy)
+    {
+
+      <<variables>>
+
+      float o, so, co, c, _cx_, _cy_, phase_screen;
+      c = -2.0/(R*N_xy);
+      o = 2*PI*kl/N_xy;
+      sincosf(o,&so,&co);
+      x_kl0 = R*co;
+      y_kl0 = R*so;
+      cx[0] = cy[0] = 0.0;
+
+      for (i=0;i<turb->N_k;i++)
+	{
+	  <<frequency magnitude sum>>
+          for (j=0;j<turb->N_a;j++)
+	    {
+	      <<frequency angle sum>>
+	      for (l=0;l<_N_LAYER_;l++)
+		{
+		  <<layer sum>>
+                  sum_l *= gl;
+		}
+	      sum += sqrt_spectrum_kernel*sum_l;
+	    }
+	}
+      phase_screen = 1.4*r0*sum;
+      _cx_ = c*co*phase_screen;
+      _cy_ = c*so*phase_screen;
+      atomicAdd(&cx[0], _cx_);
+      atomicAdd(&cy[0], _cy_);
+    }
+}
 @ 
 \subsection{Tests}
 \label{sec:tests}
@@ -1225,7 +1393,7 @@ import time
 from pylab import *
 from ceo import *
 
-<<python test II>>
+<<python test II (uplink stats)>>
 @ 
 
 <<python test I>>=
@@ -1256,6 +1424,7 @@ colorbar(ax)
 nLenslet = 10
 cog = Centroiding(nLenslet,1)
 c = zeros( (nLenslet,nLenslet*2), order="c", dtype=float32 )
+
 atm.get_phase_screen_gradient(cog,nLenslet,0.2,src,1,0.0)
 cog.getc(c)
 
@@ -1350,6 +1519,112 @@ xlabel('Time [s]')
 ylabel('Centroids [mas]')
 legend()
 show()
+@ 
+<<python test II (uplink)>>=
+R = 0.15
+N_PX = N_PX2 = 256
+N_PX2 *= N_PX
+
+atm = GmtAtmosphere(20e-2,30)
+nn = array([N_PX,N_PX],dtype=int32)
+zen = array( [0], dtype=float32)
+azi = array( [0], dtype=float32)
+src = Source("K",zen,azi,90e3,nn)
+
+tel = Telescope(N_PX)
+
+p = 2*R/N_PX
+#atm.get_phase_screen(src, 1,  p, N_PX, p, N_PX, 0.0)
+src.masked(tel)
+ps = zeros( (N_PX,N_PX), order="c", dtype=float32 )
+frame = zeros( (N_PX*4,4*N_PX), order="c", dtype=float32)
+
+cog = Centroiding(1,1)
+cog_up = Centroiding(1,1)
+
+c = zeros( 2, order="c", dtype=float32 )
+nSample = 200
+cx_g = zeros( nSample, order="c", dtype=float32 )
+cy_g = zeros( nSample, order="c", dtype=float32 )
+cx_u = zeros( nSample, order="c", dtype=float32 )
+cy_u = zeros( nSample, order="c", dtype=float32 )
+tau = 1e-2
+print "N_SAMPLE: %d\n" % nSample
+for k in range(nSample):
+
+    atm.get_phase_screen_circ_centroids(cog,R,src,1,k*tau)
+    atm.get_phase_screen_circ_uplink_centroids(cog_up,R,src,1,k*tau,0)
+    cog.getc(c)
+    cx_g[k] = c[0]
+    cy_g[k] = c[1]
+    cog_up.getc(c)
+    cx_u[k] = c[0]
+    cy_u[k] = c[1]
+  
+u = linspace(0,(nSample-1)*tau,nSample)
+rad2mas = 1e3*180*3600/pi
+cx_g *= rad2mas
+cy_g *= rad2mas
+cx_u *= rad2mas
+cy_u *= rad2mas
+figure(3)
+plot(u,cx_g,label='Cx geom.')
+plot(u,cy_g,label='Cy geom.')
+plot(u,cx_u,label='Cx diffr.')
+plot(u,cy_u,label='Cy diffr.')
+grid()
+xlabel('Time [s]')
+ylabel('Centroids [mas]')
+legend()
+show()
+@ 
+<<python test II (uplink stats)>>=
+R = 0.15
+N_PX = N_PX2 = 256
+N_PX2 *= N_PX
+
+atm = GmtAtmosphere(20e-2,30)
+nn = array([N_PX,N_PX],dtype=int32)
+zen = array( [0], dtype=float32)
+azi = array( [0], dtype=float32)
+src = Source("K",zen,azi,90e3,nn)
+
+tel = Telescope(N_PX)
+
+p = 2*R/N_PX
+#atm.get_phase_screen(src, 1,  p, N_PX, p, N_PX, 0.0)
+src.masked(tel)
+ps = zeros( (N_PX,N_PX), order="c", dtype=float32 )
+frame = zeros( (N_PX*4,4*N_PX), order="c", dtype=float32)
+
+cog = Centroiding(1,1)
+cog_up = Centroiding(1,1)
+
+c = zeros( 2, order="c", dtype=float32 )
+nSample = 2000
+cx_g = zeros( nSample, order="c", dtype=float32 )
+cy_g = zeros( nSample, order="c", dtype=float32 )
+cx_u = zeros( nSample, order="c", dtype=float32 )
+cy_u = zeros( nSample, order="c", dtype=float32 )
+tau = 1e-2
+print "N_SAMPLE: %d\n" % nSample
+for k in range(nSample):
+    
+    atm.reset()
+    atm.get_phase_screen_circ_centroids(cog,R,src,1,0.)
+    atm.get_phase_screen_circ_uplink_centroids(cog_up,R,src,1,0.,0)
+    cog.getc(c)
+    cx_g[k] = c[0]
+    cy_g[k] = c[1]
+    cog_up.getc(c)
+    cx_u[k] = c[0]
+    cy_u[k] = c[1]
+
+rad2mas = 1e3*180*3600/pi
+cx_g *= rad2mas
+cy_g *= rad2mas
+cx_u *= rad2mas
+cy_u *= rad2mas
 @ 
 <<python test III>>=
 n = 256

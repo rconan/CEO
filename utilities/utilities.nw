@@ -98,6 +98,12 @@ void dev2file(const char* filename, float* d__data, int n_data,
 void dev2file(const char* filename, int* d__data, int n_data);
 void dev2file(const char* filename, float2* d__data, int n_data);
 void dev2file(const char* filename, char* d__data, int n_data);
+
+double atmosphere_refractive_index(float wavelength, float altitude, float temperature, float humidity);
+double atmospheric_dispersion(float wavelength, float delta_wavelength,
+			      float zenith, float altitude, 
+			      float temperature, float humidity);
+
 void dev2host( float *host_data, float *dev_data, int N);
 
 #endif  // __UTILITIES_H__
@@ -135,6 +141,9 @@ int round_up_to_nhp2(int n) {
 <<Fried geometry>>
 
 <<device to file>>
+
+<<atmosphere refractive index>>
+<<atmospheric dispersion>>
 
 <<data to host from device>>
 @
@@ -907,12 +916,132 @@ free(data);
 fprintf(stderr,"@(CEO)>utilities: Data saved to %s!\n",filename);
 @ 
 
+\subsubsection{Atmospheric dispersion}
+\label{sec:atmosph-disp}
+
+The optical refractive index of air $n-1$ is given as a function of the wavelength [$\mu$m], the altitude [m], the temperature [$^{\circ}$C] and the humidity [\%].
+It is defined with the model of Owens\cite{Owens67} (\url{http://www.astrosurf.com/prostjp/Dispersion_en.html}) given by
+\begin{eqnarray*}
+  \label{eq:1}
+  \lefteqn{ \left(n - 1\right) \times 10^8 = } \\
+  && \left[ 2371.34 + {683939.7 \over 130 - \sigma^2} + {4547.3 \over 38.9 - \sigma^2} \right]D_s + \\
+  && \left[ 6487.31 + 58.05\sigma^2 - 0.71150\sigma^4 + 0.08851\sigma^6 \right]D_w,
+\end{eqnarray*}
+in which $\sigma=1/\lambda$, $\lambda$ is the wavelength in micron.
+<<atmosphere refractive index>>=
+double atmosphere_refractive_index(float wavelength, float altitude, 
+				   float temperature, float humidity)
+  {
+    double sigma2, n_minus_one, Ds, Dw, T, Ps, Pw, H, P0;
+
+    sigma2 = 1.0/wavelength/wavelength;
+    T = temperature + 273;
+    H = humidity/100.0;
+    P0 = 1013.25;
+
+    <<dry air partial pressure>>
+    <<density of dry air>>
+    <<water vapor partial pressure>>
+    <<density of water vapor>>
+
+    n_minus_one = ( 2371.34 + 683939.7 / ( 130.0 - sigma2) + 
+		    4547.3 / ( 38.9 - sigma2 ) ) * Ds +
+    ( 6487.31 + sigma2 * ( 58.05 - sigma2 * ( 0.71150 - 0.08851*sigma2 ) ) ) * Dw;
+
+    return n_minus_one*1e-8;
+  }					
+@ 
+$D_s$ is the density of dry air:
+\begin{equation*}
+  \label{eq:2}
+  D_s = { P_s \over T} \left[ 1 + P_s\left( 57.90 \times 10^{-8} - { 9.3250 \times 10^{-4} \over T } + {0.25844 \over T^2} \right) \right],
+\end{equation*}
+<<density of dry air>>=
+Ds = (Ps/T)*( 1 + Ps*( 57.90e-8 - ( 9.3250e-4  - 0.25844/T )/T ) );
+@ 
+$D_w$ is the density of water vapor:
+\begin{eqnarray*}
+  \lefteqn{ D_w =  {P_w\over T} \Bigg\{ 1 + P_w \left[ 1 + \left( 3.7\times 10^{-4} \right)P_w \right] \times }\\
+  && \left[ -2.37321 \times 10^{-3} + {2.23366 \over T } - {710.792 \over T^2 } + {7.75141\times 10^4 \over T^3} \right] \Bigg\}
+\end{eqnarray*}
+<<density of water vapor>>=
+Dw = (Pw/T)*( 1 + Pw*( 1 + 3.7e-4*Pw ) )*
+    ( -2.37321e-3 + ( 2.23366  - ( 710.792 - 7.75141e4/T )/T )/T );
+@ 
+where $P_s$ is the dry air partial pressure
+\begin{equation*}
+  \label{eq:3}
+  P_s = P_0\left( 1 -  (2.25577 \times 10^{-5} ) h \right)^{5.25588},
+\end{equation*}
+with $P_0=1013.25$mb and $h$ the altitude in meter
+<<dry air partial pressure>>=
+Ps = P0*pow( 1 - 2.25577e-5*altitude , 5.25588 );
+@ 
+and $P_w$ is the water vapor partial pressure
+\begin{eqnarray*}
+  P_w &=& P_{ws} { H \over 100 } \\
+  P_{ws} &=& T^{-8.2}\exp\left( 77.3450 + 0.0057 T - {7235 \over T} \right)
+\end{eqnarray*}
+with $H$ the relative humidity in percent and $T$ is the temperature in degree Kelvin.
+<<water vapor partial pressure>>=
+Pw = H*exp( 77.3450 + 0.0057*T - 7235.0/T )/pow(T,8.2);
+@ 
+The refraction angle is given by
+\begin{equation*}
+  \varepsilon(\lambda) = \left[ n(\lambda)-1 \right] \tan(z)
+\end{equation*}
+where $z$ is the zenith angle.
+The atmospheric dispersion $\Xi$ corresponding to a spectral filter of width $\Delta\lambda$ with central wavelength $\lambda_c$ is written
+\begin{equation*}
+  \Xi = \left[ n\left( \lambda_c - {\Delta\lambda\over2} \right) - n\left( \lambda_c + {\Delta\lambda\over2} \right) \right] \tan(z)
+\end{equation*}
+<<atmospheric dispersion>>=
+double atmospheric_dispersion(float wavelength, float delta_wavelength,
+                                   float zenith, float altitude, 
+				   float temperature, float humidity)
+{
+double n1, n2, xi;
+float lambda1, lambda2;
+lambda1 = wavelength - 0.5*delta_wavelength;
+lambda2 = wavelength + 0.5*delta_wavelength;
+n1 =  atmosphere_refractive_index(lambda1, altitude, 
+				   temperature, humidity);
+n2 =  atmosphere_refractive_index(lambda2, altitude, 
+				   temperature, humidity);
+xi = (n1-n2)*tan(zenith);
+return xi;
+}
+@
+
+The python wrapper is 
+<<ceo.pxd>>=
+cdef extern from "utilities.h":
+     double atmosphere_refractive_index(float wavelength, float altitude, 
+                                        float temperature, float humidity)
+     double atmospheric_dispersion(float wavelength, float delta_wavelength,
+                                   float zenith, float altitude, 
+				   float temperature, float humidity)
+@ 
+<<ceo.pyx>>=
+cpdef double atmosphereRefractiveIndex(float wavelength, float altitude, 
+                                 float temperature, float humidity ):
+     return atmosphere_refractive_index(wavelength, altitude, 
+                                       temperature, humidity)
+cpdef double atmosphericDispersion(float wavelength, float delta_wavelength,
+                                   float zenith, float altitude, 
+				   float temperature, float humidity):
+     return atmospheric_dispersion(wavelength, delta_wavelength,
+                                   zenith, altitude, 
+				   temperature, humidity)
+@
+
 \subsection{Python}
 \label{sec:python}
 
 <<data to host from device>>=
 void dev2host( float *host_data, float *dev_data, int N) {
-     HANDLE_ERROR( cudaMemcpy( host_data, dev_data, N*sizeof(float), cudaMemcpyDeviceToHost ) ) ;
+     HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
+			       N*sizeof(float), cudaMemcpyDeviceToHost ) ) ;
      HANDLE_ERROR( cudaDeviceSynchronize() );
 }
 @
@@ -923,4 +1052,3 @@ cdef extern from "utilities.h":
 <<ceo.pyx>>=
 cdef fromdev( np.ndarray[float, mode="c"] host_data, float *dev_data, int N):
     dev2host( &host_data[0], dev_data, N)
-@
