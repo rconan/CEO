@@ -84,6 +84,7 @@ void CUBLAS_ERROR(cublasStatus_t status);
 
 <<lenslet 2 actuator>>
 __global__ void circular_pupil(char *pupil, int N);
+__global__ void GMT_pupil(char *pupil, const int N, const float S);
 //__global__ void valid_lenslet(char *mask, int N_pupil, float threshold);
 __global__ void fried_geometry(char *lenslet_mask, char *actuator_mask, 
                                int NL, int n, float threshold);
@@ -136,6 +137,7 @@ int round_up_to_nhp2(int n) {
 <<statistics functions>>
 <<mask functions>>
 <<circular pupil>>
+<<GMT pupil>>
 
 <<Fried geometry masks>>
 <<Fried geometry>>
@@ -152,38 +154,7 @@ int round_up_to_nhp2(int n) {
 \label{sec:python}
 
 <<ceo.pxd>>=
-cdef extern from "imaging.h":
-    cdef cppclass mask:
-        void setup_circular(int)
-        void cleanup()
-@ 
-<<ceo.pyx>>=
-cdef class Telescope:
-    """ 
-    Creates a mask object.
-
-    Parameters
-    ----------
-    n: an int number
-       The sampling in pixel of the pupil.
-    
-    Returns
-    -------
-    out: Mask
-        A Mask object.
-
-    Examples
-    --------
-
-    """
-    cdef ceo.mask *_c_mask
-
-    def __cinit__(self, int n):
-	self._c_mask = new ceo.mask()
-	self._c_mask.setup_circular(n)    
-
-    def __dealloc__(self):
-        self._c_mask.cleanup()
+cdef extern from "utilities.h":
 @
 
 \section{Functions}
@@ -711,8 +682,102 @@ __device__ inline int lenset2actuator(int iL, int jL, int NL, int io, int jo)
   return iA*(NL+1) + jA;
 
 }
+@
 
+\subsection{The Giant Magellan Telescope pupil}
+\label{sec:gmt-pupil}
+
+The GMT pupil is made of 7 circular segments of diameter  $D_s=8.417$m.
+The clear aperture diameter is $D_{sca}=8.365$m.
+There is one segment centered on the optical axis with a $D_h=1.78$m diameter hole in the middle.
+The six other segments are evenly located around the center one and tilted of $\theta_s = 13.522^{\circ}$.
+The distance from the optical axis to the center of an off--axis segment is $L=8.774$m.
+<<GMT pupil>>=
+__global__ void GMT_pupil(char *pupil, const int N, const float S)
+{
+  int i, j, k, seg;
+  float h,x,y,xp,yp, co_seg, so_seg, cOs, Dh, Dsca, Ds, L;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = i*N + j;
+  seg = blockIdx.z;
+  if ( (i<N) && (j<N) ) {
+    Dh   = 1.78;
+    Dsca = 8.365;
+    Ds   = 8.417;
+    L    = 8.774;
+    <<GMT pupil coordinates>>
+    if (seg==0) {
+      <<GMT pupil definition 0>>
+    } else {
+      <<GMT pupil definition>>
+    }
+  }
+}
+@
+Lets call $x$ and $y$ the coordinates in the pupil plane.
+<<GMT pupil coordinates>>=
+h = S/(N-1);
+x = (i - 0.5*(N-1))*h;
+y = (j - 0.5*(N-1))*h;
+Dsca *= Dsca;
 @ 
+The center segment is defined with
+\begin{equation*}
+   D_h^2 \le  4\left( x^2 + y^2 \right)  \le D_{sca}^2.
+\end{equation*}
+<<GMT pupil definition 0>>=
+h = (x*x + y*y)*4.0;
+Dh   *= Dh;
+if ( (h>=Dh) && (h<=Dsca) ) {
+  pupil[k] = 1;
+}
+@ For the off--axis segments, the coordinates need to be projected on the tilted-planes of the segments.
+The segments are tilted with respect to a line tangent to the segment at the point where the line joining the center of the segment to the optical axis crossed the segment edge.
+The coordinate transformations are the following
+\begin{enumerate}
+\item the X--axis is aligned with the line joining the center of the segment to the optical axis:
+  \begin{eqnarray*}
+    x^{\prime} &=& x\cos(\theta_k) - y\sin(\theta_k) \\
+    y^{\prime} &=& x\sin(\theta_k) + y\cos(\theta_k) 
+  \end{eqnarray*}
+where $$\theta_k=\left(k-{1\over 2}\right){\pi\over 3},\quad\forall k=1,\dots,6$$ is the angle between the X--axis and the line joining the center of the $k$th segment,
+<<GMT pupil definition>>=
+sincospif( (seg-0.5)/3.0, &so_seg, &co_seg);
+xp = x*co_seg - y*so_seg;
+yp = x*so_seg + y*co_seg;
+@ \item the origin of coordinates is moved to the rotation point:
+  \begin{equation*}
+    x^{\prime} \leftarrow x^{\prime} - \left( L - { D_s \over 2 } \right)
+  \end{equation*}
+<<GMT pupil definition>>=
+xp -= L - 0.5*Ds;
+@ \item the coordinates are projected on the tilted planes:
+  \begin{eqnarray*}
+    x^{\prime} &\leftarrow & {x^{\prime} \over \cos(\theta_s) } \\
+    y^{\prime} &\leftarrow &  {y^{\prime} \over \cos(\theta_s) }
+  \end{eqnarray*}
+<<GMT pupil definition>>=
+cOs = cospif( 13.522/180.0 );
+xp /= cOs;
+yp /= cOs;
+@ \item the projected coordinates are centered on the center of the segment
+  \begin{equation*}
+    x^{\prime} \leftarrow x^{\prime} - \left( { D_s \over 2 } \right)
+  \end{equation*}
+<<GMT pupil definition>>=
+xp -= Ds*0.5;
+@ \end{enumerate}
+and the off--axis segment is given with
+\begin{equation*}
+  4\left( {x^{\prime}}^2 + {y^{\prime}}^2 \right) \le D_{sca}^2.
+\end{equation*}
+<<GMT pupil definition>>=
+h = (xp*xp + yp*yp)*4.0;
+if (h<=Dsca) {
+  pupil[k] = 1;
+}
+@
 
 \subsection{Mask structure}
 \label{sec:mask-structure}
@@ -739,6 +804,7 @@ struct mask {
   <<mask parameters>>
   void setup(int n);
   void setup_circular(int n);
+  void setup_GMT(int n, float S);
   void set_filter(void);
   void cleanup(void);
 };
@@ -769,6 +835,16 @@ void mask::setup_circular(int n) {
   circular_pupil LLL gridDim,blockDim RRR ( m , n );
   set_filter();
 }
+@ \item with the Giant Magellan Telescope mask inside an [[n]]$\times$[[n]] array of length [[S]] in meter
+<<mask functions>>=
+void mask::setup_GMT(int n, float S) {
+  nel = n*n;
+  <<setup commom>>
+  dim3 blockDim(16,16);
+  dim3 gridDim(n/16+1,n/16+1,7);
+  GMT_pupil LLL gridDim,blockDim RRR ( m , n, S );
+  set_filter();
+}
 @
 \end{itemize}
 \item set the filter and compute the number of non--zeros elements:
@@ -780,7 +856,7 @@ void mask::set_filter(void) {
   cublasHandle_t handle;
   cublasCreate(&handle);
   CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
-  printf("@(CEO)>mask: nnz = %.0f\n",nnz);
+  printf("@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
   cublasDestroy(handle);
 }
 @
@@ -802,6 +878,78 @@ i = blockIdx.x * blockDim.x + threadIdx.x;
 }
 @
 \end{itemize}
+
+The python wrapper is 
+<<ceo.pxd>>=
+## mask structure
+    cdef cppclass mask:
+        float *f
+        void setup_circular(int)
+        void setup_GMT(int, float)
+        void cleanup()
+@ 
+<<ceo.pyx>>=
+## mask structure
+cdef class Telescope:
+    """ 
+    Creates a mask object.
+
+    Parameters
+    ----------
+    n: an int number
+       The sampling in pixel of the pupil.
+    
+    Returns
+    -------
+    out: Mask
+        A Mask object.
+
+    Examples
+    --------
+
+    """
+    cdef ceo.mask *_c_mask
+
+    def __cinit__(self, int n):
+	self._c_mask = new ceo.mask()
+	self._c_mask.setup_circular(n)    
+
+    <<mask python common>>
+cdef class GMT:
+    """ 
+    Creates a mask object for the Giant Magellan Telescope pupil.
+
+    Parameters
+    ----------
+    n: an int number
+       The sampling in pixel of the pupil.
+    S: a float number
+       The size of the pupil in meter.
+    
+    Returns
+    -------
+    out: Mask
+        A Mask object.
+
+    Examples
+    --------
+
+    """
+    cdef ceo.mask *_c_mask
+
+    def __cinit__(self, int n, float S):
+	self._c_mask = new ceo.mask()
+	self._c_mask.setup_GMT(n,S)    
+
+    <<mask python common>>
+@ with
+<<mask python common>>=
+def __dealloc__(self):
+    self._c_mask.cleanup()
+
+def getfilter(self, np.ndarray[float , ndim=2, mode="c"] data):
+    dev2host(&data[0,0],self._c_mask.f, data.size)
+@ 
 
 \subsection{Input/Output}
 \label{sec:inputoutput}
@@ -914,6 +1062,26 @@ fwrite(&n_page,sizeof(int),1,fid);
 fclose(fid);
 free(data);
 fprintf(stderr,"@(CEO)>utilities: Data saved to %s!\n",filename);
+@
+
+\subsubsection{Device to host}
+\label{sec:dev-to-host}
+
+<<data to host from device>>=
+void dev2host( float *host_data, float *dev_data, int N) {
+     HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
+			       N*sizeof(float), cudaMemcpyDeviceToHost ) ) ;
+     HANDLE_ERROR( cudaDeviceSynchronize() );
+}
+@
+<<ceo.pxd>>=
+## device to host
+    void dev2host( float *host_data, float *dev_data, int N)
+@ 
+<<ceo.pyx>>=
+## device to host
+cdef fromdev( np.ndarray[float, mode="c"] host_data, float *dev_data, int N):
+    dev2host( &host_data[0], dev_data, N)
 @ 
 
 \subsection{Atmospheric dispersion}
@@ -1015,40 +1183,22 @@ return xi;
 
 The python wrapper is 
 <<ceo.pxd>>=
-cdef extern from "utilities.h":
-     double atmosphere_refractive_index(float wavelength, float altitude, 
+## atmosphere dispersion  
+    double atmosphere_refractive_index(float wavelength, float altitude, 
                                         float temperature, float humidity)
-     double atmospheric_dispersion(float wavelength, float delta_wavelength,
+    double atmospheric_dispersion(float wavelength, float delta_wavelength,
                                    float zenith, float altitude, 
 				   float temperature, float humidity)
 @ 
 <<ceo.pyx>>=
+## atmosphere dispersion  
 cpdef double atmosphereRefractiveIndex(float wavelength, float altitude, 
                                  float temperature, float humidity ):
-     return atmosphere_refractive_index(wavelength, altitude, 
+    return atmosphere_refractive_index(wavelength, altitude, 
                                        temperature, humidity)
 cpdef double atmosphericDispersion(float wavelength, float delta_wavelength,
                                    float zenith, float altitude, 
 				   float temperature, float humidity):
-     return atmospheric_dispersion(wavelength, delta_wavelength,
-                                   zenith, altitude, 
-				   temperature, humidity)
-@
-
-\section{Python}
-\label{sec:python}
-
-<<data to host from device>>=
-void dev2host( float *host_data, float *dev_data, int N) {
-     HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
-			       N*sizeof(float), cudaMemcpyDeviceToHost ) ) ;
-     HANDLE_ERROR( cudaDeviceSynchronize() );
-}
-@
-<<ceo.pxd>>=
-cdef extern from "utilities.h":
-     void dev2host( float *host_data, float *dev_data, int N)
-@ 
-<<ceo.pyx>>=
-cdef fromdev( np.ndarray[float, mode="c"] host_data, float *dev_data, int N):
-    dev2host( &host_data[0], dev_data, N)
+    return atmospheric_dispersion(wavelength, delta_wavelength,
+				  zenith, altitude, 
+				  temperature, humidity)
