@@ -84,7 +84,7 @@ void CUBLAS_ERROR(cublasStatus_t status);
 
 <<lenslet 2 actuator>>
 __global__ void circular_pupil(char *pupil, int N);
-__global__ void GMT_pupil(char *pupil, const int N, const float S);
+__global__ void GMT_pupil(char *pupil, const int N, const float S, float Dsh, const float c, const char v);
 //__global__ void valid_lenslet(char *mask, int N_pupil, float threshold);
 __global__ void fried_geometry(char *lenslet_mask, char *actuator_mask, 
                                int NL, int n, float threshold);
@@ -692,20 +692,22 @@ The clear aperture diameter is $D_{sca}=8.365$m.
 There is one segment centered on the optical axis with a $D_h=1.78$m diameter hole in the middle.
 The six other segments are evenly located around the center one and tilted of $\theta_s = 13.522^{\circ}$.
 The distance from the optical axis to the center of an off--axis segment is $L=8.774$m.
+The ASM and the FSM off--axis segments have a central hole of diameter $D_{sh}=0.559m$ and $D_{sh}=0.07$m, respectively.
 <<GMT pupil>>=
-__global__ void GMT_pupil(char *pupil, const int N, const float S)
+__global__ void GMT_pupil(char *pupil, const int N, const float S, float _Dsh, const float c, const char v)
 {
   int i, j, k, seg;
-  float h,x,y,xp,yp, co_seg, so_seg, cOs, Dh, Dsca, Ds, L;
+  float h,x,y,xp,yp, co_seg, so_seg, cOs, Dh, Dsca, Ds, Dsh, L;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = i*N + j;
   seg = blockIdx.z;
   if ( (i<N) && (j<N) ) {
-    Dh   = 1.78;
-    Dsca = 8.365;
-    Ds   = 8.417;
-    L    = 8.774;
+    Dh   = c*2.300;
+    Dsh  = _Dsh;
+    Dsca = c*8.365;
+    Ds   = c*8.417;
+    L    = c*8.774;
     <<GMT pupil coordinates>>
     if (seg==0) {
       <<GMT pupil definition 0>>
@@ -718,8 +720,8 @@ __global__ void GMT_pupil(char *pupil, const int N, const float S)
 Lets call $x$ and $y$ the coordinates in the pupil plane.
 <<GMT pupil coordinates>>=
 h = S/(N-1);
-x = (i - 0.5*(N-1))*h;
-y = (j - 0.5*(N-1))*h;
+x = (j - 0.5*(N-1))*h;
+y = (i - 0.5*(N-1))*h;
 Dsca *= Dsca;
 @ 
 The center segment is defined with
@@ -730,7 +732,7 @@ The center segment is defined with
 h = (x*x + y*y)*4.0;
 Dh   *= Dh;
 if ( (h>=Dh) && (h<=Dsca) ) {
-  pupil[k] = 1;
+  pupil[k] = v;
 }
 @ For the off--axis segments, the coordinates need to be projected on the tilted-planes of the segments.
 The segments are tilted with respect to a line tangent to the segment at the point where the line joining the center of the segment to the optical axis crossed the segment edge.
@@ -774,9 +776,10 @@ and the off--axis segment is given with
 \end{equation*}
 <<GMT pupil definition>>=
 h = (xp*xp + yp*yp)*4.0;
-if (h<=Dsca) {
-  pupil[k] = 1;
-}
+Dsh *= Dsh;
+if ( (h>=Dsh) && (h<=Dsca) ) {
+  pupil[k] = v;
+ }
 @
 
 \subsection{Mask structure}
@@ -842,7 +845,16 @@ void mask::setup_GMT(int n, float S) {
   <<setup commom>>
   dim3 blockDim(16,16);
   dim3 gridDim(n/16+1,n/16+1,7);
-  GMT_pupil LLL gridDim,blockDim RRR ( m , n, S );
+  // PRIMARY + ASM
+  GMT_pupil LLL gridDim,blockDim RRR ( m , n, S, 0.559 , 1.0        , 1);
+  // ASM SHADOW
+  GMT_pupil LLL gridDim,blockDim RRR ( m , n, S, 0.000 , 1.042/8.365, 0);
+  /*
+  // PRIMARY + FSM
+  GMT_pupil LLL gridDim,blockDim RRR ( m , n, S, 0.070 , 1.0        , 1);
+  // FSM SHADOW
+  GMT_pupil LLL gridDim,blockDim RRR ( m , n, S, 0.000 , 1.049/8.365, 0);
+  */
   set_filter();
 }
 @
