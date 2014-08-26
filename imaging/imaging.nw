@@ -1,8 +1,8 @@
 % -*- mode: Noweb; noweb-code-mode: c-mode -*-
 @
-\subsection{The files}
+\section{The files}
 
-\subsubsection{Header}
+\subsection{Header}
 
 <<imaging.h>>=
 #ifndef __IMAGING_H__
@@ -53,7 +53,7 @@ struct imaging {
 
 #endif  // __IMAGING_H__
 @
-\subsubsection{Source}
+\subsection{Source}
 
 <<imaging.cu>>=
 #include "imaging.h"
@@ -89,7 +89,7 @@ struct imaging {
 <<plot frame with Strehl ratio>>
 @
 
-\subsubsection{Python}
+\subsection{Python}
 \label{sec:python}
 
 <<ceo.pxd>>=
@@ -159,7 +159,7 @@ cdef class Imaging:
         dev2host(<float *>data.data,self._c_imaging.d__frame, data.size)
 @
 
-\subsection{Parameters}
+\section{Parameters}
 \label{sec:parameters}
 
 The parameters are:
@@ -184,12 +184,12 @@ float2 *d__wave_PUPIL;
 float  *d__frame, zenith, azimuth, theta_x, theta_y, pixel_scale;
 
 @
-\subsection{Functions}
+\section{Functions}
 \label{sec:functions}
 
 In this section, we are dealing with the process of computing images from wavefronts in the pupil.
 
-\subsubsection{Setup \& Cleanup}
+\subsection{Setup \& Cleanup}
 \label{sec:setup--cleanup}
 
 A [[setup]] routine is defined to initialize any required variables:
@@ -273,7 +273,7 @@ void imaging::set_pointing_direction(float zen, float azim) {
 }
 
 @
-\subsubsection{Propagation}
+\subsection{Propagation}
 \label{sec:propagation}
 
 As we are considering only the case of imaging sources at infinity, the wavefront propagation is performed with the Fraunhofer approximation meaning that the image in the focal plane is simply the Fourier transform of the complex amplitude in the pupil plane.
@@ -355,7 +355,7 @@ The memory allocate for the plan is freed with
 cufftDestroy(plan);
 @
 
-\paragraph{Propagation through field stop}
+\subsubsection{Propagation through field stop}
 \label{sec:prop-thro-field}
 
 In order to reduce aliasing, a field stop is sometimes introduced in a focal plane.
@@ -431,7 +431,7 @@ __global__ void apply_field_stop(float2 *d__wave_PUPIL, int N_DFT,
 }
 @
 
-\paragraph{Propagation through pyramid}
+\subsubsection{Propagation through pyramid}
 \label{sec:prop-thro-pym}
 
 The pyramid wavefront sensor is a focal plane wavefront sensor.
@@ -506,7 +506,7 @@ __global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL)
 }
 @
 
-\paragraph{Imaging numerical model}
+\subsubsection{Imaging numerical model}
 \label{sec:imag-numer-model}
 
 The imaging routine is modeling the propagation of [[N_SOURCE]] sources through a square lenslet array of length $[[N_SIDE_LENSLET]]\geq 1$ to the lenslet focal plane.
@@ -704,12 +704,12 @@ __global__ void binning(float *frame, const float2 *wave, int N_DFT,
 }
 @
 
-\subsubsection{Image analysis}
+\subsection{Image analysis}
 \label{sec:image-analysis}
 
 The following routines are used to evaluate image properties: Strehl ratio, entrapped energy and full width at half maximum.
 
-\paragraph{Strehl ratio}
+\subsubsection{Strehl ratio}
 \label{sec:strehl-ratio}
 
 The Strehl ratio is given by the ratio between the PSF at frequency 0 and a reference PSF a frequency 0.
@@ -729,7 +729,7 @@ float imaging::strehl_ratio(imaging *ref)
 }
 
 @ 
-\subsubsection{Input/Output}
+\subsection{Input/Output}
 \label{sec:inputoutput}
 
 The main parameters are displayed with:
@@ -813,10 +813,10 @@ void imaging::show_frame(char *filename, imaging *ref)
 }
 
 @
-\subsection{Tests}
+\section{Tests}
 \label{sec:tests}
 
-\subsubsection{Test 1}
+\subsection{Test 1}
 \label{sec:test-1}
 
 For this test, the relative position of the guide star and the weavefront sensor is demonstrated.
@@ -866,7 +866,7 @@ imgr.cleanup();
 @
 % --------------------
 
-\subsubsection{C}
+\subsection{C}
 \label{sec:c}
 
 
@@ -935,7 +935,7 @@ lenslet_array.setup(nPxLenslet,nLenslet,
 lenslet_array.cleanup();
 @
 
-\subsubsection{Python tests}
+\subsection{Python}
 \label{sec:python-tests}
 
 <<imaging.py>>=
@@ -946,16 +946,19 @@ sys.path.append("/home/rconan/CEO/python")
 from pylab import *
 from ceo import *
 
-<<field stop test>>
+<<main test>>
 @ 
+The test suite consists of:
+\begin{description}
+\item[the main test] 
 <<main test>>=
-n = 256
+n = 1024
 nn = array([n,n],dtype=int32)
 zen = array( [0], dtype=float32)
 azi = array( [0], dtype=float32)
 src = Source("V",zen,azi,float("inf"),nn)
 
-tel = Telescope(n)
+tel = GMT(n,25.5)
 src.masked(tel)
 
 imgr = Imaging(n, 1, 4, 4*n, 1, 1)
@@ -985,7 +988,7 @@ figure(2)
 ax = imshow(frame0,interpolation='None') 
 colorbar(ax)
 show()
-@ 
+@ \item[the field stop test] 
 <<field stop test>>=
 n = 32
 nn = array([n,n],dtype=int32)
@@ -998,7 +1001,28 @@ src.masked(tel)
 osf = 4
 
 imgr = Imaging(n, 1, osf, osf*n, 1, 1)
-#imgr.propagateThroughFieldStop(src,4.0)
+imgr.propagateThroughFieldStop(src,4.0)
+
+frame0 = zeros( (n*osf,n*osf), order="c", dtype=float32)
+imgr.getframe(frame0)
+
+figure(1)
+ax = imshow(frame0,interpolation='None') 
+colorbar(ax)
+show()
+@ \item[the pyramid WFS test] 
+<<field stop test>>=
+n = 32
+nn = array([n,n],dtype=int32)
+zen = zeros( 1, dtype=float32)
+azi = zeros( 1, dtype=float32)
+src = Source("V",zen,azi,float("inf"),nn)
+
+tel = Telescope(n)
+src.masked(tel)
+osf = 4
+
+imgr = Imaging(n, 1, osf, osf*n, 1, 1)
 imgr.propagateThroughPyramid(src)
 
 frame0 = zeros( (n*osf,n*osf), order="c", dtype=float32)
@@ -1008,10 +1032,9 @@ figure(1)
 ax = imshow(frame0,interpolation='None') 
 colorbar(ax)
 show()
+@ \end{description}
 
-@
-
-\subsubsection{Matlab MEX}
+\subsection{Matlab MEX}
 \label{sec:matlab-mex}
 
 
