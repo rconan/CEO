@@ -902,7 +902,31 @@ The python wrapper is
 @ 
 <<ceo.pyx>>=
 ## mask structure
-cdef class Telescope:
+cdef class Mask:
+    """ 
+    Creates a mask object.
+
+    Parameters
+    ----------
+    
+    Returns
+    -------
+    out: Mask
+        A Mask object.
+
+    Examples
+    --------
+
+    """
+    cdef ceo.mask *_c_mask
+
+    def __cinit__(self):
+	self._c_mask = new ceo.mask()
+
+    def __dealloc__(self):
+        self._c_mask.cleanup()
+
+cdef class Telescope(Mask):
     """ 
     Creates a mask object.
 
@@ -919,15 +943,12 @@ cdef class Telescope:
     Examples
     --------
 
-    """
-    cdef ceo.mask *_c_mask
-
+    """ 
     def __cinit__(self, int n):
-	self._c_mask = new ceo.mask()
+        Mask.__init__(self)
 	self._c_mask.setup_circular(n)    
 
-    <<mask python common>>
-cdef class GMT:
+cdef class GMT(Mask):
     """ 
     Creates a mask object for the Giant Magellan Telescope pupil.
 
@@ -947,13 +968,10 @@ cdef class GMT:
     --------
 
     """
-    cdef ceo.mask *_c_mask
-
     def __cinit__(self, int n, float S):
-	self._c_mask = new ceo.mask()
+        Mask.__init__(self)
 	self._c_mask.setup_GMT(n,S)    
 
-    <<mask python common>>
 @ with
 <<mask python common>>=
 def __dealloc__(self):
