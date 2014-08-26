@@ -59,6 +59,7 @@ struct imaging {
 #include "imaging.h"
 
 <<imaging complex amplitude>>
+<<intensity>>
 <<apply field stop>>
 <<apply pyramid>>
 
@@ -301,14 +302,25 @@ void imaging::propagate(source *src) {
 					      N_PX_PUPIL, N_PX_IMAGE, M,
 					      N_SIDE_LENSLET, src->dev_ptr,
                                               pixel_scale, theta_x, theta_y,1);
-  <<imaging CUFFT execution>>
-
-  gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,N_SOURCE);
-  binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
-				     src->dev_ptr, pixel_scale, theta_x, theta_y,
-				     N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
-  ++N_FRAME;
+  <<propagation (FFT, intensity and binning)>>
 }
+@ with
+<<propagation (FFT, intensity and binning)>>=
+<<imaging CUFFT execution>>
+
+int N, Nb;
+N = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
+Nb = (int) ceilf( sqrtf(N)/16.0 );
+gridDim  = dim3(Nb,Nb);
+wave2intensity LLL gridDim , blockDim RRR( d__wave_PUPIL, N);
+
+gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
+                N_SOURCE);
+binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
+                                   src->dev_ptr, pixel_scale, theta_x, theta_y,
+                                   N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
+
+++N_FRAME;
 @ 
 The Fourier transform is done with the CUFFT library:
 <<imaging CUFFT execution>>=
@@ -330,7 +342,26 @@ HANDLE_ERROR_CUFFT( cufftPlanMany(&plan, NRANK, n_DFT,
 		    "Unable to create plan");
 HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE),
 		    "Unable to set compatibility mode to native");
-@  Dynamically allocated variables are freed with the cleanup routine:
+@ 
+The intensity is computed with
+<<intensity>>=
+__global__ void wave2intensity(float2 *wave_PUPIL, const int N)
+{
+  int i, j, ij;
+  float x ,y;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( ij < N )
+    {
+      x =  wave_PUPIL[ij].x;
+      y =  wave_PUPIL[ij].y;
+      wave_PUPIL[ij].x = x*x + y*y;
+      wave_PUPIL[ij].y = 0.0;
+    }
+}
+@
+Dynamically allocated variables are freed with the cleanup routine:
 <<cleanup>>=
 void imaging::cleanup(void) {
   printf("@(CEO)>imaging: Device memory free\n");
@@ -384,15 +415,7 @@ void imaging::propagateThroughFieldStop(source *src, float field_stop_diam) {
   gridDim = dim3(1+N_DFT/16,1+N_DFT/16);
   apply_field_stop LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, 
 					       field_stop_diam);
-
-  <<imaging CUFFT execution>>
-  
-  gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
-		  N_SOURCE);
-  binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
-				     src->dev_ptr, pixel_scale, theta_x, theta_y,
-				     N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
-  ++N_FRAME;
+  <<propagation (FFT, intensity and binning)>>
 }
 @
 <<apply field stop>>=
@@ -466,14 +489,7 @@ void imaging::propagateThroughPyramid(source *src) {
   gridDim = dim3(1+N_DFT/16,1+N_DFT/16);
   apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL);
 
-  <<imaging CUFFT execution>>
-   
-  gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
-		  N_SOURCE);
-  binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
-				     src->dev_ptr, pixel_scale, theta_x, theta_y,
-				     N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
-  ++N_FRAME;
+  <<propagation (FFT, intensity and binning)>>
 }
 @
 <<apply pyramid>>=
@@ -688,8 +704,7 @@ __global__ void binning(float *frame, const float2 *wave, int N_DFT,
       		  {
       		    ij_DFT = lenslet2row(iPxL,jPxL,N_DFT,
 					 iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
-      		    bin[ii][jj] += 
-		      wave[ij_DFT].x*wave[ij_DFT].x + wave[ij_DFT].y*wave[ij_DFT].y;
+      		    bin[ii][jj] += wave[ij_DFT].x;
       		  }
       	      }
       	}
@@ -946,7 +961,7 @@ sys.path.append("/home/rconan/CEO/python")
 from pylab import *
 from ceo import *
 
-<<main test>>
+<<pyramid test>>
 @ 
 The test suite consists of:
 \begin{description}
@@ -1001,7 +1016,7 @@ src.masked(tel)
 osf = 4
 
 imgr = Imaging(n, 1, osf, osf*n, 1, 1)
-imgr.propagateThroughFieldStop(src,4.0)
+imgr.propagateThroughFieldStop(src,8.0)
 
 frame0 = zeros( (n*osf,n*osf), order="c", dtype=float32)
 imgr.getframe(frame0)
@@ -1011,7 +1026,7 @@ ax = imshow(frame0,interpolation='None')
 colorbar(ax)
 show()
 @ \item[the pyramid WFS test] 
-<<field stop test>>=
+<<pyramid test>>=
 n = 32
 nn = array([n,n],dtype=int32)
 zen = zeros( 1, dtype=float32)
