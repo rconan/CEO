@@ -92,6 +92,7 @@ cdef extern from "source.h":
         void masked()
     cdef cppclass source:
         char *photometric_band
+        float fwhm
         complex_amplitude wavefront
         void setup(char *,float , float , float )
 	void setup(char *,float , float , float , int )
@@ -140,13 +141,17 @@ cdef class Source:
     cdef ceo.source *_c_source
 
     def __cinit__(self,char *_photometric_band,  
-	np.ndarray[float, mode="c"] zenith, 
-	np.ndarray[float, mode="c"] azimuth, 
-        float height, 
-        np.ndarray[int, mode="c"] resolution):
+		  np.ndarray[float, mode="c"] zenith, 
+		  np.ndarray[float, mode="c"] azimuth, 
+		  float height, 
+		  np.ndarray[int, mode="c"] resolution,
+		  fwhm = None):
 	self._c_source = new ceo.source()
         self._c_source.setup(_photometric_band, 
-        &zenith[0], &azimuth[0], height, zenith.size, np.prod(resolution))    
+			     &zenith[0], &azimuth[0], height, 
+			     zenith.size, np.prod(resolution))
+        if fwhm is not None:
+            self._c_source.fwhm = fwhm
 
     def __dealloc__(self):
         self._c_source.cleanup()
@@ -203,17 +208,16 @@ mask *M;
 @ The magnitude at a given photometric band are set with:
 <<source parameters>>=
 char *photometric_band;float magnitude;
-@ If the source is resolved by the  optical system, one must define its normalized irradiance map
+@ If the source is resolved by the  optical system, the irradiance is assumed to have a Gaussian shape of full width a half maximum [[fwhm]]
 <<source parameters>>=
-float *irradiance, *irradiance_ft;
-@ The irradiance is normalized such as is sum is equal to 1. The Fourier transform of the irradiance map must be given too.
-The wavefront is addegd to the source
+float fwhm;
+@  The wavefront is added to the source
 <<source parameters>>=
 complex_amplitude wavefront;
 @ Source structures will be allocated on the device:
 <<source parameters>>=
 source *dev_ptr;
-@ An the source can be tagged with
+@ and the source can be tagged with
 <<source parameters>>=
 char tag[8];
 @ 
@@ -274,6 +278,7 @@ void source::setup(char *_photometric_band,
   N_SRC = _N_SRC;
   height = _height;
   photometric_band = _photometric_band;
+  fwhm = 0.0;
   source __src;
   HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
   strcpy(tag,"sources");
@@ -303,6 +308,7 @@ void source::setup(char *_photometric_band,
   N_SRC = _N_SRC;
   height = _height;
   photometric_band = _photometric_band;
+  fwhm = 0.0;
   source __src;
   HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
   strcpy(tag,"sources");
@@ -335,6 +341,7 @@ height  = _height;
 theta_x = tanf(zenith)*cosf(azimuth);
 theta_y = tanf(zenith)*sinf(azimuth);
 photometric_band = _photometric_band;
+fwhm = 0.0;
 source __src;
 __src.zenith  = zenith;
 __src.azimuth = azimuth;

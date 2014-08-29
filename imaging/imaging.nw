@@ -62,6 +62,7 @@ struct imaging {
 <<intensity>>
 <<apply field stop>>
 <<apply pyramid>>
+<<apply irradiance>>
 
 <<binning>>
 
@@ -304,16 +305,80 @@ void imaging::propagate(source *src) {
                                               pixel_scale, theta_x, theta_y,1);
   <<propagation (FFT, intensity and binning)>>
 }
-@ with
+@ which sets the complex amplitude [[d__wave_PUPIL]] with the source wavefront amplitude and phase including the necessary zero padding for the DFT and the phasor to recenter the image.
+Then the DFT is applied in--place to the complex amplitude [[d__wave_PUPIL]].
 <<propagation (FFT, intensity and binning)>>=
 <<imaging CUFFT execution>>
-
+@ 
+[[d__wave_PUPIL]] is overwritten with the intensity:
+<<propagation (FFT, intensity and binning)>>=
 int N, Nb;
 N = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
 Nb = (int) ceilf( sqrtf(N)/16.0 );
 gridDim  = dim3(Nb,Nb);
 wave2intensity LLL gridDim , blockDim RRR( d__wave_PUPIL, N);
-
+if (src->fwhm>0) {
+  <<propagation (convolution)>>
+}
+@ 
+In the case of a resolved source, the images are convoluted by the source irradiance function.
+The convolution is performed in the Fourier domain, multiplying the images by the Fourier transform of the irradiance function.
+The irradiance functions $I_s(x)$ is modeled as a Gaussian function:
+$$I_s(x,y)={1\over \sigma\sqrt{2\pi}}\exp\left( -{x^2+y^2\over 2\sigma^2} \right),$$
+with $$[[fwhm]]=2\sqrt{2\log(2)}\sigma,$$ [[fwhm]] is the full width at half maximum of $I(x,y)$.
+The Fourier transform of $I(x,y)$ is 
+$$\mathcal F\left[ I(x,y) \right](u,v) = \exp\left( -2\pi^2\sigma^2 (u^2 + v^2) \right).$$
+The convolution takes 3 steps:
+\begin{enumerate}
+\item inverse DFT of the images
+<<propagation (convolution)>>=
+HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_INVERSE),
+		    "Unable to execute plan forward FT");
+@ \item multiplication by $\mathcal F\left[ I(x,y) \right](u,v)$
+<<propagation (convolution)>>=
+apply_irradiance LLL gridDim , blockDim RRR (d__wave_PUPIL, N_DFT, N_SIDE_LENSLET, src->fwhm);
+@ \item forward DFTT
+<<propagation (convolution)>>=
+HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_FORWARD),
+		    "Unable to execute plan forward FT");
+@ \end{enumerate} 
+with the kernel:
+<<apply irradiance>>=
+__global__ void apply_irradiance(float2 *wave_PUPIL, const int N_DFT, 
+				   const int N_SIDE_LENSLET, const float fwhm)
+{
+  int i, j, iLenslet, jLenslet, ij_DFT, iSource, w, half, N2;
+  float xi, yj, sigma2, fft_I;
+  iSource = blockIdx.z;
+  if ( threads2lenslet(threadIdx, blockIdx, blockDim,
+                       &i, &j, N_DFT,
+                       &iLenslet, &jLenslet, N_SIDE_LENSLET) ) {
+    ij_DFT = lenslet2row(i,j,N_DFT,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);                  
+    w = N_DFT & 1;
+    half = (N_DFT-2+w)/2;
+    if (i>half)
+      xi = (float) (i - N_DFT);
+    else
+      xi = (float) i;
+    if (j>half)
+      yj = (float) (j - N_DFT);
+    else
+      yj = (float) j;
+    xi /= N_DFT;
+    yj /= N_DFT; 
+    sigma2 = 8*logf(2);
+    sigma2 = fwhm*fwhm/sigma2;
+    fft_I = 2*PI*PI*sigma2;
+    fft_I *= xi*xi + yj*yj;
+    fft_I = expf( -fft_I);
+    N2 = N_DFT*N_DFT;
+    wave_PUPIL[ij_DFT].x *= fft_I/N2;
+    wave_PUPIL[ij_DFT].y *= fft_I/N2;
+  }
+}
+@ 
+The image are binned on the detector pixels:
+<<propagation (FFT, intensity and binning)>>=
 gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
                 N_SOURCE);
 binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
@@ -326,7 +391,6 @@ The Fourier transform is done with the CUFFT library:
 <<imaging CUFFT execution>>=
 HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_FORWARD),
 		    "Unable to execute plan forward FT");
-HANDLE_ERROR( cudaThreadSynchronize() );
 @ that computes the discrete Fourier tranform (DFT) from the complex amplitude [[d__wave_PUPIL]] in the pupil plane.
 CUFFT requires to define a plan first:
 <<imaging CUFFT plan creation>>=
@@ -602,7 +666,7 @@ __global__ void complexAmplitude(float2 *wave_PUPIL, int N_DFT,
 <<imaging complex amplitude>>=
   // source index
   iSource = blockIdx.z;
-@ The  pixel coordinates ([[i]],[[j]]) in the lenslet ([[iLenslet]],[[jLenslet]]) is derrived from the thread blocks:
+@ The  pixel coordinates ([[i]],[[j]]) in the lenslet ([[iLenslet]],[[jLenslet]]) is derived from the thread blocks:
 <<imaging complex amplitude>>=
   //  wave pixel coordinate (N_DFTLxN_SIDE_LENSLET)^2
   if ( threads2lenslet(threadIdx, blockIdx, blockDim, 
@@ -961,7 +1025,7 @@ sys.path.append("/home/rconan/CEO/python")
 from pylab import *
 from ceo import *
 
-<<pyramid test>>
+<<main test>>
 @ 
 The test suite consists of:
 \begin{description}
