@@ -12,20 +12,14 @@
 % atm = gmtAtmosphere(1);
 % r0 = atm.r0;
 % L0 = atm.L0;
+wavenumber = 2*pi/atm.wavelength;
 
 nxy = 512;
 ceodir = '~/CEO';
-cd(ceodir)
-unix(['sed -i ',...
-    '-e ''s/#define _N_LAYER_ [0-9]*/#define _N_LAYER_ ',num2str(atm.nLayer),'/g'' ',...
-    '-e ''s/#define _N_PIXEL_ [0-9]*/#define _N_PIXEL_ ',...
-    num2str(nxy^2),'/g'' include/definitions.h']);
-unix('cat include/definitions.h');
-unix('make clean all')
 cd([ceodir,'/atmosphere'])
 clear ceo_atmosphere
 unix('make atmosphere.mex')
-mex -largeArrayDims -I../include -L../lib -lceo -o ceo_atmosphere atmosphere.mex.cu
+mex -largeArrayDims -I../include -L../lib -lceo -lcurl -ljsmn -o ceo_atmosphere atmosphere.mex.cu
 
 u = single( L0*gpuArray.linspace(-1,1,nxy) );
 [x,y] = meshgrid( u );
@@ -38,18 +32,8 @@ colorbar
 %% Variance test
 fprintf('__ Variance Test __\n')
 clear x y ceo_atmosphere
-cd([ceodir,'/atmosphere'])
-unix(['sed -i ',...
-    '-e ''s/#define _N_LAYER_ [0-9]*/#define _N_LAYER_ ',num2str(atm.nLayer),'/g'' ',...
-    '-e ''s/#define _N_PIXEL_ [0-9]*/#define _N_PIXEL_ 1/g'' definitions.h']);
-unix('cat definitions.h');
-cd(ceodir)
-unix('make clean lib atmosphere.mex')
-cd([ceodir,'/atmosphere'])
-clear ceo_atmosphere
-mex -largeArrayDims -I../include -L../lib -lceo -o ceo_atmosphere atmosphere.mex.cu
 tic
-nxy = 1000;
+nxy = 2500;
 x   = gpuArray.rand(1,nxy,'single');
 y   = gpuArray.rand(1,nxy,'single');
 L = 100;
@@ -62,22 +46,14 @@ for kxy = 1:nxy
     waitbar(kxy/nxy,h)
 end
 close(h)
+var_num = var(phs_var)*wavenumber^2;
 fprintf(' . Theoretical variance: %8.2frd^2\n',phaseStats.variance(atm))
-fprintf(' . Numerical variance:   %8.2frd^2\n',var(phs_var))
-fprintf(' . Variance ratio: %6.5f\n',var(phs_var)/phaseStats.variance(atm))
+fprintf(' . Numerical variance:   %8.2frd^2\n',var_num)
+fprintf(' . Variance ratio: %6.5f\n',var_num/phaseStats.variance(atm))
 toc
 %% Structure function test I
 fprintf('__ Structure Function Test I __\n')
 n_sample = 1000;
-clear ceo_atmosphere
-cd([ceodir,'/atmosphere'])
-unix(['sed -i -e ''s/#define _N_PIXEL_ [0-9]*/#define _N_PIXEL_ ',...
-    num2str(n_sample),'/g'' definitions.h']);
-unix('cat definitions.h');
-cd(ceodir)
-unix('make clean lib atmosphere.mex')
-cd([ceodir,'/atmosphere'])
-mex -largeArrayDims -I../include -L../lib -lceo -o ceo_atmosphere atmosphere.mex.cu
 rho = 0:0.25:5;
 rho(1) = 0.1;
 nRho = length(rho);
@@ -113,7 +89,7 @@ end
 close(hwb)
 
 figure(25)
-heb = errorbar(rho,mean_sf, std_sf);
+heb = errorbar(rho,mean_sf*wavenumber^2, std_sf*wavenumber^2);
 set(heb','Marker','o','MarkerSize',8,...
     'MarkerFaceColor','r','MarkerEdgeColor','k',...
     'Linewidth',2,'LineStyle','none')
@@ -180,8 +156,10 @@ for kL0 = 1:nL0
     th_sf(:,kL0) = phaseStats.structureFunction(rho,atm);
     
     figure(26)
-    heb = errorbar(repmat(rho,1,kL0),mean_sf(:,1:kL0), std_sf(:,1:kL0));
-    set(heb','Marker','o','MarkerSize',8,...
+    heb = errorbar(repmat(rho,1,kL0),...
+        mean_sf(:,1:kL0)*wavenumber^2,...
+        std_sf(:,1:kL0)*wavenumber^2);
+    set(heb,'Marker','o','MarkerSize',8,...
         'MarkerFaceColor','r','MarkerEdgeColor','k',...
         'Linewidth',2,'LineStyle','none','color','b')
     hold all

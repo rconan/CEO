@@ -30,12 +30,23 @@
 
 #define RAND_SEED 2013
 
+struct layer {
+
+  <<layer parameters>>
+
+  void setup(float _altitude, float _xi0,
+               float _wind_speed_, float _wind_direction);
+
+};
+
 struct profile {
 
   <<profile parameters>>
 
   void setup(float *altitude, float *xi0,
-	     float *wind_speed, float *wind_direction);
+	     float *wind_speed, float *wind_direction,
+	     int N_LAYER);
+  void cleanup();
 
 };
 
@@ -43,12 +54,9 @@ struct atmosphere {
 
   <<atmosphere parameters>>
 
-  void setup(float r0_, float L0, 
+  void setup(float r0_, float L0, int N_LAYER,
 	     float *altitude, float *xi0,
 	     float *wind_speed, float *wind_direction);
-  void setup(float r0_, float L0, 
-	     float altitude,
-	     float wind_speed, float wind_direction);
   void gmt_setup();
   void gmt_setup(float r0_, float L0);
 
@@ -120,10 +128,11 @@ struct atmosphere {
 <<phase screen gradient kernel>>
 <<phase screen gradient kernel (masked)>>
 
+<<layer setup>>
 <<profile setup>>
+<<profile cleanup>>
 
 <<atmosphere setup>>
-<<atmosphere setup (single layer)>>
 <<atmosphere setup (GMT)>>
 <<atmosphere setup (GMT prm)>>
 
@@ -152,7 +161,7 @@ struct atmosphere {
 <<ceo.pxd>>=
 cdef extern from "atmosphere.h":
     cdef cppclass atmosphere:
-        void setup(float , float , float *, float *, float *, float *)
+        void setup(float , float, int, float *, float *, float *, float *)
         void gmt_setup(float , float)
         void cleanup()
         void info()
@@ -209,13 +218,14 @@ cdef class Atmosphere:
 
     cdef ceo.atmosphere *_c_atmosphere
 
-    def __cinit__(self, float r0, float L0, 
+    def __cinit__(self, float r0, float L0, int N_LAYER,
         np.ndarray[float, mode="c"] altitude, 
         np.ndarray[float, mode="c"] xi0, 
         np.ndarray[float, mode="c"] wind_speed, 
         np.ndarray[float, mode="c"] wind_direction):
 	self._c_atmosphere = new ceo.atmosphere()
-        self._c_atmosphere.setup(r0, L0, &altitude[0], &xi0[0],
+        self._c_atmosphere.setup(r0, L0, N_LAYER,
+				 &altitude[0], &xi0[0],
 				 &wind_speed[0], &wind_direction[0])   
  
     <<python atmosphere methods>>
@@ -311,20 +321,27 @@ The atmosphere parameters are
 <<atmosphere parameters>>=
 char *photometric_band;
 float wavelength, r0, wavenumber;
+@ \item the number of atmospheric layers
+<<atmosphere parameters>>=
+int N_LAYER;
 @ \item the outer scale
 <<profile parameters>>=
 float  L0;      
-@ \item the turbulence layers altitude
-<<profile parameters>>=
-float altitude[_N_LAYER_],
-@ \item the fractional $r_0$ vector: $$\xi_0(h)= \left( r_0(h)\over r_0 \right)^{-5/3}$$
-<<profile parameters>>=
-      xi0[_N_LAYER_],
-@ \item the wind vector
-<<profile parameters>>=
-  wind_speed[_N_LAYER_], wind_direction[_N_LAYER_];
-
 @ \end{itemize}
+
+The atmospheric layer parameters are:
+\begin{itemize}
+\item the altitude
+<<layer parameters>>=
+float altitude;
+@ \item the fractional $r_0$ : $$\xi_0(h)= \left( r_0(h)\over r_0 \right)^{-5/3}$$
+<<layer parameters>>=
+float xi0;
+@ \item the wind vector
+<<layer parameters>>=
+float wind_speed, wind_direction, vx, vy;
+@ \end{itemize}
+
 
 \section{Functions}
 \label{sec:functions}
@@ -333,20 +350,20 @@ The main parameters of the atmosphere are displayed with the [[info]] routine:
 <<info>>=
 void atmosphere::info(void)
 {
-printf("\n\x1B[1;42m@(CEO)>atmosphere: Von Karman atmospheric turbulence model\x1B[;42m\n");
-printf(" . wavelength = %5.2fnm\n . r0 = %5.2fcm\n . L0 = %5.2fm\n",
+fprintf(stdout,"\n\x1B[1;42m@(CEO)>atmosphere: Von Karman atmospheric turbulence model\x1B[;42m\n");
+fprintf(stdout," . wavelength = %5.2fnm\n . r0 = %5.2fcm\n . L0 = %5.2fm\n",
        wavelength*1e9,r0*1e2,turbulence.L0);
-printf("----------------------------------------------------\n");
-printf("  Layer   Altitude[m]   fr0    wind([m/s] [deg])\n");
-for (int kLayer=0;kLayer<_N_LAYER_;kLayer++) {
-  printf("  %2d      %8.2f      %4.2f    (%5.2f %6.2f)\n",
+fprintf(stdout,"----------------------------------------------------\n");
+fprintf(stdout,"  Layer   Altitude[m]   fr0    wind([m/s] [deg])\n");
+for (int kLayer=0;kLayer<N_LAYER;kLayer++) {
+  fprintf(stdout,"  %2d      %8.2f      %4.2f    (%5.2f %6.2f)\n",
   kLayer,
   turbulence.altitude[kLayer],
   turbulence.xi0[kLayer],
   turbulence.wind_speed[kLayer],
   turbulence.wind_direction[kLayer]*180/PI);
 }
-printf("----------------------------------------------------\x1B[0m\n");
+fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
 }
 @
 
@@ -429,7 +446,7 @@ Eq.~(\ref{eq:1}) gives the expression of a single phase screen sampled with the 
 For an atmosphere made of several phase screens with a source at a finite distance, Eq.~(\ref{eq:1}) becomes:
 \begin{eqnarray}
   \label{eq:13}
-    \varphi(x,y) &=& 1.4 r_0^{-{5\over6}} \sum_{i=1}^{N_\kappa}\sum_{j=1}^{N_\varphi} \Gamma\left( \bk\right) \sum_{l=1}^{[[_N_LAYER_]]} \xi_{0l}^{1\over2} \\
+    \varphi(x,y) &=& 1.4 r_0^{-{5\over6}} \sum_{i=1}^{N_\kappa}\sum_{j=1}^{N_\varphi} \Gamma\left( \bk\right) \sum_{l=1}^{[[N_LAYER]]} \xi_{0l}^{1\over2} \\
 && \times \left\{ \zeta_{1l}(i,j) \cos\left[ \eta_{1l}(i,j) + \bk \left( x_l\cos \phi_j + y_l\sin \phi_j \right) \right] \right. \nonumber\\
 && \quad + \left. \zeta_{2l}(i,j) \cos\left[ \eta_{2l}(i,j) - \bk \left( x_l\sin \phi_j - y_l\cos \phi_j \right) \right] \right\} \nonumber\\
 x_l &=& \left( 1 - {h_l\over z_\ast} \right)(x-v_xt) + h_l\theta_{\ast x} \\
@@ -439,37 +456,25 @@ y_l &=& \left( 1 - {h_l\over z_\ast} \right)(y-v_yt) + h_l\theta_{\ast y}
 The above definitions call for the declarations of new variables:
 <<profile parameters>>=
 float l0, L, f, delta, N_k, N_a, kmin;
-float vx[_N_LAYER_], vy[_N_LAYER_];
+float *altitude, *xi0, *wind_speed, *wind_direction;
 @ 
 <<atmosphere parameters>>=
 float *zeta1, *eta1, *zeta2, *eta2;
 curandState *devStates;
 profile turbulence, *d__turbulence;
+layer *layers;
 @ This variables are defined in the setup routines:
 <<atmosphere setup>>=
-void atmosphere::setup(float r0_, float L0, 
+void atmosphere::setup(float r0_, float L0, int _NLAYER,
 		       float *altitude, float *xi0,
 		       float *wind_speed, float *wind_direction) {
   wavelength = 550e-9;
   wavenumber = wavelength/2/PI;
   r0 = r0_;
+  N_LAYER = _NLAYER;
   turbulence.L0 = L0;
   turbulence.setup(altitude, xi0,
-		   wind_speed, wind_direction);
-  <<allocation>>
-}
-@  or for a single layer atmosphere, one can call instead:
-<<atmosphere setup (single layer)>>=
-void atmosphere::setup(float r0_, float L0, 
-		       float altitude,
-		       float wind_speed, float wind_direction) {
-  wavelength = 550e-9;
-  wavenumber = wavelength/2/PI;
-  r0 = r0_;
-  turbulence.L0 = L0;
-  float xi0 = 1;
-  turbulence.setup(&altitude, &xi0,
-		   &wind_speed, &wind_direction);
+		   wind_speed, wind_direction, N_LAYER);
   <<allocation>>
 }
 @ For the GMT simulations, the GMT standard atmosphere model is called with:
@@ -479,12 +484,13 @@ void atmosphere::gmt_setup() {
   wavenumber = wavelength/2/PI;
   r0 = 15e-2;
   turbulence.L0 = 60;
+  N_LAYER = 7;
   float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
               xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
               wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
               wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
   turbulence.setup(altitude, xi0,
-		   wind_speed, wind_direction);
+		   wind_speed, wind_direction, N_LAYER);
   <<allocation>>
 }
 <<atmosphere setup (GMT prm)>>=
@@ -493,22 +499,24 @@ void atmosphere::gmt_setup(float r0_, float L0) {
   wavenumber = wavelength/2/PI;
   r0 = r0_;
   turbulence.L0 = L0;
+  N_LAYER = 7;
   float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
               xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
               wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
               wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
   turbulence.setup(altitude, xi0,
-		   wind_speed, wind_direction);
+		   wind_speed, wind_direction, N_LAYER);
   <<allocation>>
 }
 
 <<allocation>>=
 info();
+<<layer to device>>
 HANDLE_ERROR( cudaMalloc( (void**)&d__turbulence, sizeof(profile) ) );
 HANDLE_ERROR( cudaMemcpy( d__turbulence, &turbulence,
 			  sizeof(profile), cudaMemcpyHostToDevice ) );
-int nel = _N_LAYER_*turbulence.N_k*turbulence.N_a;
-printf("\n@(CEO)>atmosphere: initializing %d variates ...",nel);
+int nel = N_LAYER*turbulence.N_k*turbulence.N_a;
+fprintf(stdout,"\n@(CEO)>atmosphere: initializing %d variates ...",nel);
 HANDLE_ERROR( cudaMalloc( (void**)&devStates, 4*nel*sizeof(curandState)) );  
 HANDLE_ERROR( cudaMalloc( (void**)&zeta1, nel*sizeof(float)) );
 HANDLE_ERROR( cudaMalloc( (void**)&eta1,  nel*sizeof(float)) );
@@ -520,21 +528,23 @@ setupRandomSequence LLL gridDim,blockDim RRR (devStates, 4*nel);
 HANDLE_ERROR( cudaDeviceSynchronize() );
 generateVariates LLL gridDim,blockDim RRR (zeta1, eta1, zeta2, eta2, devStates, nel);
 HANDLE_ERROR( cudaDeviceSynchronize() );
-printf("done!\n");
+fprintf(stdout,"done!\n");
 
 @ 
 <<profile setup>>=
 void profile::setup(float *altitude_, float *xi0_,
-		    float *wind_speed_, float *wind_direction_) {
-  for (int k=0;k<_N_LAYER_;k++)
+		    float *wind_speed_, float *wind_direction_, int N_LAYER) {
+  altitude       = (float*)malloc(sizeof(float)*N_LAYER);                                               
+  xi0            = (float*)malloc(sizeof(float)*N_LAYER);                                               
+  wind_speed     = (float*)malloc(sizeof(float)*N_LAYER);                                               
+  wind_direction = (float*)malloc(sizeof(float)*N_LAYER);                                               
+  for (int k=0;k<N_LAYER;k++)
     {
-      altitude[k] = altitude_[k];
-      xi0[k]      = xi0_[k];
+      altitude[k]       = altitude_[k];
+      xi0[k]            = xi0_[k];
       wind_speed[k]     = wind_speed_[k];
       wind_direction[k] = wind_direction_[k];
-      vx[k] = wind_speed[k]*cosf(wind_direction[k]);
-      vy[k] = wind_speed[k]*sinf(wind_direction[k]);
-    }
+    }  
   l0    = 1e-3;
   L     = 1e2;
   f     = MAX(L,3*L0);
@@ -548,12 +558,44 @@ void profile::setup(float *altitude_, float *xi0_,
   N_a = ceilf( N_a );
   f = powf( (4*N_a + PI)/(4*N_a - PI) , N_k );
   delta = 0.5*PI/N_a;
-  printf("\n@(CEO)>profile:\n");
-  printf(" . N_k = %f\n",N_k);
-  printf(" . N_a = %f\n",N_a);
-  printf(" . frequency range      = %8.2f\n",f);
-  printf(" . frequency resolution = %6.4f\n",delta);
-  printf(" . minimum frequency    = %6.4f\n",kmin);
+  fprintf(stdout,"\n@(CEO)>profile:\n");
+  fprintf(stdout," . N_k = %f\n",N_k);
+  fprintf(stdout," . N_a = %f\n",N_a);
+  fprintf(stdout," . frequency range      = %8.2f\n",f);
+  fprintf(stdout," . frequency resolution = %6.4f\n",delta);
+  fprintf(stdout," . minimum frequency    = %6.4f\n",kmin);
+}
+@ 
+<<profile cleanup>>=
+void profile::cleanup(void) {
+  free(altitude);
+  free(xi0);
+  free(wind_speed);
+  free(wind_direction);
+}
+@ 
+An atmospheric layer parameters are set with:
+<<layer setup>>=
+void layer::setup(float _altitude, float _xi0,
+                 float _wind_speed, float _wind_direction)
+{
+    altitude       = _altitude;
+    xi0            = _xi0;
+    wind_speed     = _wind_speed;
+    wind_direction = _wind_direction;
+    vx = wind_speed*cosf(wind_direction);
+    vy = wind_speed*sinf(wind_direction);
+}
+@ The [[layer]] structures are filled with their parameters and copied to the device
+<<layer to device>>=
+HANDLE_ERROR( cudaMalloc( (void**)&layers, sizeof(layer)*N_LAYER ) );
+layer one_layer;
+for (int i_LAYER=0; i_LAYER<N_LAYER; i_LAYER++) {
+    one_layer.setup(altitude[i_LAYER], xi0[i_LAYER], 
+		    wind_speed[i_LAYER], wind_direction[i_LAYER]);
+    HANDLE_ERROR( cudaMemcpy( layers + i_LAYER, &one_layer,
+                              sizeof(layer),
+                              cudaMemcpyHostToDevice ) );
 }
 @ 
 The random generator is initialized within the following kernel:
@@ -601,7 +643,7 @@ __global__ void generateVariates(float *zeta1, float *eta1, float *zeta2, float 
 <<new variates>>=
 void atmosphere::reset(void)
 {
-  int nel = _N_LAYER_*turbulence.N_k*turbulence.N_a;
+  int nel = N_LAYER*turbulence.N_k*turbulence.N_a;
   dim3 blockDim(64,1);
   dim3 gridDim( 1+nel/64 , 1 );
   generateVariates LLL gridDim,blockDim RRR (zeta1, eta1, zeta2, eta2, devStates, nel);
@@ -609,13 +651,14 @@ void atmosphere::reset(void)
 @ The dynamically allocated variables are freed in the cleanup routine:
 <<cleanup>>=
 void atmosphere::cleanup(void) {
-  fprintf(stderr,"@(CEO)>atmosphere: freeing memory!\n");
+  fprintf(stdout,"@(CEO)>atmosphere: freeing memory!\n");
+  turbulence.cleanup();
   HANDLE_ERROR( cudaFree( devStates ) );
   HANDLE_ERROR( cudaFree( zeta1  ));
   HANDLE_ERROR( cudaFree( eta1 ) );
   HANDLE_ERROR( cudaFree( zeta2 ) );
   HANDLE_ERROR( cudaFree( eta2 ) );
-  HANDLE_ERROR( cudaFree( d__turbulence ) );
+  HANDLE_ERROR( cudaFree( layers ) );
 }
 @
 The phase screen are defined in the telescope pupil at the ground 
@@ -628,7 +671,9 @@ void atmosphere::get_phase_screen(float *phase_screen,
   dim3 gridDim( ceilf(sqrt(N_xy)/16) , ceilf(sqrt(N_xy)/16));
   plps LLL gridDim , blockDim RRR (phase_screen,
 				   x, y, N_xy, 
-				   d__turbulence, wavenumber*powf(r0,-5.0/6.0),
+				   d__turbulence, 
+				   wavenumber*powf(r0,-5.0/6.0),
+				   layers, N_LAYER,
 				   zeta1, eta1, zeta2, eta2,
 				   src, time);
 }
@@ -641,17 +686,19 @@ void atmosphere::get_phase_screen(float const *x, float const *y, int N_xy,
   dim3 gridDim( ceilf(sqrt(N_xy)/16) , ceilf(sqrt(N_xy)/16));
   plps LLL gridDim , blockDim RRR (src->wavefront.phase,
 				   x, y, N_xy, 
-				   d__turbulence, wavenumber*powf(r0,-5.0/6.0),
+				   d__turbulence, 
+				   wavenumber*powf(r0,-5.0/6.0),
+				   layers, N_LAYER,
 				   zeta1, eta1, zeta2, eta2,
 				   src, time);
 }
 @ and computed with the kernel
 <<phase screen kernel>>=
-  __global__ void plps(float *phase_screen,
-		       float const *x, float const *y, int N_xy, 
-		       profile *turb, float r0,
-		       float *zeta1, float *eta1, float *zeta2, float *eta2,
-		       source *src, float time)
+__global__ void plps(float *phase_screen,
+		     float const *x, float const *y, int N_xy, 
+		     profile *turb, float r0, layer *layers, int N_LAYER,
+		     float *zeta1, float *eta1, float *zeta2, float *eta2,
+		     source *src, float time)
 {
   <<declarations>>
 
@@ -670,7 +717,7 @@ void atmosphere::get_phase_screen(float const *x, float const *y, int N_xy,
           for (j=0;j<turb->N_a;j++)
 	    {
 	      <<frequency angle sum>>
-	      for (l=0;l<_N_LAYER_;l++)
+	      for (l=0;l<N_LAYER;l++)
 		{
 		  <<layer sum>>
 		}
@@ -737,7 +784,7 @@ The innest loop is the sum over the layer.
 @ Some new variable definitions:
 <<layer sum: variable definitions>>=
 ijl = ij + l*turb->N_a*turb->N_k;
-gl = 1 - turb->altitude[l]/src[i_source].height;
+gl = 1 - layers[l].altitude/src[i_source].height;
 x_kl = x_kl0;
 y_kl = y_kl0;
 @ The cone effect is applied to the layer coordinates:
@@ -746,11 +793,11 @@ x_kl *= gl;
 y_kl *= gl;
 @ The source angular and time offset are accounted for in the following:
 <<layer sum: angle and time offsets>>=
-x_kl += turb->altitude[l]*src[i_source].theta_x - turb->vx[l]*time;
-y_kl += turb->altitude[l]*src[i_source].theta_y - turb->vy[l]*time;
+x_kl += layers[l].altitude*src[i_source].theta_x - layers[l].vx*time;
+y_kl += layers[l].altitude*src[i_source].theta_y - layers[l].vy*time;
 @ The quadrature of the power spectrum density of the turbulent phase:
 <<layer sum: PSD quadrature>>=
-sum_l += sqrt(turb->xi0[l])*
+sum_l += sqrt(layers[l].xi0)*
    ( zeta1[ijl]*cosf( eta1[ijl] +
 		     freq_mag*( x_kl*cos_freq_ang + y_kl*sin_freq_ang ) ) +
      zeta2[ijl]*cosf( eta2[ijl] -
@@ -771,7 +818,9 @@ void atmosphere::get_phase_screen(float const delta_x, int N_x, float const delt
   dim3 gridDim( 1+N_x/16 , 1+N_y/16);
   square_plps LLL gridDim , blockDim RRR (src->wavefront.phase,
 				   delta_x, N_x, delta_y, N_y, 
-				   d__turbulence, wavenumber*powf(r0,-5.0/6.0),
+				   d__turbulence, 
+				   wavenumber*powf(r0,-5.0/6.0),
+				   layers, N_LAYER,
 				   zeta1, eta1, zeta2, eta2,
 				   src, time);
 }
@@ -784,7 +833,9 @@ void atmosphere::get_phase_screen(float *phase_screen,
   dim3 gridDim( 1+N_x/16 , 1+N_y/16);
   square_plps LLL gridDim , blockDim RRR (phase_screen,
 				   delta_x, N_x, delta_y, N_y, 
-				   d__turbulence, wavenumber*powf(r0,-5.0/6.0),
+				   d__turbulence, 
+				   wavenumber*powf(r0,-5.0/6.0),
+				   layers, N_LAYER,
 				   zeta1, eta1, zeta2, eta2,
 				   src, time);
 }
@@ -797,7 +848,9 @@ void atmosphere::get_phase_screen(source *src,
   dim3 gridDim( 1+N_x/16 , 1+N_y/16);
   square_plps LLL gridDim , blockDim RRR (src->wavefront.phase,
 				   delta_x, N_x, delta_y, N_y, 
-				   d__turbulence, wavenumber*powf(r0,-5.0/6.0),
+				   d__turbulence, 
+				   wavenumber*powf(r0,-5.0/6.0),
+				   layers, N_LAYER,
 				   zeta1, eta1, zeta2, eta2,
 				   src->dev_ptr, time);
 }
@@ -810,7 +863,9 @@ void atmosphere::get_phase_screen(source *src, int N_SRC,
   dim3 gridDim( 1+N_x/16 , 1+N_y/16, N_SRC);
   square_plps LLL gridDim , blockDim RRR (src->wavefront.phase,
 				   delta_x, N_x, delta_y, N_y, 
-				   d__turbulence, wavenumber*powf(r0,-5.0/6.0),
+				   d__turbulence, 
+				   wavenumber*powf(r0,-5.0/6.0),
+                                   layers, N_LAYER,
 				   zeta1, eta1, zeta2, eta2,
 				   src->dev_ptr, time);
 }
@@ -818,7 +873,7 @@ void atmosphere::get_phase_screen(source *src, int N_SRC,
 <<phase screen kernel (square)>>=
   __global__ void square_plps(float *phase_screen,
 		       float const delta_x, int N_x, float const delta_y, int N_y, 
-		       profile *turb, float r0,
+       		       profile *turb, float r0, layer *layers, int N_LAYER,
 		       float *zeta1, float *eta1, float *zeta2, float *eta2,
 		       source *src, float time)
 {
@@ -838,7 +893,7 @@ void atmosphere::get_phase_screen(source *src, int N_SRC,
           for (j=0;j<turb->N_a;j++)
 	    {
 	      <<frequency angle sum>>
-	      for (l=0;l<_N_LAYER_;l++)
+	      for (l=0;l<N_LAYER;l++)
 		{
 		  <<layer sum>>
 		}
@@ -888,10 +943,10 @@ It is also given by the difference of the wavefront averaged on both sides of th
 Inserting Eq.~(\ref{eq:13}) into Eq.~(\ref{eq:15}) and performing the integration leads to:
 \begin{eqnarray}
   \label{eq:16}
-      s_x &=& -{\lambda\over 2\pi} 1.4 r_0^{-{5\over6}} \sum_{i=1}^{N_\kappa}\sum_{j=1}^{N_\varphi} \Gamma\left( \bk\right) \sum_{l=1}^{[[_N_LAYER_]]} \xi_{0l}^{1\over2} \mathrm{sinc}\left(\gamma_l^\ast\bkx d\over 2\right) \mathrm{sinc}\left(\gamma_l^\ast\bky d\over 2\right) \\
+      s_x &=& -{\lambda\over 2\pi} 1.4 r_0^{-{5\over6}} \sum_{i=1}^{N_\kappa}\sum_{j=1}^{N_\varphi} \Gamma\left( \bk\right) \sum_{l=1}^{[[N_LAYER]]} \xi_{0l}^{1\over2} \mathrm{sinc}\left(\gamma_l^\ast\bkx d\over 2\right) \mathrm{sinc}\left(\gamma_l^\ast\bky d\over 2\right) \\
 && \times \left\{ \zeta_{1l}(i,j) \sin\left[ \eta_{1l}(i,j) + \bkx x_{L,l} + \bky y_{L,l} \right] \bkx \right. \nonumber\\
 && \quad - \left. \zeta_{2l}(i,j) \sin\left[ \eta_{2l}(i,j) - \bky x_{L,l} + \bkx y_{L,l} \right] \bky \right\} \nonumber\\
-      s_y &=& -{\lambda\over 2\pi} 1.4 r_0^{-{5\over6}} \sum_{i=1}^{N_\kappa}\sum_{j=1}^{N_\varphi} \Gamma\left( \bk\right) \sum_{l=1}^{[[_N_LAYER_]]} \xi_{0l}^{1\over2} \mathrm{sinc}\left(\gamma_l^\ast\bkx d\over 2\right) \mathrm{sinc}\left(\gamma_l^\ast\bky d\over 2\right) \\
+      s_y &=& -{\lambda\over 2\pi} 1.4 r_0^{-{5\over6}} \sum_{i=1}^{N_\kappa}\sum_{j=1}^{N_\varphi} \Gamma\left( \bk\right) \sum_{l=1}^{[[N_LAYER]]} \xi_{0l}^{1\over2} \mathrm{sinc}\left(\gamma_l^\ast\bkx d\over 2\right) \mathrm{sinc}\left(\gamma_l^\ast\bky d\over 2\right) \\
 && \times \left\{ \zeta_{1l}(i,j) \sin\left[ \eta_{1l}(i,j) + \bkx x_{L,l} + \bky y_{L,l} \right] \bky \right. \nonumber\\
 && \quad + \left. \zeta_{2l}(i,j) \sin\left[ \eta_{2l}(i,j) - \bky x_{L,l} + \bkx y_{L,l} \right] \bkx \right\} \nonumber
 \end{eqnarray}
@@ -912,8 +967,9 @@ void atmosphere::get_phase_screen_gradient(float *sx, float *sy, int NL, float c
   dim3 gridDim( 1+NL/16 , 1+NL/16);
   plps_gradient LLL gridDim , blockDim RRR (sx, sy, NL, d,
 					    d__turbulence, wavelength, r0,
-				   zeta1, eta1, zeta2, eta2,
-				   src, time);
+					    layers, N_LAYER,
+					    zeta1, eta1, zeta2, eta2,
+					    src, time);
 }
 <<phase screen gradient II>>=
 void atmosphere::get_phase_screen_gradient(centroiding *cog, int NL, float const d, 
@@ -925,11 +981,13 @@ void atmosphere::get_phase_screen_gradient(centroiding *cog, int NL, float const
     plps_gradient_mask LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy, NL, 
 						   cog->lenslet_mask, d,
 						   d__turbulence, wavelength, r0,
+						   layers, N_LAYER,
 						   zeta1, eta1, zeta2, eta2,
 						   src->dev_ptr, time);
   else
     plps_gradient LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy, NL, d,
 					      d__turbulence, wavelength, r0,
+					      layers, N_LAYER,
 					      zeta1, eta1, zeta2, eta2,
 					      src->dev_ptr, time);
 }
@@ -943,11 +1001,13 @@ void atmosphere::get_phase_screen_gradient(centroiding *cog, int NL, float const
     plps_gradient_mask LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy, NL, 
 						   cog->lenslet_mask, d,
 						   d__turbulence, wavelength, r0,
+						   layers, N_LAYER,
 						   zeta1, eta1, zeta2, eta2,
 						   src->dev_ptr, time);
   else
     plps_gradient LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy, NL, d,
 					      d__turbulence, wavelength, r0,
+					      layers, N_LAYER,
 					      zeta1, eta1, zeta2, eta2,
 					      src->dev_ptr, time);
 }
@@ -959,14 +1019,16 @@ void atmosphere::get_phase_screen_gradient(centroiding *cog, int NL, char *valid
   dim3 gridDim( 1+NL/16 , 1+NL/16, N_SRC);
   plps_gradient_mask LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy, NL, 
 						 valid_lenslet, d,
-					    d__turbulence, wavelength, r0,
-				            zeta1, eta1, zeta2, eta2,
-				            src->dev_ptr, time);
+						 d__turbulence, wavelength, r0,
+						 layers, N_LAYER,
+						 zeta1, eta1, zeta2, eta2,
+						 src->dev_ptr, time);
 }
 @ with the kernel
 <<phase screen gradient kernel>>=
 __global__ void plps_gradient(float *sx, float *sy, int NL, float const d,
 			      profile *turb, float wavelength, float r0,
+			      layer *layers, int N_LAYER,
 			      float *zeta1, float *eta1, float *zeta2, float *eta2,
 			      source *src, float time)
 {
@@ -990,7 +1052,7 @@ __global__ void plps_gradient(float *sx, float *sy, int NL, float const d,
 		cos_freq_ang *= freq_mag;
 		sin_freq_ang *= freq_mag;
 		sum_l_x = sum_l_y = 0;
-	      for (l=0;l<_N_LAYER_;l++)
+	      for (l=0;l<N_LAYER;l++)
 		{
 		  <<layer sum (gradient)>>
 		}
@@ -1012,17 +1074,19 @@ void atmosphere::get_phase_screen_gradient(float *sx, float *sy, int NL, char *v
   dim3 blockDim(16,16);
   dim3 gridDim( 1+NL/16 , 1+NL/16);
   plps_gradient_mask LLL gridDim , blockDim RRR (sx, sy, NL, valid_lenslet, d,
-					    d__turbulence, wavelength, r0,
-				   zeta1, eta1, zeta2, eta2,
-				   src, time);
+						 d__turbulence, wavelength, r0,
+						 layers, N_LAYER,
+						 zeta1, eta1, zeta2, eta2,
+						 src, time);
 }
 @ with the kernel
 <<phase screen gradient kernel (masked)>>=
 __global__ void plps_gradient_mask(float *sx, float *sy, int NL, 
 				   char *valid_lenslet, float const d,
-				     profile *turb, float wavelength, float r0,
-				     float *zeta1, float *eta1, float *zeta2, float *eta2,
-				     source *src, float time)
+				   profile *turb, float wavelength, float r0,
+				   layer *layers, int N_LAYER,
+				   float *zeta1, float *eta1, float *zeta2, float *eta2,
+				   source *src, float time)
 {
   <<declarations (common)>>
     float sum_x, sum_l_x, sum_y, sum_l_y, red0, red1, red2;
@@ -1045,7 +1109,7 @@ __global__ void plps_gradient_mask(float *sx, float *sy, int NL,
 			cos_freq_ang *= freq_mag;
 		      sin_freq_ang *= freq_mag;
 		      sum_l_x = sum_l_y = 0;
-		      for (l=0;l<_N_LAYER_;l++)
+		      for (l=0;l<N_LAYER;l++)
 			{
 			  <<layer sum (gradient)>>
 			    }
@@ -1075,12 +1139,12 @@ y_kl0 = (j+0.5)*d - NL*d*0.5;
 The innest loop is the sum over the layer.
 <<layer sum (gradient)>>=
 ijl = ij + l*turb->N_a*turb->N_k;
-gl = 1 - turb->altitude[l]/src[i_source].height;
+gl = 1 - layers[l].altitude/src[i_source].height;
 x_kl = gl*x_kl0;
 y_kl = gl*y_kl0;
-x_kl += turb->altitude[l]*src[i_source].theta_x - turb->vx[l]*time;
-y_kl += turb->altitude[l]*src[i_source].theta_y - turb->vy[l]*time;
-red0 = sqrt(turb->xi0[l])*
+x_kl += layers[l].altitude*src[i_source].theta_x - layers[l].vx*time;
+y_kl += layers[l].altitude*src[i_source].theta_y - layers[l].vy*time;
+red0 = sqrt(layers[l].xi0)*
   sinc_atm(0.5*gl*cos_freq_ang*d)*sinc_atm(0.5*gl*sin_freq_ang*d);
 red1 = zeta1[ijl]*sin( eta1[ijl] + cos_freq_ang*x_kl + sin_freq_ang*y_kl );
 red2 = zeta2[ijl]*sin( eta2[ijl] - sin_freq_ang*x_kl + cos_freq_ang*y_kl );
@@ -1110,14 +1174,16 @@ void atmosphere::get_phase_screen_circ_centroids(centroiding *cog, const float R
   dim3 blockDim(16,16);
   dim3 gridDim( ceilf(sqrt(N_o)/16) , ceilf(sqrt(N_o)/16));
   circ_centroids_kernel LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy,  N_o, R,
-						    d__turbulence, wavenumber*powf(r0,-5.0/6.0),
+						    d__turbulence, 
+						    wavenumber*powf(r0,-5.0/6.0),
+						    layers, N_LAYER,
 						    zeta1, eta1, zeta2, eta2,
 						    src->dev_ptr, time);
 }
 <<phase screen circular centroids kernel>>=
 __global__ void circ_centroids_kernel(float *cx, float *cy, int N_xy, 
 				      const float R,
-				      profile *turb, float r0,
+				      profile *turb, float r0, layer *layers, int N_LAYER,
 				      float *zeta1, float *eta1, float *zeta2, float *eta2,
 				      source *src, float time)
 {
@@ -1149,7 +1215,7 @@ __global__ void circ_centroids_kernel(float *cx, float *cy, int N_xy,
           for (j=0;j<turb->N_a;j++)
 	    {
 	      <<frequency angle sum>>
-	      for (l=0;l<_N_LAYER_;l++)
+	      for (l=0;l<N_LAYER;l++)
 		{
 		  <<layer sum>>
 		}
@@ -1181,12 +1247,16 @@ void atmosphere::get_phase_screen_circ_uplink_centroids(centroiding *cog, const 
   dim3 gridDim( ceilf(sqrt(N_o)/16) , ceilf(sqrt(N_o)/16));
   if (focused==1)
     circ_focused_uplink_centroids_kernel LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy,  N_o, R,
-								     d__turbulence, wavenumber*powf(r0,-5.0/6.0),
+								     d__turbulence, 
+								     wavenumber*powf(r0,-5.0/6.0),
+								     layers, N_LAYER,
 								     zeta1, eta1, zeta2, eta2,
 								     src->dev_ptr, time);
   else
     circ_uplink_centroids_kernel LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy,  N_o, R,
-							     d__turbulence, wavenumber*powf(r0,-5.0/6.0),
+							     d__turbulence, 
+							     wavenumber*powf(r0,-5.0/6.0),
+							     layers, N_LAYER,
 							     zeta1, eta1, zeta2, eta2,
 							     src->dev_ptr, time);
 }
@@ -1195,7 +1265,7 @@ For a collimated uplink beam, the device kernel is:
 <<phase screen circular uplink centroids kernel>>=
 __global__ void circ_uplink_centroids_kernel(float *cx, float *cy, int N_xy, 
 				      const float R,
-				      profile *turb, float r0,
+                                      profile *turb, float r0, layer *layers, int N_LAYER,
 				      float *zeta1, float *eta1, float *zeta2, float *eta2,
 				      source *src, float time)
 {
@@ -1227,7 +1297,7 @@ __global__ void circ_uplink_centroids_kernel(float *cx, float *cy, int N_xy,
           for (j=0;j<turb->N_a;j++)
 	    {
 	      <<frequency angle sum>>
-	      for (l=0;l<_N_LAYER_;l++)
+	      for (l=0;l<N_LAYER;l++)
 		{
 		  <<layer sum (collimated)>>
                   sum_l *= gl;
@@ -1247,7 +1317,7 @@ For a focused uplink beam, the device kernel is:
 <<phase screen circular focused uplink centroids kernel>>=
 __global__ void circ_focused_uplink_centroids_kernel(float *cx, float *cy, int N_xy, 
 				      const float R,
-				      profile *turb, float r0,
+                                      profile *turb, float r0, layer *layers, int N_LAYER,
 				      float *zeta1, float *eta1, float *zeta2, float *eta2,
 				      source *src, float time)
 {
@@ -1279,7 +1349,7 @@ __global__ void circ_focused_uplink_centroids_kernel(float *cx, float *cy, int N
           for (j=0;j<turb->N_a;j++)
 	    {
 	      <<frequency angle sum>>
-	      for (l=0;l<_N_LAYER_;l++)
+	      for (l=0;l<N_LAYER;l++)
 		{
 		  <<layer sum>>
                   sum_l *= gl;
@@ -1734,8 +1804,6 @@ It calls the mex function:
 #include "mex.h"
 #include "gpu/mxGPUArray.h"
 
-#include "definitions.h"
-
 #ifndef __CEO_H__
 #include "ceo.h"
 #endif
@@ -1795,6 +1863,9 @@ void mexFunction(int nlhs, mxArray *plhs[],
     L0 = mxGetPr(prhs[inputIndex++]);
     time = mxGetPr(prhs[inputIndex++]);
 
+    int N_PIXEL;
+    N_PIXEL = mxGPUGetNumberOfElements(x);
+
     /* Create GPUArray to hold the result and get underlying pointer. */
     mxGPUArray *phase_screen;
     phase_screen = mxGPUCreateGPUArray(2,mxGPUGetDimensions(x),
@@ -1810,6 +1881,7 @@ void mexFunction(int nlhs, mxArray *plhs[],
 				  cudaMemcpyHostToDevice ) );
        
         // Single layer turbulence profile
+	int N_LAYER = 1;
         float altitude[] = {0},
               xi0[] = {1},
               wind_speed[] = {10},
@@ -1823,14 +1895,14 @@ void mexFunction(int nlhs, mxArray *plhs[],
 	      */
 
         // Atmosphere
-        atm.setup(0.15,(float) (*L0),altitude,xi0,wind_speed,wind_direction);
+        atm.setup(0.15,(float) (*L0),N_LAYER,altitude,xi0,wind_speed,wind_direction);
         mexAtExit(cleanup);
         INIT = 1;
     }
     
    if (*reset>0) { atm.reset(); }
     
-   atm.get_phase_screen(d__phase_screen,d__x,d__y,_N_PIXEL_,d__src,(float)(*time));
+   atm.get_phase_screen(d__phase_screen,d__x,d__y,N_PIXEL,d__src,(float)(*time));
     
     /* Wrap the result up as a MATLAB gpuArray for return. */
     plhs[0] = mxGPUCreateMxArrayOnGPU(phase_screen);

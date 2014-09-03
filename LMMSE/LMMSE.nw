@@ -354,12 +354,12 @@ void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star,
 
   } else {
  
-     paCov.setup(N_mmse_star*_N_LAYER_,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET_,pa.d__cov);
+     paCov.setup(N_mmse_star*atm->N_LAYER,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET_,pa.d__cov);
   
      PS_E_N_PX = paCov.MT2_TOTAL;
 
      NI = NP;
-     nnz = 4*NI*NI*_N_LAYER_;
+     nnz = 4*NI*NI*atm->N_LAYER;
      <<sparse setup>>
   }
 
@@ -395,7 +395,7 @@ void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star,
 
   pa.setup(NP,N_SIDE_LENSLET_,osf,atm,sampling,
            mmse_star, N_mmse_star, guide_star, N_guide_star);
-
+ 
   if (mmse_star[0].height==guide_star[0].height) {
 
      paCov.setup(N_mmse_star,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET_,pa.d__cov);
@@ -406,12 +406,12 @@ void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star,
 
   } else {
  
-     paCov.setup(N_mmse_star*_N_LAYER_,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET_,pa.d__cov);
+    paCov.setup(N_mmse_star*atm->N_LAYER,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET_,pa.d__cov);
   
      PS_E_N_PX = paCov.MT2_TOTAL;
 
      NI = NP;
-     nnz = 4*_N_LAYER_*pupil->nnz;
+     nnz = 4*atm->N_LAYER*pupil->nnz;
      <<sparse setup with pupil mask>>
   }
 
@@ -589,7 +589,7 @@ csrColIndH[idx] = ndx + NP + 1;
 @ The sparse matrix is stored in the compressed sparse row format and it is computed with the kernel
 <<sparse matrix kernel>>=
 __global__ void bilinearSparseOperator(float *csrValH, int *csrColIndH, int *csrRowPtrH,
-				  int* MT, int NI, profile *turb, float z)
+				  int* MT, int NI, layer *turb, int N_LAYER, float z)
 {
   int i, j, k, idx, ndx, NP, k_LAYER, offset;
   float scale, s, t, fs, ft, onemt, onems, delta, delta_p;
@@ -598,22 +598,22 @@ __global__ void bilinearSparseOperator(float *csrValH, int *csrColIndH, int *csr
   if ( (i<NI) && (j<(NI)) ) {
     delta   = 1.0;
     k = i*NI + j;
-    idx = _N_LAYER_*4*k - 1;
+    idx = N_LAYER*4*k - 1;
     offset = 0;
-    for (k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
-    	delta_p = 1 - turb->altitude[k_LAYER]/z;
+    for (k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++) {
+    	delta_p = 1 - turb[k_LAYER].altitude/z;
 	NP = MT[k_LAYER];
         <<bilinear interpolation>>
 	offset += NP*NP;
     }	
-    csrRowPtrH[k+1] = _N_LAYER_*4*(k+1);
+    csrRowPtrH[k+1] = N_LAYER*4*(k+1);
   }
 }
 @ The sparse matrix is modified to take into account the pupil mask.
 Where the pupil mask is zero, the corresponding row in the sparse matrix must be filled with zeros.
 <<sparse matrix kernel with pupil mask>>=
 __global__ void bilinearSparseOperatorMask(float *csrValH, int *csrColIndH, int *csrRowPtrH,
-				  int* MT, int NI, profile *turb, float z, 
+				  int* MT, int NI, layer *turb, int N_LAYER, float z, 
                                   const char *mask, int nnz)
 {
   int i, j, k, idx, ndx, NP, k_LAYER, offset, l, pos;
@@ -625,22 +625,22 @@ __global__ void bilinearSparseOperatorMask(float *csrValH, int *csrColIndH, int 
     k = i*NI + j;
     if (mask[k]>0) {
        <<nnz position>>
-       idx =  _N_LAYER_*4*(pos-1) - 1;
+       idx =  N_LAYER*4*(pos-1) - 1;
        offset = 0;
-       for (k_LAYER=0;k_LAYER<_N_LAYER_;k_LAYER++) {
-         delta_p = 1 - turb->altitude[k_LAYER]/z;
+       for (k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++) {
+         delta_p = 1 - turb[k_LAYER].altitude/z;
          NP = MT[k_LAYER];
          <<bilinear interpolation>>
          offset += NP*NP;
        }	
-       csrRowPtrH[k] = _N_LAYER_*4*(pos-1);
+       csrRowPtrH[k] = N_LAYER*4*(pos-1);
        <<csrRowPtrH for empty rows>>
        if ( k==(NI*NI-1) )
-          csrRowPtrH[k+1] = _N_LAYER_*4*nnz;
+          csrRowPtrH[k+1] = N_LAYER*4*nnz;
     } else { 
          if ( k==(NI*NI-1) ) {
            ++k;
-           csrRowPtrH[k] = _N_LAYER_*4*nnz;
+           csrRowPtrH[k] = N_LAYER*4*nnz;
            <<csrRowPtrH for empty rows>>
         } 
      }
@@ -708,14 +708,14 @@ dim3 blockDim(16,16);
 dim3 gridDim(NI/16+1,NI/16+1);
 bilinearSparseOperator LLL gridDim,blockDim RRR 
   (csrValH, csrColIndH, csrRowPtrH, paCov.d__MT, NI, 
-   atm->d__turbulence, guide_star[0].height);
+   atm->layers, atm->N_LAYER, guide_star[0].height);
 @ Creation of the sparse matrix with the pupil mask:
 <<sparse making with pupil mask>>=
 dim3 blockDim(16,16);
 dim3 gridDim(NI/16+1,NI/16+1);
 bilinearSparseOperatorMask LLL gridDim,blockDim RRR 
   (csrValH, csrColIndH, csrRowPtrH, paCov.d__MT, NI, 
-   atm->d__turbulence, guide_star[0].height, pupil->m, pupil->nnz);
+   atm->layers, atm->N_LAYER, guide_star[0].height, pupil->m, pupil->nnz);
 
 @ Conversion sparse to dense matrix:
 <<sparse to dense>>=
