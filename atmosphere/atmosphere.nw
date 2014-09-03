@@ -158,9 +158,14 @@ cdef extern from "atmosphere.h":
         void info()
 	void reset()
         void get_phase_screen(source *, int , float , int , float , int , float )
-        void get_phase_screen_gradient(centroiding *, int , float , source *, int , float )
-        void get_phase_screen_circ_centroids(centroiding *,  float, source *, int , float )
-        void get_phase_screen_circ_uplink_centroids(centroiding *,  float, source *, int , float, char )
+        void get_phase_screen(float *, float *, int,
+                              source *, float )
+        void get_phase_screen_gradient(centroiding *, int , float , source *,
+				       int , float )
+        void get_phase_screen_circ_centroids(centroiding *,  float, source *,
+					     int , float )
+        void get_phase_screen_circ_uplink_centroids(centroiding *,  float, source *,
+						    int , float, char )
   
 @ 
 <<ceo.pyx>>=
@@ -210,7 +215,8 @@ cdef class Atmosphere:
         np.ndarray[float, mode="c"] wind_speed, 
         np.ndarray[float, mode="c"] wind_direction):
 	self._c_atmosphere = new ceo.atmosphere()
-        self._c_atmosphere.setup(r0, L0, &altitude[0], &xi0[0], &wind_speed[0], &wind_direction[0])   
+        self._c_atmosphere.setup(r0, L0, &altitude[0], &xi0[0],
+				 &wind_speed[0], &wind_direction[0])   
  
     <<python atmosphere methods>>
 
@@ -227,18 +233,70 @@ cdef class GmtAtmosphere:
 def reset(self):
     self._c_atmosphere.reset()
 
-def get_phase_screen(self, Source src, int N_SRC, float delta_x, int N_x, float delta_y, int N_y, float time):
-    self._c_atmosphere.get_phase_screen(src._c_source, N_SRC, delta_x, N_x, delta_y, N_y, time)
+def get_phase_screen(self, Source src, int N_SRC, 
+		     float delta_x, int N_x, 
+		     float delta_y, int N_y, 
+		     float time):
+    """
+    Computes the N_x$\times$N_y phase screen of the source wavefront
+    
+    Parameters
+    ----------
+    src: Source object
+        The light source 
+    N_SRC: int
+        The number of light sources contained in the Source object
+    delta_x: float
+        X-axis spacing
+    N_x: int
+        X-axis sampling
+    delta_y: float
+        Y-axis spacing
+    N_y: int
+        Y-axis sampling
+    time: float
+        The time of the atmosphere snapshot since the beginning of the simulation
+    """
+    self._c_atmosphere.get_phase_screen(src._c_source, N_SRC, 
+					delta_x, N_x, 
+					delta_y, N_y, time)
 
-def get_phase_screen_gradient(self, Centroiding cog, int NL, float d, Source src, int N_SRC, float time):  
-    self._c_atmosphere.get_phase_screen_gradient(cog._c_centroiding, NL, d, src._c_source, N_SRC, time)
+def get_phase_values(self, np.ndarray[float, mode="c"] x,
+                     np.ndarray[float, mode="c"] y, 
+                     Source src, float time):
+    """
+    Computes the phase screen of the source wavefront
+    
+    Parameters
+    ----------
+    x: ndarray of floats
+        X coordinates of the phase screen samples
+    y: ndarray of floats
+        Y coordinates of the phase screen samples
+    src: Source object
+        The light source 
+    time: float
+        The time of the atmosphere snapshot since the beginning of the simulation
+    """
+    self._c_atmosphere.get_phase_screen(&x[0],&y[0],x.size,
+                                        src._c_source, time)
 
-def get_phase_screen_circ_centroids(self, Centroiding cog, float R, Source src, int N_SRC, float time):  
-    self._c_atmosphere.get_phase_screen_circ_centroids(cog._c_centroiding, R, src._c_source, N_SRC, time)
+def get_phase_screen_gradient(self, Centroiding cog, int NL, float d, 
+			      Source src, int N_SRC, float time):  
+    self._c_atmosphere.get_phase_screen_gradient(cog._c_centroiding, NL, d, 
+						 src._c_source, N_SRC, time)
+
+def get_phase_screen_circ_centroids(self, Centroiding cog, float R, 
+				    Source src, int N_SRC, float time):  
+    self._c_atmosphere.get_phase_screen_circ_centroids(cog._c_centroiding, R, 
+						       src._c_source, N_SRC, time)
 
 def get_phase_screen_circ_uplink_centroids(self, Centroiding cog, float R, 
-					     Source src, int N_SRC, float time, char focused):  
-    self._c_atmosphere.get_phase_screen_circ_uplink_centroids(cog._c_centroiding, R, src._c_source, N_SRC, time,focused)
+					     Source src, int N_SRC, 
+					   float time, char focused):  
+    self._c_atmosphere.get_phase_screen_circ_uplink_centroids(cog._c_centroiding, R, 
+							      src._c_source, N_SRC, 
+							      time,focused)
 
 def __dealloc__(self):
     self._c_atmosphere.cleanup()
@@ -1667,7 +1725,7 @@ show()
 The test suite is a Matlab script.
 It calls the mex function:
 <<atmosphere.mex>>=
-<<atmosphere phase gradient>>
+<<atmosphere phase>>
 @ 
 <<atmosphere phase>>=
 #include <math.h>
@@ -1745,10 +1803,10 @@ void mexFunction(int nlhs, mxArray *plhs[],
     
     if (INIT==0) {
         // Source
-        src.setup(ARCSEC(60) , 0, 90e3);//INFINITY);
-	HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source)*_N_SOURCE_ ) );
+        src.setup("R",ARCSEC(60) , 0, 90e3);//INFINITY);
+	HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source)) );
 	HANDLE_ERROR( cudaMemcpy( d__src, &src,
-				  sizeof(source)*_N_SOURCE_ ,
+				  sizeof(source) ,
 				  cudaMemcpyHostToDevice ) );
        
         // Single layer turbulence profile

@@ -15,16 +15,16 @@
 
 nxy = 512;
 ceodir = '~/CEO';
-cd([ceodir,'/atmosphere'])
+cd(ceodir)
 unix(['sed -i ',...
     '-e ''s/#define _N_LAYER_ [0-9]*/#define _N_LAYER_ ',num2str(atm.nLayer),'/g'' ',...
     '-e ''s/#define _N_PIXEL_ [0-9]*/#define _N_PIXEL_ ',...
-    num2str(nxy^2),'/g'' definitions.h']);
-unix('cat definitions.h');
-cd(ceodir)
-unix('make clean lib atmosphere.mex')
+    num2str(nxy^2),'/g'' include/definitions.h']);
+unix('cat include/definitions.h');
+unix('make clean all')
 cd([ceodir,'/atmosphere'])
 clear ceo_atmosphere
+unix('make atmosphere.mex')
 mex -largeArrayDims -I../include -L../lib -lceo -o ceo_atmosphere atmosphere.mex.cu
 
 u = single( L0*gpuArray.linspace(-1,1,nxy) );
