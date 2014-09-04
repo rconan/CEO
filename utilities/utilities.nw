@@ -1,4 +1,4 @@
-% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+% -*- mode: Noweb; noweb-code-mode: python-mode -*-
 @
 \section{The files}
 
@@ -1102,6 +1102,13 @@ void dev2host( float *host_data, float *dev_data, int N) {
      HANDLE_ERROR( cudaDeviceSynchronize() );
 }
 @
+<<data to device from host>>=
+void host2dev( float **dev_data, float *host_data, int N) {
+     HANDLE_ERROR( cudaMemcpy( dev_data, host_data, 
+			       N*sizeof(float), cudaMemcpyHostToDevice ) ) ;
+     HANDLE_ERROR( cudaDeviceSynchronize() );
+}
+@
 <<ceo.pxd>>=
 ## device to host
     void dev2host( float *host_data, float *dev_data, int N)
@@ -1111,6 +1118,46 @@ void dev2host( float *host_data, float *dev_data, int N) {
 cdef fromdev( np.ndarray[float, mode="c"] host_data, float *dev_data, int N):
     dev2host( &host_data[0], dev_data, N)
 @ 
+The cu<Type>Array class is a cython class that is a container for CUDA variables:
+<<ceo.pyx>>=
+cdef class cuFloatArray:
+    """
+    A class to interact with a cuda float array
+
+    Parameters
+    ---------
+    row: int, optional
+        Number of rows 
+    col: int, optional
+        Number of columns
+    
+    Returns
+    -------
+    out: cuFloatArray 
+        A cuFloatArray object
+    """
+    cdef float *data
+    cdef int nel
+    cdef shape
+
+    def __cinit__(self,shape=None,host_array=None):
+        if host_array is not None:
+            host_data = np.array( host_array , dtype=np.float32 )
+            shape = host_data.shape
+        if shape is not None:
+            self.shape = shape
+            self.nel = np.prod(shape)
+
+    property host:
+        def __get__(self):
+            """
+            Copies the data from the device to the host and returns the associated ndarray
+            """
+            cdef np.ndarray host_data = np.zeros(self.shape,order='c',dtype=np.float32)
+            dev2host( <float *>host_data.data, self.data, self.nel)
+            return host_data
+@ 
+
 
 \subsection{Atmospheric dispersion}
 \label{sec:atmosph-disp}

@@ -1,4 +1,4 @@
-% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+% -*- mode: Noweb; noweb-code-mode: python-mode -*-
 @
 
 The source structure contains all the data associated with a remote optical emitter: its location, wavefront, irradiance, ...
@@ -107,6 +107,24 @@ cdef class Source:
     """ 
     A class to represent an astronomical source
 
+    Parameters
+    ----------
+    photometric_band: char
+        The sources photometric band
+    zenith: an object
+        The sources zenith angles [rd].
+    azimuth: an object
+        The sources azimuth angles [rd].
+    height: number
+        The sources altitude [m].
+    resolution: a list or tuple with 2 arguments
+        The sampling [n,m] in pixel of the source wavefront complex amplitude.
+    
+    Returns
+    -------
+    out: Source
+        A Source object.
+
     Examples
     --------
     import numpy as np
@@ -123,55 +141,45 @@ cdef class Source:
 
     """
     cdef ceo.source *_c_source
-
+    cdef int n, m
+    cdef np.ndarray zenith, azimuth
+ 
     def __cinit__(self,char *_photometric_band,  
-		  np.ndarray[float, mode="c"] zenith, 
-		  np.ndarray[float, mode="c"] azimuth, 
+		  zenith, azimuth, 
 		  float height, 
-		  np.ndarray[int, mode="c"] resolution,
+		  resolution,
 		  fwhm = None):
         """
         Instanciates a Source object
-
-        Parameters
-        ----------
-        photometric_band: char
-           The sources photometric band
-        zenith: ndarray of floats
-           The sources zenith angles [rd].
-        azimuth: ndarray of floats
-           The sources azimuth angles [rd].
-        height: number
-           The sources altitude [m].
-        resolution: ndarray of ints
-           The sampling [n,m] in pixel of the source wavefront complex amplitude.
-    
-        Returns
-        -------
-        out: Source
-           A Source object.
         """
 	self._c_source = new ceo.source()
+        self.n = resolution[0]
+        self.m = resolution[1]
+        self.zenith  = np.array( zenith,  dtype=np.float32)
+        self.azimuth = np.array( azimuth, dtype=np.float32)
         self._c_source.setup(_photometric_band, 
-			     &zenith[0], &azimuth[0], height, 
-			     zenith.size, np.prod(resolution))
+			     <float *>self.zenith.data, 
+                             <float *>self.azimuth.data, height, 
+			     self.zenith.size, np.prod(resolution))
         if fwhm is not None:
             self._c_source.fwhm = fwhm
 
     def __dealloc__(self):
         self._c_source.cleanup()
 
-    def get_phase(self, np.ndarray[float , ndim=2, mode="c"] data):
-	"""
-        Retrieves the wavefront phase from the device
-
-        Parameters
-        ----------
-        data: ndarray of floats
-            The phase screen on the host 
-        """
-        dev2host(&data[0,0],self._c_source.wavefront.phase, data.size)
-
+    property phase:
+        def __get__(self):
+            """
+            Returns the wavefront phase as a cuFloatArray object
+            
+            See also
+            --------
+            cuFloatArray
+            """
+            x = cuFloatArray((self.n,self.m))
+            x.data = self._c_source.wavefront.phase
+            return x
+           
     def masked(self, Mask tel):
         """
         Apply the binary mask of the telescope pupil to the source wavefront
