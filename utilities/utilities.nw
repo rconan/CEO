@@ -104,6 +104,10 @@ double atmospheric_dispersion(float wavelength, float delta_wavelength,
 			      float temperature, float humidity);
 
 void dev2host( float *host_data, float *dev_data, int N);
+void host2dev( float **dev_data, float *host_data, int N);
+void freedev( float **dev_data );
+
+<<gpu data structure>>
 
 #endif  // __UTILITIES_H__
 @
@@ -146,6 +150,10 @@ int round_up_to_nhp2(int n) {
 <<atmospheric dispersion>>
 
 <<data to host from device>>
+<<data to device from host>>
+<<free device>>
+
+<<gpu data structure function>>
 @
 
 \subsection{Python}
@@ -1104,21 +1112,66 @@ void dev2host( float *host_data, float *dev_data, int N) {
 @
 <<data to device from host>>=
 void host2dev( float **dev_data, float *host_data, int N) {
-     HANDLE_ERROR( cudaMemcpy( dev_data, host_data, 
+    fprintf(stdout,"__ HOST2DEV __\n");
+    HANDLE_ERROR( cudaMalloc( (void**)dev_data, N*sizeof(float)) );
+    HANDLE_ERROR( cudaMemcpy( *dev_data, host_data, 
 			       N*sizeof(float), cudaMemcpyHostToDevice ) ) ;
-     HANDLE_ERROR( cudaDeviceSynchronize() );
+    HANDLE_ERROR( cudaDeviceSynchronize() );
+}
+@ 
+<<free device>>=
+void freedev( float **dev_data ) {
+    fprintf(stdout,"__ FREEDEV __\n");
+    HANDLE_ERROR( cudaFree( *dev_data) );
+}
+@ 
+<<gpu data structure>>=
+struct gpu {
+  float *dev_data, *host_data;
+  int N;
+  void malloc_dev(void);
+  void free_dev(void);
+  void dev2host(void);
+  void host2dev(void);
+};
+<<gpu data structure function>>=
+void gpu::malloc_dev(void) {
+    fprintf(stdout,"__ MALLOC_DEV __\n");
+    HANDLE_ERROR( cudaMalloc( (void**)&dev_data, N*sizeof(float)) );
+}
+void gpu::free_dev(void) {
+    fprintf(stdout,"__ FREE_DEV __\n");
+    HANDLE_ERROR( cudaFree( dev_data ) );
+}
+void gpu::dev2host(void) {
+     HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
+			       N*sizeof(float), cudaMemcpyDeviceToHost ) ) ;
+     HANDLE_ERROR( cudaDeviceSynchronize() ); 
+}
+void gpu::host2dev(void) {
+    HANDLE_ERROR( cudaMemcpy( dev_data, host_data, 
+			       N*sizeof(float), cudaMemcpyHostToDevice ) ) ;
+    HANDLE_ERROR( cudaDeviceSynchronize() );
 }
 @
 <<ceo.pxd>>=
 ## device to host
     void dev2host( float *host_data, float *dev_data, int N)
-@ 
-<<ceo.pyx>>=
-## device to host
-cdef fromdev( np.ndarray[float, mode="c"] host_data, float *dev_data, int N):
-    dev2host( &host_data[0], dev_data, N)
+    void host2dev( float **dev_data, float *host_data, int N)
+    void freedev( float **dev_data )
 @ 
 The cu<Type>Array class is a cython class that is a container for CUDA variables:
+<<ceo.pxd>>=
+cdef extern from "utilities.h":
+    cdef cppclass gpu:
+        float *dev_data
+        float *host_data
+        int N
+        void malloc_dev()
+        void free_dev()
+        void dev2host()
+        void host2dev()
+@ 
 <<ceo.pyx>>=
 cdef class cuFloatArray:
     """
@@ -1126,36 +1179,53 @@ cdef class cuFloatArray:
 
     Parameters
     ---------
-    row: int, optional
-        Number of rows 
-    col: int, optional
-        Number of columns
+    shape: (int,int), optional
+        Number of rows and colums
+    host_array: data object, optional
+        Host data to copy to the device
     
     Returns
     -------
     out: cuFloatArray 
         A cuFloatArray object
     """
-    cdef float *data
-    cdef int nel
-    cdef shape
+     
+    cdef ceo.gpu *_c_gpu
+    cdef int size
+    cdef shape, allocated
+    cdef np.ndarray host_data
 
     def __cinit__(self,shape=None,host_array=None):
+        self._c_gpu = new ceo.gpu()
         if host_array is not None:
-            host_data = np.array( host_array , dtype=np.float32 )
-            shape = host_data.shape
+            print "Allocation of data!"
+            self.host_data = np.array( host_array , dtype=np.float32 )
+            print self.host_data
+            self.shape = host_array.shape
+            self.size = np.prod(self.shape)
+            self._c_gpu.N = self.size
+            self._c_gpu.malloc_dev()
+            self._c_gpu.host_data = <float *>self.host_data.data;
+            self._c_gpu.host2dev()
+            self.allocated = True
         if shape is not None:
             self.shape = shape
-            self.nel = np.prod(shape)
+            self.size = np.prod(shape)
+            self._c_gpu.N = self.size
+
+    def __dealloc__(self):
+         if self.allocated:
+            self._c_gpu.free_dev()
 
     property host:
         def __get__(self):
             """
             Copies the data from the device to the host and returns the associated ndarray
             """
-            cdef np.ndarray host_data = np.zeros(self.shape,order='c',dtype=np.float32)
-            dev2host( <float *>host_data.data, self.data, self.nel)
-            return host_data
+            self.host_data = np.zeros(self.shape,order='c',dtype=np.float32)
+            self._c_gpu.host_data = <float *>self.host_data.data;
+            self._c_gpu.dev2host()
+            return self.host_data
 @ 
 
 
