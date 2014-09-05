@@ -1129,18 +1129,16 @@ void freedev( float **dev_data ) {
 struct gpu {
   float *dev_data, *host_data;
   int N;
-  void malloc_dev(void);
+  void dev_malloc(void);
   void free_dev(void);
   void dev2host(void);
   void host2dev(void);
 };
 <<gpu data structure function>>=
-void gpu::malloc_dev(void) {
-    fprintf(stdout,"__ MALLOC_DEV __\n");
+void gpu::dev_malloc(void) {
     HANDLE_ERROR( cudaMalloc( (void**)&dev_data, N*sizeof(float)) );
 }
 void gpu::free_dev(void) {
-    fprintf(stdout,"__ FREE_DEV __\n");
     HANDLE_ERROR( cudaFree( dev_data ) );
 }
 void gpu::dev2host(void) {
@@ -1167,7 +1165,7 @@ cdef extern from "utilities.h":
         float *dev_data
         float *host_data
         int N
-        void malloc_dev()
+        void dev_malloc()
         void free_dev()
         void dev2host()
         void host2dev()
@@ -1191,30 +1189,34 @@ cdef class cuFloatArray:
     """
      
     cdef ceo.gpu *_c_gpu
-    cdef int size
-    cdef shape, allocated
-    cdef np.ndarray host_data
+    cdef public int size
+    cdef public shape
+    cdef dev_malloc
+    cdef public np.ndarray host_data
 
-    def __cinit__(self,shape=None,host_array=None):
+    def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
         self._c_gpu = new ceo.gpu()
-        if host_array is not None:
-            print "Allocation of data!"
-            self.host_data = np.array( host_array , dtype=np.float32 )
-            print self.host_data
-            self.shape = host_array.shape
-            self.size = np.prod(self.shape)
-            self._c_gpu.N = self.size
-            self._c_gpu.malloc_dev()
-            self._c_gpu.host_data = <float *>self.host_data.data;
-            self._c_gpu.host2dev()
-            self.allocated = True
+        self.dev_malloc = dev_malloc
         if shape is not None:
             self.shape = shape
             self.size = np.prod(shape)
             self._c_gpu.N = self.size
+        if self.dev_malloc:
+            self._c_gpu.N = self.size
+            self._c_gpu.dev_malloc()           
+        if host_data is not None:
+            self.host_data = np.array( host_data , dtype=np.float32 , order='C')
+            self.shape = host_data.shape
+            self.size = np.prod(self.shape)
+            self._c_gpu.N = self.size
+            if not self.dev_malloc:
+                self._c_gpu.dev_malloc()
+            self._c_gpu.host_data = <float *>self.host_data.data;
+            self._c_gpu.host2dev()
+            self.dev_malloc = True            
 
     def __dealloc__(self):
-         if self.allocated:
+         if self.dev_malloc:
             self._c_gpu.free_dev()
 
     property host:

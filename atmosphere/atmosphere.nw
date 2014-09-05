@@ -167,7 +167,7 @@ cdef extern from "atmosphere.h":
         void info()
 	void reset()
         void get_phase_screen(source *, int , float , int , float , int , float )
-        void get_phase_screen(float *, float *, int,
+        void get_phase_screen(float*, float *, float *, int,
                               source *, float )
         void get_phase_screen_gradient(centroiding *, int , float , source *,
 				       int , float )
@@ -190,6 +190,8 @@ cdef class Atmosphere:
        The Fried parameter [m].
     L0: number
        The outer scale of turbulence [m].
+    N_LAYER: int 
+       The number of atmospheric layers.
     altitude: ndarray of floats
        The atmosphere layer altitudes [m].
     xi0: ndarray of floats
@@ -217,16 +219,27 @@ cdef class Atmosphere:
     """
 
     cdef ceo.atmosphere *_c_atmosphere
+    cdef public float r0, L0
+    cdef public int N_LAYER
+    cdef public np.ndarray altitude, xi0, wind_speed, wind_direction
 
-    def __cinit__(self, float r0, float L0, int N_LAYER,
-        np.ndarray[float, mode="c"] altitude, 
-        np.ndarray[float, mode="c"] xi0, 
-        np.ndarray[float, mode="c"] wind_speed, 
-        np.ndarray[float, mode="c"] wind_direction):
+    def __cinit__(self, float r0, float L0, 
+                  N_LAYER=1,
+                  altitude=0.0, xi0=1.0, 
+                  wind_speed=0.0, wind_direction=0.0):
 	self._c_atmosphere = new ceo.atmosphere()
-        self._c_atmosphere.setup(r0, L0, N_LAYER,
-				 &altitude[0], &xi0[0],
-				 &wind_speed[0], &wind_direction[0])   
+        self.r0 = r0
+        self.L0 = L0
+        self.N_LAYER        = N_LAYER
+        self.altitude       = np.array( altitude, dtype=np.float32)
+        self.xi0            = np.array( xi0, dtype=np.float32)
+        self.wind_speed     = np.array( wind_speed, dtype=np.float32)
+        self.wind_direction = np.array( wind_direction, dtype=np.float32)
+        self._c_atmosphere.setup(self.r0, self.L0, self.N_LAYER,
+				 <float *>self.altitude.data,
+                                 <float *>self.xi0.data,
+				 <float *>self.wind_speed.data, 
+                                 <float *>self.wind_direction.data)
  
     <<python atmosphere methods>>
 
@@ -288,8 +301,13 @@ def get_phase_values(self, cuFloatArray x,
     time: float
         The time of the atmosphere snapshot since the beginning of the simulation
     """
- #   self._c_atmosphere.get_phase_screen(&x[0],&y[0],x.size,
-  #                                      src._c_source, time)
+    ps = cuFloatArray(shape=x.shape,dev_malloc=True)
+    self._c_atmosphere.get_phase_screen(ps._c_gpu.dev_data,
+                                        x._c_gpu.dev_data,
+                                        y._c_gpu.dev_data,
+                                        x._c_gpu.N,
+                                        src._c_source, time)
+    return ps
 
 def get_phase_screen_gradient(self, Centroiding cog, int NL, float d, 
 			      Source src, int N_SRC, float time):  
@@ -675,7 +693,7 @@ void atmosphere::get_phase_screen(float *phase_screen,
 				   wavenumber*powf(r0,-5.0/6.0),
 				   layers, N_LAYER,
 				   zeta1, eta1, zeta2, eta2,
-				   src, time);
+				   src->dev_ptr, time);
 }
 @ 
 <<phase screen II>>=
@@ -690,7 +708,7 @@ void atmosphere::get_phase_screen(float const *x, float const *y, int N_xy,
 				   wavenumber*powf(r0,-5.0/6.0),
 				   layers, N_LAYER,
 				   zeta1, eta1, zeta2, eta2,
-				   src, time);
+				   src->dev_ptr, time);
 }
 @ and computed with the kernel
 <<phase screen kernel>>=
@@ -822,7 +840,7 @@ void atmosphere::get_phase_screen(float const delta_x, int N_x, float const delt
 				   wavenumber*powf(r0,-5.0/6.0),
 				   layers, N_LAYER,
 				   zeta1, eta1, zeta2, eta2,
-				   src, time);
+				   src->dev_ptr, time);
 }
 <<phase screen IV>>=
 void atmosphere::get_phase_screen(float *phase_screen,
@@ -837,7 +855,7 @@ void atmosphere::get_phase_screen(float *phase_screen,
 				   wavenumber*powf(r0,-5.0/6.0),
 				   layers, N_LAYER,
 				   zeta1, eta1, zeta2, eta2,
-				   src, time);
+				   src->dev_ptr, time);
 }
 <<phase screen V>>=
 void atmosphere::get_phase_screen(source *src,
@@ -969,7 +987,7 @@ void atmosphere::get_phase_screen_gradient(float *sx, float *sy, int NL, float c
 					    d__turbulence, wavelength, r0,
 					    layers, N_LAYER,
 					    zeta1, eta1, zeta2, eta2,
-					    src, time);
+					    src->dev_ptr, time);
 }
 <<phase screen gradient II>>=
 void atmosphere::get_phase_screen_gradient(centroiding *cog, int NL, float const d, 
@@ -1077,7 +1095,7 @@ void atmosphere::get_phase_screen_gradient(float *sx, float *sy, int NL, char *v
 						 d__turbulence, wavelength, r0,
 						 layers, N_LAYER,
 						 zeta1, eta1, zeta2, eta2,
-						 src, time);
+						 src->dev_ptr, time);
 }
 @ with the kernel
 <<phase screen gradient kernel (masked)>>=
