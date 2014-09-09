@@ -86,8 +86,12 @@ __global__ void GMT_pupil(char *pupil, const int N, const float S, float Dsh, co
 //__global__ void valid_lenslet(char *mask, int N_pupil, float threshold);
 __global__ void fried_geometry(char *lenslet_mask, char *actuator_mask, 
                                int NL, int n, float threshold);
+__global__ void fried_geometry_vs_pupil(char *lenslet_mask, char *actuator_mask, 
+                                        int NL, int n, float threshold, char *pupil);
 char fried_geometry_setup(char *lenslet_mask, char *actuator_mask, 
                           int NL, int n, float threshold);
+char fried_geometry_setup_vs_pupil(char *lenslet_mask, char *actuator_mask, 
+			  int NL, int n, float threshold, char *pupil);
 
 void dev2file(const char* filename, float* d__data, int n_data);
 void dev2file(const char* filename, float* d__data, int n_data, 
@@ -143,6 +147,8 @@ int round_up_to_nhp2(int n) {
 
 <<Fried geometry masks>>
 <<Fried geometry>>
+<<Fried geometry masks (arbitrary pupil)>>
+<<Fried geometry (arbitrary pupil)>>
 
 <<device to file>>
 
@@ -620,6 +626,7 @@ dim3 gridDim(NL/16+1,NL/16+1);
 fried_geometry LLL gridDim,blockDim RRR (lenslet_mask, actuator_mask, NL, n, threshold);
 return 1;
 }
+@
 <<Fried geometry>>=
   __global__ void fried_geometry(char *lenslet_mask, char *actuator_mask, 
 				 int NL, int n, float threshold)
@@ -670,7 +677,66 @@ return 1;
 
   }
 }
+@ 
+The following routine computes the masks of valid lenslet [[lenslet_mask]] and actuators [[actuator_mask]] for an arbitrary pupil corresponding to a square [[NL]]$\times$[[NL]] lenslet array with [[n]] pixel per lenslet.
+<<Fried geometry masks (arbitrary pupil)>>=
+char fried_geometry_setup_vs_pupil(char *lenslet_mask, char *actuator_mask, 
+			  int NL, int n, float threshold, char *pupil)
+{
+HANDLE_ERROR( cudaMemset(lenslet_mask,  0, sizeof(char)*NL*NL         ) );
+HANDLE_ERROR( cudaMemset(actuator_mask, 0, sizeof(char)*(NL+1)*(NL+1) ) );
+dim3 blockDim(16,16);
+dim3 gridDim(NL/16+1,NL/16+1);
+fried_geometry_vs_pupil LLL gridDim,blockDim RRR (lenslet_mask, actuator_mask, NL, n, threshold, pupil);
+return 1;
+}
+@
+<<Fried geometry (arbitrary pupil)>>=
+  __global__ void fried_geometry_vs_pupil(char *lenslet_mask, char *actuator_mask, 
+				 int NL, int n, float threshold, char *pupil)
+{
+  int i, j, k, iL, jL, sum, ai, bi, aj, bj, kL, kA, N_pupil;
+  // total pixel
+  N_pupil = n*NL;
+  // lenslet index
+  iL = blockIdx.x * blockDim.x + threadIdx.x;
+  jL = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (iL<NL) & (jL<NL)) {
 
+    sum = 0;
+    ai = iL*n;
+    bi = (iL+1)*n;
+    aj = jL*n;
+    bj = (jL+1)*n;
+
+    for (i=ai;i<bi;i++) {
+      for (j=aj;j<bj;j++) {
+        k = i*N_pupil + j;
+    	sum += pupil[k];
+      }
+    }
+ 
+    threshold *= n*n;
+
+    if (sum>threshold) {
+
+      kL = iL*NL + jL;
+      lenslet_mask[kL] = 1;
+
+      kA = lenset2actuator(iL,jL,NL, 1, 1);     
+      actuator_mask[kA] = 1;
+      kA = lenset2actuator(iL,jL,NL,-1, 1);     
+      actuator_mask[kA] = 1;
+      kA = lenset2actuator(iL,jL,NL,-1,-1);     
+      actuator_mask[kA] = 1;
+      kA = lenset2actuator(iL,jL,NL, 1,-1);     
+      actuator_mask[kA] = 1;
+
+    }
+
+  }
+}
+@
 <<lenslet 2 actuator>>=
 __device__ inline int lenset2actuator(int iL, int jL, int NL, int io, int jo)
 {
@@ -877,8 +943,7 @@ void mask::set_filter(void) {
   printf("@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
   cublasDestroy(handle);
 }
-@
-\item [[cleanup]]
+@ \item [[cleanup]]
 <<mask functions>>=
 void mask::cleanup(void) {
   fprintf(stderr,"@(CEO)>mask: freeing memory!\n");
@@ -925,6 +990,7 @@ cdef class Mask:
 
     """
     cdef ceo.mask *_c_mask
+    cdef int n
 
     def __cinit__(self):
 	self._c_mask = new ceo.mask()
@@ -952,8 +1018,10 @@ cdef class Telescope(Mask):
     """ 
     def __cinit__(self, int n):
         Mask.__init__(self)
-	self._c_mask.setup_circular(n)    
+        self.n = n
+	self._c_mask.setup_circular(self.n)    
 
+    <<mask python common>>
 cdef class GMT(Mask):
     """ 
     Creates a mask object for the Giant Magellan Telescope pupil.
@@ -976,15 +1044,17 @@ cdef class GMT(Mask):
     """
     def __cinit__(self, int n, float S):
         Mask.__init__(self)
-	self._c_mask.setup_GMT(n,S)    
-
+        self.n = n
+	self._c_mask.setup_GMT(n,S)   
+ 
+    <<mask python common>>
 @ with
 <<mask python common>>=
-def __dealloc__(self):
-    self._c_mask.cleanup()
-
-def getfilter(self, np.ndarray[float , ndim=2, mode="c"] data):
-    dev2host(&data[0,0],self._c_mask.f, data.size)
+property f:
+    def __get__ (self):
+        x = cuFloatArray(shape=(self.n,self.n))
+        x._c_gpu.dev_data = self._c_mask.f
+        return x
 @ 
 
 \subsection{Input/Output}
@@ -1129,6 +1199,7 @@ void freedev( float **dev_data ) {
 struct gpu {
   float *dev_data, *host_data;
   int N;
+  stats S;
   void dev_malloc(void);
   void free_dev(void);
   void dev2host(void);
@@ -1193,6 +1264,7 @@ cdef class cuFloatArray:
     cdef public shape
     cdef dev_malloc
     cdef public np.ndarray host_data
+    cdef units
 
     def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
         self._c_gpu = new ceo.gpu()
@@ -1213,21 +1285,29 @@ cdef class cuFloatArray:
                 self._c_gpu.dev_malloc()
             self._c_gpu.host_data = <float *>self.host_data.data;
             self._c_gpu.host2dev()
-            self.dev_malloc = True            
+            self.dev_malloc = True    
+        self.units = {'micron': 1e6, 'nm': 1e9, 'arcsec': 180*3600/math.pi}
 
     def __dealloc__(self):
          if self.dev_malloc:
             self._c_gpu.free_dev()
 
-    property host:
-        def __get__(self):
-            """
-            Copies the data from the device to the host and returns the associated ndarray
-            """
-            self.host_data = np.zeros(self.shape,order='c',dtype=np.float32)
-            self._c_gpu.host_data = <float *>self.host_data.data;
-            self._c_gpu.dev2host()
-            return self.host_data
+    def host(self,units=None,zm=False,mask=None):
+        """
+        Copies the data from the device to the host and returns the associated ndarray
+        """
+        self.host_data = np.zeros(self.shape,order='c',dtype=np.float32)
+        self._c_gpu.host_data = <float *>self.host_data.data;
+        self._c_gpu.dev2host()
+        if zm:
+            if mask is None:
+                self.host_data -= self.host_data.mean()
+            else:
+                mean_host_data = np.sum(self.host_data*mask)/np.sum(mask)
+                self.host_data = mask*(self.host_data-mean_host_data)
+        if units is not None:
+            self.host_data = self.host_data*self.units[units]
+        return self.host_data
 @ 
 
 

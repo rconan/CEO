@@ -33,7 +33,7 @@ colorbar
 fprintf('__ Variance Test __\n')
 clear x y ceo_atmosphere
 tic
-nxy = 2500;
+nxy = 1000;
 x   = gpuArray.rand(1,nxy,'single');
 y   = gpuArray.rand(1,nxy,'single');
 L = 100;
@@ -54,7 +54,8 @@ toc
 %% Structure function test I
 fprintf('__ Structure Function Test I __\n')
 n_sample = 1000;
-rho = 0:0.25:5;
+%rho = 0:0.25:5;
+rho = linspace(0,atm.L0*4,21);
 rho(1) = 0.1;
 nRho = length(rho);
 mean_sf = zeros(1,nRho);

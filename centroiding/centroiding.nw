@@ -1,4 +1,4 @@
-% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+% -*- mode: Noweb; noweb-code-mode: python-mode -*-
 @
 \section{The files}
 
@@ -34,6 +34,7 @@ struct centroiding {
 
   void show_centroids(char *filename);
   void show_flux(char *filename);
+  void fried_geometry(mask *dm, mask *pupil, int n, float threshold);
 
 };
 
@@ -61,6 +62,7 @@ struct centroiding {
 
 <<display centroids>>
 <<display flux>>
+<<Fried geometry>>
 @
 
 \subsection{Python}
@@ -71,6 +73,7 @@ cdef extern from "centroiding.h":
     cdef cppclass centroiding:
         float *d__c
         void setup(int, int)
+        void fried_geometry(mask *dm, mask *pupil, int n, float threshold)
         void cleanup()
 @ 
 <<ceo.pyx>>=
@@ -82,7 +85,7 @@ cdef class Centroiding:
     ----------
     N_SIDE_LENSLET: an int number
        The linear size of the lenslet array (>=1).
-    N_SOURCE: an int number
+    N_SOURCE: an int number, optional [default=1]
        The number of guide stars (>=1).
     
     Returns
@@ -95,16 +98,26 @@ cdef class Centroiding:
 
     """
     cdef ceo.centroiding *_c_centroiding
+    cdef public int N_SIDE_LENSLET
+    cdef public int N_SOURCE
 
-    def __cinit__(self, int N_SIDE_LENSLET, int N_SOURCE):
+    def __cinit__(self, int N_SIDE_LENSLET, N_SOURCE=1):
 	self._c_centroiding = new ceo.centroiding()
-        self._c_centroiding.setup(N_SIDE_LENSLET,N_SOURCE)    
+        self.N_SIDE_LENSLET = N_SIDE_LENSLET
+        self.N_SOURCE = N_SOURCE
+        self._c_centroiding.setup(self.N_SIDE_LENSLET,self.N_SOURCE)    
 
     def __dealloc__(self):
         self._c_centroiding.cleanup()
 
-    def getc(self, np.ndarray[float , mode="c"] data):
-        dev2host(&data[0],self._c_centroiding.d__c, data.size)
+    def fried_geometry(self,Mask dm, Mask pupil, int n, float threshold):
+        self._c_centroiding.fried_geometry(dm._c_mask, pupil._c_mask, n, threshold)
+
+    property c:
+        def __get__(self):
+            c = cuFloatArray(shape=2*self.N_SOURCE*self.N_SIDE_LENSLET**2)
+            c._c_gpu.dev_data = self._c_centroiding.d__c
+            return c
 @
 \section{Parameters}
 \label{sec:prms}
@@ -158,6 +171,15 @@ DEV_SHARED_MEM = dev_prop.sharedMemPerBlock;
 DEV_MAX_THREADS = dev_prop.maxThreadsPerBlock;
 //printf("Maximum shared memory:  %d\n",DEV_SHARED_MEM);
 //printf("Maximum threads per block: %d\n",DEV_MAX_THREADS);
+@ 
+The valid lenslets mask is computed for a given pupil mask sampled with $N=[[N_SIDE_LENSLET]]\times n$ pixel across with $n$ the number of pixel per lenslet:
+<<Fried geometry>>=
+void centroiding::fried_geometry(mask *dm, mask *pupil, int n, float threshold) {
+    MASK_SET = fried_geometry_setup_vs_pupil(lenslet_mask, dm->m, 
+			                     _N_SIDE_LENSLET_, n, threshold, pupil->m);
+}
+
+
 @
 \subsection{Data processing}
 \label{sec:data-processing}

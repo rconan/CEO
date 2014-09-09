@@ -130,14 +130,12 @@ cdef class Source:
     import numpy as np
     import ceo
 
-    n   = np.array( [1024,1024], dtype=np.int32)
-    zen = np.array( [0], dtype=np.float32)
-    azi = np.array( [0], dtype=np.float32)
-    src = ceo.Source("K",zen,azi,float("inf"),n)
+    n   = 1024
+    src = ceo.Source("K",resolution=(n,n))
 
     zen = np.arange(3,dtype=np.float32)*1e-6*25
     azi = np.arange(3,dtype=np.float32)*3.14
-    lgs = ceo.Source("R",zen,azi,90e3,32**2) 
+    lgs = ceo.Source("R",zenith=zen,azimuth=azi,height=90e3,resolution=(n,n)) 
 
     """
     cdef ceo.source *_c_source
@@ -178,7 +176,7 @@ cdef class Source:
             --------
             cuFloatArray
             """
-            x = cuFloatArray(shape=(self.n,self.m))
+            x = cuFloatArray(shape=(self.n,self.m*self.zenith.size))
             x._c_gpu.dev_data = self._c_source.wavefront.phase
             return x
            

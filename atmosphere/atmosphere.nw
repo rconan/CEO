@@ -180,7 +180,29 @@ cdef extern from "atmosphere.h":
 <<ceo.pyx>>=
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cdef class Atmosphere:
+cdef class AtmosphereAbstract:
+
+    cdef ceo.atmosphere *_c_atmosphere
+    cdef public float r0, L0
+    cdef public int N_LAYER
+    cdef public np.ndarray altitude, xi0, wind_speed, wind_direction
+
+    def __cinit__(self, float r0, float L0, 
+                  N_LAYER=1,
+                  altitude=0.0, xi0=1.0, 
+                  wind_speed=0.0, wind_direction=0.0):
+	self._c_atmosphere = new ceo.atmosphere()
+        self.r0 = r0
+        self.L0 = L0
+        self.N_LAYER        = N_LAYER
+        self.altitude       = np.array( altitude, dtype=np.float32)
+        self.xi0            = np.array( xi0, dtype=np.float32)
+        self.wind_speed     = np.array( wind_speed, dtype=np.float32)
+        self.wind_direction = np.array( wind_direction, dtype=np.float32)
+
+    <<python atmosphere methods>>
+
+cdef class Atmosphere(AtmosphereAbstract):
     """ 
     Create an atmosphere
 
@@ -218,39 +240,29 @@ cdef class Atmosphere:
 
     """
 
-    cdef ceo.atmosphere *_c_atmosphere
-    cdef public float r0, L0
-    cdef public int N_LAYER
-    cdef public np.ndarray altitude, xi0, wind_speed, wind_direction
-
     def __cinit__(self, float r0, float L0, 
                   N_LAYER=1,
                   altitude=0.0, xi0=1.0, 
                   wind_speed=0.0, wind_direction=0.0):
-	self._c_atmosphere = new ceo.atmosphere()
-        self.r0 = r0
-        self.L0 = L0
-        self.N_LAYER        = N_LAYER
-        self.altitude       = np.array( altitude, dtype=np.float32)
-        self.xi0            = np.array( xi0, dtype=np.float32)
-        self.wind_speed     = np.array( wind_speed, dtype=np.float32)
-        self.wind_direction = np.array( wind_direction, dtype=np.float32)
+        AtmosphereAbstract.__init__(self,r0,L0,
+                                    N_LAYER=N_LAYER,
+                                    altitude=altitude, 
+                                    xi0=xi0, 
+                                    wind_speed=wind_speed, 
+                                    wind_direction=wind_direction)
         self._c_atmosphere.setup(self.r0, self.L0, self.N_LAYER,
 				 <float *>self.altitude.data,
                                  <float *>self.xi0.data,
 				 <float *>self.wind_speed.data, 
                                  <float *>self.wind_direction.data)
- 
-    <<python atmosphere methods>>
 
-cdef class GmtAtmosphere:
-    cdef ceo.atmosphere *_c_atmosphere
+
+cdef class GmtAtmosphere(AtmosphereAbstract):
 
     def __cinit__(self, float r0, float L0):
-	self._c_atmosphere = new ceo.atmosphere()
+        AtmosphereAbstract.__init__(self,r0,L0)
         self._c_atmosphere.gmt_setup(r0, L0)   
     
-    <<python atmosphere methods>>
 @ 
 <<python atmosphere methods>>=
 def reset(self):
@@ -293,13 +305,13 @@ def get_phase_values(self, cuFloatArray x,
     Parameters
     ----------
     x: ndarray of floats
-        X coordinates of the phase screen samples
+        X coordinates of the phase screen samples.
     y: ndarray of floats
-        Y coordinates of the phase screen samples
+        Y coordinates of the phase screen samples.
     src: Source object
-        The light source 
+        The light source.
     time: float
-        The time of the atmosphere snapshot since the beginning of the simulation
+        The time of the atmosphere snapshot since the beginning of the simulation.
     """
     ps = cuFloatArray(shape=x.shape,dev_malloc=True)
     self._c_atmosphere.get_phase_screen(ps._c_gpu.dev_data,
@@ -311,6 +323,22 @@ def get_phase_values(self, cuFloatArray x,
 
 def get_phase_screen_gradient(self, Centroiding cog, int NL, float d, 
 			      Source src, int N_SRC, float time):  
+    """
+    Computes the phase screen gradient of the source wavefront
+    
+    Parameters
+    ----------
+    cog: Centroiding object
+        The centroids container object.
+    NL: int
+        The size of the square lenslet array.
+    d: float
+        The lenslet array pitch.
+    src: Source object
+        The light source.
+    time: float
+        The time of the atmosphere snapshot since the beginning of the simulation
+    """
     self._c_atmosphere.get_phase_screen_gradient(cog._c_centroiding, NL, d, 
 						 src._c_source, N_SRC, time)
 
@@ -1832,8 +1860,9 @@ It calls the mex function:
 #include "atmosphere.h"
 #endif
 
-static source src, *d__src;
-static atmosphere atm;static unsigned int INIT=0;
+static source src;
+static atmosphere atm;
+static unsigned int INIT=0;
 static void cleanup(void)
 {
     atm.cleanup();
@@ -1893,10 +1922,6 @@ void mexFunction(int nlhs, mxArray *plhs[],
     if (INIT==0) {
         // Source
         src.setup("R",ARCSEC(60) , 0, 90e3);//INFINITY);
-	HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source)) );
-	HANDLE_ERROR( cudaMemcpy( d__src, &src,
-				  sizeof(source) ,
-				  cudaMemcpyHostToDevice ) );
        
         // Single layer turbulence profile
 	int N_LAYER = 1;
@@ -1920,7 +1945,7 @@ void mexFunction(int nlhs, mxArray *plhs[],
     
    if (*reset>0) { atm.reset(); }
     
-   atm.get_phase_screen(d__phase_screen,d__x,d__y,N_PIXEL,d__src,(float)(*time));
+   atm.get_phase_screen(d__phase_screen,d__x,d__y,N_PIXEL,&src,(float)(*time));
     
     /* Wrap the result up as a MATLAB gpuArray for return. */
     plhs[0] = mxGPUCreateMxArrayOnGPU(phase_screen);
