@@ -87,7 +87,7 @@ __global__ void GMT_pupil(char *pupil, const int N, const float S, float Dsh, co
 __global__ void fried_geometry(char *lenslet_mask, char *actuator_mask, 
                                int NL, int n, float threshold);
 __global__ void fried_geometry_vs_pupil(char *lenslet_mask, char *actuator_mask, 
-                                        int NL, int n, float threshold, char *pupil);
+                                        const int NL, const int n, const float threshold, const char *pupil);
 char fried_geometry_setup(char *lenslet_mask, char *actuator_mask, 
                           int NL, int n, float threshold);
 char fried_geometry_setup_vs_pupil(char *lenslet_mask, char *actuator_mask, 
@@ -692,10 +692,11 @@ return 1;
 }
 @
 <<Fried geometry (arbitrary pupil)>>=
-  __global__ void fried_geometry_vs_pupil(char *lenslet_mask, char *actuator_mask, 
-				 int NL, int n, float threshold, char *pupil)
+__global__ void fried_geometry_vs_pupil(char *lenslet_mask, char *actuator_mask, 
+				 const int NL, const int n, const float threshold, const char *pupil)
 {
   int i, j, k, iL, jL, sum, ai, bi, aj, bj, kL, kA, N_pupil;
+  float threshold_px;
   // total pixel
   N_pupil = n*NL;
   // lenslet index
@@ -716,9 +717,9 @@ return 1;
       }
     }
  
-    threshold *= n*n;
+    threshold_px = threshold*n*n;
 
-    if (sum>threshold) {
+    if (sum>threshold_px) {
 
       kL = iL*NL + jL;
       lenslet_mask[kL] = 1;
@@ -967,13 +968,14 @@ The python wrapper is
 ## mask structure
     cdef cppclass mask:
         float *f
+        void setup(int)
         void setup_circular(int)
         void setup_GMT(int, float)
         void cleanup()
 @ 
 <<ceo.pyx>>=
 ## mask structure
-cdef class Mask:
+cdef class MaskAbstract:
     """ 
     Creates a mask object.
 
@@ -992,13 +994,45 @@ cdef class Mask:
     cdef ceo.mask *_c_mask
     cdef int n
 
-    def __cinit__(self):
+    def __cinit__(self,int n, S=0):
 	self._c_mask = new ceo.mask()
+        self.n = n
 
     def __dealloc__(self):
         self._c_mask.cleanup()
 
-cdef class Telescope(Mask):
+
+    property f:
+        def __get__ (self):
+            x = cuFloatArray(shape=(self.n,self.n))
+            x._c_gpu.dev_data = self._c_mask.f
+            return x
+
+cdef class Mask(MaskAbstract):
+    """ 
+    Creates a mask object.
+
+    Parameters
+    ----------
+     n: an int number
+       The sampling in pixel of the pupil.
+    
+   
+    Returns
+    -------
+    out: Mask
+        A Mask object.
+
+    Examples
+    --------
+
+    """
+
+    def __cinit__(self,int n):
+        MaskAbstract.__init__(self,n)
+        self._c_mask.setup(n*n)
+
+cdef class Telescope(MaskAbstract):
     """ 
     Creates a mask object.
 
@@ -1017,12 +1051,10 @@ cdef class Telescope(Mask):
 
     """ 
     def __cinit__(self, int n):
-        Mask.__init__(self)
-        self.n = n
+        MaskAbstract.__init__(self,n)
 	self._c_mask.setup_circular(self.n)    
 
-    <<mask python common>>
-cdef class GMT(Mask):
+cdef class GMT(MaskAbstract):
     """ 
     Creates a mask object for the Giant Magellan Telescope pupil.
 
@@ -1043,18 +1075,8 @@ cdef class GMT(Mask):
 
     """
     def __cinit__(self, int n, float S):
-        Mask.__init__(self)
-        self.n = n
-	self._c_mask.setup_GMT(n,S)   
- 
-    <<mask python common>>
-@ with
-<<mask python common>>=
-property f:
-    def __get__ (self):
-        x = cuFloatArray(shape=(self.n,self.n))
-        x._c_gpu.dev_data = self._c_mask.f
-        return x
+        MaskAbstract.__init__(self,n)
+	self._c_mask.setup_GMT(self.n,S)    
 @ 
 
 \subsection{Input/Output}
@@ -1296,6 +1318,8 @@ cdef class cuFloatArray:
         """
         Copies the data from the device to the host and returns the associated ndarray
         """
+        if self.shape==(0,0) or self.shape is None:
+            raise ValueError("Data must have a size greater than zero!!")
         self.host_data = np.zeros(self.shape,order='c',dtype=np.float32)
         self._c_gpu.host_data = <float *>self.host_data.data;
         self._c_gpu.dev2host()
