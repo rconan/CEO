@@ -140,6 +140,7 @@ cdef class Source:
     """
     cdef ceo.source *_c_source
     cdef int n, m
+    cdef public int size
     cdef public np.ndarray zenith, azimuth
     cdef public float height
  
@@ -157,10 +158,11 @@ cdef class Source:
         self.zenith  = np.array( zenith,  dtype=np.float32)
         self.azimuth = np.array( azimuth, dtype=np.float32)
         self.height  = float(height);
+        self.size = self.zenith.size
         self._c_source.setup(_photometric_band, 
 			     <float *>self.zenith.data, 
                              <float *>self.azimuth.data, height, 
-			     self.zenith.size, np.prod(resolution))
+			     self.size, np.prod(resolution))
         if fwhm is not None:
             self._c_source.fwhm = fwhm
 
@@ -176,7 +178,7 @@ cdef class Source:
             --------
             cuFloatArray
             """
-            x = cuFloatArray(shape=(self.n*self.zenith.size,self.m))
+            x = cuFloatArray(shape=(self.n*self.size,self.m))
             x._c_gpu.dev_data = self._c_source.wavefront.phase
             return x
            

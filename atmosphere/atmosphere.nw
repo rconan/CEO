@@ -1,4 +1,4 @@
-% -*- mode: Noweb; noweb-code-mode: python-mode -*-
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
 @
 \def\bk{\bar \kappa_i}
 \def\bkx{\bar \kappa_{x,i}}
@@ -124,6 +124,7 @@ struct atmosphere {
 <<phase screen kernel>>
 
 <<phase screen kernel (square)>>
+<<phase screen kernel (square & masked)>>
 
 <<phase screen gradient kernel>>
 <<phase screen gradient kernel (masked)>>
@@ -166,11 +167,10 @@ cdef extern from "atmosphere.h":
         void cleanup()
         void info()
 	void reset()
-        void get_phase_screen(source *, int , float , int , float , int , float )
+        void get_phase_screen(source *, float , int , float , int , float )
         void get_phase_screen(float*, float *, float *, int,
                               source *, float )
-        void get_phase_screen_gradient(centroiding *, int , float , source *,
-				       int , float )
+        void get_phase_screen_gradient(centroiding *, int , float , source *, float )
         void get_phase_screen_circ_centroids(centroiding *,  float, source *,
 					     int , float )
         void get_phase_screen_circ_uplink_centroids(centroiding *,  float, source *,
@@ -268,7 +268,7 @@ cdef class GmtAtmosphere(AtmosphereAbstract):
 def reset(self):
     self._c_atmosphere.reset()
 
-def get_phase_screen(self, Source src, int N_SRC, 
+def get_phase_screen(self, Source src, 
 		     float delta_x, int N_x, 
 		     float delta_y, int N_y, 
 		     float time):
@@ -292,7 +292,7 @@ def get_phase_screen(self, Source src, int N_SRC,
     time: float
         The time of the atmosphere snapshot since the beginning of the simulation
     """
-    self._c_atmosphere.get_phase_screen(src._c_source, N_SRC, 
+    self._c_atmosphere.get_phase_screen(src._c_source, 
 					delta_x, N_x, 
 					delta_y, N_y, time)
 
@@ -322,7 +322,7 @@ def get_phase_values(self, cuFloatArray x,
     return ps
 
 def get_phase_screen_gradient(self, Centroiding cog, int NL, float d, 
-			      Source src, int N_SRC, float time):  
+			      Source src, float time):  
     """
     Computes the phase screen gradient of the source wavefront
     
@@ -340,7 +340,7 @@ def get_phase_screen_gradient(self, Centroiding cog, int NL, float d,
         The time of the atmosphere snapshot since the beginning of the simulation
     """
     self._c_atmosphere.get_phase_screen_gradient(cog._c_centroiding, NL, d, 
-						 src._c_source, N_SRC, time)
+						 src._c_source, time)
 
 def get_phase_screen_circ_centroids(self, Centroiding cog, float R, 
 				    Source src, int N_SRC, float time):  
@@ -891,14 +891,25 @@ void atmosphere::get_phase_screen(source *src,
 		       float time)
 {
   dim3 blockDim(16,16);
-  dim3 gridDim( 1+N_x/16 , 1+N_y/16);
-  square_plps LLL gridDim , blockDim RRR (src->wavefront.phase,
-				   delta_x, N_x, delta_y, N_y, 
-				   d__turbulence, 
-				   wavenumber*powf(r0,-5.0/6.0),
-				   layers, N_LAYER,
-				   zeta1, eta1, zeta2, eta2,
-				   src->dev_ptr, time);
+  dim3 gridDim( 1+N_x/16 , 1+N_y/16, src->N_SRC);
+  if (src->wavefront.M==NULL)
+    square_plps LLL gridDim , blockDim RRR 
+      (src->wavefront.phase,
+       delta_x, N_x, delta_y, N_y, 
+       d__turbulence, 
+       wavenumber*powf(r0,-5.0/6.0),
+       layers, N_LAYER,
+       zeta1, eta1, zeta2, eta2,
+       src->dev_ptr, time);
+  else
+    square_plps_masked LLL gridDim , blockDim RRR 
+      (src->wavefront.phase, src->wavefront.M->m,
+       delta_x, N_x, delta_y, N_y, 
+       d__turbulence, 
+       wavenumber*powf(r0,-5.0/6.0),
+       layers, N_LAYER,
+       zeta1, eta1, zeta2, eta2,
+       src->dev_ptr, time);
 }
 <<phase screen VI>>=
 void atmosphere::get_phase_screen(source *src, int N_SRC,
@@ -929,6 +940,40 @@ void atmosphere::get_phase_screen(source *src, int N_SRC,
   
   sum = 0;
   if ( (i<N_x) && (j<N_y) )
+    {
+
+      <<variables>>
+
+      for (i=0;i<turb->N_k;i++)
+	{
+	  <<frequency magnitude sum>>
+          for (j=0;j<turb->N_a;j++)
+	    {
+	      <<frequency angle sum>>
+	      for (l=0;l<N_LAYER;l++)
+		{
+		  <<layer sum>>
+		}
+	      sum += sqrt_spectrum_kernel*sum_l;
+	    }
+	}
+      phase_screen[kl] = 1.4*r0*sum;
+    }
+}
+@  or if the wavefront of the source is masked:
+<<phase screen kernel (square & masked)>>=
+__global__ void square_plps_masked(float *phase_screen, char *mask,
+		       float const delta_x, int N_x, float const delta_y, int N_y, 
+       		       profile *turb, float r0, layer *layers, int N_LAYER,
+		       float *zeta1, float *eta1, float *zeta2, float *eta2,
+		       source *src, float time)
+{
+  <<declarations>>
+
+  <<thread to coordinate index (square)>>
+  
+  sum = 0;
+  if ( ( (i<N_x) && (j<N_y) ) && (mask[i * N_x + j]) )
     {
 
       <<variables>>
@@ -1022,7 +1067,7 @@ void atmosphere::get_phase_screen_gradient(centroiding *cog, int NL, float const
 					   source *src, float time)
 {
   dim3 blockDim(16,16);
-  dim3 gridDim( 1+NL/16 , 1+NL/16);
+    dim3 gridDim( 1+NL/16 , 1+NL/16, src->N_SRC);
   if (cog->MASK_SET)
     plps_gradient_mask LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy, NL, 
 						   cog->lenslet_mask, d,

@@ -34,11 +34,9 @@ struct LMMSE {
 
   <<parameters>>
 
-  void setup(atmosphere *atm, source *guide_star, int N_guide_star, 
-	     source *mmse_star, int N_mmse_star,
+  void setup(atmosphere *atm, source *guide_star, source *mmse_star,
 	     float sampling, int N, char *solver_id);
-  void setup(atmosphere *atm, source *guide_star, int N_guide_star, 
-	     source *mmse_star, int N_mmse_star,
+  void setup(atmosphere *atm, source *guide_star, source *mmse_star,
 	     float sampling, int N, 
 	     mask *pupil, char *solver_id);
 
@@ -81,9 +79,8 @@ struct LMMSE {
 cdef extern from "LMMSE.h":
     cdef cppclass LMMSE:
         float *d__phase_est
-        void setup(atmosphere *, source *, int , 
-                   source *, int , float , int , 
-                   mask *, char *)
+        void setup(atmosphere *, source *, source *, 
+                   float , int , mask *, char *)
         void cleanup()
         void estimation(centroiding *)
 @ 
@@ -121,17 +118,15 @@ cdef class Lmmse:
     cdef ceo.LMMSE *_c_LMMSE
     cdef int N_phase
 
-    def __cinit__(self,AtmosphereAbstract atm, Source guide_star, int N_guide_star,
-                  Source mmse_star, int N_mmse_star,
+    def __cinit__(self,AtmosphereAbstract atm, 
+                  Source guide_star, Source mmse_star,
                   float sampling, int N, 
                   Mask pupil, char *solver_id):
         self._c_LMMSE = new ceo.LMMSE()
         self.N_phase = N + 1
         self._c_LMMSE.setup(atm._c_atmosphere,
-                            guide_star._c_source, N_guide_star,
-                            mmse_star._c_source, N_mmse_star,
-                            sampling, N, 
-                            pupil._c_mask, solver_id)
+                            guide_star._c_source, mmse_star._c_source,
+                            sampling, N, pupil._c_mask, solver_id)
 
     def __dealloc__(self):
         self._c_LMMSE.cleanup()
@@ -157,7 +152,7 @@ cdef class Lmmse:
 
 The parameters are defined in
 <<parameters>>=
-int *d__idx, PS_E_N_PX, N_guide_star, offset, NP, osf;
+int *d__idx, PS_E_N_PX, N_guide_star, N_mmse_star, offset, NP, osf;
 float *d__ce, *d__phase_est, *d__phase_est_c, *d__phase_est_i, *d__x;
 aaStats aa;
 BTBT aaCov;
@@ -408,11 +403,11 @@ where $H_i$ is the sparse bi--linear interpolation matrix.
 
 The setup method takes as parameters an atmosphere structure [[atm]], the source structure corresponding to the guide star [[guide_star]], the number of guide star [[_N_guide_star]], the source structure corresponding to the science star [[mmse_star]], the number of science star [[N_mmse_star]], the lenslet pitch [[sampling]], the linear side of the lenslet array [[N_SIDE_LENSLET_]] and the iterative solver name either "CG" or "MINRES":
 <<setup>>=
-void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star, 
-                        source *mmse_star, int N_mmse_star,
-		       float sampling, int N_SIDE_LENSLET_, char *solver_id)
+void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
+		  float sampling, int N_SIDE_LENSLET_, char *solver_id)
 {
-  N_guide_star = _N_guide_star;
+  N_guide_star = guide_star->N_SRC;
+  N_mmse_star  = mmse_star->N_SRC;
 
   <<setup: AA covariance>>
 
@@ -458,12 +453,12 @@ HANDLE_ERROR( cudaEventCreate( &start ) );
 HANDLE_ERROR( cudaEventCreate( &stop ) );
 }
 <<setup with pupil>>=
-void LMMSE::setup(atmosphere *atm, source *guide_star, int _N_guide_star, 
-                        source *mmse_star, int N_mmse_star,
+void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
 		       float sampling, int N_SIDE_LENSLET_,
                        mask *pupil, char *solver_id)
 {
-  N_guide_star = _N_guide_star;
+  N_guide_star = guide_star->N_SRC;
+  N_mmse_star  = mmse_star->N_SRC;
 
   <<setup: AA covariance>>
 
