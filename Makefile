@@ -17,15 +17,16 @@ tex: $(texsrc)
 	for i in $(SOURCE_DIR); do (echo -n "\chapter" >doc/ceo.manual.$$i.tex; echo -e "{$$i}\n\label{sec:$$i}\n\n\input{../$$i/$$i}">>doc/ceo.manual.$$i.tex); done
 
 cython:
-	mkdir -p $(CEOPATH)/python
-	rm -f $(CEOPATH)/python/ceo.pxd $(CEOPATH)/python/ceo.pyx
-	cp $(CEOPATH)/etc/ceo.pxd $(CEOPATH)/python/ceo.pxd
-	cp $(CEOPATH)/etc/ceo.pyx $(CEOPATH)/python/ceo.pyx
-	for i in $(PYTHON_DIR); do (echo -e "\n# $$i.nw">>$(CEOPATH)/python/ceo.pxd;echo -e "\n# $$i.nw">>$(CEOPATH)/python/ceo.pyx;make -C $$i python);echo -e "\n"; done
-	cython --cplus $(CEOPATH)/python/ceo.pyx -o $(CEOPATH)/python/ceo.cu
-	$(NVCC) $(INCS) -I$(PYTHONPATH)/include/python2.7/ -I$(PYTHONPATH)/lib/python2.7/site-packages/numpy/core/include $(NVCCFLAGS) -o $(CEOPATH)/python/ceo.o -c $(CEOPATH)/python/ceo.cu
-	$(NVCC) $(LIBS) -shared $(CEOPATH)/python/ceo.o -o $(CEOPATH)/python/ceo.so -lceo -lcurl -ljsmn
-	rm -f $(CEOPATH)/python/ceo.cu $(CEOPATH)/python/ceo.o
+	mkdir -p $(CEOPYPATH)
+	rm -f $(CEOPYPATH)/ceo.pxd $(CEOPYPATH)/ceo.pyx
+	cp $(CEOPATH)/etc/ceo.pxd $(CEOPYPATH)/ceo.pxd
+	cp $(CEOPATH)/etc/ceo.pyx $(CEOPYPATH)/ceo.pyx
+	for i in $(PYTHON_DIR); do (echo -e "\n# $$i.nw">>$(CEOPYPATH)/ceo.pxd;echo -e "\n# $$i.nw">>$(CEOPYPATH)/ceo.pyx;make -C $$i python);echo -e "\n"; done
+	cython --cplus $(CEOPYPATH)/ceo.pyx -o $(CEOPYPATH)/ceo.cu
+	$(NVCC) $(INCS) -I$(PYTHONPATH)/include/python2.7/ -I$(PYTHONPATH)/lib/python2.7/site-packages/numpy/core/include $(NVCCFLAGS) -o $(CEOPYPATH)/ceo.o -c $(CEOPYPATH)/ceo.cu
+	$(NVCC) $(LIBS) -shared $(CEOPYPATH)/ceo.o -o $(CEOPYPATH)/ceo.so -lceo -lcurl -ljsmn
+	rm -f $(CEOPYPATH)/ceo.cu $(CEOPYPATH)/ceo.o
+	set PYTHONPATH=$(CEOPYPATH)
 
 doc: tex
 	make -C doc all
