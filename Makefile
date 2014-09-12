@@ -1,8 +1,8 @@
 include common.mk
 
 #ls -d */ | sed -e 's,//$,,' -e 's,doc,,' -e 's,lib,,'  -e 's,include,,' | xargs
-SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE plotly
-TUTORIAL	= atmosphericDispersion lgsao ngsao ltao ltaoVsAst geaos
+SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE #plotly
+TUTORIAL	= ngsao lgsao ltao ltaoVsAst geaos
 PYTHON_DIR	= utilities source atmosphere centroiding imaging shackHartmann LMMSE
 
 all: makefile 
