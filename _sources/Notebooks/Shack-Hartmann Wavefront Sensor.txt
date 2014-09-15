@@ -1,0 +1,183 @@
+
+.. code:: python
+
+    import numpy as np
+    from ceo import ceo
+    %pylab inline
+
+.. parsed-literal::
+
+    Populating the interactive namespace from numpy and matplotlib
+
+
+A :math:`N_L\times N_L` Shack-Hartmann wavefront sensor (WFS) on a
+:math:`D` diameter telescope is going to be modeled with
+:math:`n_P\times n_P` pixels per lenslet on the detector.
+
+.. code:: python
+
+    nLenslet = 60
+    D = 25.5
+    n = 6
+    nPx = n*nLenslet
+A arbitrary number of guide stars (GS) can be used by one WFS model, the
+assumption beeing that all the GS uses exactly the same WFS. Here the GS
+are randomly distributed in a 2arcmin diameter field of regard.
+
+.. code:: python
+
+    nGS = 2
+    zen = np.random.uniform(-1,1,nGS)*math.pi/180/60
+    azi = np.random.uniform(0,2*math.pi,nGS)
+    gs = ceo.Source("K",zenith=zen,azimuth=azi,height=float("inf"),resolution=(nPx,nPx))
+Next the telescope pupil mask is defined and applied to the GSs.
+
+.. code:: python
+
+    tel = ceo.GMT(nPx,D)
+    gs.masked(tel)
+The shack-Hartmann WFS is defined with the ``shackHartmann`` class. The
+mandatory parameters of the class constructor are: - the lenslet array
+size :math:`N_L`, - the number of pixel per lenslet in the pupil plane
+:math:`n_P`, meaning that the wavefront of the corresponding GSs must be
+sampled with :math:`N_L n_P \times N_L n_P` pixels, - the lenslet pitch
+:math:`d`.
+
+By default, the WFS imagelets are Nyquist sampled meaning that the
+default value of the discrete Fourier transform over-sampling factor is
+set to 2, i.e. :math:`\alpha\equiv` ``DFT_osf=2``. The size of each
+imagelet is then :math:`\alpha n_P \times \alpha n_P`.
+
+The detector framelet sizes are ``N_PX_IMAGE``\ :math:`\times `
+``N_PX_IMAGE`` pixels each with the default value ``N_PX_IMAGE``
+:math:`=n_P`. If the imagelets are larger, they are cropped to the
+specified size, if they are smaller, the framelets are padded with
+zeros.
+
+Finally the framelets can be binned down by a factor :math:`\beta\equiv`
+``BIN_IMAGE`` leading to a final framelet size of
+
+.. math:: {N_I\over\beta}\times{N_I\over\beta}
+
+ with :math:`N_I\equiv` ``N_PX_IMAGE``. The default value of
+``BIN_IMAGE`` is 1.
+
+The pixel scale is given by:
+
+.. math:: {\beta\lambda \over \alpha d}
+
+ and the lenslet field-of-view is
+
+.. math:: N_I{\lambda\over \alpha d}
+
+ with :math:`\lambda` the wavelength.
+
+If more than on GS is assigned to the WFS, the parameter ``N_GS`` needs
+to be set.
+
+.. code:: python
+
+    wfs = ceo.ShackHartmann(nLenslet, n, D/nLenslet,N_GS = nGS)
+The WFS reference slopes and valid lenslets are set with the
+``calibrate`` method passing a ``Source`` object which wavefront sets
+the reference slopes and the lenslet intensity threshold used to discard
+the lenset with too litle illumination.
+
+.. code:: python
+
+    wfs.calibrate(gs,0.5)
+The source wavefront can now be analyzed with respect to the former
+calibration.
+
+.. code:: python
+
+    wfs.analyze(gs)
+The detector frame is saved in the ``cuFloatArray`` object ``frame``.
+
+.. code:: python
+
+    figure(figsize=(12,12))
+    imshow(wfs.frame.host().transpose(),interpolation='none')
+
+
+
+.. parsed-literal::
+
+    <matplotlib.image.AxesImage at 0x7f086fc1fdd0>
+
+
+
+
+.. image:: Shack-Hartmann%20Wavefront%20Sensor_files/Shack-Hartmann%20Wavefront%20Sensor_14_1.png
+
+
+A ``Atmosphere`` object is defined next and the GSs are propagated
+through:
+
+.. code:: python
+
+    atm =ceo.GmtAtmosphere(15e-2,30)
+    p = D/nPx
+    atm.get_phase_screen(gs,  p, nPx, p, nPx, 0.0)
+.. code:: python
+
+    figure(figsize=(12,12))
+    imshow(gs.phase.host().transpose(),interpolation='none')
+
+
+
+.. parsed-literal::
+
+    <matplotlib.image.AxesImage at 0x7f086fb6c210>
+
+
+
+
+.. image:: Shack-Hartmann%20Wavefront%20Sensor_files/Shack-Hartmann%20Wavefront%20Sensor_17_1.png
+
+
+The WFS detector need to be reset before proceeding with a new wavefront
+analysis.
+
+.. code:: python
+
+    wfs.reset()
+    wfs.analyze(gs)
+.. code:: python
+
+    figure(figsize=(12,12))
+    imshow(wfs.frame.host().transpose(),interpolation='none')
+
+
+
+.. parsed-literal::
+
+    <matplotlib.image.AxesImage at 0x7f086faaa510>
+
+
+
+
+.. image:: Shack-Hartmann%20Wavefront%20Sensor_files/Shack-Hartmann%20Wavefront%20Sensor_20_1.png
+
+
+The WFS centroids are accessible through the ``cuFloatArray`` object
+``c``.
+
+.. code:: python
+
+    figure(figsize=(12,12))
+    imshow(wfs.c.host().reshape(2*nLenslet*nGS
+                                ,nLenslet).transpose(),interpolation='none')
+
+
+
+.. parsed-literal::
+
+    <matplotlib.image.AxesImage at 0x7f086f9e8850>
+
+
+
+
+.. image:: Shack-Hartmann%20Wavefront%20Sensor_files/Shack-Hartmann%20Wavefront%20Sensor_22_1.png
+
+

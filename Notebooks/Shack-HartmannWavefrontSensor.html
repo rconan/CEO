@@ -1,0 +1,191 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>Shack-Hartmann Wavefront Sensor &mdash; CEO</title>
+    
+    <link rel="stylesheet" href="../_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../',
+        VERSION:     '0.1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../_static/jquery.js"></script>
+    <script type="text/javascript" src="../_static/underscore.js"></script>
+    <script type="text/javascript" src="../_static/doctools.js"></script>
+    <script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="CEO" href="../index.html" />
+    <link rel="up" title="Notebooks:" href="notebooks.html" />
+    <link rel="prev" title="Laser Tomography" href="LaserTomography.html" /> 
+  </head>
+  <body>
+      <div class="header"><h1 class="heading"><a href="../index.html">
+          <span>CEO</span></a></h1>
+        <h2 class="heading"><span>Shack-Hartmann Wavefront Sensor</span></h2>
+      </div>
+      <div class="topnav">
+      
+        <p>
+        «&#160;&#160;<a href="LaserTomography.html">Laser Tomography</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        </p>
+
+      </div>
+      <div class="content">
+        
+        
+  <div class="section" id="shack-hartmann-wavefront-sensor">
+<h1>Shack-Hartmann Wavefront Sensor<a class="headerlink" href="#shack-hartmann-wavefront-sensor" title="Permalink to this headline">¶</a></h1>
+<div class="code python highlight-python"><div class="highlight"><pre>import numpy as np
+from ceo import ceo
+%pylab inline
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>Populating the interactive namespace from numpy and matplotlib
+</pre></div>
+</div>
+<p>A <span class="math">\(N_L\times N_L\)</span> Shack-Hartmann wavefront sensor (WFS) on a
+<span class="math">\(D\)</span> diameter telescope is going to be modeled with
+<span class="math">\(n_P\times n_P\)</span> pixels per lenslet on the detector.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">nLenslet</span> <span class="o">=</span> <span class="mi">60</span>
+<span class="n">D</span> <span class="o">=</span> <span class="mf">25.5</span>
+<span class="n">n</span> <span class="o">=</span> <span class="mi">6</span>
+<span class="n">nPx</span> <span class="o">=</span> <span class="n">n</span><span class="o">*</span><span class="n">nLenslet</span>
+</pre></div>
+</div>
+<p>A arbitrary number of guide stars (GS) can be used by one WFS model, the
+assumption beeing that all the GS uses exactly the same WFS. Here the GS
+are randomly distributed in a 2arcmin diameter field of regard.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">nGS</span> <span class="o">=</span> <span class="mi">2</span>
+<span class="n">zen</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="n">nGS</span><span class="p">)</span><span class="o">*</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="o">/</span><span class="mi">180</span><span class="o">/</span><span class="mi">60</span>
+<span class="n">azi</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">2</span><span class="o">*</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span><span class="n">nGS</span><span class="p">)</span>
+<span class="n">gs</span> <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">Source</span><span class="p">(</span><span class="s">&quot;K&quot;</span><span class="p">,</span><span class="n">zenith</span><span class="o">=</span><span class="n">zen</span><span class="p">,</span><span class="n">azimuth</span><span class="o">=</span><span class="n">azi</span><span class="p">,</span><span class="n">height</span><span class="o">=</span><span class="nb">float</span><span class="p">(</span><span class="s">&quot;inf&quot;</span><span class="p">),</span><span class="n">resolution</span><span class="o">=</span><span class="p">(</span><span class="n">nPx</span><span class="p">,</span><span class="n">nPx</span><span class="p">))</span>
+</pre></div>
+</div>
+<p>Next the telescope pupil mask is defined and applied to the GSs.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">tel</span> <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">GMT</span><span class="p">(</span><span class="n">nPx</span><span class="p">,</span><span class="n">D</span><span class="p">)</span>
+<span class="n">gs</span><span class="o">.</span><span class="n">masked</span><span class="p">(</span><span class="n">tel</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The shack-Hartmann WFS is defined with the <tt class="docutils literal"><span class="pre">shackHartmann</span></tt> class. The
+mandatory parameters of the class constructor are: - the lenslet array
+size <span class="math">\(N_L\)</span>, - the number of pixel per lenslet in the pupil plane
+<span class="math">\(n_P\)</span>, meaning that the wavefront of the corresponding GSs must be
+sampled with <span class="math">\(N_L n_P \times N_L n_P\)</span> pixels, - the lenslet pitch
+<span class="math">\(d\)</span>.</p>
+<p>By default, the WFS imagelets are Nyquist sampled meaning that the
+default value of the discrete Fourier transform over-sampling factor is
+set to 2, i.e. <span class="math">\(\alpha\equiv\)</span> <tt class="docutils literal"><span class="pre">DFT_osf=2</span></tt>. The size of each
+imagelet is then <span class="math">\(\alpha n_P \times \alpha n_P\)</span>.</p>
+<p>The detector framelet sizes are <tt class="docutils literal"><span class="pre">N_PX_IMAGE</span></tt><span class="math">\(\times `
+``N_PX_IMAGE`\)</span> pixels each with the default value <tt class="docutils literal"><span class="pre">N_PX_IMAGE</span></tt>
+<span class="math">\(=n_P\)</span>. If the imagelets are larger, they are cropped to the
+specified size, if they are smaller, the framelets are padded with
+zeros.</p>
+<p>Finally the framelets can be binned down by a factor <span class="math">\(\beta\equiv\)</span>
+<tt class="docutils literal"><span class="pre">BIN_IMAGE</span></tt> leading to a final framelet size of</p>
+<div class="math">
+\[{N_I\over\beta}\times{N_I\over\beta}\]\[with :math:`N_I\equiv` ``N_PX_IMAGE``. The default value of\]</div>
+<p><tt class="docutils literal"><span class="pre">BIN_IMAGE</span></tt> is 1.</p>
+<p>The pixel scale is given by:</p>
+<div class="math">
+\[{\beta\lambda \over \alpha d}\]\[and the lenslet field-of-view is\]</div>
+<div class="math">
+\[N_I{\lambda\over \alpha d}\]\[with :math:`\lambda` the wavelength.\]</div>
+<p>If more than on GS is assigned to the WFS, the parameter <tt class="docutils literal"><span class="pre">N_GS</span></tt> needs
+to be set.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">wfs</span> <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">ShackHartmann</span><span class="p">(</span><span class="n">nLenslet</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">D</span><span class="o">/</span><span class="n">nLenslet</span><span class="p">,</span><span class="n">N_GS</span> <span class="o">=</span> <span class="n">nGS</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The WFS reference slopes and valid lenslets are set with the
+<tt class="docutils literal"><span class="pre">calibrate</span></tt> method passing a <tt class="docutils literal"><span class="pre">Source</span></tt> object which wavefront sets
+the reference slopes and the lenslet intensity threshold used to discard
+the lenset with too litle illumination.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">wfs</span><span class="o">.</span><span class="n">calibrate</span><span class="p">(</span><span class="n">gs</span><span class="p">,</span><span class="mf">0.5</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The source wavefront can now be analyzed with respect to the former
+calibration.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">wfs</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The detector frame is saved in the <tt class="docutils literal"><span class="pre">cuFloatArray</span></tt> object <tt class="docutils literal"><span class="pre">frame</span></tt>.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span><span class="mi">12</span><span class="p">))</span>
+<span class="n">imshow</span><span class="p">(</span><span class="n">wfs</span><span class="o">.</span><span class="n">frame</span><span class="o">.</span><span class="n">host</span><span class="p">()</span><span class="o">.</span><span class="n">transpose</span><span class="p">(),</span><span class="n">interpolation</span><span class="o">=</span><span class="s">&#39;none&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>&lt;matplotlib.image.AxesImage at 0x7f086fc1fdd0&gt;
+</pre></div>
+</div>
+<img alt="../_images/Shack-HartmannWavefrontSensor_15_1.png" src="../_images/Shack-HartmannWavefrontSensor_15_1.png" />
+<p>A <tt class="docutils literal"><span class="pre">Atmosphere</span></tt> object is defined next and the GSs are propagated
+through:</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">atm</span> <span class="o">=</span><span class="n">ceo</span><span class="o">.</span><span class="n">GmtAtmosphere</span><span class="p">(</span><span class="mf">15e-2</span><span class="p">,</span><span class="mi">30</span><span class="p">)</span>
+<span class="n">p</span> <span class="o">=</span> <span class="n">D</span><span class="o">/</span><span class="n">nPx</span>
+<span class="n">atm</span><span class="o">.</span><span class="n">get_phase_screen</span><span class="p">(</span><span class="n">gs</span><span class="p">,</span>  <span class="n">p</span><span class="p">,</span> <span class="n">nPx</span><span class="p">,</span> <span class="n">p</span><span class="p">,</span> <span class="n">nPx</span><span class="p">,</span> <span class="mf">0.0</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span><span class="mi">12</span><span class="p">))</span>
+<span class="n">imshow</span><span class="p">(</span><span class="n">gs</span><span class="o">.</span><span class="n">phase</span><span class="o">.</span><span class="n">host</span><span class="p">()</span><span class="o">.</span><span class="n">transpose</span><span class="p">(),</span><span class="n">interpolation</span><span class="o">=</span><span class="s">&#39;none&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>&lt;matplotlib.image.AxesImage at 0x7f086fb6c210&gt;
+</pre></div>
+</div>
+<img alt="../_images/Shack-HartmannWavefrontSensor_18_1.png" src="../_images/Shack-HartmannWavefrontSensor_18_1.png" />
+<p>The WFS detector need to be reset before proceeding with a new wavefront
+analysis.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">wfs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+<span class="n">wfs</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span><span class="mi">12</span><span class="p">))</span>
+<span class="n">imshow</span><span class="p">(</span><span class="n">wfs</span><span class="o">.</span><span class="n">frame</span><span class="o">.</span><span class="n">host</span><span class="p">()</span><span class="o">.</span><span class="n">transpose</span><span class="p">(),</span><span class="n">interpolation</span><span class="o">=</span><span class="s">&#39;none&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>&lt;matplotlib.image.AxesImage at 0x7f086faaa510&gt;
+</pre></div>
+</div>
+<img alt="../_images/Shack-HartmannWavefrontSensor_21_1.png" src="../_images/Shack-HartmannWavefrontSensor_21_1.png" />
+<p>The WFS centroids are accessible through the <tt class="docutils literal"><span class="pre">cuFloatArray</span></tt> object
+<tt class="docutils literal"><span class="pre">c</span></tt>.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">figure</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">12</span><span class="p">,</span><span class="mi">12</span><span class="p">))</span>
+<span class="n">imshow</span><span class="p">(</span><span class="n">wfs</span><span class="o">.</span><span class="n">c</span><span class="o">.</span><span class="n">host</span><span class="p">()</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">2</span><span class="o">*</span><span class="n">nLenslet</span><span class="o">*</span><span class="n">nGS</span>
+                            <span class="p">,</span><span class="n">nLenslet</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(),</span><span class="n">interpolation</span><span class="o">=</span><span class="s">&#39;none&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>&lt;matplotlib.image.AxesImage at 0x7f086f9e8850&gt;
+</pre></div>
+</div>
+<img alt="../_images/Shack-HartmannWavefrontSensor_23_1.png" src="../_images/Shack-HartmannWavefrontSensor_23_1.png" />
+</div>
+
+
+      </div>
+      <div class="bottomnav">
+      
+        <p>
+        «&#160;&#160;<a href="LaserTomography.html">Laser Tomography</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        </p>
+
+      </div>
+
+    <div class="footer">
+        &copy; Copyright 2014, Rodolphe Conan.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 1.2.2.
+    </div>
+  </body>
+</html>

@@ -1,0 +1,187 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>&lt;no title&gt; &mdash; CEO</title>
+    
+    <link rel="stylesheet" href="../_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../',
+        VERSION:     '0.1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../_static/jquery.js"></script>
+    <script type="text/javascript" src="../_static/underscore.js"></script>
+    <script type="text/javascript" src="../_static/doctools.js"></script>
+    <script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="CEO" href="../index.html" /> 
+  </head>
+  <body>
+      <div class="header"><h1 class="heading"><a href="../index.html">
+          <span>CEO</span></a></h1>
+        <h2 class="heading"><span>&lt;no title&gt;</span></h2>
+      </div>
+      <div class="topnav">
+      
+        <p>
+        <a class="uplink" href="../index.html">Contents</a>
+        </p>
+
+      </div>
+      <div class="content">
+        
+        
+  <p>Phase screens are computed with an <tt class="docutils literal"><span class="pre">Atmosphere</span></tt> and a <tt class="docutils literal"><span class="pre">Source</span></tt>
+object. Lets import the <tt class="docutils literal"><span class="pre">ceo</span></tt> module first.</p>
+<div class="code python highlight-python"><div class="highlight"><pre>import math
+import numpy as np
+from ceo import ceo
+%pylab inline
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>Populating the interactive namespace from numpy and matplotlib
+</pre></div>
+</div>
+<p>The atmosphere is defined with</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="c">#atm = ceo.Atmosphere(0.15,30,altitude=10e3,wind_speed=10)</span>
+<span class="n">atm</span> <span class="o">=</span>  <span class="n">ceo</span><span class="o">.</span><span class="n">GmtAtmosphere</span><span class="p">(</span><span class="mf">0.15</span><span class="p">,</span><span class="mi">30</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>A V band on-axis source is defined first,</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">NL</span> <span class="o">=</span> <span class="mi">60</span>
+<span class="n">NA</span> <span class="o">=</span> <span class="n">NL</span><span class="o">+</span><span class="mi">1</span>
+<span class="n">src</span> <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">Source</span><span class="p">(</span><span class="s">&quot;V&quot;</span><span class="p">,</span><span class="n">resolution</span><span class="o">=</span><span class="p">(</span><span class="n">NA</span><span class="p">,</span><span class="n">NA</span><span class="p">))</span>
+</pre></div>
+</div>
+<p>The telescope pupil is defined as the Giant Magellan Telescope and mask
+for the deformable mirror actuators is also set.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">D</span> <span class="o">=</span> <span class="mf">25.5</span>
+<span class="c">#tel = ceo.Telescope(NL*16)</span>
+<span class="n">tel</span> <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">GMT</span><span class="p">(</span><span class="n">NL</span><span class="o">*</span><span class="mi">16</span><span class="p">,</span><span class="n">D</span><span class="p">)</span>
+<span class="n">dm</span>  <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">Mask</span><span class="p">(</span><span class="n">NA</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">imshow</span><span class="p">(</span><span class="n">tel</span><span class="o">.</span><span class="n">f</span><span class="o">.</span><span class="n">host</span><span class="p">(),</span><span class="n">interpolation</span><span class="o">=</span><span class="s">&#39;None&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>&lt;matplotlib.image.AxesImage at 0x7f3f7661ef50&gt;
+</pre></div>
+</div>
+<img alt="Notebooks/Atmosphere%20Phase%20Screen%20Gradient_files/Atmosphere%20Phase%20Screen%20Gradient_8_1.png" src="Notebooks/Atmosphere%20Phase%20Screen%20Gradient_files/Atmosphere%20Phase%20Screen%20Gradient_8_1.png" />
+<p>A <tt class="docutils literal"><span class="pre">Centroiding</span></tt> object is defined, it will contains the phase screen
+gradient. The <tt class="docutils literal"><span class="pre">fried_geometry</span></tt> method computes the DM valid actuator
+mask according to the telescope pupil shape and the given intensity
+<tt class="docutils literal"><span class="pre">threshlod</span></tt>. The <tt class="docutils literal"><span class="pre">Source</span></tt> object is masked with the dm mask.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">d</span> <span class="o">=</span> <span class="n">D</span><span class="o">/</span><span class="n">NL</span>
+<span class="n">cog</span> <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">Centroiding</span><span class="p">(</span><span class="n">NL</span><span class="p">)</span>
+<span class="n">cog</span><span class="o">.</span><span class="n">fried_geometry</span><span class="p">(</span><span class="n">dm</span><span class="p">,</span> <span class="n">tel</span><span class="p">,</span> <span class="mi">16</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">)</span>
+<span class="n">src</span><span class="o">.</span><span class="n">masked</span><span class="p">(</span><span class="n">dm</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">imshow</span><span class="p">(</span><span class="n">dm</span><span class="o">.</span><span class="n">f</span><span class="o">.</span><span class="n">host</span><span class="p">(),</span><span class="n">interpolation</span><span class="o">=</span><span class="s">&#39;None&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>&lt;matplotlib.image.AxesImage at 0x7f3f8c092e10&gt;
+</pre></div>
+</div>
+<img alt="Notebooks/Atmosphere%20Phase%20Screen%20Gradient_files/Atmosphere%20Phase%20Screen%20Gradient_11_1.png" src="Notebooks/Atmosphere%20Phase%20Screen%20Gradient_files/Atmosphere%20Phase%20Screen%20Gradient_11_1.png" />
+<p>The <span class="math">\(n \times n\)</span> phase screen of <span class="math">\(D\)</span> width is computed next</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">p</span> <span class="o">=</span> <span class="n">D</span><span class="o">/</span><span class="p">(</span><span class="n">NA</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+<span class="n">atm</span><span class="o">.</span><span class="n">get_phase_screen</span><span class="p">(</span><span class="n">src</span><span class="p">,</span><span class="n">p</span><span class="p">,</span><span class="n">NA</span><span class="p">,</span><span class="n">p</span><span class="p">,</span><span class="n">NA</span><span class="p">,</span><span class="mf">0.0</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">dm_mask</span> <span class="o">=</span> <span class="n">dm</span><span class="o">.</span><span class="n">f</span>
+<span class="n">src_phase</span> <span class="o">=</span> <span class="n">src</span><span class="o">.</span><span class="n">phase</span>
+<span class="n">imshow</span><span class="p">(</span><span class="n">src_phase</span><span class="o">.</span><span class="n">host</span><span class="p">(</span><span class="n">units</span><span class="o">=</span><span class="s">&#39;micron&#39;</span><span class="p">,</span><span class="n">zm</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span><span class="n">mask</span><span class="o">=</span><span class="n">dm_mask</span><span class="o">.</span><span class="n">host</span><span class="p">()),</span><span class="n">interpolation</span><span class="o">=</span><span class="s">&#39;None&#39;</span><span class="p">)</span>
+<span class="n">colorbar</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>&lt;matplotlib.colorbar.Colorbar instance at 0x7f3f765553b0&gt;
+</pre></div>
+</div>
+<img alt="Notebooks/Atmosphere%20Phase%20Screen%20Gradient_files/Atmosphere%20Phase%20Screen%20Gradient_14_1.png" src="Notebooks/Atmosphere%20Phase%20Screen%20Gradient_files/Atmosphere%20Phase%20Screen%20Gradient_14_1.png" />
+<p>The phase screen gradient is computed with the <tt class="docutils literal"><span class="pre">Atmosphere</span></tt> method
+<tt class="docutils literal"><span class="pre">get_phase_screen_gradient</span></tt>. The gradient is computed over a square
+lenslet array of size <span class="math">\(N_L \times N_L\)</span> with <span class="math">\(d\)</span> the pitch in
+meter. The phase screen gradient is computed for a given <tt class="docutils literal"><span class="pre">Source</span></tt>
+object that contains one or more guide stars. The phase screen gradient
+can be computed for a given time delay. The <span class="math">\(c_x\)</span> and <span class="math">\(c_y\)</span>
+centroids are saved in a <tt class="docutils literal"><span class="pre">Centroiding</span></tt> object.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">atm</span><span class="o">.</span><span class="n">get_phase_screen_gradient</span><span class="p">(</span><span class="n">cog</span><span class="p">,</span><span class="n">NL</span><span class="p">,</span><span class="n">d</span><span class="p">,</span><span class="n">src</span><span class="p">,</span><span class="mf">0.0</span><span class="p">)</span>
+<span class="n">c</span> <span class="o">=</span> <span class="n">cog</span><span class="o">.</span><span class="n">c</span><span class="o">.</span><span class="n">host</span><span class="p">(</span><span class="n">units</span><span class="o">=</span><span class="s">&#39;arcsec&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">imshow</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">NL</span><span class="o">*</span><span class="mi">2</span><span class="p">,</span><span class="n">NL</span><span class="p">)</span><span class="o">.</span><span class="n">transpose</span><span class="p">(),</span><span class="n">interpolation</span><span class="o">=</span><span class="s">&#39;None&#39;</span><span class="p">)</span>
+<span class="n">colorbar</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>&lt;matplotlib.colorbar.Colorbar instance at 0x7f3f763b63b0&gt;
+</pre></div>
+</div>
+<img alt="Notebooks/Atmosphere%20Phase%20Screen%20Gradient_files/Atmosphere%20Phase%20Screen%20Gradient_17_1.png" src="Notebooks/Atmosphere%20Phase%20Screen%20Gradient_files/Atmosphere%20Phase%20Screen%20Gradient_17_1.png" />
+<p>From the phase gradient, the phase screen can be reconstructed with a
+linear minimim mean square error reconstructor (LMMSE). A <tt class="docutils literal"><span class="pre">Lmmse</span></tt>
+object is used to perform the phase estimation. The parameters are: - an
+<tt class="docutils literal"><span class="pre">Atmosphere</span></tt> object, - a <tt class="docutils literal"><span class="pre">Source</span></tt> object representing the guide
+star(s), - the number of guide stars, - a <tt class="docutils literal"><span class="pre">Source</span></tt> object representing
+the star(s) in the estimation direction(s), - the number of star(s) in
+the estimation direction(s), - the wavefront sampling step in meter, -
+the number of sample across the wavefront, - a <tt class="docutils literal"><span class="pre">Mask</span></tt> object
+representing the pupil, - the iterative solver.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">src_lmmse</span> <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">Lmmse</span><span class="p">(</span><span class="n">atm</span><span class="p">,</span><span class="n">src</span><span class="p">,</span><span class="n">src</span><span class="p">,</span><span class="n">d</span><span class="p">,</span><span class="n">NL</span><span class="p">,</span><span class="n">dm</span><span class="p">,</span><span class="s">&quot;MINRES&quot;</span><span class="p">)</span>
+<span class="n">src_lmmse</span><span class="o">.</span><span class="n">estimation</span><span class="p">(</span><span class="n">cog</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">src_lmmse_phase</span> <span class="o">=</span> <span class="n">src_lmmse</span><span class="o">.</span><span class="n">phase</span>
+<span class="n">imshow</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">((</span><span class="n">src_phase</span><span class="o">.</span><span class="n">host_data</span><span class="p">,</span>
+                            <span class="n">src_lmmse_phase</span><span class="o">.</span><span class="n">host</span><span class="p">(</span><span class="n">units</span><span class="o">=</span><span class="s">&#39;micron&#39;</span><span class="p">,</span><span class="n">zm</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span><span class="n">mask</span><span class="o">=</span><span class="n">dm_mask</span><span class="o">.</span><span class="n">host</span><span class="p">())),</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span>
+           <span class="n">interpolation</span><span class="o">=</span><span class="s">&#39;none&#39;</span><span class="p">)</span>
+<span class="n">colorbar</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>&lt;matplotlib.colorbar.Colorbar instance at 0x7f3f76285098&gt;
+</pre></div>
+</div>
+<img alt="Notebooks/Atmosphere%20Phase%20Screen%20Gradient_files/Atmosphere%20Phase%20Screen%20Gradient_20_1.png" src="Notebooks/Atmosphere%20Phase%20Screen%20Gradient_files/Atmosphere%20Phase%20Screen%20Gradient_20_1.png" />
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">ps_e</span> <span class="o">=</span> <span class="n">src_lmmse_phase</span><span class="o">.</span><span class="n">host_data</span> <span class="o">-</span> <span class="n">src_phase</span><span class="o">.</span><span class="n">host_data</span>
+<span class="n">imshow</span><span class="p">(</span><span class="n">ps_e</span><span class="o">*</span><span class="mf">1e3</span><span class="p">,</span><span class="n">interpolation</span><span class="o">=</span><span class="s">&#39;none&#39;</span><span class="p">)</span>
+<span class="n">colorbar</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>&lt;matplotlib.colorbar.Colorbar instance at 0x7f3f7614f710&gt;
+</pre></div>
+</div>
+<img alt="Notebooks/Atmosphere%20Phase%20Screen%20Gradient_files/Atmosphere%20Phase%20Screen%20Gradient_21_1.png" src="Notebooks/Atmosphere%20Phase%20Screen%20Gradient_files/Atmosphere%20Phase%20Screen%20Gradient_21_1.png" />
+<div class="code python highlight-python"><div class="highlight"><pre><span class="k">print</span> <span class="s">&quot;wavefront error: </span><span class="si">%5.2f</span><span class="s">nm&quot;</span> <span class="o">%</span> <span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">std</span><span class="p">(</span><span class="n">ps_e</span><span class="p">[</span><span class="n">dm_mask</span><span class="o">.</span><span class="n">host_data</span><span class="o">!=</span><span class="mi">0</span><span class="p">])</span><span class="o">*</span><span class="mf">1e3</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>wavefront error: 98.75nm
+</pre></div>
+</div>
+
+
+      </div>
+      <div class="bottomnav">
+      
+        <p>
+        <a class="uplink" href="../index.html">Contents</a>
+        </p>
+
+      </div>
+
+    <div class="footer">
+        &copy; Copyright 2014, Rodolphe Conan.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 1.2.2.
+    </div>
+  </body>
+</html>

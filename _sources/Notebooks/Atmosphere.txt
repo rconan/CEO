@@ -1,0 +1,197 @@
+
+Atmospheric Phase Screens
+=========================
+
+First we import the ``ceo`` module.
+
+.. code:: python
+
+    import sys
+    import numpy as np
+    import math
+    from ceo import ceo, phaseStats
+    %pylab inline
+
+.. parsed-literal::
+
+    Populating the interactive namespace from numpy and matplotlib
+
+
+Then a ``Source`` object is created. You must specify the photometric
+bandwidth. The zenith and azimuth angles and the source height are
+optional parameters set by default to 0,0 and :math:`\infty`,
+respectively. The wavefront shape is also optional set to (0,0) per
+default, meaning that the source won't have a wavefront.
+
+.. code:: python
+
+    n = 64
+    src = ceo.Source("K",resolution=(n,n))
+An ``Atmosphere`` object is created by specifying first the :math:`r_0`
+and :math:`L_0`, the the optional number of layers, layer altitudes,
+fractional powers, wind speeds and directions. Here a single atmospheric
+layer at the ground is created.
+
+.. code:: python
+
+    atm = ceo.Atmosphere(0.15,30)
+    #atm = ceo.GmtAtmosphere(0.15,30)
+A phase screen is computed by passing the source object, the number of
+sources in the source object, the sampling step and number in the X and
+y directions and the time delay.
+
+.. code:: python
+
+    atm.get_phase_screen(src,0.1,n,0.1,n,0.0)
+The phase screen is written in the phase attribute of the source object.
+The phase attribute is a ``cuFloatArray`` object that contains a pointer
+to the phase screen on the device. To copy the data to the host, simply
+call the ``host`` method of the ``cuFloatArray`` object.
+
+.. code:: python
+
+    imshow(src.phase.host(units='micron'))
+
+
+
+.. parsed-literal::
+
+    <matplotlib.image.AxesImage at 0x7ff22cf8a310>
+
+
+
+
+.. image:: Atmosphere_files/Atmosphere_10_1.png
+
+
+Variance
+--------
+
+The atmosphere turbulence phase can also be computed for arbitrary
+coordinates :math:`[x,y]`. The coordinates are defined as
+``cuFloatArray`` objects setting the ``host_data`` attributes to a numpy
+array. A copy on the device of ``host_data`` is immediately made.
+
+.. code:: python
+
+    x = ceo.cuFloatArray(host_data=np.array([0]))
+    y = ceo.cuFloatArray(host_data=np.array([0]))
+Now lets define a function to compute single phase values. By calling
+the ``reset`` method of the ``Atmosphere`` object, we ensure to have a
+set of independent variates. ``reset`` re-draw the random number used to
+compute the phase values.
+
+.. code:: python
+
+    def var_eval(x,y,atm,src):
+        atm.reset()
+        ps = atm.get_phase_values(x,y,src,0.0)
+        return ps.host()
+The function is called a number of times and the phase values are saved
+in ``ps``
+
+.. code:: python
+
+    ps_fun = lambda z: [var_eval(x,y,atm,src) for k in range(z) ]
+The variance of the phase is computed next. The phase is given in meter,
+so it is converted in radian.
+
+.. code:: python
+
+    ps = ps_fun(1000)
+    wavenumber = 2*math.pi/0.55e-6
+    num_var = np.var(ps)*(wavenumber**2)
+The numerical variance is compared to the theoretical variance.
+
+.. code:: python
+
+    the_var = phaseStats.variance(atmosphere=atm)
+    print "Theoretical variance: %6.2frd^2" % the_var
+    print "Numerical variance  : %6.2frd^2" % num_var
+    print "Variance ratio      : %8.5f" % (num_var/the_var)
+
+.. parsed-literal::
+
+    Theoretical variance: 590.38rd^2
+    Numerical variance  : 557.36rd^2
+    Variance ratio      :  0.94407
+
+
+Structure function
+------------------
+
+The :math:`[x,y]` plane is randomly sampled in the range
+:math:`[-2\mathcal L_0,+2\mathcal L_0]`.
+
+.. code:: python
+
+    n_points = 1000
+    x = np.random.uniform(-1,1,n_points)*atm.L0*2
+    y = np.random.uniform(-1,1,n_points)*atm.L0*2
+    z_xy = x + 1j*y
+Data are copied to the device:
+
+.. code:: python
+
+    cu_x = ceo.cuFloatArray(host_data=z_xy.real)
+    cu_y = ceo.cuFloatArray(host_data=z_xy.imag)
+The structure function is computed for baseline :math:`\rho` randomly
+distributed on a circle.
+
+.. code:: python
+
+    phi = np.random.uniform(0,2*math.pi,n_points)
+    rho,rho_step = np.linspace(0,atm.L0*4,21,retstep=True)
+    rho[0] = 0.1
+The differential phase is computed for ``n_sample`` independent
+variates.
+
+The structure function of the independent variates is computed first.
+The structure function ``sf`` is distributed on a circle of radius
+:math:`\rho` where it should be constant.
+
+The mean and standart deviation on the circle of the structure function
+``sf`` is evaluated in ``mean_sf`` and ``std_sf``.
+
+.. code:: python
+
+    n_sample = 1000
+    d_ps = np.zeros( (n_points, n_sample) , dtype=np.float32)
+    mean_sf = np.zeros( rho.size)
+    std_sf  = np.zeros( rho.size)
+.. code:: python
+
+    print "rho sample: %d" % (rho.size)
+    for k_rho in range(rho.size):
+        sys.stdout.write("\r[%d]" % k_rho)
+        z_rho = rho[k_rho]*np.exp(1j*phi)
+        z_xy_rho = z_xy + z_rho
+        cu_x_rho = ceo.cuFloatArray(host_data=z_xy_rho.real)
+        cu_y_rho = ceo.cuFloatArray(host_data=z_xy_rho.imag)
+        for k in range(n_sample):
+            atm.reset()
+            ps     = atm.get_phase_values(cu_x,cu_y,src,0.0).host()
+            ps_rho = atm.get_phase_values(cu_x_rho,cu_y_rho,src,0.0).host()
+            d_ps[:,k]   = ps - ps_rho
+        sf = d_ps.var(axis=1)*(wavenumber**2)
+        mean_sf[k_rho] = sf.mean()
+        std_sf[k_rho]  = sf.std()
+
+.. parsed-literal::
+
+    rho sample: 21
+    [20]
+
+.. code:: python
+
+    sf_th = phaseStats.structure_function(rho,atmosphere=atm)
+.. code:: python
+
+    plot(rho,sf_th)
+    errorbar(rho,mean_sf,yerr=std_sf)
+    grid()
+
+
+.. image:: Atmosphere_files/Atmosphere_33_0.png
+
+

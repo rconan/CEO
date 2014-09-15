@@ -1,0 +1,230 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>Atmospheric Phase Screens &mdash; CEO</title>
+    
+    <link rel="stylesheet" href="../_static/haiku.css" type="text/css" />
+    <link rel="stylesheet" href="../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../',
+        VERSION:     '0.1',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../_static/jquery.js"></script>
+    <script type="text/javascript" src="../_static/underscore.js"></script>
+    <script type="text/javascript" src="../_static/doctools.js"></script>
+    <script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="CEO" href="../index.html" />
+    <link rel="up" title="Notebooks:" href="notebooks.html" />
+    <link rel="next" title="Atmosphere Phase Screen" href="AtmospherePhaseScreen.html" />
+    <link rel="prev" title="Notebooks:" href="notebooks.html" /> 
+  </head>
+  <body>
+      <div class="header"><h1 class="heading"><a href="../index.html">
+          <span>CEO</span></a></h1>
+        <h2 class="heading"><span>Atmospheric Phase Screens</span></h2>
+      </div>
+      <div class="topnav">
+      
+        <p>
+        «&#160;&#160;<a href="notebooks.html">Notebooks:</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="AtmospherePhaseScreen.html">Atmosphere Phase Screen</a>&#160;&#160;»
+        </p>
+
+      </div>
+      <div class="content">
+        
+        
+  <div class="section" id="atmospheric-phase-screens">
+<h1>Atmospheric Phase Screens<a class="headerlink" href="#atmospheric-phase-screens" title="Permalink to this headline">¶</a></h1>
+<p>First we import the <tt class="docutils literal"><span class="pre">ceo</span></tt> module.</p>
+<div class="code python highlight-python"><div class="highlight"><pre>import sys
+import numpy as np
+import math
+from ceo import ceo, phaseStats
+%pylab inline
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>Populating the interactive namespace from numpy and matplotlib
+</pre></div>
+</div>
+<p>Then a <tt class="docutils literal"><span class="pre">Source</span></tt> object is created. You must specify the photometric
+bandwidth. The zenith and azimuth angles and the source height are
+optional parameters set by default to 0,0 and <span class="math">\(\infty\)</span>,
+respectively. The wavefront shape is also optional set to (0,0) per
+default, meaning that the source won&#8217;t have a wavefront.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">n</span> <span class="o">=</span> <span class="mi">64</span>
+<span class="n">src</span> <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">Source</span><span class="p">(</span><span class="s">&quot;K&quot;</span><span class="p">,</span><span class="n">resolution</span><span class="o">=</span><span class="p">(</span><span class="n">n</span><span class="p">,</span><span class="n">n</span><span class="p">))</span>
+</pre></div>
+</div>
+<p>An <tt class="docutils literal"><span class="pre">Atmosphere</span></tt> object is created by specifying first the <span class="math">\(r_0\)</span>
+and <span class="math">\(L_0\)</span>, the the optional number of layers, layer altitudes,
+fractional powers, wind speeds and directions. Here a single atmospheric
+layer at the ground is created.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">atm</span> <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">Atmosphere</span><span class="p">(</span><span class="mf">0.15</span><span class="p">,</span><span class="mi">30</span><span class="p">)</span>
+<span class="c">#atm = ceo.GmtAtmosphere(0.15,30)</span>
+</pre></div>
+</div>
+<p>A phase screen is computed by passing the source object, the number of
+sources in the source object, the sampling step and number in the X and
+y directions and the time delay.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">atm</span><span class="o">.</span><span class="n">get_phase_screen</span><span class="p">(</span><span class="n">src</span><span class="p">,</span><span class="mf">0.1</span><span class="p">,</span><span class="n">n</span><span class="p">,</span><span class="mf">0.1</span><span class="p">,</span><span class="n">n</span><span class="p">,</span><span class="mf">0.0</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The phase screen is written in the phase attribute of the source object.
+The phase attribute is a <tt class="docutils literal"><span class="pre">cuFloatArray</span></tt> object that contains a pointer
+to the phase screen on the device. To copy the data to the host, simply
+call the <tt class="docutils literal"><span class="pre">host</span></tt> method of the <tt class="docutils literal"><span class="pre">cuFloatArray</span></tt> object.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">imshow</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">phase</span><span class="o">.</span><span class="n">host</span><span class="p">(</span><span class="n">units</span><span class="o">=</span><span class="s">&#39;micron&#39;</span><span class="p">))</span>
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>&lt;matplotlib.image.AxesImage at 0x7ff22cf8a310&gt;
+</pre></div>
+</div>
+<img alt="../_images/Atmosphere_10_1.png" src="../_images/Atmosphere_10_1.png" />
+<div class="section" id="variance">
+<h2>Variance<a class="headerlink" href="#variance" title="Permalink to this headline">¶</a></h2>
+<p>The atmosphere turbulence phase can also be computed for arbitrary
+coordinates <span class="math">\([x,y]\)</span>. The coordinates are defined as
+<tt class="docutils literal"><span class="pre">cuFloatArray</span></tt> objects setting the <tt class="docutils literal"><span class="pre">host_data</span></tt> attributes to a numpy
+array. A copy on the device of <tt class="docutils literal"><span class="pre">host_data</span></tt> is immediately made.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">x</span> <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">cuFloatArray</span><span class="p">(</span><span class="n">host_data</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">0</span><span class="p">]))</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">cuFloatArray</span><span class="p">(</span><span class="n">host_data</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="mi">0</span><span class="p">]))</span>
+</pre></div>
+</div>
+<p>Now lets define a function to compute single phase values. By calling
+the <tt class="docutils literal"><span class="pre">reset</span></tt> method of the <tt class="docutils literal"><span class="pre">Atmosphere</span></tt> object, we ensure to have a
+set of independent variates. <tt class="docutils literal"><span class="pre">reset</span></tt> re-draw the random number used to
+compute the phase values.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="k">def</span> <span class="nf">var_eval</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">y</span><span class="p">,</span><span class="n">atm</span><span class="p">,</span><span class="n">src</span><span class="p">):</span>
+    <span class="n">atm</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+    <span class="n">ps</span> <span class="o">=</span> <span class="n">atm</span><span class="o">.</span><span class="n">get_phase_values</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">y</span><span class="p">,</span><span class="n">src</span><span class="p">,</span><span class="mf">0.0</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">ps</span><span class="o">.</span><span class="n">host</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>The function is called a number of times and the phase values are saved
+in <tt class="docutils literal"><span class="pre">ps</span></tt></p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">ps_fun</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">z</span><span class="p">:</span> <span class="p">[</span><span class="n">var_eval</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">y</span><span class="p">,</span><span class="n">atm</span><span class="p">,</span><span class="n">src</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">z</span><span class="p">)</span> <span class="p">]</span>
+</pre></div>
+</div>
+<p>The variance of the phase is computed next. The phase is given in meter,
+so it is converted in radian.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">ps</span> <span class="o">=</span> <span class="n">ps_fun</span><span class="p">(</span><span class="mi">1000</span><span class="p">)</span>
+<span class="n">wavenumber</span> <span class="o">=</span> <span class="mi">2</span><span class="o">*</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="o">/</span><span class="mf">0.55e-6</span>
+<span class="n">num_var</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">var</span><span class="p">(</span><span class="n">ps</span><span class="p">)</span><span class="o">*</span><span class="p">(</span><span class="n">wavenumber</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The numerical variance is compared to the theoretical variance.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">the_var</span> <span class="o">=</span> <span class="n">phaseStats</span><span class="o">.</span><span class="n">variance</span><span class="p">(</span><span class="n">atmosphere</span><span class="o">=</span><span class="n">atm</span><span class="p">)</span>
+<span class="k">print</span> <span class="s">&quot;Theoretical variance: </span><span class="si">%6.2f</span><span class="s">rd^2&quot;</span> <span class="o">%</span> <span class="n">the_var</span>
+<span class="k">print</span> <span class="s">&quot;Numerical variance  : </span><span class="si">%6.2f</span><span class="s">rd^2&quot;</span> <span class="o">%</span> <span class="n">num_var</span>
+<span class="k">print</span> <span class="s">&quot;Variance ratio      : </span><span class="si">%8.5f</span><span class="s">&quot;</span> <span class="o">%</span> <span class="p">(</span><span class="n">num_var</span><span class="o">/</span><span class="n">the_var</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>Theoretical variance: 590.38rd^2
+Numerical variance  : 557.36rd^2
+Variance ratio      :  0.94407
+</pre></div>
+</div>
+</div>
+<div class="section" id="structure-function">
+<h2>Structure function<a class="headerlink" href="#structure-function" title="Permalink to this headline">¶</a></h2>
+<p>The <span class="math">\([x,y]\)</span> plane is randomly sampled in the range
+<span class="math">\([-2\mathcal L_0,+2\mathcal L_0]\)</span>.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">n_points</span> <span class="o">=</span> <span class="mi">1000</span>
+<span class="n">x</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="n">n_points</span><span class="p">)</span><span class="o">*</span><span class="n">atm</span><span class="o">.</span><span class="n">L0</span><span class="o">*</span><span class="mi">2</span>
+<span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="n">n_points</span><span class="p">)</span><span class="o">*</span><span class="n">atm</span><span class="o">.</span><span class="n">L0</span><span class="o">*</span><span class="mi">2</span>
+<span class="n">z_xy</span> <span class="o">=</span> <span class="n">x</span> <span class="o">+</span> <span class="mi">1j</span><span class="o">*</span><span class="n">y</span>
+</pre></div>
+</div>
+<p>Data are copied to the device:</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">cu_x</span> <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">cuFloatArray</span><span class="p">(</span><span class="n">host_data</span><span class="o">=</span><span class="n">z_xy</span><span class="o">.</span><span class="n">real</span><span class="p">)</span>
+<span class="n">cu_y</span> <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">cuFloatArray</span><span class="p">(</span><span class="n">host_data</span><span class="o">=</span><span class="n">z_xy</span><span class="o">.</span><span class="n">imag</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>The structure function is computed for baseline <span class="math">\(\rho\)</span> randomly
+distributed on a circle.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">phi</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">uniform</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="mi">2</span><span class="o">*</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span><span class="n">n_points</span><span class="p">)</span>
+<span class="n">rho</span><span class="p">,</span><span class="n">rho_step</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="n">atm</span><span class="o">.</span><span class="n">L0</span><span class="o">*</span><span class="mi">4</span><span class="p">,</span><span class="mi">21</span><span class="p">,</span><span class="n">retstep</span><span class="o">=</span><span class="bp">True</span><span class="p">)</span>
+<span class="n">rho</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="mf">0.1</span>
+</pre></div>
+</div>
+<p>The differential phase is computed for <tt class="docutils literal"><span class="pre">n_sample</span></tt> independent
+variates.</p>
+<p>The structure function of the independent variates is computed first.
+The structure function <tt class="docutils literal"><span class="pre">sf</span></tt> is distributed on a circle of radius
+<span class="math">\(\rho\)</span> where it should be constant.</p>
+<p>The mean and standart deviation on the circle of the structure function
+<tt class="docutils literal"><span class="pre">sf</span></tt> is evaluated in <tt class="docutils literal"><span class="pre">mean_sf</span></tt> and <tt class="docutils literal"><span class="pre">std_sf</span></tt>.</p>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">n_sample</span> <span class="o">=</span> <span class="mi">1000</span>
+<span class="n">d_ps</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span> <span class="p">(</span><span class="n">n_points</span><span class="p">,</span> <span class="n">n_sample</span><span class="p">)</span> <span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float32</span><span class="p">)</span>
+<span class="n">mean_sf</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span> <span class="n">rho</span><span class="o">.</span><span class="n">size</span><span class="p">)</span>
+<span class="n">std_sf</span>  <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span> <span class="n">rho</span><span class="o">.</span><span class="n">size</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="k">print</span> <span class="s">&quot;rho sample: </span><span class="si">%d</span><span class="s">&quot;</span> <span class="o">%</span> <span class="p">(</span><span class="n">rho</span><span class="o">.</span><span class="n">size</span><span class="p">)</span>
+<span class="k">for</span> <span class="n">k_rho</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">rho</span><span class="o">.</span><span class="n">size</span><span class="p">):</span>
+    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\r</span><span class="s">[</span><span class="si">%d</span><span class="s">]&quot;</span> <span class="o">%</span> <span class="n">k_rho</span><span class="p">)</span>
+    <span class="n">z_rho</span> <span class="o">=</span> <span class="n">rho</span><span class="p">[</span><span class="n">k_rho</span><span class="p">]</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="mi">1j</span><span class="o">*</span><span class="n">phi</span><span class="p">)</span>
+    <span class="n">z_xy_rho</span> <span class="o">=</span> <span class="n">z_xy</span> <span class="o">+</span> <span class="n">z_rho</span>
+    <span class="n">cu_x_rho</span> <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">cuFloatArray</span><span class="p">(</span><span class="n">host_data</span><span class="o">=</span><span class="n">z_xy_rho</span><span class="o">.</span><span class="n">real</span><span class="p">)</span>
+    <span class="n">cu_y_rho</span> <span class="o">=</span> <span class="n">ceo</span><span class="o">.</span><span class="n">cuFloatArray</span><span class="p">(</span><span class="n">host_data</span><span class="o">=</span><span class="n">z_xy_rho</span><span class="o">.</span><span class="n">imag</span><span class="p">)</span>
+    <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n_sample</span><span class="p">):</span>
+        <span class="n">atm</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+        <span class="n">ps</span>     <span class="o">=</span> <span class="n">atm</span><span class="o">.</span><span class="n">get_phase_values</span><span class="p">(</span><span class="n">cu_x</span><span class="p">,</span><span class="n">cu_y</span><span class="p">,</span><span class="n">src</span><span class="p">,</span><span class="mf">0.0</span><span class="p">)</span><span class="o">.</span><span class="n">host</span><span class="p">()</span>
+        <span class="n">ps_rho</span> <span class="o">=</span> <span class="n">atm</span><span class="o">.</span><span class="n">get_phase_values</span><span class="p">(</span><span class="n">cu_x_rho</span><span class="p">,</span><span class="n">cu_y_rho</span><span class="p">,</span><span class="n">src</span><span class="p">,</span><span class="mf">0.0</span><span class="p">)</span><span class="o">.</span><span class="n">host</span><span class="p">()</span>
+        <span class="n">d_ps</span><span class="p">[:,</span><span class="n">k</span><span class="p">]</span>   <span class="o">=</span> <span class="n">ps</span> <span class="o">-</span> <span class="n">ps_rho</span>
+    <span class="n">sf</span> <span class="o">=</span> <span class="n">d_ps</span><span class="o">.</span><span class="n">var</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="p">(</span><span class="n">wavenumber</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span>
+    <span class="n">mean_sf</span><span class="p">[</span><span class="n">k_rho</span><span class="p">]</span> <span class="o">=</span> <span class="n">sf</span><span class="o">.</span><span class="n">mean</span><span class="p">()</span>
+    <span class="n">std_sf</span><span class="p">[</span><span class="n">k_rho</span><span class="p">]</span>  <span class="o">=</span> <span class="n">sf</span><span class="o">.</span><span class="n">std</span><span class="p">()</span>
+</pre></div>
+</div>
+<div class="highlight-python"><div class="highlight"><pre>rho sample: 21
+[20]
+</pre></div>
+</div>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">sf_th</span> <span class="o">=</span> <span class="n">phaseStats</span><span class="o">.</span><span class="n">structure_function</span><span class="p">(</span><span class="n">rho</span><span class="p">,</span><span class="n">atmosphere</span><span class="o">=</span><span class="n">atm</span><span class="p">)</span>
+</pre></div>
+</div>
+<div class="code python highlight-python"><div class="highlight"><pre><span class="n">plot</span><span class="p">(</span><span class="n">rho</span><span class="p">,</span><span class="n">sf_th</span><span class="p">)</span>
+<span class="n">errorbar</span><span class="p">(</span><span class="n">rho</span><span class="p">,</span><span class="n">mean_sf</span><span class="p">,</span><span class="n">yerr</span><span class="o">=</span><span class="n">std_sf</span><span class="p">)</span>
+<span class="n">grid</span><span class="p">()</span>
+</pre></div>
+</div>
+<img alt="../_images/Atmosphere_33_0.png" src="../_images/Atmosphere_33_0.png" />
+</div>
+</div>
+
+
+      </div>
+      <div class="bottomnav">
+      
+        <p>
+        «&#160;&#160;<a href="notebooks.html">Notebooks:</a>
+        &#160;&#160;::&#160;&#160;
+        <a class="uplink" href="../index.html">Contents</a>
+        &#160;&#160;::&#160;&#160;
+        <a href="AtmospherePhaseScreen.html">Atmosphere Phase Screen</a>&#160;&#160;»
+        </p>
+
+      </div>
+
+    <div class="footer">
+        &copy; Copyright 2014, Rodolphe Conan.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 1.2.2.
+    </div>
+  </body>
+</html>

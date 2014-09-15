@@ -1,0 +1,198 @@
+
+Atmosphere Phase Screen Gradient
+================================
+
+Phase screens are computed with an ``Atmosphere`` and a ``Source``
+object. Lets import the ``ceo`` module first.
+
+.. code:: python
+
+    import math
+    import numpy as np
+    from ceo import ceo
+    %pylab inline
+
+.. parsed-literal::
+
+    Populating the interactive namespace from numpy and matplotlib
+
+
+The atmosphere is defined with
+
+.. code:: python
+
+    #atm = ceo.Atmosphere(0.15,30,altitude=10e3,wind_speed=10)
+    atm =  ceo.GmtAtmosphere(0.15,30)
+A V band on-axis source is defined first,
+
+.. code:: python
+
+    NL = 60
+    NA = NL+1
+    src = ceo.Source("V",resolution=(NA,NA))
+The telescope pupil is defined as the Giant Magellan Telescope and mask
+for the deformable mirror actuators is also set.
+
+.. code:: python
+
+    D = 25.5
+    #tel = ceo.Telescope(NL*16)
+    tel = ceo.GMT(NL*16,D)
+    dm  = ceo.Mask(NA)
+.. code:: python
+
+    imshow(tel.f.host(),interpolation='None')
+
+
+
+.. parsed-literal::
+
+    <matplotlib.image.AxesImage at 0x7f3f7661ef50>
+
+
+
+
+.. image:: AtmospherePhaseScreenGradient_files/AtmospherePhaseScreenGradient_9_1.png
+
+
+A ``Centroiding`` object is defined, it will contains the phase screen
+gradient. The ``fried_geometry`` method computes the DM valid actuator
+mask according to the telescope pupil shape and the given intensity
+``threshlod``. The ``Source`` object is masked with the dm mask.
+
+.. code:: python
+
+    d = D/NL
+    cog = ceo.Centroiding(NL)
+    cog.fried_geometry(dm, tel, 16, 0.5)
+    src.masked(dm)
+.. code:: python
+
+    imshow(dm.f.host(),interpolation='None')
+
+
+
+.. parsed-literal::
+
+    <matplotlib.image.AxesImage at 0x7f3f8c092e10>
+
+
+
+
+.. image:: AtmospherePhaseScreenGradient_files/AtmospherePhaseScreenGradient_12_1.png
+
+
+The :math:`n \times n` phase screen of :math:`D` width is computed next
+
+.. code:: python
+
+    p = D/(NA-1)
+    atm.get_phase_screen(src,p,NA,p,NA,0.0)
+.. code:: python
+
+    dm_mask = dm.f
+    src_phase = src.phase
+    imshow(src_phase.host(units='micron',zm=True,mask=dm_mask.host()),interpolation='None')
+    colorbar()
+
+
+
+.. parsed-literal::
+
+    <matplotlib.colorbar.Colorbar instance at 0x7f3f765553b0>
+
+
+
+
+.. image:: AtmospherePhaseScreenGradient_files/AtmospherePhaseScreenGradient_15_1.png
+
+
+The phase screen gradient is computed with the ``Atmosphere`` method
+``get_phase_screen_gradient``. The gradient is computed over a square
+lenslet array of size :math:`N_L \times N_L` with :math:`d` the pitch in
+meter. The phase screen gradient is computed for a given ``Source``
+object that contains one or more guide stars. The phase screen gradient
+can be computed for a given time delay. The :math:`c_x` and :math:`c_y`
+centroids are saved in a ``Centroiding`` object.
+
+.. code:: python
+
+    atm.get_phase_screen_gradient(cog,NL,d,src,0.0)
+    c = cog.c.host(units='arcsec')
+.. code:: python
+
+    imshow(c.reshape(NL*2,NL).transpose(),interpolation='None')
+    colorbar()
+
+
+
+.. parsed-literal::
+
+    <matplotlib.colorbar.Colorbar instance at 0x7f3f763b63b0>
+
+
+
+
+.. image:: AtmospherePhaseScreenGradient_files/AtmospherePhaseScreenGradient_18_1.png
+
+
+From the phase gradient, the phase screen can be reconstructed with a
+linear minimim mean square error reconstructor (LMMSE). A ``Lmmse``
+object is used to perform the phase estimation. The parameters are: - an
+``Atmosphere`` object, - a ``Source`` object representing the guide
+star(s), - the number of guide stars, - a ``Source`` object representing
+the star(s) in the estimation direction(s), - the number of star(s) in
+the estimation direction(s), - the wavefront sampling step in meter, -
+the number of sample across the wavefront, - a ``Mask`` object
+representing the pupil, - the iterative solver.
+
+.. code:: python
+
+    src_lmmse = ceo.Lmmse(atm,src,src,d,NL,dm,"MINRES")
+    src_lmmse.estimation(cog)
+.. code:: python
+
+    src_lmmse_phase = src_lmmse.phase
+    imshow(np.concatenate((src_phase.host_data,
+                                src_lmmse_phase.host(units='micron',zm=True,mask=dm_mask.host())),axis=1),
+               interpolation='none')
+    colorbar()
+
+
+
+.. parsed-literal::
+
+    <matplotlib.colorbar.Colorbar instance at 0x7f3f76285098>
+
+
+
+
+.. image:: AtmospherePhaseScreenGradient_files/AtmospherePhaseScreenGradient_21_1.png
+
+
+.. code:: python
+
+    ps_e = src_lmmse_phase.host_data - src_phase.host_data
+    imshow(ps_e*1e3,interpolation='none')
+    colorbar()
+
+
+
+.. parsed-literal::
+
+    <matplotlib.colorbar.Colorbar instance at 0x7f3f7614f710>
+
+
+
+
+.. image:: AtmospherePhaseScreenGradient_files/AtmospherePhaseScreenGradient_22_1.png
+
+
+.. code:: python
+
+    print "wavefront error: %5.2fnm" % (np.std(ps_e[dm_mask.host_data!=0])*1e3)
+
+.. parsed-literal::
+
+    wavefront error: 98.75nm
+
