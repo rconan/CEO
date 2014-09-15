@@ -46,14 +46,16 @@ Tutorials
 
 The PDF documentation contains some tutorials on the use of C++ API.
 
-Several Ipython Notebooks demonstrates the capabilities of the python interface.
+Several Ipython `Notebooks <Notebooks/notebooks.html>`_ demonstrates the capabilities of the python interface.
 
 
 Contents:
+---------
 
 .. toctree::
-   :maxdepth: 2
-
+   :maxdepth: 1
+  
+   Notebooks/notebooks.rst
 
 
 Indices and tables
