@@ -4,6 +4,7 @@ Cuda-Engined Adaptive Optics
 CEO is a Linear Minimum Mean Square Error wavefront estimator for Shack--Hartmann wavefront sensor based Adaptive Optics systems.
 CEO reconstructs the wavefront on-axis from one or several guide stars. The guide stars can be either Natural Guide Stars or Laser Guide Stars.
 The wavefront estimator algorithm is written in CUDA 5.0 and it relies on CUFFT, CUBLAS and CUSPARSE.
+More details at [http://rconan.github.io/CEO/](http://rconan.github.io/CEO/)
 
 Compiling CEO
 -------------
