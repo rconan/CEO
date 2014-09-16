@@ -11,9 +11,6 @@ The CEO library is compiled with `make all` and the PDF documentation is generat
 [noweb](http://www.cs.tufts.edu/~nr/noweb/) is required in order to generate the code and the documentation and Latex is needed to compile the documentation. 
 
 Prior to compiling the library, you must set the `CEOPATH`, `CUDAPATH` and `NOWEBPATH` variables in `commom.mk` such as they match you local paths.
-The library contains an atmosphere model with a number of turbulence layers that is set at compile time.
-The number of layers is set by the variable `_N_LAYER_` in `include/definition.h`.
-You have to change the value of `_N_LAYER` to match your atmosphere model.
 
 CEO has some limited plotting capability using [plotly](http://plot.ly).
 CEO has a wrapper for the REST API of plotly and it requires [libcurl](http://curl.haxx.se/libcurl/).
