@@ -990,7 +990,7 @@ void mask::set_filter(void) {
 @ \item [[cleanup]]
 <<mask functions>>=
 void mask::cleanup(void) {
-  fprintf(stderr,"@(CEO)>mask: freeing memory!\n");
+  fprintf(stdout,"@(CEO)>mask: freeing memory!\n");
   HANDLE_ERROR( cudaFree( m ) );
   HANDLE_ERROR( cudaFree( f ) );
 }
@@ -1010,6 +1010,7 @@ The python wrapper is
 <<ceo.pxd>>=
 ## mask structure
     cdef cppclass mask:
+        char *m
         float *f
         void setup(int)
         void setup_circular(int)
@@ -1041,10 +1042,6 @@ cdef class MaskAbstract:
 	self._c_mask = new ceo.mask()
         self.n = n
 
-    def __dealloc__(self):
-        self._c_mask.cleanup()
-
-
     property f:
         def __get__ (self):
             x = cuFloatArray(shape=(self.n,self.n))
@@ -1075,6 +1072,9 @@ cdef class Mask(MaskAbstract):
         MaskAbstract.__init__(self,n)
         self._c_mask.setup(n*n)
 
+    def __dealloc__(self):
+        self._c_mask.cleanup()
+
 cdef class Telescope(MaskAbstract):
     """ 
     Creates a mask object.
@@ -1096,6 +1096,9 @@ cdef class Telescope(MaskAbstract):
     def __cinit__(self, int n):
         MaskAbstract.__init__(self,n)
 	self._c_mask.setup_circular(self.n)    
+
+    def __dealloc__(self):
+        self._c_mask.cleanup()
 
 cdef class GMT(MaskAbstract):
     """ 
@@ -1120,6 +1123,9 @@ cdef class GMT(MaskAbstract):
     def __cinit__(self, int n, float S):
         MaskAbstract.__init__(self,n)
 	self._c_mask.setup_GMT(self.n,S)    
+
+    def __dealloc__(self):
+        self._c_mask.cleanup()
 @ 
 
 \subsection{Input/Output}
@@ -1215,9 +1221,9 @@ char path[50];
 
 if (stat("bins",&sb)!=0)
   if (mkdir("bins", S_IRWXU)==0)
-    fprintf(stderr,"@(CEO)>utilities: bins directory created!\n");
+    fprintf(stdout,"@(CEO)>utilities: bins directory created!\n");
   else {
-    fprintf(stderr,"\n\x1B[31m@(CEO)>utilities: bins mkdir failed!\x1B[0m\n");
+    fprintf(stdout,"\n\x1B[31m@(CEO)>utilities: bins mkdir failed!\x1B[0m\n");
     return;
   }
 strcpy(path,"bins/");
@@ -1225,14 +1231,14 @@ strcat(path,filename);
 FILE *fid;
 fid = fopen(path,"wb");
 if (fid==NULL) {
-  fprintf(stderr,"\n\x1B[31m@(CEO)>utilities: Unable to open the file: %s!\x1B[0m\n",path);
+  fprintf(stdout,"\n\x1B[31m@(CEO)>utilities: Unable to open the file: %s!\x1B[0m\n",path);
   return;
  }
 fwrite(&n_page,sizeof(int),1,fid);
 <<device to file common end>>=
 fclose(fid);
 free(data);
-fprintf(stderr,"@(CEO)>utilities: Data saved to %s!\n",filename);
+fprintf(stdout,"@(CEO)>utilities: Data saved to %s!\n",filename);
 @
 
 \subsubsection{Device to host}

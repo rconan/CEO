@@ -100,6 +100,7 @@ cdef extern from "imaging.h":
         float *d__frame
         void setup(int , int , int , int , int, int)
         void cleanup()
+        void set_pointing_direction(float , float )
         void propagate(source *)
         void propagateThroughFieldStop(source *, float field_stop_diam)
         void propagateThroughPyramid(source *)
@@ -175,7 +176,8 @@ The parameters are:
 \item the pointing direction vector [[zenith]] and [[azimuth]], 
 if [[zenith]] is negative, the device is align with the guide star,
 if it is positive or null then the guide star is displaced in the image plane according to their relative position,
-\item the pixel scale [[pixel_scale]].
+\item the pixel scale [[pixel_scale]],
+\item a flag setting the pointing of the imaging device either absolute or relative to the direction of the light source [[absolute_pointing]],
 \end{itemize}
 
 <<parameters>>=
@@ -184,7 +186,7 @@ int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_LENSLET,
 cufftHandle plan;
 float2 *d__wave_PUPIL;
 float  *d__frame, zenith, azimuth, theta_x, theta_y, pixel_scale;
-
+char absolute_pointing;
 @
 \section{Functions}
 \label{sec:functions}
@@ -256,7 +258,8 @@ N_FRAME     = 0;
 <<setup common>>=
 zenith = -1.0;
 pixel_scale = 0.0;
-printf("@(CEO)>imaging: Device memory allocation\n");
+absolute_pointing = 0;
+fprintf(stdout,"@(CEO)>imaging: Device memory allocation\n");
 int N_DFT_bytes = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
 cudaMalloc( (void**)&d__wave_PUPIL , sizeof(float2) * N_DFT_bytes);
 cudaMalloc( (void**)&d__frame , 
@@ -290,8 +293,8 @@ void imaging::propagate(source *src) {
   /* float dx, dy, dx_int, dy_int; */
   /* <<angular offset>> */
   /* printf("ANGULAR OFFSET:\n"); */
-  /* printf(" . x: %3.0f + %4.3f\n",dx_int,dx);     */
-  /* printf(" . y: %3.0f + %4.3f\n",dy_int,dy);     */
+  /* printf(" . x: %3.0f + %4.3f\n",dx_int,dx); */
+  /* printf(" . y: %3.0f + %4.3f\n",dy_int,dy); */
   /*   } */
   dim3 gridDim;
   dim3 blockDim(16,16);
@@ -302,7 +305,8 @@ void imaging::propagate(source *src) {
                                               src->wavenumber(),
 					      N_PX_PUPIL, N_PX_IMAGE, M,
 					      N_SIDE_LENSLET, src->dev_ptr,
-                                              pixel_scale, theta_x, theta_y,1);
+                                              pixel_scale, theta_x, theta_y,
+					      absolute_pointing,1);
   <<propagation (FFT, intensity and binning)>>
 }
 @ which sets the complex amplitude [[d__wave_PUPIL]] with the source wavefront amplitude and phase including the necessary zero padding for the DFT and the phasor to recenter the image.
@@ -383,6 +387,7 @@ gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
                 N_SOURCE);
 binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
                                    src->dev_ptr, pixel_scale, theta_x, theta_y,
+				   absolute_pointing,
                                    N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
 
 ++N_FRAME;
@@ -394,7 +399,7 @@ HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_FORWA
 @ that computes the discrete Fourier tranform (DFT) from the complex amplitude [[d__wave_PUPIL]] in the pupil plane.
 CUFFT requires to define a plan first:
 <<imaging CUFFT plan creation>>=
-printf("@(CEO)>imaging: Creating a 2D FFT plan\n");
+fprintf(stdout,"@(CEO)>imaging: Creating a 2D FFT plan\n");
 int n_DFT[NRANK] = {N_DFT, N_DFT};
 int iodist = N_DFT*N_DFT;
 int BATCH = N_LENSLET*N_SOURCE;
@@ -428,7 +433,7 @@ __global__ void wave2intensity(float2 *wave_PUPIL, const int N)
 Dynamically allocated variables are freed with the cleanup routine:
 <<cleanup>>=
 void imaging::cleanup(void) {
-  printf("@(CEO)>imaging: Device memory free\n");
+  fprintf(stdout,"@(CEO)>imaging: Device memory free\n");
   cufftDestroy(plan);
   cudaFree( d__wave_PUPIL );
   cudaFree( d__frame );
@@ -471,7 +476,8 @@ void imaging::propagateThroughFieldStop(source *src, float field_stop_diam) {
                                               src->wavenumber(),
 					      N_PX_PUPIL, N_PX_IMAGE, M,
 					      N_SIDE_LENSLET, src->dev_ptr,
-                                              pixel_scale, theta_x, theta_y,0);
+                                              pixel_scale, theta_x, theta_y,
+					      absolute_pointing,0);
   <<imaging CUFFT execution>>
 
  
@@ -547,7 +553,8 @@ void imaging::propagateThroughPyramid(source *src) {
                                               src->wavenumber(),
 					      N_PX_PUPIL, N_PX_IMAGE, M,
 					      N_SIDE_LENSLET, src->dev_ptr,
-                                              pixel_scale, theta_x, theta_y,0);
+                                              pixel_scale, theta_x, theta_y,
+					      absolute_pointing,0);
   <<imaging CUFFT execution>>
  
   gridDim = dim3(1+N_DFT/16,1+N_DFT/16);
@@ -630,18 +637,19 @@ $$\Psi_{ij} \leftarrow \Psi_{ij}\exp\left[\iota\pi{(i+j)(1 - N_{DFT} + w) \over 
 When the imaging device and the source are not aligned, the source is displaced in the image plane.
 The source location is given by its direction vector $\vec\theta_\ast$.
 The device is pointing in the direction given by the vector $\vec\theta_d$.
-The angular displacement in the image plane is: $$\vec\delta=\vec\theta_\ast-\vec\theta_d.$$
+The angular displacement in the image plane is: $$\vec\delta=\delta_M\vec\theta_\ast-\vec\theta_d.$$
+The pointing of the imaging devince can be either absolute $\delta_M=1$ i.e. with respect to the zenith direction or relative to the source direction i.e. $\delta_M=0$ the default.
 If $p$ is the angular pixel scale on the camera, then the displacement in pixel is $\vec d=\vec\delta/p$.
 The pixel displacement is divided into the integer pixel displacement on the camera, $\text{round}(\vec d)$, and the displacement in the imagelets,  $M\left(\vec d - \text{round}(\vec d)\right)$ with $M=[[N_PX_IMAGE]]/[[N_PX_CAMERA]]$.
 The displacement in pixel is computed with:
 <<angular offset>>=
 if (pixel_scale>0) {
-  dx  = src->theta_x - theta_x;
+  dx  = absolute_pointing*src->theta_x - theta_x;
   dx /= pixel_scale;
   dx_int = rintf( dx );
   dx -= dx_int; 
   dx *= M;
-  dy  = src->theta_y - theta_y;
+  dy  = absolute_pointing*src->theta_y - theta_y;
   dy /= pixel_scale;
   dy_int = rintf( dy );
   dy -= dy_int; 
@@ -657,7 +665,7 @@ __global__ void complexAmplitude(float2 *wave_PUPIL, int N_DFT,
 				 int N_SIDE_LENSLET, source *src,
 				 float pixel_scale,
 				 float theta_x, float theta_y,
-				 char DFT_SHIFT)
+				 char absolute_pointing, char DFT_SHIFT)
 {
   int i, j, iLenslet, jLenslet, ij_PUPIL, ij_DFT, iSource;
   float c ,s, phasor, dx, dy, dx_int, dy_int;
@@ -732,7 +740,7 @@ The imagelets are binned into framelets on the detector frame:
 <<binning>>=
 __global__ void binning(float *frame, const float2 *wave, int N_DFT, 
 			source *src, float pixel_scale,
-			float theta_x, float theta_y,
+			float theta_x, float theta_y, char absolute_pointing,
 			int N_PX_IMAGE, int N_PX_CAMERA, int N_SIDE_LENSLET)
 {
   int u, v, iLenslet, jLenslet, ij_DFT, 
@@ -815,15 +823,14 @@ The main parameters are displayed with:
 <<info>>=
 void imaging::info(void)
 {
-  printf("\n\x1B[1;42m@(CEO)>imaging:\x1B[;42m\n");
-  printf(" . imaging device    : %4d\n",N_LENSLET);
-  printf(" . pupil sampling    : %4d\n",N_PX_PUPIL);
-  printf(" . DFT sampling      : %4d\n",N_DFT);
-  printf(" . imagelet sampling : %4d\n",N_PX_IMAGE);
-  printf(" . frame sampling    : %4d\n",N_PX_CAMERA);
-  printf(" . source #          : %4d\n",N_SOURCE);
-  printf("----------------------------------------------------\x1B[0m\n");
- 
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>imaging:\x1B[;42m\n");
+  fprintf(stdout," . imaging device    : %4d\n",N_LENSLET);
+  fprintf(stdout," . pupil sampling    : %4d\n",N_PX_PUPIL);
+  fprintf(stdout," . DFT sampling      : %4d\n",N_DFT);
+  fprintf(stdout," . imagelet sampling : %4d\n",N_PX_IMAGE);
+  fprintf(stdout," . frame sampling    : %4d\n",N_PX_CAMERA);
+  fprintf(stdout," . source #          : %4d\n",N_SOURCE);
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n"); 
 }
 @ 
 The frame is saved to a file with:

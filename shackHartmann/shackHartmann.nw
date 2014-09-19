@@ -1,4 +1,4 @@
-% -*- mode: Noweb; noweb-code-mode: python-mode -*-
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
 @
 \section{The files}
 \label{sec:files}
@@ -62,6 +62,9 @@ struct shackHartmann {
 <<ceo.pxd>>=
 cdef extern from "shackHartmann.h":
     cdef cppclass shackHartmann:
+        float slopes_gain
+        mask valid_lenslet
+        mask valid_actuator
         imaging optics_relay
         centroiding data_proc
         void setup(int , int, float , int , int , int, int)
@@ -132,6 +135,9 @@ cdef class ShackHartmann:
     def reset(self):
         self._c_shackHartmann.optics_relay.reset()
 
+    def pointing(self,float zen, float azim):
+        self._c_shackHartmann.optics_relay.set_pointing_direction(zen, azim)
+
     property frame:
         def __get__(self):
             x = cuFloatArray(shape=(self.N_GS*self.N_PX_FRAME,self.N_PX_FRAME))
@@ -143,6 +149,24 @@ cdef class ShackHartmann:
             x = cuFloatArray(shape=(self.N_GS,(self.N_SIDE_LENSLET**2)*2))
             x._c_gpu.dev_data = self._c_shackHartmann.data_proc.d__c
             return x
+
+    property valid_actuator:
+        def __get__(self):
+            x = MaskAbstract(self.N_SIDE_LENSLET+1)
+            x._c_mask.m = self._c_shackHartmann.valid_actuator.m
+            x._c_mask.f = self._c_shackHartmann.valid_actuator.f
+            return x
+
+    property valid_lenslet:
+        def __get__(self):
+            x = MaskAbstract(self.N_SIDE_LENSLET)
+            x._c_mask.m = self._c_shackHartmann.valid_lenslet.m
+            x._c_mask.f = self._c_shackHartmann.valid_lenslet.f
+            return x
+
+    property slopes_gain:
+        def __set__(self, float val):
+            self._c_shackHartmann.slopes_gain = val
 @ 
 
 \section{Parameters}
@@ -189,6 +213,9 @@ float pixel_scale;
 @ \item the lenslet intensity threshold:
 <<parameters>>=
 float intensity_threshold;
+@ \item the slopes gain:
+<<parameters>>=
+float slopes_gain;
 @ \end{itemize}
 
 \section{Functions}
@@ -216,38 +243,59 @@ void shackHartmann::setup(int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
   N_ACTUATOR = (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1);
   N_WFS      = N_GS;
   N_SLOPE    = N_LENSLET*N_GS*2;
+  slopes_gain = 1.0;
   HANDLE_ERROR( cudaMalloc( (void**)&d__c0 , sizeof(float) *N_SLOPE ) );
   HANDLE_ERROR( cudaMemset( d__c0, 0, sizeof(float)*N_SLOPE ) ); 
   d__cx0 = d__c0;
   d__cy0 = d__c0 + N_LENSLET;
-  valid_lenslet.setup(N_LENSLET*N_WFS);
-  valid_actuator.setup(N_ACTUATOR*N_WFS);
+  valid_lenslet.setup(N_LENSLET);
+  valid_actuator.setup(N_ACTUATOR);
   optics_relay.setup(N_PX_LENSLET, N_SIDE_LENSLET, DFT_osf,
 	    (float)N_PX_IMAGE/N_PX_LENSLET, 
 	    1.0/BIN_IMAGE, N_GS);
   data_proc.setup(N_SIDE_LENSLET, N_GS);
+  <<lenslet mask pointer>>
 }
+@
+The [[lenslet_mask]] in [[data_proc]] now points to the mask in the [[valid_lenslet]] [[mask]] structure
+<<lenslet mask pointer>>= 
+HANDLE_ERROR( cudaFree( data_proc.lenslet_mask) );
+data_proc.lenslet_mask = valid_lenslet.m;
+@
+Allocated memory is freed with:
 <<cleanup>>=
 void shackHartmann::cleanup(void)
 {
-  fprintf(stderr,"@(CEO)>shackHartmann: freeing memory!\n");
-  fprintf(stderr," |-");
+  fprintf(stdout,"@(CEO)>shackHartmann: freeing memory!\n");
+  fprintf(stdout," |-");
   valid_lenslet.cleanup();
-  fprintf(stderr," |-");
+  data_proc.lenslet_mask = 0;
+  fprintf(stdout," |-");
   valid_actuator.cleanup();
-  fprintf(stderr," |-");
+  fprintf(stdout," |-");
   optics_relay.cleanup();
-  fprintf(stderr," |-");
+  fprintf(stdout," |-");
   data_proc.cleanup();
+}
+@
+The WFS calibration routine is:
+<<WFS calibration>>= 
+void shackHartmann::calibrate(source *src, float threshold) {
+  <<WFS calibration source propagation>>
+  <<WFS calibration reference slopes>>
+  <<WFS calibration valid lenslet>>
+  data_proc.MASK_SET = 1;
+  optics_relay.reset();
 }
 @
 The wavefront sensor need first to be calibrated with a reference calibration source.
 <<WFS calibration source propagation>>=
+pixel_scale = 1E-6*src->wavelength()/(lenslet_pitch*DFT_osf)*slopes_gain;
+optics_relay.pixel_scale = pixel_scale;
 optics_relay.propagate(src);
 @ 
 The slopes derived from the calibration wavefront will be set a the reference slopes.
 <<WFS calibration reference slopes>>=
-pixel_scale = 1E-6*src->wavelength()/(lenslet_pitch*DFT_osf);
 data_proc.get_data(optics_relay.d__frame,optics_relay.N_PX_CAMERA);
 HANDLE_ERROR( cudaMemcpy( d__c0, data_proc.d__c, N_SLOPE*sizeof(float), 
 			  cudaMemcpyDeviceToDevice ) ); 
@@ -256,8 +304,8 @@ HANDLE_ERROR( cudaMemset( data_proc.d__c, 0, sizeof(float)*N_SLOPE ) );
 The total intensity per lenslet is used to compute the valid lenslet.
 The valid lenslet and actuator masks are first set to 0. 
 <<WFS calibration valid lenslet>>=
-HANDLE_ERROR( cudaMemset(valid_lenslet.m,  0, sizeof(char)*N_LENSLET*N_WFS  ) );
-HANDLE_ERROR( cudaMemset(valid_actuator.m, 0, sizeof(char)*N_ACTUATOR*N_WFS ) );
+HANDLE_ERROR( cudaMemset(valid_lenslet.m,  0, sizeof(char)*N_LENSLET  ) );
+HANDLE_ERROR( cudaMemset(valid_actuator.m, 0, sizeof(char)*N_ACTUATOR ) );
 @
 The maximum lenslet intensity is sought:
 <<WFS calibration valid lenslet>>=
@@ -271,10 +319,12 @@ The masks are computed with the [[set_valid_lenslet]] kernel:
 <<WFS calibration valid lenslet>>=
 int NL = optics_relay.N_SIDE_LENSLET;
 dim3 blockDim(16,16);
-dim3 gridDim(NL/16+1,NL/16+1,N_WFS);
+dim3 gridDim(NL/16+1,NL/16+1,1); // The 3rd argument sets the WFS which intensity is used for calibration
 set_valid_lenslet LLL gridDim,blockDim RRR (valid_lenslet.m, valid_actuator.m, 
                                             NL, data_proc.d__mass,
                                             idx, threshold);
+valid_lenslet.set_filter();
+valid_actuator.set_filter();
 @ with the kernel:
 <<valid lenslet>>=
 __global__ void set_valid_lenslet(char *lenslet_mask, char *actuator_mask, 
@@ -315,21 +365,15 @@ __global__ void set_valid_lenslet(char *lenslet_mask, char *actuator_mask,
 	lenslet_intensity_map[kL] = 0.0;
     }
 }
-@
-The WFS calibration routine is:
-<<WFS calibration>>= 
-void shackHartmann::calibrate(source *src, float threshold) {
-  <<WFS calibration source propagation>>
-  <<WFS calibration reference slopes>>
-  <<WFS calibration valid lenslet>>
-  optics_relay.reset();
-}
 
 @
 The wavefront of the guide star is processed with:
 <<wavefront processing>>=
 void shackHartmann::analyze(source *gs) {
-  pixel_scale = 1E-6*gs->wavelength()/(lenslet_pitch*DFT_osf);
+    /* printf("slopes gain:%.2E\n",slopes_gain); */
+  pixel_scale = 1E-6*gs->wavelength()/(lenslet_pitch*DFT_osf)*slopes_gain;
+  /* printf("pixel scale:%.2E\n",pixel_scale); */
+  optics_relay.pixel_scale = pixel_scale;
   optics_relay.propagate(gs);
   data_proc.get_data(optics_relay.d__frame,optics_relay.N_PX_CAMERA,
 		     d__cx0,d__cy0,pixel_scale,
@@ -354,7 +398,7 @@ All CEO programs must include the following headers which also contains the head
 #endif
 
 <<shackHartmann.bin>>=
-<<test 1>>
+<<test 2>>
 
 @ 
 \subsection{Test 1}
@@ -368,6 +412,7 @@ The main function is:
 <<main header>>
 <<square tiled geometry>>
 int main(int argc,char *argv[]) {
+printf(" ##### TEST 1 #####\n");
 if (argc != 4) {
   printf("Usage: %s N_SIDE_LENSLET N_PX_LENSLET N_GS\n",argv[0]);
   return 1;
@@ -386,23 +431,24 @@ wfs.optics_relay.show_frame("Shack-Hartmann/frame");
 wfs.data_proc.show_centroids("Shack-Hartmann/centroids");
 wfs.data_proc.show_flux("Shack-Hartmann/flux");
 
-atm.get_phase_screen_gradient(&wfs.data_proc,N_SIDE_LENSLET,d,&gs,N_GS,0);
-wfs.data_proc.show_centroids("Shack-Hartmann/geometric centroids");
 
-/*
 lmmse.estimation(&wfs.data_proc);
 atm.get_phase_screen(&gs_dm,N_GS,d,N_ACTUATOR,d,N_ACTUATOR,0);
 gs_dm.wavefront.masked(&DM_mask);
 gs_dm.wavefront.show_phase("Shack-Hartmann/wavefront low res.");
 phase_screen.M = &DM_mask;
 phase_screen.add_phase(1,lmmse.d__phase_est);
-phase_screen.add_phase(-1,gs_dm.wavefront.phase);
+//phase_screen.add_phase(-1,gs_dm.wavefront.phase);
 phase_screen.show_phase("Shack-Hartmann/recon. wavefront");
+
+/*
+atm.get_phase_screen_gradient(&wfs.data_proc,N_SIDE_LENSLET,d,&gs,N_GS,0);
+wfs.data_proc.show_centroids("Shack-Hartmann/geometric centroids");
 
 lmmse.estimation(&wfs.data_proc);
 phase_screen.reset();
 phase_screen.add_phase(1,lmmse.d__phase_est);
-phase_screen.add_phase(-1,gs_dm.wavefront.phase);
+//phase_screen.add_phase(-1,gs_dm.wavefront.phase);
 
 phase_screen.show_phase("Shack-Hartmann/geom. recon. wavefront");
 */
@@ -445,8 +491,7 @@ The guide star is defined with
 float zenith[] = {ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30)},
   azimuth[] = {0,2.*PI/6.,4.*PI/6.,6.*PI/6.,8.*PI/6.,10.*PI/6.,12.*PI/6.};
 source gs;
-gs.setup( zenith, azimuth, INFINITY, N_GS, N_PX2);
-gs.photometric_band = "K";
+gs.setup("K", zenith, azimuth, INFINITY, N_GS, N_PX2);
 <<test 1 cleanup>>=
 gs.cleanup();
 @ 
@@ -461,15 +506,14 @@ telescope.cleanup();
 The wavefront sampled on the actuators location is from the following guide star:
 <<test 1 setup>>=
 source gs_dm;
-gs_dm.setup( zenith, azimuth, INFINITY, N_GS, N_ACTUATOR2);
-gs_dm.photometric_band = "K";
+gs_dm.setup("K", zenith, azimuth, INFINITY, N_GS, N_ACTUATOR2);
 <<test 1 cleanup>>=
 gs_dm.cleanup();
 @ 
 The wavefront sensor is defined with:
 <<test 1 setup>>=
 shackHartmann wfs;
-wfs.setup(N_SIDE_LENSLET,N_PX_LENSLET,d,2,2*N_PX_LENSLET,1,N_GS);
+wfs.setup(N_SIDE_LENSLET,N_PX_LENSLET,d,2,N_PX_LENSLET,1,N_GS);
 <<test 1 cleanup>>=
 wfs.cleanup();
 @ 
@@ -526,12 +570,279 @@ The filtering properties associated with the pupil are set with:
 DM_mask.set_filter();
 @ 
 The wavefront is reconstructed from the centroids:
-<<test 1 setup (opted out)>>=
+<<test 1 setup>>=
 LMMSE lmmse;
-lmmse.setup(&atm,&gs,1,&gs,1,d,N_SIDE_LENSLET,&DM_mask,"MINRES");
-<<test 1 cleanup (opted out)>>=
+lmmse.setup(&atm,&gs,&gs,d,N_SIDE_LENSLET,&DM_mask,"MINRES");
+<<test 1 cleanup>>=
 lmmse.cleanup();
 @ 
+
+\subsection{Test 2}
+\label{sec:test-2}
+
+The input parameters are
+\begin{itemize}
+\item the size of the lenslet array [[N_SIDE_LENSLET]]$\times$[[N_SIDE_LENSLET]],
+<<setup test 2>>=
+int N_SIDE_LENSLET, N_ACTUATOR, N_ACTUATOR2;
+N_SIDE_LENSLET = atoi( argv[1] );
+int _N_LENSLET_ = (N_SIDE_LENSLET*N_SIDE_LENSLET);
+N_ACTUATOR     = N_SIDE_LENSLET + 1;
+N_ACTUATOR2    = N_ACTUATOR*N_ACTUATOR;
+printf("__ SHACK-HARTMANN __\n");
+printf(" . %dX%d lenslets: \n", N_SIDE_LENSLET, N_SIDE_LENSLET);
+@ \item the number of pixel per lenslet [[N_PX_LENSLET]]$\times$[[N_PX_LENSLET]]
+<<setup test 2>>=
+int N_PX_LENSLET;
+N_PX_LENSLET = atoi( argv[2] );
+printf(" . %dX%d pixels per lenslet: \n", N_PX_LENSLET, N_PX_LENSLET);
+@ \item the number of sources,
+<<setup test 2>>=
+int N_GS;
+N_GS = atoi( argv[3] );
+printf(" . source #: %d\n", N_GS);
+@ \end{itemize}
+The total number of pixel is given by
+<<setup test 2>>=
+int N_PX, N_PX2;
+N_PX  = N_SIDE_LENSLET*N_PX_LENSLET;
+N_PX2 = N_PX*N_PX;
+float p, d, D;
+D = 25.0;
+p = D/N_PX;
+d = D/N_SIDE_LENSLET;
+@
+The components common to all the systems are defined first:
+\begin{itemize}
+\item the science source,
+<<setup test 2>>=
+source src;
+src.setup("J",ARCSEC(0) , 0, INFINITY,(N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1), "SRC");
+<<cleanup test 2>>=
+src.cleanup();
+@ \item the atmosphere,
+<<setup test 2>>=
+atmosphere atm;
+//atm.setup(20e-2,30,10e3,10,0);
+atm.gmt_setup(15e-2,60);
+/*
+float altitude[] = {0, 10e3},
+xi0[] = {0.5, 0.5},
+wind_speed[] = {10, 10},
+wind_direction[] = {0, 0};
+atm.setup(20e-2,30,altitude, xi0, wind_speed, wind_direction);
+*/
+<<cleanup test 2>>=
+atm.cleanup();
+@ \item the pupil mask.
+<<setup test 2>>=
+  //mask pupil_mask;
+  //pupil_mask.setup( (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1) );
+<<cleanup test 2>>=
+  //pupil_mask.cleanup();
+@ \item the wavefront sensor centroid container,
+<<setup test 2>>=
+  //centroiding cog;
+  //cog.setup(N_SIDE_LENSLET,1);
+<<cleanup test 2>>=
+  //cog.cleanup();
+@ \item the diffraction limited science imager,
+<<setup test 2>>=
+imaging imager;
+imager.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup test 2>>=
+imager.cleanup();
+@ \item the turbulence limited science imager,
+<<setup test 2>>=
+imaging imager_turb;
+imager_turb.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup test 2>>=
+imager_turb.cleanup();
+@ \item the science imager for NGSAO LMMSE,
+<<setup test 2>>=
+imaging imager_ngsao_lmmse;
+imager_ngsao_lmmse.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup test 2>>=
+imager_ngsao_lmmse.cleanup();
+@ \item the statistical tool.
+<<setup test 2>>=
+stats S;
+S.setup();
+<<cleanup test 2>>=
+S.cleanup();
+@  \end{itemize}
+
+The natural guide star (NGS) is given by:
+<<setup test 2>>=
+source ngs;
+ngs.setup("R",ARCSEC(0) , 0, INFINITY, (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1), "NGS");
+<<cleanup test 2>>=
+ngs.cleanup();
+@
+The wavefront sensor is defined with:
+<<setup test 2>>=
+shackHartmann wfs;
+wfs.setup(N_SIDE_LENSLET,N_PX_LENSLET,d,2,N_PX_LENSLET,1,N_GS);
+wfs.calibrate(&ngs,0.5);
+<<cleanup test 2>>=
+wfs.cleanup();
+
+@ 
+The Fried geometry for a circular pupil with the intensity [[threshold]] is enforced::
+<<setup test 2>>=
+  //float threshold = 0.5;
+  //cog.MASK_SET = fried_geometry_setup(cog.lenslet_mask, pupil_mask.m, 
+//				    N_SIDE_LENSLET, 16, threshold);
+@ 
+The filtering properties associated with the pupil are set with:
+<<setup test 2>>=
+  wfs.valid_actuator.set_filter();
+  //pupil_mask.set_filter();
+@ 
+The science is propagated through the [[pupil_mask]] to the focal plane of the [[imager]]:
+<<setup test 2>>=
+src.wavefront.masked(&wfs.valid_actuator);
+imager.propagate(&src);
+//imager.frame2file("refFrame.bin");
+char plotly_name[64], plotly_dir[64];
+sprintf(plotly_dir,"Shack-Hartmann+LMMSE/D=%.1fm, N=%d (%d samples)/",D,N_SIDE_LENSLET,N_SAMPLE);
+SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/diffraction limited");
+imager.show_frame(plotly_name);
+
+@ A few useful variables are defined here:
+<<setup test 2>>=
+int NP, NP2, k_SAMPLE;
+float tau=0.;
+NP = N_SIDE_LENSLET+1;
+NP2 = NP*NP;
+k_SAMPLE = 0;
+@
+The science wavefront is propagated through the atmosphere from [[src]] to [[pupil_mask]].
+<<science wavefront>>=
+atm.get_phase_screen(&src,d,NP,d,NP,tau);
+src.wavefront.masked();
+if (k_SAMPLE==(N_SAMPLE-1)) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/science phase screen");
+  src.wavefront.show_phase(plotly_name);
+ }
+<<setup test 2>>=
+float science_wf_rms=0.;
+<<science wavefront>>=
+science_wf_rms += S.var(src.wavefront.phase, &wfs.valid_actuator, NP2);
+
+@  and then propagated to the focal plane of the imager:
+<<science wavefront>>=
+imager_turb.propagate(&src);
+if (k_SAMPLE==(N_SAMPLE-1)) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/turbulence limited");
+  imager_turb.show_frame(plotly_name);
+ }
+@ The turbulence wavefront is saved apart for later use:
+<<science wavefront>>=
+complex_amplitude phase_screen;
+phase_screen.setup((N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1));
+phase_screen.add_phase(1,src.wavefront.phase);
+
+@ 
+All CEO programs must include the following headers which also contains the headers for all the CEO library modules.
+<<main header>>=
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+@ The number of atmosphere sample
+<<main header>>=
+#define N_SAMPLE 1
+#define PLOTLY_LIM (N_SAMPLE-1) // (N_SAMPLE-1) for plotting, higher for disabling plotting
+@
+The main function is:
+<<test 2>>=
+<<main header>>
+void SET_PLOTLY_NAME(char *name,char *dir,char *path)
+{
+strcpy(name, dir);
+strcat(name,path);
+}
+int main(int argc,char *argv[]) {
+printf(" ##### TEST 2 #####\n");
+if (argc != 4) {
+  printf("Usage: %s N_SIDE_LENSLET N_PX_LENSLET N_GS\n",argv[0]);
+  return 1;
+ }
+cudaSetDevice(0);
+<<setup test 2>>
+fprintf(stdout," Samples: %d:\n",N_SAMPLE);
+for (k_SAMPLE=0;k_SAMPLE<N_SAMPLE;k_SAMPLE++) {
+  fprintf(stdout,"\r%4d",k_SAMPLE);
+  atm.reset();
+
+ printf("WFS MASK SET: %d\n",wfs.data_proc.MASK_SET);
+
+<<science wavefront>>
+<<ngsao>>
+    }
+ fprintf(stdout,"\n");
+<<results>>
+<<cleanup test 2>>
+}
+
+
+@  The NGS wavefront gradients are computed with:
+<<ngsao>>=
+atm.get_phase_screen_gradient(&wfs.data_proc,N_SIDE_LENSLET,d,&ngs,tau);
+
+@ 
+The wavefront is reconstructed from the NGS centroids:
+<<setup test 2>>=
+LMMSE ngs_lmmse;
+ngs_lmmse.setup(&atm,&ngs,&src,&wfs,"MINRES");
+int cvgce_iteration=0;
+float elapsed_time=0.;
+<<ngsao>>=
+ngs_lmmse.estimation(&wfs.data_proc);
+elapsed_time += ngs_lmmse.elapsed_time;
+cvgce_iteration += ngs_lmmse.iSolve.cvgce_iteration;
+@ The LMMMSE NGS wavefront estimate is subtracted from the science wavefront:
+<<ngsao>>=
+src.wavefront.reset(phase_screen);
+src.wavefront.add_phase(-1,ngs_lmmse.d__phase_est);
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/LMMSE NGS AO");
+  src.wavefront.show_phase(plotly_name);
+ }
+<<setup test 2>>=
+float ngs_wfe_rms_lmmse=0.;
+<<ngsao>>=
+ngs_wfe_rms_lmmse += S.var(src.wavefront.phase, 
+		   &wfs.valid_actuator, NP2);
+//ngs_lmmse.toFile("phaseEstNgsItp.bin");
+<<cleanup test 2>>=
+ngs_lmmse.cleanup();
+@ and the residual wavefront corresponding image is computed.
+<<ngsao>>=
+imager_ngsao_lmmse.propagate(&src);
+//imager.frame2file("ngsLmmseFrame.bin");
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/LMMSE NGS AO");
+  imager_ngsao_lmmse.show_frame(plotly_name,&imager);
+ }
+
+@ 
+\subsubsection{Results}
+\label{sec:results}
+
+<<results>>=
+science_wf_rms    = 1E9*sqrtf(science_wf_rms/N_SAMPLE);
+ngs_wfe_rms_lmmse = 1E9*sqrtf(ngs_wfe_rms_lmmse/N_SAMPLE);
+elapsed_time /= N_SAMPLE;
+cvgce_iteration /= N_SAMPLE;
+printf("------------------------------\n");
+printf("___  TURBULENCE WAVEFRONT ___\n");
+printf("\n NGS WF RMS: %7.2fnm\n", science_wf_rms);
+printf("\n___ ON-AXIS WAVEFRONT ESTIMATE FROM NGS ___\n");
+printf("\n NGS MMSE WFE RMS: %8.3fnm in %.2fms with %d iterations\n",
+       ngs_wfe_rms_lmmse,elapsed_time,cvgce_iteration);
+printf("------------------------------\n");
+@
 
 \subsection{Python}
 \label{sec:python-1}

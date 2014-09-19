@@ -24,6 +24,10 @@
 #include "GBTBT.h"
 #endif
 
+#ifndef __SHACKHARTMANN__
+#include "shackHartmann.h"
+#endif
+
 #ifndef __ITERATIVESOLVERS_H__
 #include "iterativeSolvers.h"
 #endif
@@ -39,12 +43,15 @@ struct LMMSE {
   void setup(atmosphere *atm, source *guide_star, source *mmse_star,
 	     float sampling, int N, 
 	     mask *pupil, char *solver_id);
+  void setup(atmosphere *atm, source *guide_star, source *mmse_star,
+	     shackHartmann *wfs, char *solver_id);
 
   void cleanup(void);
 
   void estimation_old(float* d__c, int nMaxIteration, float *d__x0);
   void estimation_old(float* d__c, int nMaxIteration);
   void estimation(const centroiding *cog);
+  void estimation(shackHartmann *wfs);
 
   void set_phase_est_ptr(float *data_ptr);
   void toFile(const char *filename);
@@ -63,10 +70,12 @@ struct LMMSE {
 
 <<setup>>
 <<setup with pupil>>
+<<setup with shackHartmann>>
 
 <<cleanup>>
 
 <<wavefront estimation>>
+<<wavefront estimation (shackHartmann)>>
 
 <<phase estimate pointer>>
 <<phase estimate to file>>
@@ -81,8 +90,11 @@ cdef extern from "LMMSE.h":
         float *d__phase_est
         void setup(atmosphere *, source *, source *, 
                    float , int , mask *, char *)
+        void setup(atmosphere *, source *, source *, 
+                   shackHartmann *, char *)
         void cleanup()
         void estimation(centroiding *)
+        void estimation(shackHartmann *)
 @ 
 <<ceo.pyx>>=
 cdef class Lmmse:
@@ -145,6 +157,67 @@ cdef class Lmmse:
             x = cuFloatArray(shape=(self.N_phase,self.N_phase))
             x._c_gpu.dev_data = self._c_LMMSE.d__phase_est
             return x
+
+cdef class LmmseSH:
+    """
+    A class for LMMSE reconstructor
+
+    Parameters
+    ----------
+    atm: an Atmosphere object
+        The atmosphere model used to computed the covariance matrices.
+    guide_star: a Source object
+        The guide stars from which the wavefront gradient is used for the wavefront reconstruction.
+    N_guide_star: an int
+        The number of guide stars.
+    mmse_star: a Source object
+        The star in the direction of which the wavefront is reconstructed.
+    N_mmse_star: an int
+        The number of mmse_star.
+    sampling: float
+        The sampling step of the wavefront in meters.
+    N: int
+        The number of lenslet across the lenslet array.
+    pupil: a Mask object
+        The binary mask corresponding to the telescope pupil.
+    solver_id: char
+        The name of the iterative solver: MINRES or CG.
+
+    Returns:
+    out : Lmmse
+        A Lmmse object
+    """
+    
+    cdef ceo.LMMSE *_c_LMMSE
+    cdef int N_phase
+
+    def __cinit__(self,AtmosphereAbstract atm, 
+                  Source guide_star, Source mmse_star,
+                  ShackHartmann wfs, char *solver_id):
+        self._c_LMMSE = new ceo.LMMSE()
+        self.N_phase = wfs.N_SIDE_LENSLET + 1
+        self._c_LMMSE.setup(atm._c_atmosphere,
+                            guide_star._c_source, mmse_star._c_source,
+                            wfs._c_shackHartmann, solver_id)
+
+    def __dealloc__(self):
+        self._c_LMMSE.cleanup()
+
+    def estimation(self, ShackHartmann wfs):
+        """
+        Computes an estimate of the wavefront corresponding to the centroids in the Centroiding object
+        """
+        self._c_LMMSE.estimation(wfs._c_shackHartmann)
+
+    property phase:
+        def __get__(self):
+            """
+            Return the phase estimate in a cuFloatArray object
+            """
+            x = cuFloatArray(shape=(self.N_phase,self.N_phase))
+            x._c_gpu.dev_data = self._c_LMMSE.d__phase_est
+            return x
+
 @ 
 
 \section{Parameters}
@@ -452,11 +525,27 @@ HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* N_LENSLET*2*N_guide_star ) );
 HANDLE_ERROR( cudaEventCreate( &start ) );
 HANDLE_ERROR( cudaEventCreate( &stop ) );
 }
+@ with a pupil:
 <<setup with pupil>>=
 void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
 		       float sampling, int N_SIDE_LENSLET_,
                        mask *pupil, char *solver_id)
 {
+<<setup common>>
+}
+@ with a Shack--Hartmann:
+<<setup with shackHartmann>>=
+void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
+		       shackHartmann *wfs, char *solver_id)
+{
+float sampling      = wfs->lenslet_pitch;
+int N_SIDE_LENSLET_ = wfs->optics_relay.N_SIDE_LENSLET;
+mask *pupil;
+pupil = &(wfs->valid_actuator);
+<<setup common>>
+}
+@  with
+<<setup common>>=
   N_guide_star = guide_star->N_SRC;
   N_mmse_star  = mmse_star->N_SRC;
 
@@ -503,8 +592,8 @@ HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* N_LENSLET*2*N_guide_star 
 HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* N_LENSLET*2*N_guide_star ) );
 HANDLE_ERROR( cudaEventCreate( &start ) );
 HANDLE_ERROR( cudaEventCreate( &stop ) );
-}
-@ 
+@
+ 
 The slope covariance matrix is computed first:
 <<setup: AA covariance>>=
 aa.setup(N_SIDE_LENSLET_,atm,sampling,guide_star, N_guide_star);
@@ -516,17 +605,17 @@ Memory is freed with
 <<cleanup>>= 
 void LMMSE::cleanup(void)
 {
-  fprintf(stderr,"@(CEO)>LMMSE: freeing memory!\n");
+  fprintf(stdout,"@(CEO)>LMMSE: freeing memory!\n");
 
-  fprintf(stderr," |-");
+  fprintf(stdout," |-");
   aa.cleanup();
-  fprintf(stderr," |-");
+  fprintf(stdout," |-");
   pa.cleanup();
-  fprintf(stderr," |-");
+  fprintf(stdout," |-");
   aaCov.cleanup();
-  fprintf(stderr," |-");
+  fprintf(stdout," |-");
   paCov.cleanup();
-  fprintf(stderr," |-");
+  fprintf(stdout," |-");
   iSolve.cleanup();
 
   HANDLE_ERROR( cudaEventDestroy( start ) );
@@ -548,6 +637,18 @@ void LMMSE::cleanup(void)
 <<wavefront estimation>>=
 void LMMSE::estimation(const centroiding *cog)
 {
+  <<wavefront estimation (common)>>
+}
+@ 
+<<wavefront estimation (shackHartmann)>>=
+void LMMSE::estimation(shackHartmann *wfs)
+{
+  centroiding *cog;
+  cog = &(wfs->data_proc);
+  <<wavefront estimation (common)>>
+}
+@ with
+<<wavefront estimation (common)>>=
 HANDLE_ERROR( cudaEventRecord( start, 0 ) );
 
 <<wavefront estimation (solver and projection)>>
@@ -572,7 +673,7 @@ d__phase_est = d__phase_est_i;
 HANDLE_ERROR( cudaEventRecord( stop, 0 ) );
 HANDLE_ERROR( cudaEventSynchronize( stop ) );
 HANDLE_ERROR( cudaEventElapsedTime( &elapsed_time, start, stop ) );
-}
+
 
 <<wavefront estimation (solver and projection)>>=
 if (cog->MASK_SET) aaCov.mask = cog->lenslet_mask;

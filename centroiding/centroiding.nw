@@ -154,10 +154,12 @@ void centroiding::setup(int _N_SIDE_LENSLET, int _N_SOURCE) {
 @ and de--allocated with the [[cleanup]] routine
 <<cleanup>>=
 void centroiding::cleanup(void) {
-  fprintf(stderr,"@(CEO)>centroiding: freeing memory!\n");
+  fprintf(stdout,"@(CEO)>centroiding: freeing memory!\n");
   HANDLE_ERROR( cudaFree( d__c ) );
   HANDLE_ERROR( cudaFree( d__mass ) );
-  HANDLE_ERROR( cudaFree( lenslet_mask ) );
+  if (lenslet_mask) {
+    HANDLE_ERROR( cudaFree( lenslet_mask ) );
+  }
 }
 @ 
 The centroiding device kernel is allocating shared memory. 
@@ -221,14 +223,14 @@ void centroiding::get_data(float *frame, int N_PX_CAMERA,
 @ 
 <<shared memory requirement>>=
 if (N_PX_CAMERA>DEV_MAX_THREADS) {
-  fprintf(stderr,"\n\x1B[31m@(CEO)>centroiding: The required number thread (%d) is larger\n that the maximum number of threads per block (%d)\x1B[0m\n",N_PX_CAMERA,DEV_MAX_THREADS);
+  fprintf(stdout,"\n\x1B[31m@(CEO)>centroiding: The required number thread (%d) is larger\n that the maximum number of threads per block (%d)\x1B[0m\n",N_PX_CAMERA,DEV_MAX_THREADS);
   exit( EXIT_FAILURE );
   }
 //printf("Required shared memory:  %d\n",N_PX_CAMERA_BYTE);
 dim3 blockGrid(_N_SIDE_LENSLET_,_N_SIDE_LENSLET_,N_SOURCE);
 dim3 threadGrid(N_PX_CAMERA,1);
 if (N_PX_CAMERA_BYTE>DEV_SHARED_MEM) {
-//  fprintf(stderr,"\n\x1B[31m@(CEO)>centroiding: The required shared memory (%dbytes) is larger\n that the maximum shared memory per block (%dbytes)\x1B[0m\n",N_PX_CAMERA_BYTE,DEV_SHARED_MEM);
+//  fprintf(stdout,"\n\x1B[31m@(CEO)>centroiding: The required shared memory (%dbytes) is larger\n that the maximum shared memory per block (%dbytes)\x1B[0m\n",N_PX_CAMERA_BYTE,DEV_SHARED_MEM);
   float *shared;
   HANDLE_ERROR( cudaMalloc( (void**)&shared , N_PX_CAMERA_BYTE ) );    
   centroidingEngineSh LLL blockGrid , threadGrid RRR 
@@ -249,14 +251,14 @@ if (N_PX_CAMERA_BYTE>DEV_SHARED_MEM) {
 @ 
 <<shared memory requirement (GT)>>=
 if (N_PX_CAMERA>DEV_MAX_THREADS) {
-  fprintf(stderr,"\n\x1B[31m@(CEO)>centroiding: The required number thread (%d) is larger\n that the maximum number of threads per block (%d)\x1B[0m\n",N_PX_CAMERA,DEV_MAX_THREADS);
+  fprintf(stdout,"\n\x1B[31m@(CEO)>centroiding: The required number thread (%d) is larger\n that the maximum number of threads per block (%d)\x1B[0m\n",N_PX_CAMERA,DEV_MAX_THREADS);
   exit( EXIT_FAILURE );
   }
 //printf("Required shared memory:  %d\n",N_PX_CAMERA_BYTE);
 dim3 blockGrid(_N_SIDE_LENSLET_,_N_SIDE_LENSLET_,N_SOURCE);
 dim3 threadGrid(N_PX_CAMERA,1);
 if (N_PX_CAMERA_BYTE>DEV_SHARED_MEM) {
-//  fprintf(stderr,"\n\x1B[31m@(CEO)>centroiding: The required shared memory (%dbytes) is larger\n that the maximum shared memory per block (%dbytes)\x1B[0m\n",N_PX_CAMERA_BYTE,DEV_SHARED_MEM);
+//  fprintf(stdout,"\n\x1B[31m@(CEO)>centroiding: The required shared memory (%dbytes) is larger\n that the maximum shared memory per block (%dbytes)\x1B[0m\n",N_PX_CAMERA_BYTE,DEV_SHARED_MEM);
   float *shared;
   HANDLE_ERROR( cudaMalloc( (void**)&shared , N_PX_CAMERA_BYTE ) );    
   centroidingEngineGTSh LLL blockGrid , threadGrid RRR 

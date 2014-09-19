@@ -237,20 +237,20 @@ for (int i=0;i<M;i++)
   }
 
 int BATCH = M*N;
-fprintf(stderr,"\n@(CEO)>GBTBT: Creating a 1D covariance FFT plan\n");
+fprintf(stdout,"\n@(CEO)>GBTBT: Creating a 1D covariance FFT plan\n");
 HANDLE_ERROR_CUFFT( cufftPlan1d(&raster_plan, NDFT, CUFFT_R2C, BATCH),
 		    "Unable to create plan");
 HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(raster_plan, CUFFT_COMPATIBILITY_NATIVE),
 		    "Unable to set compatibility mode to native");
 
-fprintf(stderr,"\n@(CEO)>GBTBT: Creating a 1D MVM input FFT plan\n");
+fprintf(stdout,"\n@(CEO)>GBTBT: Creating a 1D MVM input FFT plan\n");
 BATCH = M*N;
 HANDLE_ERROR_CUFFT( cufftPlan1d(&MVM_input_plan, NDFT, CUFFT_R2C, BATCH),
 		    "Unable to create plan");
 HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(MVM_input_plan, CUFFT_COMPATIBILITY_NATIVE),
 		    "Unable to set compatibility mode to native");
 
-fprintf(stderr,"\n@(CEO)>GBTBT: Creating a 1D MVM output FFT plan\n");
+fprintf(stdout,"\n@(CEO)>GBTBT: Creating a 1D MVM output FFT plan\n");
 BATCH = M;
 HANDLE_ERROR_CUFFT( cufftPlan1d(&MVM_output_plan, NDFT, CUFFT_C2R, BATCH),
 		    "Unable to create plan");
@@ -281,13 +281,13 @@ The 1D Fourier transform is now applied to the raster covariance
 #ifdef GBTBT_DEBUG
 cov = (float2*)malloc(cov_size);
 HANDLE_ERROR( cudaMemcpy( cov, d__cov, cov_size, cudaMemcpyDeviceToHost) );
-fprintf(stderr,"\n@(CEO)>GBTBT: raster covariance\n");
+fprintf(stdout,"\n@(CEO)>GBTBT: raster covariance\n");
 for (int k=0;k<NDFT;k++) {
-  fprintf(stderr,"%2d: ", k);
+  fprintf(stdout,"%2d: ", k);
   for (int l=0;l<N*M;l++) {
-    fprintf(stderr,"%+4.2E %+4.2E.I||", cov[k+l*NDFT].x,cov[k+l*NDFT].y);
+    fprintf(stdout,"%+4.2E %+4.2E.I||", cov[k+l*NDFT].x,cov[k+l*NDFT].y);
   }
-  fprintf(stderr,"\b\b\n");
+  fprintf(stdout,"\b\b\n");
  }
 #endif
 <<raster covariance FT>>=
@@ -299,7 +299,7 @@ HANDLE_ERROR( cudaThreadSynchronize() );
 <<cleanup>>=
 void GBTBT::cleanup(void)
 {
-  fprintf(stderr,"@(CEO)>GBTBT: freeing memory!\n");
+  fprintf(stdout,"@(CEO)>GBTBT: freeing memory!\n");
   cufftDestroy(raster_plan);
   cufftDestroy(MVM_input_plan);
   cufftDestroy(MVM_output_plan);
@@ -331,32 +331,32 @@ The main parameters of [[GBTBT]] are displayed with the [[info]] routine:
 <<info>>=
 void GBTBT::info(void)
 {
-  fprintf(stderr,"\n\x1B[1;42m@(CEO)>GBTBT:\x1B[;42m\n");
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>GBTBT:\x1B[;42m\n");
   <<info content>>
-  fprintf(stderr,"----------------------------------------------------\x1B[0m\n");
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
 }
 <<info content>>=
-  fprintf(stderr," . number of outermost blocks    : %dX%d\n",M,N);
-  fprintf(stderr," . size of outermost blocks      : %dX%d\n",MT[0],NT);
-  fprintf(stderr," . size of innermost blocks      : %dX%d\n",MT[0],NT);
+  fprintf(stdout," . number of outermost blocks    : %dX%d\n",M,N);
+  fprintf(stdout," . size of outermost blocks      : %dX%d\n",MT[0],NT);
+  fprintf(stdout," . size of innermost blocks      : %dX%d\n",MT[0],NT);
   n_full = powf(NT,4)*M*N;
-  fprintf(stderr," . DFT length                    : %d\n",NDFT);
-  fprintf(stderr," . full matrix elements #        : %.3E\n",n_full);
+  fprintf(stdout," . DFT length                    : %d\n",NDFT);
+  fprintf(stdout," . full matrix elements #        : %.3E\n",n_full);
   n_comp = NU_TOTAL;
-  fprintf(stderr," . compressed matrix elements #  : %.3E\n",n_comp);
-  fprintf(stderr," . compression factor            : %4.0f \n",n_full/n_comp);
+  fprintf(stdout," . compressed matrix elements #  : %.3E\n",n_comp);
+  fprintf(stdout," . compression factor            : %4.0f \n",n_full/n_comp);
   float mb = powf(2,20);
   b_full = n_full*sizeof(float);
   if (b_full>mb)
-    fprintf(stderr," . full matrix storage [MB]      : %6.1f\n",b_full/mb);
+    fprintf(stdout," . full matrix storage [MB]      : %6.1f\n",b_full/mb);
   else
-    fprintf(stderr," . full matrix storage [KB]      : %6.1f\n",b_full/1024.0);
+    fprintf(stdout," . full matrix storage [KB]      : %6.1f\n",b_full/1024.0);
 b_comp = n_comp*sizeof(float2);
   if (b_comp>mb)
-    fprintf(stderr," . compressed matrix storage [MB]: %6.1f\n",b_comp/mb);
+    fprintf(stdout," . compressed matrix storage [MB]: %6.1f\n",b_comp/mb);
   else
-    fprintf(stderr," . compressed matrix storage [KB]: %6.1f\n",b_comp/1024.0);
-  fprintf(stderr," . compression factor            : %4.0f \n",b_full/b_comp);
+    fprintf(stdout," . compressed matrix storage [KB]: %6.1f\n",b_comp/1024.0);
+  fprintf(stdout," . compression factor            : %4.0f \n",b_full/b_comp);
 @
 \subsection{Matrix--to--vector product}
 \label{sec:matr-vect-prod}

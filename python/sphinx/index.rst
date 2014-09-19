@@ -23,7 +23,7 @@ This high level interface has been written with Cython to preserve speed.
 
 All the code has been written following the literate programming methodology.
 This means that the code and the associated documentation are tangled together in a few source files.
-**CEO** relies on `noweb` to extract the code from the source files and to build the corresponding Latex documentation.
+**CEO** relies on ``noweb`` to extract the code from the source files and to build the corresponding ``Latex`` documentation.
 
 .. _installation:
 
@@ -32,12 +32,13 @@ Installation
 
 First get the source from Github : `https://github.com/rconan/CEO <https://github.com/rconan/CEO>`_
 
-`noweb` is required in order to generate the code and the documentation and Latex is needed to compile the documentation. 
+``noweb`` is required in order to generate the code and the documentation and Latex is needed to compile the documentation. 
 
-Then change the paths in `common.mk` such as they match the path on your own machine.
+Then change the paths in ``common.mk`` such as they match the path on your own machine.
 
-`make all` will compile the library and will generate the Latex documentation file.
-`make doc` will compile the documentation into a single PDF file.
+``make all`` will compile the library and will generate the Latex documentation file.
+
+``make doc`` will compile the documentation into a single PDF file.
 
 .. _tutorials:
 
@@ -53,10 +54,10 @@ Contents:
 ---------
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
   
    Notebooks/notebooks.rst
-
+   ceo.rst
 
 Indices and tables
 ==================
