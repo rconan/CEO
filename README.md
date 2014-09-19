@@ -16,7 +16,6 @@ Prior to compiling the library, you must set the `CEOPATH`, `CUDAPATH` and `NOWE
 CEO has some limited plotting capability using [plotly](http://plot.ly).
 CEO has a wrapper for the REST API of plotly and it requires [libcurl](http://curl.haxx.se/libcurl/).
 To use plotly, you need to sign in on [plotly](http://plot.ly) website and copy your username and key in `include/plotly.credentials`.
-If you want to compile CEO with the plotly wrapper, you have to add plotly to the `SOURCE_DIR` variables in `Makefile`.
 
 Running the examples
 --------------------
