@@ -1,4 +1,4 @@
-% -*- mode: Noweb; noweb-code-mode: python-mode -*-
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
 @
 \section{The files}
 
@@ -139,6 +139,7 @@ int round_up_to_nhp2(int n) {
 <<cublas error>>
 
 <<fill ones>>
+<<fill ones (char)>>
 <<fill ones filtered>>
 <<statistics functions>>
 <<mask functions>>
@@ -470,6 +471,14 @@ int i;
 i = blockIdx.x * blockDim.x + threadIdx.x;
  if (i<n_data)
        ones[i] = 1.;
+}
+<<fill ones (char)>>=
+__global__ void fill_ones_char(char *ones, int n_data) 
+{
+int i;
+i = blockIdx.x * blockDim.x + threadIdx.x;
+ if (i<n_data)
+       ones[i] = 1;
 }
 
 @  
@@ -937,6 +946,10 @@ The mask functions are:
 void mask::setup(int n) {
   nel = n;
   <<setup commom>>
+  dim3 blockDim(256);
+  dim3 gridDim(nel/256+1);
+  fill_ones_char LLL gridDim,blockDim RRR (m,nel);
+  set_filter();
 }
 @ with 
 <<setup commom>>=

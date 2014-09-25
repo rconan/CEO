@@ -92,13 +92,14 @@ cdef extern from "source.h":
         void masked()
     cdef cppclass source:
         char *photometric_band
-        float fwhm
+        float fwhm, magnitude
         complex_amplitude wavefront
         void setup(char *,float , float , float )
 	void setup(char *,float , float , float , int )
         void setup(char *,float *, float *, float , int , int )
         void cleanup()
         void info()
+        float n_photon()
 @ 
 <<ceo.pyx>>=
 @cython.boundscheck(False)
@@ -146,6 +147,7 @@ cdef class Source:
  
     def __cinit__(self,char *_photometric_band,  
 		  zenith=0, azimuth=0, 
+                  magnitude=None,
 		  height=float("inf"), 
 		  resolution = (0,0),
 		  fwhm = None):
@@ -163,6 +165,8 @@ cdef class Source:
 			     <float *>self.zenith.data, 
                              <float *>self.azimuth.data, height, 
 			     self.size, np.prod(resolution))
+        if magnitude is not None:
+            self._c_source.magnitude = magnitude
         if fwhm is not None:
             self._c_source.fwhm = fwhm
 
@@ -181,6 +185,20 @@ cdef class Source:
             x = cuFloatArray(shape=(self.n*self.size,self.m))
             x._c_gpu.dev_data = self._c_source.wavefront.phase
             return x
+
+    property nPhoton:
+        def __get__(self):
+            """
+            Returns the number of photon per second
+            """
+            return self._c_source.n_photon()
+
+    property magnitude:
+        def __set__(self,value):
+            """
+            Sets the source magnitude
+            """
+            self._c_source.magnitude = value
            
     def masked(self, MaskAbstract tel):
         """
@@ -241,7 +259,8 @@ float *amplitude, *phase;
 mask *M;
 @ The magnitude at a given photometric band are set with:
 <<source parameters>>=
-char *photometric_band;float magnitude;
+char *photometric_band;
+float magnitude;
 @ If the source is resolved by the  optical system, the irradiance is assumed to have a Gaussian shape of full width a half maximum [[fwhm]]
 <<source parameters>>=
 float fwhm;
@@ -312,6 +331,7 @@ void source::setup(char *_photometric_band,
   N_SRC = _N_SRC;
   height = _height;
   photometric_band = _photometric_band;
+  magnitude = 0.0;
   fwhm = 0.0;
   source __src;
   HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
@@ -327,9 +347,10 @@ void source::setup(char *_photometric_band,
     HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
 			      sizeof(source) ,
 			      cudaMemcpyHostToDevice ) );
-    fprintf(stdout," %5.2f      %6.2f    %8.2f    %5.3f\n",
-                        _zenith[i_SRC]*RADIAN2ARCSEC,
-	   _azimuth[i_SRC]*180/PI,_height,wavelength());
+    fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
+	    _zenith[i_SRC]*RADIAN2ARCSEC,
+	    _azimuth[i_SRC]*180/PI,_height,
+	    wavelength(),magnitude);
   }
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
   wavefront.setup(0);
@@ -342,6 +363,7 @@ void source::setup(char *_photometric_band,
   N_SRC = _N_SRC;
   height = _height;
   photometric_band = _photometric_band;
+  magnitude = 0.0;
   fwhm = 0.0;
   source __src;
   HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
@@ -357,9 +379,10 @@ void source::setup(char *_photometric_band,
     HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
 			      sizeof(source) ,
 			      cudaMemcpyHostToDevice ) );
-    fprintf(stdout," %5.2f      %6.2f    %8.2f    %5.3f\n",
-                        _zenith[i_SRC]*RADIAN2ARCSEC,
-	   _azimuth[i_SRC]*180/PI,_height,wavelength());
+    fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
+	    _zenith[i_SRC]*RADIAN2ARCSEC,
+	    _azimuth[i_SRC]*180/PI,_height,
+	    wavelength(),magnitude);
   }
   wavefront.setup(resolution,N_SRC);
   fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
@@ -375,6 +398,7 @@ height  = _height;
 theta_x = tanf(zenith)*cosf(azimuth);
 theta_y = tanf(zenith)*sinf(azimuth);
 photometric_band = _photometric_band;
+magnitude = 0.0;
 fwhm = 0.0;
 source __src;
 __src.zenith  = zenith;
@@ -590,9 +614,10 @@ void source::info(void)
 {
   fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
-  fprintf(stdout," %5.2f      %6.2f    %8.2f    %5.3f\n",
-	 zenith*RADIAN2ARCSEC,
-	 azimuth*180.0/PI,height,wavelength());
+  fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
+	  zenith*RADIAN2ARCSEC,
+	  azimuth*180.0/PI,height,wavelength(),
+	  magnitude);
   if (wavefront.N_PX>0)
     fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n");

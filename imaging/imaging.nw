@@ -17,6 +17,7 @@
 #endif
 
 #define NRANK 2
+#define RAND_SEED 2014
 
 struct imaging {
 
@@ -41,6 +42,8 @@ struct imaging {
   void propagateThroughFieldStop(source *src, float field_stop_diam);
   void propagateThroughPyramid(source *src);
 
+  void readout(float readOutNoiseRms);
+
   float strehl_ratio(imaging *ref);
 
   void info(void);
@@ -58,6 +61,7 @@ struct imaging {
 <<imaging.cu>>=
 #include "imaging.h"
 
+<<detector Poisson and Gaussian noise>>
 <<imaging complex amplitude>>
 <<intensity>>
 <<apply field stop>>
@@ -65,6 +69,7 @@ struct imaging {
 <<apply irradiance>>
 
 <<binning>>
+<<read-out>>
 
 <<setup I>>
 <<setup II>>
@@ -104,6 +109,7 @@ cdef extern from "imaging.h":
         void propagate(source *)
         void propagateThroughFieldStop(source *, float field_stop_diam)
         void propagateThroughPyramid(source *)
+        void readout(float)
         void reset()
 @ 
 <<ceo.pyx>>=
@@ -155,6 +161,9 @@ cdef class Imaging:
     def propagateThroughPyramid(self, Source src):
         self._c_imaging.propagateThroughPyramid(src._c_source)
 
+    def readOut(self,float readOutNoiseRms):
+        self._c_imaging.readout(readOutNoiseRms)
+
     def reset(self):
         self._c_imaging.reset();
 
@@ -187,6 +196,7 @@ cufftHandle plan;
 float2 *d__wave_PUPIL;
 float  *d__frame, zenith, azimuth, theta_x, theta_y, pixel_scale;
 char absolute_pointing;
+curandState *devStates;
 @
 \section{Functions}
 \label{sec:functions}
@@ -266,6 +276,13 @@ cudaMalloc( (void**)&d__frame ,
 	    sizeof(float) *N_PX_CAMERA*N_PX_CAMERA*N_LENSLET*N_SOURCE );
 reset();
 <<imaging CUFFT plan creation>>
+fprintf(stdout,"@(CEO)> Setting up random generator\n");
+int n_data;
+n_data = N_SOURCE*N_LENSLET*N_PX_CAMERA*N_PX_CAMERA;
+cudaMalloc( (void**)&devStates, n_data*sizeof(curandState));
+dim3 blockDim(256);
+dim3 gridDim(n_data/256+1);
+setupRandomSequence LLL gridDim,blockDim RRR (devStates);
 info();
 @ 
 The pointing direction is set with:
@@ -316,11 +333,12 @@ Then the DFT is applied in--place to the complex amplitude [[d__wave_PUPIL]].
 @ 
 [[d__wave_PUPIL]] is overwritten with the intensity:
 <<propagation (FFT, intensity and binning)>>=
+<<intensity normalization>>
 int N, Nb;
 N = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
 Nb = (int) ceilf( sqrtf(N)/16.0 );
 gridDim  = dim3(Nb,Nb);
-wave2intensity LLL gridDim , blockDim RRR( d__wave_PUPIL, N);
+wave2intensity LLL gridDim , blockDim RRR( d__wave_PUPIL, N, intensity_norm);
 if (src->fwhm>0) {
   <<propagation (convolution)>>
 }
@@ -414,7 +432,7 @@ HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE),
 @ 
 The intensity is computed with
 <<intensity>>=
-__global__ void wave2intensity(float2 *wave_PUPIL, const int N)
+__global__ void wave2intensity(float2 *wave_PUPIL, const int N, float intensity_norm)
 {
   int i, j, ij;
   float x ,y;
@@ -427,8 +445,14 @@ __global__ void wave2intensity(float2 *wave_PUPIL, const int N)
       y =  wave_PUPIL[ij].y;
       wave_PUPIL[ij].x = x*x + y*y;
       wave_PUPIL[ij].y = 0.0;
+      wave_PUPIL[ij].x *= intensity_norm;
     }
 }
+@ 
+The intensity is normalized with respect to the brightness of the source:
+<<intensity normalization>>=
+float intensity_norm;
+intensity_norm = src->n_photon()/src->wavefront.M->nnz;
 @
 Dynamically allocated variables are freed with the cleanup routine:
 <<cleanup>>=
@@ -788,6 +812,106 @@ __global__ void binning(float *frame, const float2 *wave, int N_DFT,
       frame[ij_CAM] +=   bin[ii][jj]/(N_DFT*N_DFT);
     }
 
+}
+@
+
+\subsection{Detector read--out noise}
+\label{sec:rand-numb-gener}
+
+Poisson and Gaussian noise are added to the frame with the [[readout]] routine
+<<read-out>>=
+void imaging::readout(float readOutNoiseRms) {
+  int N, Nb;
+  N = N_PX_CAMERA * N_PX_CAMERA * N_LENSLET*N_SOURCE;
+  Nb = (int) ceilf( sqrtf(N)/16.0 );
+  dim3 blockDim(16,16);
+  dim3 gridDim(Nb,Nb);
+  noisify LLL gridDim, blockDim RRR (devStates, d__frame, N, readOutNoiseRms);
+}
+@  with the kernels defined in the following
+<<detector Poisson and Gaussian noise>>=
+<<random numbers>>
+__global__ void noisify(curandState *state, float *frame, const int n_frame,
+			 const float readOutNoiseRms)
+ {
+   int i, j, id;
+   float lambda;
+   curandState localState;
+   i = blockIdx.x * blockDim.x + threadIdx.x;
+   j = blockIdx.y * blockDim.y + threadIdx.y;
+   id = j * gridDim.x * blockDim.x + i;
+   //int id = threadIdx.x + blockIdx.x*blockDim.x;
+   if ( id < n_frame )
+     {
+       localState = state[id];
+       lambda = frame[id];
+       frame[id] = (lambda<30) ? 
+	 curand_poisson_knuth( &localState, lambda) : 
+	 curand_poisson_atkinson( &localState, lambda);
+       frame[id] += (readOutNoiseRms>0) ? 
+	 curand_normal(&localState)*readOutNoiseRms : 0;
+       state[id] = localState;
+     }
+ }
+@ 
+In CUDA, there are as many random generator states as the number of threads.
+These states are initialized providing a used defined seed number [[RAND_SEED]];
+
+<<random numbers>>=
+__global__ void setupRandomSequence(curandState *state)
+{
+  int id = threadIdx.x + blockIdx.x*blockDim.x;
+  curand_init(RAND_SEED, id, 0, &state[id]);
+}
+
+@
+\subsubsection{Poisson distribution}
+\label{sec:poisson-distribution}
+
+Two random number generators for the Poisson distribution have been implemented.
+Both are using uniformly distributed random numbers.
+
+The first method used the famous algorithm of D. Knuth:
+<<random numbers>>=
+__device__ float curand_poisson_knuth(curandState *state, float lambda)
+{
+  unsigned int k = 0;
+  float p=exp(lambda);
+  do{
+      k++;
+      p *= curand_uniform(state);
+  }while (p > 1.0);
+  return (float) k-1;
+}
+@ 
+The execution speed of D. Knuth algorithm is proportional to $\lambda$.
+For large $\lambda$, a preferable algorithm is the one derived by A. C. Atkinson:
+<<random numbers>>=
+__device__ float curand_poisson_atkinson(curandState *state, float lambda)
+{
+  /*
+    The algorithm is ???method PA??? from ???The Computer Generation of Poisson Random Variables??? by A. C. Atkinson, Journal of the Royal Statistical Society Series C (Applied Statistics) Vol. 28, No. 1. (1979), pages 29-35. Method PA is on page 32.
+   */
+  float c, beta, alpha, k, u, x, n, v, y, lhs, rhs;
+  c = 0.767 - 3.36/lambda;
+  beta = PI/sqrt(3.0*lambda);
+  alpha = beta*lambda;
+  k = logf(c) - lambda - logf(beta);
+  do{
+    u = curand_uniform(state);
+    x = (alpha - logf((1.0 - u)/u))/beta;
+    n = floorf(x + 0.5);
+    if (n >= 0)
+      {
+	v = curand_uniform(state);
+	y = alpha - beta*x;
+        lhs = 1.0 + expf(y);
+	lhs *= lhs;
+	lhs = y + logf(v/lhs);
+	rhs = k + n*logf(lambda) - lgammaf(n+1);
+      }
+  }while(lhs > rhs);
+  return n;
 }
 @
 
