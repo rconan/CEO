@@ -32,8 +32,10 @@ struct shackHartmann {
   void setup(int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
 	     int DFT_osf_, int N_PX_IMAGE, int BIN_IMAGE, int N_GS);
   void cleanup(void);
-  void analyze(source *gs);
   void calibrate(source *src, float threshold);
+  void propagate(source *gs);
+  void process(void);
+  void analyze(source *gs);
   float* get_frame_dev_ptr(void);
 
 };
@@ -52,6 +54,8 @@ struct shackHartmann {
 <<setup>>
 <<cleanup>>
 <<WFS calibration>>
+<<wavefront propagation>>
+<<wavefront centroiding>>
 <<wavefront processing>>
 <<get detector frame>>
 @
@@ -69,8 +73,10 @@ cdef extern from "shackHartmann.h":
         centroiding data_proc
         void setup(int , int, float , int , int , int, int)
         void cleanup()
-        void analyze(source *)
         void calibrate(source *, float )
+        void propagate(source *)
+        void process()
+        void analyze(source *)
 	float* get_frame_dev_ptr()
 @ 
 <<ceo.pyx>>=
@@ -126,11 +132,20 @@ cdef class ShackHartmann:
     def __dealloc__(self):
         self._c_shackHartmann.cleanup()
 
+    def calibrate(self, Source gs, float threshold):
+        self._c_shackHartmann.calibrate(gs._c_source, threshold)
+
     def analyze(self, Source gs):
         self._c_shackHartmann.analyze(gs._c_source)
 
-    def calibrate(self, Source gs, float threshold):
-        self._c_shackHartmann.calibrate(gs._c_source, threshold)
+    def propagate(self, Source gs):
+        self._c_shackHartmann.propagate(gs._c_source)
+
+    def process(self):
+        self._c_shackHartmann.process()
+
+    def readOut(self,float exposureTime, float readOutNoiseRms):
+        self._c_shackHartmann.optics_relay.readout(exposureTime,readOutNoiseRms)
 
     def reset(self):
         self._c_shackHartmann.optics_relay.reset()
@@ -163,9 +178,6 @@ cdef class ShackHartmann:
             x._c_mask.m = self._c_shackHartmann.valid_lenslet.m
             x._c_mask.f = self._c_shackHartmann.valid_lenslet.f
             return x
-
-    def readOut(self,float readOutNoiseRms):
-        self._c_shackHartmann.optics_relay.readout(readOutNoiseRms)
 
     property slopes_gain:
         def __set__(self, float val):
@@ -368,9 +380,25 @@ __global__ void set_valid_lenslet(char *lenslet_mask, char *actuator_mask,
 	lenslet_intensity_map[kL] = 0.0;
     }
 }
-
+@ 
+The guide star [[gs]] is propagated through the lenslet array to the detector:
+<<wavefront propagation>>=
+void shackHartmann::propagate(source *gs) {
+    /* printf("slopes gain:%.2E\n",slopes_gain); */
+  pixel_scale = 1E-6*gs->wavelength()/(lenslet_pitch*DFT_osf)*slopes_gain;
+  /* printf("pixel scale:%.2E\n",pixel_scale); */
+  optics_relay.pixel_scale = pixel_scale;
+  optics_relay.propagate(gs);
+}
+@ and the resulting frame is processed to extract the centroids
+<<wavefront centroiding>>=
+void shackHartmann::process(void) {
+  data_proc.get_data(optics_relay.d__frame,optics_relay.N_PX_CAMERA,
+		     d__cx0,d__cy0,pixel_scale,
+		     valid_lenslet.m);
+}
 @
-The wavefront of the guide star is processed with:
+Noiseless propagation and centroiding can be performed with a single call to:
 <<wavefront processing>>=
 void shackHartmann::analyze(source *gs) {
     /* printf("slopes gain:%.2E\n",slopes_gain); */

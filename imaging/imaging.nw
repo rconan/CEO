@@ -42,7 +42,7 @@ struct imaging {
   void propagateThroughFieldStop(source *src, float field_stop_diam);
   void propagateThroughPyramid(source *src);
 
-  void readout(float readOutNoiseRms);
+  void readout(float exposureTime, float readOutNoiseRms);
 
   float strehl_ratio(imaging *ref);
 
@@ -109,7 +109,7 @@ cdef extern from "imaging.h":
         void propagate(source *)
         void propagateThroughFieldStop(source *, float field_stop_diam)
         void propagateThroughPyramid(source *)
-        void readout(float)
+        void readout(float, float)
         void reset()
 @ 
 <<ceo.pyx>>=
@@ -144,9 +144,11 @@ cdef class Imaging:
     """
     cdef ceo.imaging *_c_imaging
 
-    def __cinit__(self, int N_PX_PUPIL, int N_SIDE_LENSLET, 
-		  int DFT_osf, int N_PX_IMAGE, int BIN_IMAGE, int N_SOURCE):
+    def __cinit__(self, int N_SIDE_LENSLET, int N_PX_PUPIL, 
+		  DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, N_SOURCE=1):
 	self._c_imaging = new ceo.imaging()
+        if N_PX_IMAGE is None:
+            N_PX_IMAGE = N_PX_PUPIL
 	self._c_imaging.setup(N_PX_PUPIL, N_SIDE_LENSLET, DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_SOURCE)    
 
     def __dealloc__(self):
@@ -161,8 +163,8 @@ cdef class Imaging:
     def propagateThroughPyramid(self, Source src):
         self._c_imaging.propagateThroughPyramid(src._c_source)
 
-    def readOut(self,float readOutNoiseRms):
-        self._c_imaging.readout(readOutNoiseRms)
+    def readOut(self,float exposureTime, float readOutNoiseRms):
+        self._c_imaging.readout(exposureTime,readOutNoiseRms)
 
     def reset(self):
         self._c_imaging.reset();
@@ -452,7 +454,7 @@ __global__ void wave2intensity(float2 *wave_PUPIL, const int N, float intensity_
 The intensity is normalized with respect to the brightness of the source:
 <<intensity normalization>>=
 float intensity_norm;
-intensity_norm = src->n_photon()/src->wavefront.M->nnz;
+intensity_norm = src->n_photon()*src->wavefront.M->area/src->wavefront.M->nnz;
 @
 Dynamically allocated variables are freed with the cleanup routine:
 <<cleanup>>=
@@ -820,19 +822,20 @@ __global__ void binning(float *frame, const float2 *wave, int N_DFT,
 
 Poisson and Gaussian noise are added to the frame with the [[readout]] routine
 <<read-out>>=
-void imaging::readout(float readOutNoiseRms) {
+void imaging::readout(float exposureTime, float readOutNoiseRms) {
   int N, Nb;
   N = N_PX_CAMERA * N_PX_CAMERA * N_LENSLET*N_SOURCE;
   Nb = (int) ceilf( sqrtf(N)/16.0 );
   dim3 blockDim(16,16);
   dim3 gridDim(Nb,Nb);
-  noisify LLL gridDim, blockDim RRR (devStates, d__frame, N, readOutNoiseRms);
+  noisify LLL gridDim, blockDim RRR (devStates, d__frame, N, 
+                                     readOutNoiseRms, exposureTime);
 }
 @  with the kernels defined in the following
 <<detector Poisson and Gaussian noise>>=
 <<random numbers>>
 __global__ void noisify(curandState *state, float *frame, const int n_frame,
-			 const float readOutNoiseRms)
+			 const float readOutNoiseRms, float exposureTime)
  {
    int i, j, id;
    float lambda;
@@ -844,6 +847,7 @@ __global__ void noisify(curandState *state, float *frame, const int n_frame,
    if ( id < n_frame )
      {
        localState = state[id];
+       frame[id] *= exposureTime;
        lambda = frame[id];
        frame[id] = (lambda<30) ? 
 	 curand_poisson_knuth( &localState, lambda) : 
