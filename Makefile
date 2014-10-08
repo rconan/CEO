@@ -9,7 +9,7 @@ all: makefile
 	mkdir -p include lib
 	for i in $(SOURCE_DIR); do (make -C $$i all);echo -e "\n"; done
 
-tex: $(texsrc)
+tex: makefile $(texsrc)
 	for i in $(SOURCE_DIR); do (make -C $$i tex); done
 	for i in $(TUTORIAL); do (make -C TUTORIAL $$i.tex); done
 	rm -f doc/ceo.manual.main.tex
