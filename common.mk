@@ -1,7 +1,7 @@
 CEOPATH	        = /home/rconan/CEO
 CUDAPATH	= /opt/local/cuda
 PYTHONPATH      = /home/rconan/anaconda
-CEOPYPATH	= /home/rconan/CEO/python/ceo
+CEOPYPATH	= $(CEOPATH)/python/ceo
 NVCC          	= $(CUDAPATH)/bin/nvcc
 CUDALIBPATH   	= $(CUDAPATH)/lib64
 MATLABINCS	= -I/priv/monarcas1/rconan/MATLAB/R2013a/extern/include \
