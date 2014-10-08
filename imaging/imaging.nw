@@ -101,6 +101,7 @@ struct imaging {
 <<ceo.pxd>>=
 cdef extern from "imaging.h":
     cdef cppclass imaging:
+        int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_PX_CAMERA, N_SOURCE
         float *d__frame
         void setup(int , int , int , int , int, int)
         void cleanup()
@@ -168,8 +169,11 @@ cdef class Imaging:
     def reset(self):
         self._c_imaging.reset();
 
-    def getframe(self, np.ndarray[float , ndim=2, mode="c"] data):
-        dev2host(<float *>data.data,self._c_imaging.d__frame, data.size)
+    property frame:
+        def __get__(self):
+            x = cuFloatArray(shape=(self._c_imaging.N_SOURCE*self._c_imaging.N_PX_CAMERA,self._c_imaging.N_PX_CAMERA))
+            x._c_gpu.dev_data = self._c_imaging.d__frame
+            return x
 @
 
 \section{Parameters}
@@ -281,9 +285,9 @@ fprintf(stdout,"@(CEO)> Setting up random generator\n");
 int n_data;
 n_data = N_SOURCE*N_LENSLET*N_PX_CAMERA*N_PX_CAMERA;
 cudaMalloc( (void**)&devStates, n_data*sizeof(curandState));
-dim3 blockDim(256);
-dim3 gridDim(n_data/256+1);
-setupRandomSequence LLL gridDim,blockDim RRR (devStates);
+dim3 blockDim(1024);
+dim3 gridDim(n_data/1024+1);
+setupRandomSequence_imaging LLL gridDim,blockDim RRR (devStates, n_data);
 info();
 @ 
 The pointing direction is set with:
@@ -861,10 +865,11 @@ In CUDA, there are as many random generator states as the number of threads.
 These states are initialized providing a used defined seed number [[RAND_SEED]];
 
 <<random numbers>>=
-__global__ void setupRandomSequence(curandState *state)
+  __global__ void setupRandomSequence_imaging(curandState *state, int n_data)
 {
   int id = threadIdx.x + blockIdx.x*blockDim.x;
-  curand_init(RAND_SEED, id, 0, &state[id]);
+  if (id<n_data)
+    curand_init(RAND_SEED, id, 0, &state[id]);
 }
 
 @
