@@ -50,6 +50,7 @@ clean:
 	for i in $(SOURCE_DIR); do (make -C $$i clean); done
 	rm -f *.*~
 	rm -f lib/libceo.a
+	rm -f TUTORIAL/*.tex
 
 cleanbins: makefile
 	for i in $(SOURCE_DIR); do (make -C $$i cleanbins); done
