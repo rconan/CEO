@@ -5,7 +5,7 @@ SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaSta
 TUTORIAL	= ngsao lgsao ltao ltaoVsAst geaos
 PYTHON_DIR	= utilities source atmosphere centroiding imaging shackHartmann LMMSE
 
-all: makefile 
+all: makefile jsmnlib
 	mkdir -p include lib
 	for i in $(SOURCE_DIR); do (make -C $$i all);echo -e "\n"; done
 
@@ -16,7 +16,7 @@ tex: makefile $(texsrc)
 	for i in $(SOURCE_DIR); do (echo -e "\input{ceo.manual.$$i}\n">>doc/ceo.manual.main.tex); done
 	for i in $(SOURCE_DIR); do (echo -n "\chapter" >doc/ceo.manual.$$i.tex; echo -e "{$$i}\n\label{sec:$$i}\n\n\input{../$$i/$$i}">>doc/ceo.manual.$$i.tex); done
 
-cython:
+cython: all 
 	mkdir -p $(CEOPYPATH)
 	rm -f $(CEOPYPATH)/ceo.pxd $(CEOPYPATH)/ceo.pyx
 	cp $(CEOPATH)/etc/ceo.pxd $(CEOPYPATH)/ceo.pxd
