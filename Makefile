@@ -38,6 +38,7 @@ makefile: Makefile.common
 	for i in $(SOURCE_DIR); do (cp Makefile.common $$i/Makefile; sed -i -e "s/filename/$$i/g" $$i/Makefile); done
 
 jsmnlib: 
+	mkdir -p include lib
 	make -C jsmn
 	cp -P jsmn/jsmn.h include/
 	cp -P jsmn/libjsmn.a lib/
