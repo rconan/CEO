@@ -653,13 +653,34 @@ void paStats::setup(int M_, int N_, int osf_,
 
   info(kappa,sampling);
 }
+@ The phase source is duplicated and set to the same height than the slope source:
+<<phase source duplicate>>=
+float *zenith, *azimuth;
+zenith  = (float*)malloc(sizeof(float)*N_P_SRC); 
+azimuth = (float*)malloc(sizeof(float)*N_P_SRC); 
+source __src;
+for (int k_P_SRC=0;k_P_SRC<N_P_SRC;k_P_SRC++) {
+  HANDLE_ERROR( cudaMemcpy( &__src, phase_src_in->dev_ptr + k_P_SRC,
+                             sizeof(source), cudaMemcpyDeviceToHost ) );
+  zenith[k_P_SRC]  = __src.zenith;
+  azimuth[k_P_SRC] = __src.azimuth;
+}
+source clone_phase_src;
+clone_phase_src.setup(phase_src_in[0].photometric_band,
+		      zenith, azimuth, 
+		      slopes_src[0].height,N_P_SRC,0);
+free(zenith);
+free(azimuth);
 @ The covariance is computed for each layers independently in the following:    
 <<paStats setup (multilayers)>>=
+/*
 source clone_phase_src;
 clone_phase_src.setup(phase_src_in[0].photometric_band,
 		      phase_src_in[0].zenith,
 		      phase_src_in[0].azimuth,
 		      slopes_src[0].height,0);
+*/
+<<phase source duplicate>>
 phase_src = &clone_phase_src;
 
 float g;
