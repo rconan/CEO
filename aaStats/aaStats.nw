@@ -1,4 +1,4 @@
-% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+% -*- mode: Noweb; noweb-code-mode: python-mode -*-
 @
 [[aaStats]] contains a structure and the routines to compute the covariance matrix of the angle--of--arrival.
 
@@ -107,7 +107,84 @@ struct paStats {
 <<paStats info>>
 
 <<aaStats variance>>
+@ 
 
+\subsection{Python}
+\label{sec:python}
+
+<<ceo.pxd>>=
+# aaStats
+cdef extern from "aaStats.h":
+    cdef cppclass aaStats:
+        int NU, N_SRC2
+        float *d__cov
+        void setup(int, atmosphere *, float, source *, int)
+        void cleanup()
+# paStats
+cdef extern from "aaStats.h":
+    cdef cppclass paStats:
+        int NU2, N_SRC2
+        float *d__cov
+        void setup(int, int, int , atmosphere *, float,
+                   source *, int, source *, int) 
+        void cleanup()
+@
+<<ceo.pyx>>=
+# aaStats
+cdef class AaStats:
+    """
+    Slopes covariance matrix class
+
+    Parameters
+    ----------
+    N_SIDE_LENSLET: int
+        The size of the lenslet array
+    atm: an Atmosphere object
+        The atmosphere model
+    lenslet pitch: float
+        The lenslet array pitch
+    src: a Source object
+        The guide stars
+    """
+    cdef ceo.aaStats *_c_aaStats
+
+    def __cinit__(self, int N_SIDE_LENSLET, AtmosphereAbstract atm, float lenslet_pitch, Source src):
+        self._c_aaStats = new ceo.aaStats()
+        self._c_aaStats.setup(N_SIDE_LENSLET, atm._c_atmosphere, lenslet_pitch, 
+                              src._c_source, src._c_source.N_SRC)
+    def __dealloc__(self):
+        self._c_aaStats.cleanup()
+
+    property cov:
+        def __get__(self):
+            x = cuFloatArray(shape=(self._c_aaStats.N_SRC2*4*self._c_aaStats.NU,self._c_aaStats.NU))
+            x._c_gpu.dev_data = self._c_aaStats.d__cov
+            return x
+# paStats
+cdef class PaStats:
+    """
+    Phase/Slope covariance matrix class
+    """
+    cdef ceo.paStats *_c_paStats
+
+    def __cinit__(self, int M, int N, int osf, 
+                  AtmosphereAbstract atm, float lenslet_pitch,
+                  Source phase_src, Source slopes_src):
+        self._c_paStats = new ceo.paStats()
+        self._c_paStats.setup(M, N, osf, atm._c_atmosphere, lenslet_pitch,
+                              phase_src._c_source, phase_src._c_source.N_SRC,
+                              slopes_src._c_source, slopes_src._c_source.N_SRC )
+
+    def __dealloc__(self):
+        self._c_paStats.cleanup() 
+
+    property cov:
+        def __get__(self):
+            print self._c_paStats.N_SRC2
+            print self._c_paStats.NU2
+            x = cuFloatArray(shape=(self._c_paStats.N_SRC2*2*self._c_paStats.NU2,1))
+            x._c_gpu.dev_data = self._c_paStats.d__cov
+            return x
 @
 \section{The theory}
 
@@ -650,7 +727,6 @@ void paStats::setup(int M_, int N_, int osf_,
   } else {
      <<paStats setup (multilayers)>>
   }
-
   info(kappa,sampling);
 }
 @ The phase source is duplicated and set to the same height than the slope source:
@@ -922,7 +998,7 @@ dim3 gridDimCov( 1+NU/16 , 1+NU/16 );
 
 int i_P_SRC, j_S_SRC, k_LAYER;
 fprintf(stdout,"Covariance %dx%d block:\n",N_P_SRC*atm->N_LAYER,N_S_SRC);
-NU2 = 0;
+int CNU2 = 0;
 for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 
   for (k_LAYER=0;k_LAYER<atm->N_LAYER;k_LAYER++) {
@@ -933,7 +1009,7 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 
       fprintf(stdout," [%d,%d]",i_P_SRC+k_LAYER*N_P_SRC,j_S_SRC);
 
-      //fprintf(stdout,"(%2d",NU2);
+      //fprintf(stdout,"(%2d",CNU2);
       paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (
 			       d__psd, NF, osf, lenslet_pitch, 
 			       atm->wavelength, atm->r0, atm->turbulence.L0, 
@@ -942,11 +1018,11 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 			       (slopes_src->dev_ptr) + j_S_SRC,
 			       d__alpha, kappa);
       <<AA covariance with Wiener-Khinchin>>
-      pa_covariance_extraction LLL gridDimCov,blockDimCov RRR( d__cov + NU2, NU,
+      pa_covariance_extraction LLL gridDimCov,blockDimCov RRR( d__cov + CNU2, NU,
 							       d__psd, NF, kappa);
-      NU2 += NU*NU;      
+      CNU2 += NU*NU;      
 
-      //fprintf(stdout,",%2d)",NU2);
+      //fprintf(stdout,",%2d)",CNU2);
       paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (
                                d__psd, NF, osf, lenslet_pitch,
 			       atm->wavelength, atm->r0, atm->turbulence.L0, 
@@ -955,9 +1031,9 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 			       (slopes_src->dev_ptr) + j_S_SRC,
 			       d__beta, kappa);
       <<AA covariance with Wiener-Khinchin>>
-      pa_covariance_extraction LLL gridDimCov,blockDimCov RRR( d__cov +  NU2, NU,
+      pa_covariance_extraction LLL gridDimCov,blockDimCov RRR( d__cov +  CNU2, NU,
 							       d__psd, NF, kappa);
-      NU2 += NU*NU;      
+      CNU2 += NU*NU;      
     }
   fprintf(stdout,"\n");
   }
