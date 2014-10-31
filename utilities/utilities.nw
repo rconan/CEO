@@ -114,6 +114,9 @@ void freedev( float **dev_data );
 
 <<gpu data structure>>
 
+void wavefront_finite_difference(float *sx, float *sy, int NL, float *phi, int n, float d);
+__global__ void wavefront_finite_difference_kernel(float *sx, float *sy, int NL, float *phi, int n, float d);
+
 #endif  // __UTILITIES_H__
 @
 
@@ -162,6 +165,9 @@ int round_up_to_nhp2(int n) {
 <<free device>>
 
 <<gpu data structure function>>
+
+<<wavefront differentiation>>
+<<wavefront differentiation kernel>>
 @
 
 \subsection{Python}
@@ -1343,6 +1349,8 @@ cdef class cuFloatArray:
         Number of rows and colums
     host_array: data object, optional
         Host data to copy to the device
+    dev_malloc: boolean, optional
+        Allocated memory on device (default: False)
     
     Returns
     -------
@@ -1522,3 +1530,69 @@ cpdef double atmosphericDispersion(float wavelength, float delta_wavelength,
     return atmospheric_dispersion(wavelength, delta_wavelength,
 				  zenith, altitude, 
 				  temperature, humidity)
+@ 
+
+\subsection{Wavefront differentiation}
+\label{sec:wavefr-diff}
+
+The following routine is computing the finite difference of a given wavefront on a [[N_L]]$\times$[[N_L]] lenslet array of pitch [[d]].
+The wavefront is sample with [[n]]$\times$[[n]] points per lenslet ([[n]]$\geq 2$) meaning that the full wavefront is of size $\left([[n]]-1\right)[[N_L]]+1$.
+
+The x and y slopes corresponding to the average gradient of the wavefront $\varphi$ on the lenslet $(i_L,j_L)$ with $0\leq i_l,j_l <$[[N_L]] are given by:
+\begin{eqnarray}
+  \label{eq:8}
+  s_x(i_L,j_L) &=& {1\over nd} \sum_{k=0}^{n-1} \varphi\left[ i_L(n-1)+k,j_L(n-1) \right] -  \varphi\left[ i_L(n-1)+k,(j_L+1)(n-1)\right] \\
+  s_x(i_L,j_L) &=& {1\over nd} \sum_{k=0}^{n-1} \varphi\left[ i_L(n-1),j_L(n-1)+k \right] -  \varphi\left[ (i_L+1)(n-1),j_L(n-1)+k\right] 
+\end{eqnarray}
+
+<<wavefront differentiation>>=
+void wavefront_finite_difference(float *sx, float *sy, int NL, 
+                                 float *phi, int n, float d)
+  {
+    dim3 blockDim(16,16);
+    dim3 gridDim(NL/16+1,NL/16+1);
+    wavefront_finite_difference_kernel LLL gridDim,blockDim RRR (sx, sy, NL, phi, n, d);
+  }
+@ with the kernel
+<<wavefront differentiation kernel>>=
+__global__ void wavefront_finite_difference_kernel(float *sx, float *sy, int NL, 
+                                                   float *phi, int n, float d)
+  {
+    int iL, jL, kL, k, u, v, w, NP;
+    iL = blockIdx.x * blockDim.x + threadIdx.x;
+    jL = blockIdx.y * blockDim.y + threadIdx.y;
+    if ( (iL<NL) && (jL<NL) ) {
+      kL = iL*NL+jL;
+      NP = (n-1)*NL + 1;
+      u = iL*(n-1);
+      v = jL*(n-1);
+      sx[kL] = sy[kL] = 0.0;
+      for (k=0;k<n;k++) {
+	// x slope
+	w = u*NP + v + k;
+	sx[kL] += phi[w];
+	w += (n-1)*NP;
+	sx[kL] -= phi[w];
+	// y slope
+	w = (u+k)*NP + v;
+	sy[kL] += phi[w];
+	w += n-1;
+	sy[kL] -= phi[w];
+      }
+      sx[kL] /= n*d;
+      sy[kL] /= n*d;
+    }
+  }
+@ 
+The python wrapper is
+<<ceo.pxd>>=
+## wavefront differentiation
+    void wavefront_finite_difference(float *sx, float *sy, int NL, 
+                                     float *phi, int n, float d)
+@ 
+<<ceo.pyx>>=
+## wavefront differentiation
+cpdef wavefrontFiniteDifference(cuFloatArray sx, cuFloatArray sy, int NL, 
+                                cuFloatArray phi, int n, float d):
+    wavefront_finite_difference(sx._c_gpu.dev_data, sy._c_gpu.dev_data, NL, 
+                                phi._c_gpu.dev_data, n, d)
