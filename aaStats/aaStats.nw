@@ -258,7 +258,7 @@ float2 *psd, *cov;
 int N_SRC2;
 @ The parameters of the [[paStats]] structure are:
 <<paStats parameters>>=
-int osf, M;
+int osf, M, shift;
 int *M_LAYER;
 <<aaStats parameters>>
 
@@ -644,7 +644,7 @@ float aaStats::variance(void) {
 \label{sec:pa-functions}
 
 The covariance matrix is defined for a square lenslet array of size $N_L\times N_L$ and of pitch [[sampling]].
-The covariance sampling is set with the over--sampling factor [[osf]]. 
+%The covariance sampling is set with the over--sampling factor [[osf]]. 
 The covariance matrix depends on the atmosphere parameters and altitude profile.
 The covariance matrix is computed for vectors of [[N_P_SRC]] estimation sources and [[N_S_SRC]] guide star sources.
 The covariance matrix is written:
@@ -667,9 +667,9 @@ with
     \end{array}
 \right].
 \end{eqnarray}
-Each matrix $\Xi_{{\phi_i}{x_j}}$ is a two--level recursive block Toeplitz (2RBT) $[[N]]^2\times[[N]]^2$ matrix with $[[N]]=N_L$ if $[[osf]]=1$ or $[[N]]=[[osf]] \times N_L+1$ if $[[osf]]\ge 1$.
+Each matrix $\Xi_{{\phi_i}{x_j}}$ is a two--level recursive block Toeplitz (2RBT) $[[M]]^2\times[[N]]^2$ matrix.% with $[[N]]=N_L$ if $[[osf]]=1$ or $[[N]]=[[osf]] \times N_L+1$ if $[[osf]]\ge 1$.
 Toeplitz matrices \cite{GolubVanLoan} are fully defined with their first row and column. 
-So the matrix $\Xi_{{phi_i}{x_j}}$ is reduced to a $[[NU]]=(2[[N]]-1)^2$ elements vector $t_\Xi^{{\phi_i}{x_j}}$ and the matrix $\Xi_{ij}$ becomes the matrix
+So the matrix $\Xi_{{phi_i}{x_j}}$ is reduced to a $[[NU]]=([[M]][[N]]-1)^2$ elements vector $t_\Xi^{{\phi_i}{x_j}}$ and the matrix $\Xi_{ij}$ becomes the matrix
 \begin{equation}
   \label{eq:29}
   T_{ij} = \left[ t_\Xi^{{\phi_i}{x_j}} t_\Xi^{{\phi_i}{y_j}} \right].
@@ -696,6 +696,7 @@ void paStats::setup(int M_, int N_, int osf_,
   osf = osf_;
   N = N_;
   M = M_;
+  shift = (N==M) ? 0 : 1;  
   N2 = M*N;
   NU = M+N-1;
   NU2 = NU*NU;
@@ -896,7 +897,7 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 						    atm->turbulence.L0, atm->layers, atm->N_LAYER,
 						    (phase_src->dev_ptr) + i_P_SRC, 
 						    (slopes_src->dev_ptr) + j_S_SRC,
-						    d__alpha, kappa);
+						    d__alpha, kappa, shift);
     <<AA covariance with Wiener-Khinchin>>
     <<PA covariance reduction>>
 
@@ -907,7 +908,7 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 						    atm->turbulence.L0, atm->layers, atm->N_LAYER,
 						    (phase_src->dev_ptr) + i_P_SRC, 
 						    (slopes_src->dev_ptr) + j_S_SRC,
-						    d__beta, kappa);
+						    d__beta, kappa, shift);
     <<AA covariance with Wiener-Khinchin>>
     <<PA covariance reduction>>
 }
@@ -919,7 +920,7 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
 				float wavelength, float r0, float L0,
                                 layer *turb, int N_LAYER,
 				source *src1, source *src2,
-				float *alpha, float kappa)
+				float *alpha, float kappa, int shift)
 {
   int i, j, k;
   float fx, fy, f_square, fs, gl, red, c_red, s_red, wavenumber, src_x, src_y;
@@ -949,7 +950,7 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
       fy *= fs;
       f_square = fx*fx + fy*fy;
       fs *= fs;
-      red *= fx*(src_x + 0.5*d) + fy*(src_y + 0.5*d);
+      red *= fx*(src_x + 0.5*d*shift) + fy*(src_y + 0.5*d*shift);
       sincosf( red, &s_red, &c_red);
       red = -wavenumber*turb[k_LAYER].xi0*fs*wavelength*(fx*alpha[0] + fy*alpha[1])*
       powf(r0,-5.0/3.0)*
@@ -1016,7 +1017,7 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 			       atm->layers, atm->N_LAYER, k_LAYER,
 			       (phase_src->dev_ptr) + i_P_SRC, 
 			       (slopes_src->dev_ptr) + j_S_SRC,
-			       d__alpha, kappa);
+			       d__alpha, kappa,shift);
       <<AA covariance with Wiener-Khinchin>>
       pa_covariance_extraction LLL gridDimCov,blockDimCov RRR( d__cov + CNU2, NU,
 							       d__psd, NF, kappa);
@@ -1029,7 +1030,7 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 			       atm->layers, atm->N_LAYER, k_LAYER,
 			       (phase_src->dev_ptr) + i_P_SRC, 
 			       (slopes_src->dev_ptr) + j_S_SRC,
-			       d__beta, kappa);
+			       d__beta, kappa,shift);
       <<AA covariance with Wiener-Khinchin>>
       pa_covariance_extraction LLL gridDimCov,blockDimCov RRR( d__cov +  CNU2, NU,
 							       d__psd, NF, kappa);
@@ -1043,7 +1044,7 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
 				float wavelength, float r0, float L0,
 				layer *turb, int N_LAYER, int k_LAYER,
 				source *src1, source *src2,
-				float *alpha, float kappa)
+				float *alpha, float kappa, int shift)
 {
   int i, j, k;
   float fx, fy, f_square, fs, gl, red, c_red, s_red, wavenumber, src_x, src_y;
@@ -1073,7 +1074,7 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
       fy *= fs;
       f_square = fx*fx + fy*fy;
       fs *= fs;
-      red *= fx*(src_x + 0.5*d) + fy*(src_y + 0.5*d);
+      red *= fx*(src_x + 0.5*d*shift) + fy*(src_y + 0.5*d*shift);
       sincosf( red, &s_red, &c_red);
       red = -wavenumber*turb[k_LAYER].xi0*fs*wavelength*(fx*alpha[0] + fy*alpha[1])*
       powf(r0,-5.0/3.0)*

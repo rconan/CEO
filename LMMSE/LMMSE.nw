@@ -44,6 +44,10 @@ struct LMMSE {
 	     float sampling, int N, 
 	     mask *pupil, char *solver_id);
   void setup(atmosphere *atm, source *guide_star, source *mmse_star,
+	     float sampling, int N, 
+	     mask *pupil, char *solver_id,
+             int wavefront_osf);
+  void setup(atmosphere *atm, source *guide_star, source *mmse_star,
 	     shackHartmann *wfs, char *solver_id);
 
   void cleanup(void);
@@ -70,6 +74,7 @@ struct LMMSE {
 
 <<setup>>
 <<setup with pupil>>
+<<setup with pupil and osf>>
 <<setup with shackHartmann>>
 
 <<cleanup>>
@@ -89,7 +94,7 @@ cdef extern from "LMMSE.h":
     cdef cppclass LMMSE:
         float *d__phase_est
         void setup(atmosphere *, source *, source *, 
-                   float , int , mask *, char *)
+                   float , int , mask *, char *, int)
         void setup(atmosphere *, source *, source *, 
                    shackHartmann *, char *)
         void cleanup()
@@ -133,12 +138,12 @@ cdef class Lmmse:
     def __cinit__(self,AtmosphereAbstract atm, 
                   Source guide_star, Source mmse_star,
                   float sampling, int N, 
-                  Mask pupil, char *solver_id):
+                  Mask pupil, char *solver_id,osf=1):
         self._c_LMMSE = new ceo.LMMSE()
         self.N_phase = N + 1
         self._c_LMMSE.setup(atm._c_atmosphere,
                             guide_star._c_source, mmse_star._c_source,
-                            sampling, N, pupil._c_mask, solver_id)
+                            sampling, N, pupil._c_mask, solver_id,osf)
 
     def __dealloc__(self):
         self._c_LMMSE.cleanup()
@@ -226,7 +231,7 @@ cdef class LmmseSH:
 The parameters are defined in
 <<parameters>>=
 int *d__idx, PS_E_N_PX, N_guide_star, N_mmse_star, offset, NP, osf;
-float *d__ce, *d__phase_est, *d__phase_est_c, *d__phase_est_i, *d__x;
+float *d__ce, *d__phase_est, *d__phase_est_c, *d__phase_est_i, *d__x, *d__x_zero_padded;
 aaStats aa;
 BTBT aaCov;
 paStats pa;
@@ -364,14 +369,14 @@ Eq.~(\ref{eq:5}) is then solved iteratively using the method in \cite{Lee86} to 
 \draw[red,dashed,thick,rounded corners] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,4) -- ++(-1,0) -- cycle;
 \foreach \x in {1,...,3} {
 \draw[red,dashed,thick,rounded corners,xshift=\x*4cm] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,4) -- ++(-1,0) -- cycle;
-\draw[red,dashed,thick,rounded corners,yshift=-\x*5cm] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,4) -- ++(-1,0) -- cycle;
+\draw[red,dashed,thick,rounded corners,yshift=\x*5cm] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,4) -- ++(-1,0) -- cycle;
 }
-\draw[red,dashed,thick,rounded corners,yshift=-20cm] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,4) -- ++(-1,0) -- cycle;
+\draw[red,dashed,thick,rounded corners,yshift=20cm] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,4) -- ++(-1,0) -- cycle;
 \setcounter{idx}{0}
 \foreach \x/\y in {0/0,0/-5,0/-10,0/-15,0/-20,4/-20,8/-20,12/-20} {
 \foreach \i/\j in {1/25,1/24,1/23,1/22,1/21,2/21,3/21,4/21} {
   \stepcounter{idx}
-  \node[inner sep=0,xshift=\x cm,yshift=-\y cm] at (\i,\j) {\emph{\scriptsize\arabic{idx}}};
+  \node[inner sep=0,xshift=0.75*\x cm,yshift=0.75*\y cm] at (\i,\j) {\emph{\scriptsize\arabic{idx}}};
 }
 }
 \end{tikzpicture}
@@ -434,7 +439,7 @@ The location of the wavefront samples (black dots) with respect tot the WFS meas
 }
      \end{scope}
   \end{tikzpicture}
-  \caption{Wavefront and NGS measurement sampling with a $4\times4$ lenslet array. The Fried geometry is on the left and the 2RBT geometry is on the right.}
+  \caption{Wavefront and LGS measurement sampling with a $4\times4$ lenslet array. The wavefront sampling in the telescope pupil is given by the black dots, the red circles are the LGS measurement locations at the ground (left) and in altitude (right). The reconstructed wavefront from the cross--covariance is sampled with the blue dots.}
   \label{fig:2}
 \end{figure}
 
@@ -479,51 +484,8 @@ The setup method takes as parameters an atmosphere structure [[atm]], the source
 void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
 		  float sampling, int N_SIDE_LENSLET_, char *solver_id)
 {
-  N_guide_star = guide_star->N_SRC;
-  N_mmse_star  = mmse_star->N_SRC;
-
-  <<setup: AA covariance>>
-
   osf = 1; // The wavefront over-sampling factor (1 means the same sampling that the WFS)
-  NP = osf*N_SIDE_LENSLET_+1; // The number of wavefront sample
-
-  pa.setup(NP,N_SIDE_LENSLET_,osf,atm,sampling,
-           mmse_star, N_mmse_star, guide_star, N_guide_star);
-
-  if (mmse_star[0].height==guide_star[0].height) {
-
-     paCov.setup(N_mmse_star,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET_,pa.d__cov);
-
-     PS_E_N_PX = paCov.MT2_TOTAL;
-     nnz = 0;
-
-  } else {
- 
-     paCov.setup(N_mmse_star*atm->N_LAYER,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET_,pa.d__cov);
-  
-     PS_E_N_PX = paCov.MT2_TOTAL;
-
-     NI = NP;
-     nnz = 4*NI*NI*atm->N_LAYER;
-     <<sparse setup>>
-  }
-
-  int N = N_SIDE_LENSLET_*N_SIDE_LENSLET_*2;
-  if (strcmp(solver_id,"CG")==0)
-    iSolve.cg_setup(N*N_guide_star);
-  if (strcmp(solver_id,"MINRES")==0)
-    iSolve.minres_setup(N*N_guide_star);
-
-  iSolve.RTOL = 5E-2;
-
-d__idx = 0;
-d__ce  = 0;
-int N_LENSLET = N_SIDE_LENSLET_*N_SIDE_LENSLET_;
-HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est_c, sizeof(float)*PS_E_N_PX ) );
-HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* N_LENSLET*2*N_guide_star ) );
-HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* N_LENSLET*2*N_guide_star ) );
-HANDLE_ERROR( cudaEventCreate( &start ) );
-HANDLE_ERROR( cudaEventCreate( &stop ) );
+  <<setup common>>
 }
 @ with a pupil:
 <<setup with pupil>>=
@@ -531,7 +493,17 @@ void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
 		       float sampling, int N_SIDE_LENSLET_,
                        mask *pupil, char *solver_id)
 {
-<<setup common>>
+osf = 1; // The wavefront over-sampling factor (1 means the same sampling that the WFS)
+<<setup common with pupil>>
+}
+@ with a pupil and the wavefront over--sampling factor:
+<<setup with pupil and osf>>=
+void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
+		       float sampling, int N_SIDE_LENSLET_,
+                       mask *pupil, char *solver_id, int wavefront_osf)
+{
+osf = wavefront_osf; // The wavefront over-sampling factor (1 means the same sampling that the WFS)
+<<setup common with pupil>>
 }
 @ with a Shack--Hartmann:
 <<setup with shackHartmann>>=
@@ -542,21 +514,56 @@ float sampling      = wfs->lenslet_pitch;
 int N_SIDE_LENSLET_ = wfs->optics_relay.N_SIDE_LENSLET;
 mask *pupil;
 pupil = &(wfs->valid_actuator);
-<<setup common>>
+osf = 1; // The wavefront over-sampling factor (1 means the same sampling that the WFS)
+<<setup common with pupil>>
 }
-@  with
+@  
+The setup routine is written: 
 <<setup common>>=
+<<setup common (covariance computation)>>
+<<setup common (covariance matrix)>>
+<<setup common (solver setup & memory allocation)>>
+@ or when a mask object is given:
+<<setup common with pupil>>=
+<<setup common (covariance computation)>>
+<<setup common (covariance matrix with pupil)>>
+<<setup common (solver setup & memory allocation)>>
+@ with
+<<setup common (covariance computation)>>=
   N_guide_star = guide_star->N_SRC;
   N_mmse_star  = mmse_star->N_SRC;
 
   <<setup: AA covariance>>
 
-  osf = 1; // The wavefront over-sampling factor (1 means the same sampling that the WFS)
   NP = osf*N_SIDE_LENSLET_+1; // The number of wavefront sample
 
-  pa.setup(NP,N_SIDE_LENSLET_,osf,atm,sampling,
-           mmse_star, N_mmse_star, guide_star, N_guide_star);
+  if (osf>1)
+      pa.setup(NP,NP,osf,atm,sampling,
+               mmse_star, N_mmse_star, guide_star, N_guide_star);
+  else 
+      pa.setup(NP,N_SIDE_LENSLET_,osf,atm,sampling,
+               mmse_star, N_mmse_star, guide_star, N_guide_star);
+@
+<<setup common (covariance matrix)>>=
+  if (mmse_star[0].height==guide_star[0].height) {
+
+     paCov.setup(N_mmse_star,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET_,pa.d__cov);
+
+     PS_E_N_PX = paCov.MT2_TOTAL;
+     nnz = 0;
+
+  } else {
  
+    paCov.setup(N_mmse_star*atm->N_LAYER,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET_,pa.d__cov);
+  
+     PS_E_N_PX = paCov.MT2_TOTAL;
+
+     NI = NP;
+     nnz = 4*NI*NI*atm->N_LAYER;
+     <<sparse setup>>
+  }
+@
+<<setup common (covariance matrix with pupil)>>=
   if (mmse_star[0].height==guide_star[0].height) {
 
      paCov.setup(N_mmse_star,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET_,pa.d__cov);
@@ -575,7 +582,8 @@ pupil = &(wfs->valid_actuator);
      nnz = 4*atm->N_LAYER*pupil->nnz;
      <<sparse setup with pupil mask>>
   }
-
+@
+<<setup common (solver setup & memory allocation)>>=
   int N = N_SIDE_LENSLET_*N_SIDE_LENSLET_*2;
   if (strcmp(solver_id,"CG")==0)
     iSolve.cg_setup(N*N_guide_star);
