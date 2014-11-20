@@ -4,7 +4,7 @@ include common.mk
 #ls -d */ | sed -e 's,//$,,' -e 's,doc,,' -e 's,lib,,'  -e 's,include,,' | xargs
 SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE plotly
 TUTORIAL	= ngsao lgsao ltao ltaoVsAst geaos
-PYTHON_DIR	= utilities source atmosphere centroiding imaging shackHartmann aaStats LMMSE
+PYTHON_DIR	= utilities source atmosphere centroiding imaging shackHartmann aaStats GBTBT LMMSE
 
 all: makefile jsmnlib
 	mkdir -p include lib

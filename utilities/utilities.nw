@@ -1403,12 +1403,14 @@ cdef class cuFloatArray:
          if self.dev_malloc:
             self._c_gpu.free_dev()
 
-    def host(self,units=None,zm=False,mask=None):
+    def host(self,units=None,zm=False,mask=None,shape=None):
         """
         Copies the data from the device to the host and returns the associated ndarray
         """
         if self.shape==(0,0) or self.shape is None:
             raise ValueError("Data must have a size greater than zero!!")
+        if shape is not None:
+            self.shape = shape
         self.host_data = np.zeros(self.shape,order='c',dtype=np.float32)
         self._c_gpu.host_data = <float *>self.host_data.data;
         self._c_gpu.dev2host()
@@ -1416,6 +1418,7 @@ cdef class cuFloatArray:
             if mask is None:
                 self.host_data -= self.host_data.mean()
             else:
+                mask = np.reshape(mask,self.shape)
                 mean_host_data = np.sum(self.host_data*mask)/np.sum(mask)
                 self.host_data = mask*(self.host_data-mean_host_data)
         if units is not None:
