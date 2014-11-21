@@ -146,13 +146,13 @@ cdef class Lmmse:
 
     def __cinit__(self,AtmosphereAbstract atm, 
                   Source guide_star, Source mmse_star,
-                  float sampling, int N, 
-                  Mask pupil, char *solver_id,osf=1):
+                  float sampling, int N, MaskAbstract pupil, 
+                  char *solver_id, int osf=1):
         self._c_LMMSE = new ceo.LMMSE()
-        self.N_phase = N + 1
         self._c_LMMSE.setup(atm._c_atmosphere,
                             guide_star._c_source, mmse_star._c_source,
                             sampling, N, pupil._c_mask, solver_id,osf)
+        self.N_phase = self._c_LMMSE.NP
 
     def __dealloc__(self):
         self._c_LMMSE.cleanup()
@@ -644,7 +644,6 @@ if (osf>1) {
    HANDLE_ERROR( cudaMalloc((void**)&d__zp_x, sizeof(float)* NS2*2*N_guide_star ) );
    HANDLE_ERROR( cudaMemset(d__zp_x, 0, sizeof(float)* NS2*2*N_guide_star ) );
 }
-printf("NS=%d\n",NS);
 HANDLE_ERROR( cudaEventCreate( &start ) );
 HANDLE_ERROR( cudaEventCreate( &stop ) );
 @
