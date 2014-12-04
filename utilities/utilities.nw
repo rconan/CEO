@@ -90,6 +90,12 @@ __global__ void fried_geometry(char *lenslet_mask, char *actuator_mask,
                                int NL, int n, float threshold);
 __global__ void fried_geometry_vs_pupil(char *lenslet_mask, char *actuator_mask, 
                                         const int NL, const int n, const float threshold, const char *pupil);
+__global__ void wavefront_finite_difference_kernel(float *sx, float *sy, int NL, 
+                                                   float *phi, int n, float d);
+__global__ void wavefront_finite_difference_kernel_masked(
+                                 float *sx, float *sy, int NL, 
+                                 float *phi, int n, float d,
+                                 char *M);
 char fried_geometry_setup(char *lenslet_mask, char *actuator_mask, 
                           int NL, int n, float threshold);
 char fried_geometry_setup_vs_pupil(char *lenslet_mask, char *actuator_mask, 
@@ -116,7 +122,7 @@ void freedev( float **dev_data );
 <<gpu data structure>>
 
 void wavefront_finite_difference(float *sx, float *sy, int NL, float *phi, int n, float d);
-__global__ void wavefront_finite_difference_kernel(float *sx, float *sy, int NL, float *phi, int n, float d);
+void wavefront_finite_difference(float *sx, float *sy, int NL, float *phi, int n, float d, mask *pupil);
 
 #endif  // __UTILITIES_H__
 @
@@ -168,7 +174,9 @@ int round_up_to_nhp2(int n) {
 <<gpu data structure function>>
 
 <<wavefront differentiation>>
+<<wavefront differentiation (with mask)>>
 <<wavefront differentiation kernel>>
+<<wavefront differentiation kernel (with mask)>>
 @
 
 \subsection{Python}
@@ -1599,15 +1607,68 @@ __global__ void wavefront_finite_difference_kernel(float *sx, float *sy, int NL,
     }
   }
 @ 
+In case of finite pupil:
+<<wavefront differentiation (with mask)>>=
+void wavefront_finite_difference(float *sx, float *sy, int NL, 
+                                 float *phi, int n, float d,
+                                 mask *pupil)
+  {
+    dim3 blockDim(16,16);
+    dim3 gridDim(NL/16+1,NL/16+1);
+    wavefront_finite_difference_kernel_masked LLL gridDim,blockDim RRR 
+                                (sx, sy, NL, phi, n, d,pupil->m);
+  }
+@ with the kernel
+<<wavefront differentiation kernel (with mask)>>=
+__global__ void wavefront_finite_difference_kernel_masked(
+                                 float *sx, float *sy, int NL, 
+                                 float *phi, int n, float d,
+                                 char *M)
+  {
+    int iL, jL, kL, k, u, v, w, NP, m;
+    iL = blockIdx.x * blockDim.x + threadIdx.x;
+    jL = blockIdx.y * blockDim.y + threadIdx.y;
+    kL = iL*NL+jL;
+    if ( ( (iL<NL) && (jL<NL) ) && (M[kL]>0) ) {
+      NP = (n-1)*NL + 1;
+      u = iL*(n-1);
+      v = jL*(n-1);
+      sx[kL] = sy[kL] = 0.0;
+      m = 0;
+      for (k=0;k<n;k++) {
+	// x slope
+	w = u*NP + v + k;
+	sx[kL] += phi[w];
+	w += (n-1)*NP;
+	sx[kL] -= phi[w];
+	// y slope
+	w = (u+k)*NP + v;
+	sy[kL] += phi[w];
+	w += n-1;
+	sy[kL] -= phi[w];
+        ++m;
+      }
+      sx[kL] /= m*d;
+      sy[kL] /= m*d;
+    }
+  }
+@ 
 The python wrapper is
 <<ceo.pxd>>=
 ## wavefront differentiation
     void wavefront_finite_difference(float *sx, float *sy, int NL, 
                                      float *phi, int n, float d)
+    void wavefront_finite_difference(float *sx, float *sy, int NL, 
+                                     float *phi, int n, float d, mask *pupil)
 @ 
 <<ceo.pyx>>=
 ## wavefront differentiation
 cpdef wavefrontFiniteDifference(cuFloatArray sx, cuFloatArray sy, int NL, 
-                                cuFloatArray phi, int n, float d):
-    wavefront_finite_difference(sx._c_gpu.dev_data, sy._c_gpu.dev_data, NL, 
-                                phi._c_gpu.dev_data, n, d)
+                                cuFloatArray phi, int n, float d, MaskAbstract M=None):
+    if M is None:
+        wavefront_finite_difference(sx._c_gpu.dev_data, sy._c_gpu.dev_data, NL, 
+                                    phi._c_gpu.dev_data, n, d)
+    else:
+        wavefront_finite_difference(sx._c_gpu.dev_data, sy._c_gpu.dev_data, NL, 
+                                    phi._c_gpu.dev_data, n, d, M._c_mask)
+
