@@ -1559,13 +1559,13 @@ cpdef double atmosphericDispersion(float wavelength, float delta_wavelength,
 \label{sec:wavefr-diff}
 
 The following routine is computing the finite difference of a given wavefront on a [[N_L]]$\times$[[N_L]] lenslet array of pitch [[d]].
-The wavefront is sample with [[n]]$\times$[[n]] points per lenslet ([[n]]$\geq 2$) meaning that the full wavefront is of size $\left([[n]]-1\right)[[N_L]]+1$.
+The wavefront is sample with [[n+1]]$\times$[[n+1]] points per lenslet ([[n]]$\geq 2$) meaning that the full wavefront is of size $[[n]][[N_L]]+1$.
 
 The x and y slopes corresponding to the average gradient of the wavefront $\varphi$ on the lenslet $(i_L,j_L)$ with $0\leq i_l,j_l <$[[N_L]] are given by:
 \begin{eqnarray}
   \label{eq:8}
-  s_x(i_L,j_L) &=& {1\over nd} \sum_{k=0}^{n-1} \varphi\left[ i_L(n-1)+k,j_L(n-1) \right] -  \varphi\left[ i_L(n-1)+k,(j_L+1)(n-1)\right] \\
-  s_x(i_L,j_L) &=& {1\over nd} \sum_{k=0}^{n-1} \varphi\left[ i_L(n-1),j_L(n-1)+k \right] -  \varphi\left[ (i_L+1)(n-1),j_L(n-1)+k\right] 
+  s_x(i_L,j_L) &=& {1\over (n+1)d} \sum_{k=0}^{n} \varphi\left[ i_Ln+k,j_Ln \right] -  \varphi\left[ i_Ln+k,(j_L+1)n\right] \\
+  s_x(i_L,j_L) &=& {1\over (n+1)d} \sum_{k=0}^{n} \varphi\left[ i_Ln,j_Ln+k \right] -  \varphi\left[ (i_L+1)n,j_Ln+k\right] 
 \end{eqnarray}
 
 <<wavefront differentiation>>=
@@ -1585,27 +1585,30 @@ __global__ void wavefront_finite_difference_kernel(float *sx, float *sy, int NL,
     iL = blockIdx.x * blockDim.x + threadIdx.x;
     jL = blockIdx.y * blockDim.y + threadIdx.y;
     if ( (iL<NL) && (jL<NL) ) {
-      kL = iL*NL+jL;
-      NP = (n-1)*NL + 1;
-      u = iL*(n-1);
-      v = jL*(n-1);
-      sx[kL] = sy[kL] = 0.0;
-      for (k=0;k<n;k++) {
-	// x slope
-	w = u*NP + v + k;
-	sx[kL] += phi[w];
-	w += (n-1)*NP;
-	sx[kL] -= phi[w];
-	// y slope
-	w = (u+k)*NP + v;
-	sy[kL] += phi[w];
-	w += n-1;
-	sy[kL] -= phi[w];
-      }
-      sx[kL] /= n*d;
-      sy[kL] /= n*d;
+      <<wavefront differentiation core>>
     }
   }
+@  and
+<<wavefront differentiation core>>=
+ kL = iL*NL+jL;
+ NP = n*NL + 1;
+ u = iL*n;
+ v = jL*n;
+ sx[kL] = sy[kL] = 0.0;
+ for (k=0;k<=n;k++) {
+   // x slope
+   w = u*NP + v + k;
+   sx[kL] += phi[w];
+   w += n*NP;
+   sx[kL] -= phi[w];
+   // y slope
+   w = (u+k)*NP + v;
+   sy[kL] += phi[w];
+   w += n;
+   sy[kL] -= phi[w];
+ }
+ sx[kL] /= (n+1)*d;
+ sy[kL] /= (n+1)*d;
 @ 
 In case of finite pupil:
 <<wavefront differentiation (with mask)>>=
@@ -1613,6 +1616,9 @@ void wavefront_finite_difference(float *sx, float *sy, int NL,
                                  float *phi, int n, float d,
                                  mask *pupil)
   {
+    int sxy_nbyte = sizeof(float)*NL*NL;
+    HANDLE_ERROR( cudaMemset(sx,  0, sxy_nbyte ) );
+    HANDLE_ERROR( cudaMemset(sy,  0, sxy_nbyte ) );
     dim3 blockDim(16,16);
     dim3 gridDim(NL/16+1,NL/16+1);
     wavefront_finite_difference_kernel_masked LLL gridDim,blockDim RRR 
@@ -1625,31 +1631,12 @@ __global__ void wavefront_finite_difference_kernel_masked(
                                  float *phi, int n, float d,
                                  char *M)
   {
-    int iL, jL, kL, k, u, v, w, NP, m;
+    int iL, jL, kL, k, u, v, w, NP;
     iL = blockIdx.x * blockDim.x + threadIdx.x;
     jL = blockIdx.y * blockDim.y + threadIdx.y;
     kL = iL*NL+jL;
     if ( ( (iL<NL) && (jL<NL) ) && (M[kL]>0) ) {
-      NP = (n-1)*NL + 1;
-      u = iL*(n-1);
-      v = jL*(n-1);
-      sx[kL] = sy[kL] = 0.0;
-      m = 0;
-      for (k=0;k<n;k++) {
-	// x slope
-	w = u*NP + v + k;
-	sx[kL] += phi[w];
-	w += (n-1)*NP;
-	sx[kL] -= phi[w];
-	// y slope
-	w = (u+k)*NP + v;
-	sy[kL] += phi[w];
-	w += n-1;
-	sy[kL] -= phi[w];
-        ++m;
-      }
-      sx[kL] /= m*d;
-      sy[kL] /= m*d;
+      <<wavefront differentiation core>>
     }
   }
 @ 
