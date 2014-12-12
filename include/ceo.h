@@ -49,5 +49,9 @@
 #include "plotly.h"
 #endif
 
+#ifndef __SYSTEM_H__
+#include "system.h"
+#endif
+
 #endif  // __CEO_H__
 

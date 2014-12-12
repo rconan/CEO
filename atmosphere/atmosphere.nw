@@ -83,6 +83,7 @@ struct atmosphere {
   void get_phase_screen(source *src, int N_SRC,
 			float const delta_x, int N_x, float const delta_y, int N_y, 
 			float time);
+  void get_phase_screen(source *src, float time);
 
   void get_phase_screen_gradient(float *sx, float *sy, int NL, 
 				 float const d, source *src, float time);
@@ -143,7 +144,8 @@ struct atmosphere {
 <<phase screen II>>
 <<phase screen III>>
 <<phase screen IV>>
-<<phase screen V>>
+<<phase screen V.a>>
+<<phase screen V.b>>
 <<phase screen VI>>
 
 <<phase screen gradient I>>
@@ -166,6 +168,7 @@ cdef extern from "atmosphere.h":
         void info()
 	void reset()
         void get_phase_screen(source *, float , int , float , int , float )
+        void get_phase_screen(source *, float )
         void get_phase_screen(float*, float *, float *, int,
                               source *, float )
         void get_phase_screen_gradient(centroiding *, int , float , source *, float )
@@ -293,6 +296,9 @@ def get_phase_screen(self, Source src,
     self._c_atmosphere.get_phase_screen(src._c_source, 
 					delta_x, N_x, 
 					delta_y, N_y, time)
+
+def phase_screen(self, Source src, float time):
+    self._c_atmosphere.get_phase_screen(src._c_source, time)
 
 def get_phase_values(self, cuFloatArray x,
                      cuFloatArray y, 
@@ -904,7 +910,7 @@ void atmosphere::get_phase_screen(float *phase_screen,
 				   zeta1, eta1, zeta2, eta2,
 				   src->dev_ptr, time);
 }
-<<phase screen V>>=
+<<phase screen V.a>>=
 void atmosphere::get_phase_screen(source *src,
                        float const delta_x, int N_x, float const delta_y, int N_y, 
 		       float time)
@@ -924,6 +930,38 @@ void atmosphere::get_phase_screen(source *src,
     square_plps_masked LLL gridDim , blockDim RRR 
       (src->wavefront.phase, src->wavefront.M->m,
        delta_x, N_x, delta_y, N_y, 
+       d__turbulence, 
+       wavenumber*powf(r0,-5.0/6.0),
+       layers, N_LAYER,
+       zeta1, eta1, zeta2, eta2,
+       src->dev_ptr, time);
+}
+<<phase screen V.b>>=
+void atmosphere::get_phase_screen(source *src, float time)
+{
+  complex_amplitude *wavefront;
+  wavefront = &(src->wavefront);
+  printf(" . resolution: %dX%d\n",src->wavefront.M->size_px[0],src->wavefront.M->size_px[1]);
+  printf(" . resolution: %4.1fX%4.1f\n",src->wavefront.M->size_m[0],src->wavefront.M->size_m[1]);
+  printf(" . sampling  : %.2fX%.2f\n",src->wavefront.M->delta[0],src->wavefront.M->delta[1]);
+  dim3 blockDim(16,16);
+  dim3 gridDim( 1+wavefront->M->size_px[0]/16 ,
+		1+wavefront->M->size_px[1]/16, src->N_SRC);
+  if (wavefront->M==NULL)
+    square_plps LLL gridDim , blockDim RRR 
+      (wavefront->phase,
+       wavefront->M->delta[0], wavefront->M->size_px[0],
+       wavefront->M->delta[1], wavefront->M->size_px[1], 
+       d__turbulence, 
+       wavenumber*powf(r0,-5.0/6.0),
+       layers, N_LAYER,
+       zeta1, eta1, zeta2, eta2,
+       src->dev_ptr, time);
+  else
+    square_plps_masked LLL gridDim , blockDim RRR 
+      (wavefront->phase, wavefront->M->m,
+       wavefront->M->delta[0], wavefront->M->size_px[0],
+       wavefront->M->delta[1], wavefront->M->size_px[1], 
        d__turbulence, 
        wavenumber*powf(r0,-5.0/6.0),
        layers, N_LAYER,

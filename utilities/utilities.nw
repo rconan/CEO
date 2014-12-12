@@ -945,15 +945,24 @@ char *m;
 @ \item the filter [[f]] has a type of float and contains 0 and 1,
 <<mask parameters>>=
 float *f;  
-@ \item the total number of element [[nel]],
+@ \item the mask x and y size in pixel [[size_px]],
+<<mask parameters>>=
+int size_px[2];
+@ \item the total number of element $[[nel]]=[[size_px]][0] \times [[size_px]][1]$,
 <<mask parameters>>=
 int nel;  
-@ \item the number of non zeros elements [[nnz]].
+@ \item the number of non zeros elements [[nnz]],
 <<mask parameters>>=
 float nnz;  
-@ \item the surface area of the mask in $m^2$ [[mask_area]]:
+@ \item the mask x and y length in meter [[size_m]],
+<<mask parameters>>=
+float size_m[2];
+@ \item the surface area of the mask in $m^2$ [[mask_area]],
 <<mask parameters>>=
 float area;  
+@ \item the x and y pixel scale [[delta]],
+<<mask parameters>>=
+float delta[2];  
 @ \end{itemize}
 
 The mask structure definition is:
@@ -961,7 +970,9 @@ The mask structure definition is:
 struct mask {
   <<mask parameters>>
   void setup(int n);
+  void setup(int n, float L);
   void setup_circular(int n);
+  void setup_circular(int n, float D);
   void setup_GMT(int n, float S);
   void set_filter(void);
   void cleanup(void);
@@ -988,6 +999,23 @@ HANDLE_ERROR( cudaMalloc((void**)&m, sizeof(char)*nel ) );
 HANDLE_ERROR( cudaMalloc((void**)&f, sizeof(float)*nel ) );
 HANDLE_ERROR( cudaMemset( m, 0, sizeof(char)*nel) );
 HANDLE_ERROR( cudaMemset( f, 0, sizeof(float)*nel) );
+@ \item with a square mask of [[n]] pixel across and [[L]] meter width:
+<<mask functions>>=
+void mask::setup(int n, float L) {
+  size_px[0] = size_px[1] = n;
+  size_m[0]  = size_m[1]  = L;
+  delta[0]   = delta[1]   = L/(n-1);
+  printf(" . resolution: %dX%d\n",size_px[0],size_px[1]);
+  printf(" . resolution: %4.1fX%4.1f\n",size_m[0],size_m[1]);
+  printf(" . sampling  : %.2fX%.2f\n",delta[0],delta[1]);
+  nel = n*n;
+  area = L*L;
+  <<setup commom>>
+  dim3 blockDim(256);
+  dim3 gridDim(nel/256+1);
+  fill_ones_char LLL gridDim,blockDim RRR (m,nel);
+  set_filter();
+}
 @ \item with a circular mask inside an [[n]]$\times$[[n]] array
 <<mask functions>>=
 void mask::setup_circular(int n) {
@@ -999,9 +1027,29 @@ void mask::setup_circular(int n) {
   circular_pupil LLL gridDim,blockDim RRR ( m , n );
   set_filter();
 }
+@ \item with a circular mask of diameter [[D]] (in meter) inside an [[n]]$\times$[[n]] array
+<<mask functions>>=
+void mask::setup_circular(int n, float D) {
+  size_px[0] = size_px[1] = n;
+  size_m[0]  = size_m[1]  = D;
+  delta[0]   = delta[1]   = D/(n-1);
+  printf(" . resolution: %dX%d\n",size_px[0],size_px[1]);
+  printf(" . resolution: %4.1fX%4.1f\n",size_m[0],size_m[1]);
+  printf(" . sampling  : %.2fX%.2f\n",delta[0],delta[1]);
+  nel = n*n;
+  area = 0.25*PI*D*D;
+  <<setup commom>>
+  dim3 blockDim(16,16);
+  dim3 gridDim(n/16+1,n/16+1);
+  circular_pupil LLL gridDim,blockDim RRR ( m , n );
+  set_filter();
+}
 @ \item with the Giant Magellan Telescope mask inside an [[n]]$\times$[[n]] array of length [[S]] in meter
 <<mask functions>>=
 void mask::setup_GMT(int n, float S) {
+  size_px[0] = size_px[1] = n;
+  size_m[0]  = size_m[1]  = S;
+  delta[0]   = delta[1]   = S/(n-1);
   nel = n*n;
   area = 368.0;
   <<setup commom>>
@@ -1058,8 +1106,8 @@ The python wrapper is
     cdef cppclass mask:
         char *m
         float *f
-        void setup(int)
-        void setup_circular(int)
+        void setup(int, float)
+        void setup_circular(int, float)
         void setup_GMT(int, float)
         void cleanup()
 @ 
@@ -1084,7 +1132,7 @@ cdef class MaskAbstract:
     cdef ceo.mask *_c_mask
     cdef int n
 
-    def __cinit__(self,int n, S=0):
+    def __cinit__(self,int n, float S=0.0):
 	self._c_mask = new ceo.mask()
         self.n = n
 
@@ -1114,9 +1162,9 @@ cdef class Mask(MaskAbstract):
 
     """
 
-    def __cinit__(self,int n):
+    def __cinit__(self,int n, float L):
         MaskAbstract.__init__(self,n)
-        self._c_mask.setup(n*n)
+        self._c_mask.setup(n,L)
 
     def __dealloc__(self):
         self._c_mask.cleanup()
@@ -1139,9 +1187,9 @@ cdef class Telescope(MaskAbstract):
     --------
 
     """ 
-    def __cinit__(self, int n):
+    def __cinit__(self, int n, float D):
         MaskAbstract.__init__(self,n)
-	self._c_mask.setup_circular(self.n)    
+        self._c_mask.setup_circular(self.n,D)    
 
     def __dealloc__(self):
         self._c_mask.cleanup()
@@ -1166,7 +1214,7 @@ cdef class GMT(MaskAbstract):
     --------
 
     """
-    def __cinit__(self, int n, float S):
+    def __cinit__(self, int n, float S=25.5):
         MaskAbstract.__init__(self,n)
 	self._c_mask.setup_GMT(self.n,S)    
 

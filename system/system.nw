@@ -1,0 +1,140 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+@
+\section{The files}
+\label{sec:files}
+
+\subsection{Header}
+\label{sec:header}
+
+<<system.h>>=
+#ifndef __SYSTEM__
+#define __SYSTEM__
+
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+
+struct plant {
+  <<plant parameters>>
+  void setup(source *__src, atmosphere *__atm, 
+	     float *__wavefront_corrector, shackHartmann *__wfs);
+};
+
+struct controller {
+  <<controller parameters>>
+  void setup(float __g, LMMSE *__E);
+};
+
+struct system {
+  <<system parameters>>
+  void setup(float __sampling_time, plant *__sys_plant, controller *__sys_ctrl);
+};
+
+#endif // __SYSTEM__
+
+@ 
+\subsection{Source}
+\label{sec:source}
+
+<<system.cu>>=
+#include "system.h"
+
+  /* SYSTEM */
+<<system setup>>
+  /* PLANT */
+<<plant setup>>
+  /* CONTROLLER */
+<<controller setup>>
+@ 
+
+\subsection{Python}
+\label{sec:python}
+
+\section{Parameters}
+\label{sec:parameters}
+
+\subsection{System parameters}
+\label{sec:system-parameters}
+
+A system is composed of a plant and a controller.
+The system sets the sampling time.
+<<system parameters>>=
+float sampling_time;
+plant *sys_plant;
+controller *sys_ctrl;
+@ 
+
+\subsection{Plant parameters}
+\label{sec:plant-parameters}
+
+A plant can contain:
+\begin{itemize}
+\item a source,
+<<plant parameters>>=
+source *src;
+@
+\item an atmosphere,
+<<plant parameters>>=
+atmosphere *atm;
+@
+\item a wavefront corrector,
+<<plant parameters>>=
+float *wavefront_corrector;
+@
+\item a wavefront sensor,
+<<plant parameters>>=
+shackHartmann *wfs;
+@
+\item an imaging system,
+<<plant parameters>>=
+imaging img_sys;
+@ \end{itemize}
+
+\subsection{Controller parameters}
+\label{sec:contr-param}
+
+The controller parameters are the control gain [[g]] and the wavefront reconstructor [[E]].
+<<controller parameters>>=
+float g;
+LMMSE *E;
+@ 
+\section{Functions}
+\label{sec:functions}
+
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
+Setup routines are defined for
+\begin{description}
+\item[system] 
+<<system setup>>=
+void system::setup(float __sampling_time, plant *__sys_plant, controller *__sys_ctrl) {
+  sampling_time = __sampling_time;
+  sys_plant     = __sys_plant;
+  sys_ctrl      = __sys_ctrl; 
+}
+@
+\item[plant] 
+<<plant setup>>=
+void plant::setup(source *__src, atmosphere *__atm, 
+		  float *__wavefront_corrector, shackHartmann *__wfs) {
+  src                 = __src;
+  atm                 = __atm;
+  wavefront_corrector = __wavefront_corrector;
+  wfs                 = __wfs;
+}
+@
+\item[controller]]
+<<controller setup>>=
+void controller::setup(float __g, LMMSE *__E) {
+  g = __g;
+  E = __E;
+} 
+@ \end{description}
+
+\subsection{Input/Output}
+\label{sec:inputoutput}
+
+\section{Tests}
+\label{sec:tests}
+

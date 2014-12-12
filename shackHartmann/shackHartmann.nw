@@ -66,7 +66,7 @@ struct shackHartmann {
 <<ceo.pxd>>=
 cdef extern from "shackHartmann.h":
     cdef cppclass shackHartmann:
-        float slopes_gain
+        float lenslet_pitch, slopes_gain
         mask valid_lenslet
         mask valid_actuator
         imaging optics_relay
@@ -174,8 +174,7 @@ cdef class ShackHartmann:
     property valid_actuator:
         def __get__(self):
             x = MaskAbstract(self.N_SIDE_LENSLET+1)
-            x._c_mask.m = self._c_shackHartmann.valid_actuator.m
-            x._c_mask.f = self._c_shackHartmann.valid_actuator.f
+            x._c_mask = &(self._c_shackHartmann.valid_actuator)
             return x
 
     property valid_lenslet:
@@ -269,8 +268,8 @@ void shackHartmann::setup(int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
   HANDLE_ERROR( cudaMemset( d__c0, 0, sizeof(float)*N_SLOPE ) ); 
   d__cx0 = d__c0;
   d__cy0 = d__c0 + N_LENSLET;
-  valid_lenslet.setup(N_LENSLET);
-  valid_actuator.setup(N_ACTUATOR);
+  valid_lenslet.setup(N_SIDE_LENSLET,(N_SIDE_LENSLET-1)*d);
+  valid_actuator.setup(N_SIDE_LENSLET+1,N_SIDE_LENSLET*d);
   optics_relay.setup(N_PX_LENSLET, N_SIDE_LENSLET, DFT_osf,
 		     N_PX_IMAGE,  BIN_IMAGE, N_GS);
   data_proc.setup(N_SIDE_LENSLET, N_GS);
@@ -298,6 +297,10 @@ void shackHartmann::cleanup(void)
   data_proc.cleanup();
 }
 @
+
+\subsection{Calibration}
+\label{sec:calibration}
+
 The WFS calibration routine is:
 <<WFS calibration>>= 
 void shackHartmann::calibrate(source *src, float threshold) {
@@ -386,6 +389,10 @@ __global__ void set_valid_lenslet(char *lenslet_mask, char *actuator_mask,
     }
 }
 @ 
+
+\subsection{Wavefront processing}
+\label{sec:wavefront-processing}
+
 The guide star [[gs]] is propagated through the lenslet array to the detector:
 <<wavefront propagation>>=
 void shackHartmann::propagate(source *gs) {
