@@ -7,8 +7,8 @@
 \label{sec:header}
 
 <<system.h>>=
-#ifndef __SYSTEM__
-#define __SYSTEM__
+#ifndef __CEO_SYSTEM__
+#define __CEO_SYSTEM__
 
 #ifndef __CEO_H__
 #include "ceo.h"
@@ -18,19 +18,22 @@ struct plant {
   <<plant parameters>>
   void setup(source *__src, atmosphere *__atm, 
 	     float *__wavefront_corrector, shackHartmann *__wfs);
+  void update(int k);
 };
 
 struct controller {
   <<controller parameters>>
   void setup(float __g, LMMSE *__E);
+  void update(int k);
 };
 
-struct system {
-  <<system parameters>>
+struct ceo_system {
+  <<ceo_system parameters>>
   void setup(float __sampling_time, plant *__sys_plant, controller *__sys_ctrl);
+  void update();
 };
 
-#endif // __SYSTEM__
+#endif // __CEO_SYSTEM__
 
 @ 
 \subsection{Source}
@@ -39,26 +42,109 @@ struct system {
 <<system.cu>>=
 #include "system.h"
 
-  /* SYSTEM */
-<<system setup>>
+  /* CEO_SYSTEM */
+<<ceo_system setup>>
+<<ceo_system update>>
   /* PLANT */
 <<plant setup>>
+<<plant update>>
   /* CONTROLLER */
 <<controller setup>>
+<<controller update>>
 @ 
 
 \subsection{Python}
 \label{sec:python}
 
+<<ceo.pxd>>=
+cdef extern from "system.h":
+# plant
+    cdef cppclass plant:
+        void setup(source *, atmosphere *, 
+		  float *, shackHartmann *)
+# controller
+    cdef cppclass controller:
+        void setup(float , LMMSE *)
+# ceo_system
+    cdef cppclass ceo_system:
+        int k
+        void setup(float, plant *, controller *)
+        void update()
+@ 
+<<ceo.pyx>>=
+#plant
+cdef class Plant:
+    """
+    Creates a plant object
+
+    Parameters
+    ----------
+    src: a Source object
+    atm: an Atmosphere object
+    wavefront_corrector: a cuFloatArray object 
+    wfs: a ShackHartmann object
+
+    """
+    cdef ceo.plant *_c_plant
+
+    def __cinit__(self, Source src, AtmosphereAbstract atm, 
+                  cuFloatArray wavefront_corrector,
+                  ShackHartmann wfs):
+        self._c_plant = new ceo.plant()
+        self._c_plant.setup(src._c_source, atm._c_atmosphere,
+                            wavefront_corrector._c_gpu.dev_data,
+                            wfs._c_shackHartmann)
+# controller
+cdef class Controller:
+    """
+    Creates a controller object
+
+    Parameters
+    ----------
+    g: a float scalar
+        The controller gain
+    E: a Lmmse object
+        The wavefront reconstructor
+    """
+    cdef ceo.controller *_c_controller
+
+    def __cinit__(self, float g, LmmseSH E):
+        self._c_controller = new ceo.controller()
+        self._c_controller.setup(g, E._c_LMMSE)
+# ceo_system
+cdef class System:
+    """
+    Creates a ceo_system object
+
+    Parameters
+    ----------
+    sampling_time: a float number
+        the ceo_system sampling time
+    sys_plant: a plant object
+    sys_ctrl: a controller object
+
+    """
+    cdef ceo.ceo_system *_c_ceo_system
+    
+    def __cinit__(self, float sampling_time, Plant sys_plant, Controller sys_ctrl):
+        self._c_ceo_system = new ceo.ceo_system()
+        self._c_ceo_system.setup(sampling_time, sys_plant._c_plant, sys_ctrl._c_controller)
+
+    def update(self):
+        self._c_ceo_system.update()
+@ 
+
 \section{Parameters}
 \label{sec:parameters}
 
-\subsection{System parameters}
-\label{sec:system-parameters}
+\subsection{Ceo_System parameters}
+\label{sec:ceo_system-parameters}
 
-A system is composed of a plant and a controller.
-The system sets the sampling time.
-<<system parameters>>=
+A ceo_system is composed of a plant and a controller.
+The time evolution is represented with the integer variable [[k]].
+The current time $t$ is then $t=k[[samp[ling_time]]$.
+<<ceo_system parameters>>=
+int k;
 float sampling_time;
 plant *sys_plant;
 controller *sys_ctrl;
@@ -85,17 +171,25 @@ float *wavefront_corrector;
 <<plant parameters>>=
 shackHartmann *wfs;
 @
-\item an imaging system,
+\item an imaging ceo_system,
 <<plant parameters>>=
 imaging img_sys;
+@
+\item the sampling time,
+<<plant parameters>>=
+float sampling_time; 
+@ \item plant input and output ports,
+<<plant parameters>>=
+float *in, *out;
 @ \end{itemize}
 
 \subsection{Controller parameters}
 \label{sec:contr-param}
 
-The controller parameters are the control gain [[g]] and the wavefront reconstructor [[E]].
+The controller parameters are the control gain [[g]], the wavefront reconstructor [[E]] and the input/output ports.
 <<controller parameters>>=
 float g;
+float *in, *out;
 LMMSE *E;
 @ 
 \section{Functions}
@@ -106,15 +200,22 @@ LMMSE *E;
 
 Setup routines are defined for
 \begin{description}
-\item[system] 
-<<system setup>>=
-void system::setup(float __sampling_time, plant *__sys_plant, controller *__sys_ctrl) {
+\item[ceo_system] a ceo_system embeds a plant and a controller and ensures that the input/output of the plant are linked to the output/input of the controller:
+<<ceo_system setup>>=
+void ceo_system::setup(float __sampling_time, 
+		   plant *__sys_plant, 
+		   controller *__sys_ctrl) {
   sampling_time = __sampling_time;
   sys_plant     = __sys_plant;
   sys_ctrl      = __sys_ctrl; 
+  k             = 0;
+  sys_plant->sampling_time 
+                = sampling_time;
+  sys_plant->in = sys_ctrl->out;
+  sys_ctrl->in  = sys_plant->out;
 }
 @
-\item[plant] 
+\item[plant] this plant has a layout corresponding to a closed--loop ceo_system:
 <<plant setup>>=
 void plant::setup(source *__src, atmosphere *__atm, 
 		  float *__wavefront_corrector, shackHartmann *__wfs) {
@@ -122,15 +223,47 @@ void plant::setup(source *__src, atmosphere *__atm,
   atm                 = __atm;
   wavefront_corrector = __wavefront_corrector;
   wfs                 = __wfs;
+  out                 = wfs->data_proc.d__c;
 }
 @
-\item[controller]]
+\item[controller] the controller contains the algorithm of pseudo--open loop controller:
 <<controller setup>>=
 void controller::setup(float __g, LMMSE *__E) {
   g = __g;
-  E = __E;
+  E = __E;  
 } 
 @ \end{description}
+
+\subsection{Update}
+\label{sec:update}
+
+The ceo_system, plant and controller states are updated with the update routines:
+\begin{description}
+\item[ceo_system]
+<<ceo_system update>>=
+void ceo_system::update() {
+  k++;
+  sys_plant->update(k);
+  printf(" >> %d: ceo_system updated!\n",k);
+}
+@ 
+\item[plant]
+<<plant update>>=
+void plant::update(int k) {
+  wfs->optics_relay.reset();
+  atm->get_phase_screen(src,k*sampling_time);
+  src->wavefront.add_phase(-1,wavefront_corrector);
+  wfs->propagate(src);
+  wfs->optics_relay.readout(sampling_time,0.0);
+  wfs->process();
+}
+@
+\item[controller] 
+<<controller update>>=
+void controller::update(int k) {
+}
+@ 
+\end{description}
 
 \subsection{Input/Output}
 \label{sec:inputoutput}
