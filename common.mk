@@ -1,21 +1,22 @@
-CEOPATH	        = /home/rconan/CEO
-CUDAPATH	= /opt/local/cuda
-PYTHONPATH      = /home/rconan/anaconda
+CEOPATH	        = /home/ubuntu/CEO
+CUDAPATH	= /usr/local/cuda
+PYTHONPATH      = /home/ubuntu/anaconda
 CEOPYPATH	= $(CEOPATH)/python/ceo
 NVCC          	= $(CUDAPATH)/bin/nvcc
 CUDALIBPATH   	= $(CUDAPATH)/lib64
 MATLABINCS	= -I/priv/monarcas1/rconan/MATLAB/R2013a/extern/include \
 	-I/export/monarcas1/rconan/MATLAB/R2013a/toolbox/distcomp/gpu/extern/include
 CUDALIBS	= cusparse cufft cublas cudart cuda 
-NOWEBPATH	= /opt/local/noweb
+NOWEBPATH	= /usr
 WEAVE   	= $(NOWEBPATH)/bin/noweave
 TANGLE    	= $(NOWEBPATH)/bin/notangle
 CPIF	    	= $(NOWEBPATH)/bin/cpif
 TEXTOPDF  	= pdflatex
 NVCCFLAGS	= -gencode=arch=compute_20,code=\"sm_20,compute_20\" \
 		--compiler-options=-ansi,-D_GNU_SOURCE,-fwrapv,-fPIC,-fno-omit-frame-pointer,-pthread,-fno-strict-aliasing -O2
-LIBS 		= -L$(CEOPATH)/lib $(CUDALIBPATH:%=-L%) $(CUDALIBS:%=-l%)
+LIBS 		= -L$(CEOPATH)/lib $(CUDALIBPATH:%=-L%) -lceo -lcurl -ljsmn $(CUDALIBS:%=-l%)
 INCS		= -I. -I$(CEOPATH)/include #$(MATLABINCS)
+SHELL		= /bin/bash
 
 texsrc = $(nwsrc:%.nw=%.tex)
 header = $(nwsrc:%.nw=%.h)
@@ -53,7 +54,7 @@ libsrc = $(CEOPATH)/lib/libceo.a
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
 	mv $@ $@.cu
 	make -C $(CEOPATH) all
-	$(NVCC) $(INCS) $(LIBS) $@.cu -lceo -lcurl -ljsmn
+	$(NVCC) $(INCS) $(LIBS) $@.cu
 
 .nw.py:
 	$(TANGLE) -R$@ $< > $@

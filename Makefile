@@ -24,7 +24,7 @@ cython: all
 	for i in $(PYTHON_DIR); do (echo -e "\n# $$i.nw">>$(CEOPYPATH)/ceo.pxd;echo -e "\n# $$i.nw">>$(CEOPYPATH)/ceo.pyx;make -C $$i python);echo -e "\n"; done
 	cython --cplus $(CEOPYPATH)/ceo.pyx -o $(CEOPYPATH)/ceo.cu
 	$(NVCC) $(INCS) -I$(PYTHONPATH)/include/python2.7/ -I$(PYTHONPATH)/lib/python2.7/site-packages/numpy/core/include $(NVCCFLAGS) -o $(CEOPYPATH)/ceo.o -c $(CEOPYPATH)/ceo.cu
-	$(NVCC) $(LIBS) -shared $(CEOPYPATH)/ceo.o -o $(CEOPYPATH)/ceo.so -lceo -lcurl -ljsmn
+	$(NVCC) -shared $(CEOPYPATH)/ceo.o -o $(CEOPYPATH)/ceo.so $(LIBS) 
 	rm -f $(CEOPYPATH)/ceo.cu $(CEOPYPATH)/ceo.o
 	set PYTHONPATH=$(CEOPYPATH)
 
