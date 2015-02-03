@@ -100,6 +100,15 @@ struct atmosphere {
   void get_phase_screen_circ_uplink_centroids(centroiding *cog, const float R, 
 					      source *src, int N_SRC, float time, 
 					      char focused);
+
+  void rayTracing(const float* x_PUPIL,const float* y_PUPIL, 
+		  const int NXY_PUPIL, 
+		  const source* src, const int N_SOURCE,
+		  const layer* layers,
+		  const float* WIDTH_LAYER, const int* N_WIDTH_LAYER, 
+		  const float* LENGTH_LAYER, const int* N_LENGTH_LAYER, 
+		  float* phase_screen_LAYER, 
+		  const int N_LAYER, const float tau);
 };
 
 #endif // __ATMOSPHERE_H__
@@ -110,6 +119,9 @@ struct atmosphere {
 #include "atmosphere.h"
 
 <<sinc (atm)>>
+
+<<ray tracing kernel>>
+
 <<phase screen circular centroids kernel>>
 <<phase screen circular uplink centroids kernel>>
 <<phase screen circular focused uplink centroids kernel>>
@@ -1508,6 +1520,164 @@ __global__ void circ_focused_uplink_centroids_kernel(float *cx, float *cy, int N
       atomicAdd(&cx[0], _cx_);
       atomicAdd(&cy[0], _cy_);
     }
+}
+@
+\subsection{Ray tracing}
+\label{sec:ray-tracing}
+
+This note describe a CUDA implementation of ray tracing through several phase screens from a set of difference sources at a finite or infinite distance.
+The phase screens, computed independently, are rectangular strip with the longest side aligned along the wind direction.
+% he short side length [[W]] is the size of the field--of--view at the layer altitude $h$, i.e $$[[W]]=D + 2h\tan(\omega/2),$$ where $D$ is the telescope diameter and $\omega$ is the field--of--view.
+% The long side length [[L]] depends on the wind speed $v$ and the experience duration $T$, i.e. $$L = W + vT.$$
+The atmosphere has [[N_LAYER]] turbulence layers and there are [[N_SOURCE]] different sources.
+
+The ray tracing consists in accumulating on a set of coordinates in the telescope pupil plane the values of phase screens distributed above the telescope at several altitudes.
+The wavefront is accumulated on rays going from the source through the phase screens and to the (x,y) location in the pupil plane.
+The geometric propagation does the following: (i) the pupil plane coordinates are transformed into new coordinates at each layer (Sec.~\ref{sec:coord-transf}) and (ii) the wavefront of each layer is interpolated onto the new coordinates (Sec.~\ref{sec:bi-line-interp}).
+
+\subsubsection{Coordinate transformation}
+\label{sec:coord-transf}
+
+%The coordinates in the telescope pupil are defined on a square Cartesian grid of [[N_PUPIL]]$\times$[[N_PUPIL]] pixels.
+The coordinates in the pupil plane are given in the vectors [[x_PUPIL]] and [[y_PUPIL]] of length [[NXY_PUPIL]] each.
+
+The pupil coordinates need to be transformed at each layer to take into account the height and direction of the source and the wind vector for the layer considered.
+At a given layer $[[k_LAYER]]\in[0,\dots,[[N_LAYER-1]]]$ for the source $[[k_SOURCE]]\in[0,\dots,[[N_SOURCE-1]]]$, the coordinates [[x_PUPIL]] and [[y_PUPIL]] undergo the following transformations
+\begin{enumerate}
+\item scaling by the factor [[g]] given by 
+<<coordinate transformation>>=
+g = 1 - layers[k_LAYER].altitude/src[k_SOURCE].height;
+@ where [[iz_SOURCE]] is the inverse of the source height, leading to
+<<coordinate transformation>>=
+x = g*x_PUPIL[ij];
+y = g*y_PUPIL[ij];
+@ \item translation based on the intersection between the ray going from the center of the pupil to the source and the atmosphere layer plane
+<<coordinate transformation>>=
+x += src[k_SOURCE].theta_x*layers[k_LAYER].altitude;
+y += src[k_SOURCE].theta_y*layers[k_LAYER].altitude;
+@ where [[theta_x_SOURCE]] and [[theta_y_SOURCE]] are the x and y components of the direction vector of the source [[k_SOURCE]].
+They are written $$[[theta_x_SOURCE]]=\tan(\zeta)\cos(\alpha)$$ and $$[[theta_y_SOURCE]]=\tan(\zeta)\sin(\alpha)$$ with $\zeta$ and $\alpha$ the zenith and azimuth coordinates of the source.
+\item rotation according to the wind direction [[theta_wind]]; the phase screens being aligned with the wind vector, the pupil plane coordinates are rotated to be correctly aligned with the wind vector in the phase screens frame of reference
+<<coordinate transformation>>=
+sincosf(layers[k_LAYER].wind_direction - PI, &s, &c);
+xi = x*c + y*s;
+yi = y*c - x*s;
+@ \item translation according to the wind speed [[mag_wind]] and time step [[tau]]; the phase screens are carried by the wind which is blowing along the x--axis in the phase screen frame of reference, the pupil plane coordinates in this frame are then translated along the phase screens x--axis
+<<coordinate transformation>>=
+xi += tau*layers[k_LAYER].wind_speed;
+@ \end{enumerate}
+
+
+@ 
+\subsubsection{Bi--linear interpolation}
+\label{sec:bi-line-interp}
+
+Once the pupil coordinates have been transformed into the reference frame of each layer, the phase screens are interpolated onto the new coordinates.
+The phase screens are long rectangular strips of width [[WIDTH_LAYER]] and length [[LENGTH_LAYER]].
+The phase screens have been computed on Cartesian grids of pixel size [[N_WIDTH_LAYER]]$\times$[[N_LENGTH_LAYER]] with $$x\in[-[[WIDTH_LAYER]]/2,[[LENGTH_LAYER]]-[[WIDTH_LAYER/2]]]$$ and $$y\in[-[[WIDTH_LAYER]]/2,[[WIDTH_LAYER]]/2].$$
+The phase screen of one layer is stored in a vector of length $[[N_WIDTH_LAYER]]\times[[N_WIDTH_LAYER]]$ and all the phase screens from all the layers are concatenated into a single vector [[phase_screen_LAYER]].
+The first phase value of the layer [[k_LAYER]] is read with
+<<bilinear interpolation>>=
+N_L = N_LENGTH_LAYER[k_LAYER];
+N_W = N_WIDTH_LAYER[k_LAYER];
+z = phase_screen_LAYER + pitch;
+pitch += N_L*N_W;
+@ [[pitch]] must first be initialized to 0.
+
+ The interpolation starts with normalizing the coordinates to the pixel size of the phase screen i.e.
+<<bilinear interpolation>>=
+s = (N_L - 1 )
+  *(xi + WIDTH_LAYER[k_LAYER]*0.5)/LENGTH_LAYER[k_LAYER];
+t = (N_W - 1 )
+  *(yi/WIDTH_LAYER[k_LAYER] + 0.5);
+@  and taking the floor integer part to locate the bottom--left coordinate of the pixels surrounding [[xi]] and [[yi]]
+<<bilinear interpolation>>=
+fs  = floorf(s);
+ft  = floorf(t);
+ndx = __float2int_rd( ft + fs*N_W );
+@ Next, one checks if the edge of the phase screens have been reached
+<<bilinear interpolation>>=
+if (s==(N_L-1)) { s += 1 - fs; ndx -= N_W; } else { s -= fs; }    
+if (t==(N_W-1)) { t += 1 - ft; ndx -= 1; }   else { t -= ft; }
+@ and finally the interpolation is computed as
+<<bilinear interpolation>>=	 
+onemt = 1 - t;
+zi = ( z[ndx]*onemt + z[ndx+1]*t )*(1-s) + 
+        ( z[ndx+N_W]*onemt + z[ndx+N_W+1]*t )*s;
+
+
+@
+\subsubsection{The CUDA kernel}
+\label{sec:cuda-kernel}
+
+The codes in the former sections have implicitly declared several variable that we are declaring formally now
+<<ray tracing variables>>=
+int N_L, N_W, k_LAYER, k_SOURCE, ij, ndx, ix, iy, pitch;
+float x, y, xi, yi, zi, s, c, t, fs, ft, g, onemt;
+float *z;
+@ The GPU thhread block and grid sizes are set such as the x and y threads process the telescope pupil coordinates and the z thread span the different sources.
+<<threads to pupil and source mapping>>=
+ix = blockIdx.x * blockDim.x + threadIdx.x;
+iy = blockIdx.y * blockDim.y + threadIdx.y;
+pitch = gridDim.x * blockDim.x;
+ij = iy * pitch + ix;
+k_SOURCE = threadIdx.z;
+pitch = 0;
+@ The kernel itself is written has follows
+<<ray tracing kernel>>=
+__global__ void rayTracingKern(
+const float* x_PUPIL,const float* y_PUPIL, 
+float* phase_screen_PUPIL,const int NXY_PUPIL, 
+const source* src, const int N_SOURCE,
+const layer* layers,
+const float* WIDTH_LAYER, const int* N_WIDTH_LAYER, 
+const float* LENGTH_LAYER, const int* N_LENGTH_LAYER, 
+float* phase_screen_LAYER, 
+const int N_LAYER, const float tau)
+{
+
+  <<ray tracing variables>>
+
+  <<threads to pupil and source mapping>>
+
+  if ((ij<NXY_PUPIL) && (k_SOURCE<N_SOURCE))
+  {
+    for (k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++)
+    {
+
+      <<coordinate transformation>>
+
+      <<bilinear interpolation>>
+
+      phase_screen_PUPIL[ij+k_SOURCE*NXY_PUPIL] += zi;
+    }
+  }
+}
+@
+The kernel is called with
+<<ray tracing>>=
+void atmosphere::rayTracing(
+const float* x_PUPIL,const float* y_PUPIL, 
+const int NXY_PUPIL, 
+const source *src, const int N_SOURCE,
+const float* WIDTH_LAYER, const int* N_WIDTH_LAYER, 
+const float* LENGTH_LAYER, const int* N_LENGTH_LAYER, 
+float* phase_screen_LAYER, 
+const int N_LAYER, const float tau)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim( 1+sqrtf(NXY_PUPIL)/16 , 1+sqrtf(NXY_PUPIL)/16, src->N_SRC);
+  rayTracingKern LLL gridDim, blockDim RRR(
+  x_PUPIL, y_PUPIL, 
+  src->wavefront.phase, NXY_PUPIL, 
+  src->dev_ptr, src->N_SRC,
+  layers,
+  WIDTH_LAYER, N_WIDTH_LAYER, 
+  LENGTH_LAYER, N_LENGTH_LAYER, 
+  h_LAYER, theta_wind, 
+  mag_wind, phase_screen_LAYER, 
+  N_LAYER, tau);
+  )
 }
 @ 
 \section{Tests}
