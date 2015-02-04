@@ -102,7 +102,7 @@ struct atmosphere {
 					      char focused);
 
   void rayTracing(const float* x_PUPIL,const float* y_PUPIL, 
-		  const int NXY_PUPIL, 
+		  float* phase_screen_PUPIL, const int NXY_PUPIL, 
 		  const source* src, const int N_SOURCE,
 		  const layer* layers,
 		  const float* WIDTH_LAYER, const int* N_WIDTH_LAYER, 
@@ -188,7 +188,13 @@ cdef extern from "atmosphere.h":
 					     int , float )
         void get_phase_screen_circ_uplink_centroids(centroiding *,  float, source *,
 						    int , float, char )
-  
+        void rayTracing(float*, float*, 
+                   float*, int, 
+                   source*, int,
+                   float*, int*, 
+                   float*, int*, 
+                   float*, 
+                   int, float)
 @ 
 <<ceo.pyx>>=
 @cython.boundscheck(False)
@@ -336,6 +342,25 @@ def get_phase_values(self, cuFloatArray x,
                                         x._c_gpu.N,
                                         src._c_source, time)
     return ps
+
+def ray_tracing(self,
+                cuFloatArray x_PUPIL,cuFloatArray y_PUPIL, 
+                cuFloatArray phase_screen_PUPIL, int NXY_PUPIL, 
+                Source src, int N_SOURCE,
+                cuFloatArray WIDTH_LAYER, cuFloatArray N_WIDTH_LAYER, 
+                cuFloatArray LENGTH_LAYER, cuFloatArray N_LENGTH_LAYER, 
+                cuFloatArray phase_screen_LAYER, 
+                int N_LAYER, float tau):
+    ps = cuFloatArray(shape=x_PUPIL.shape,dev_malloc=True)
+    """
+    self._c_atmosphere.rayTracing(x_PUPIL._c_gpu.dev_data, y_PUPIL._c_gpu.dev_data,
+                                  phase_screen_PUPIL._c_gpu.dev_data, NXY_PUPIL,
+                                  src._c_source, N_SOURCE,
+                                  WIDTH_LAYER._c_gpu.dev_data, N_WIDTH_LAYER._c_gpu.dev_data,
+                                  LENGTH_LAYER._c_gpu.dev_data, N_LENGTH_LAYER._c_gpu.dev_data,
+                                  phase_screen_LAYER._c_gpu.dev_data,
+                                  N_LAYER, tau)
+    """
 
 def get_phase_screen_gradient(self, Centroiding cog, int NL, float d, 
 			      Source src, float time):  
@@ -1658,7 +1683,7 @@ The kernel is called with
 <<ray tracing>>=
 void atmosphere::rayTracing(
 const float* x_PUPIL,const float* y_PUPIL, 
-const int NXY_PUPIL, 
+float* phase_screen_PUPIL, const int NXY_PUPIL, 
 const source *src, const int N_SOURCE,
 const float* WIDTH_LAYER, const int* N_WIDTH_LAYER, 
 const float* LENGTH_LAYER, const int* N_LENGTH_LAYER, 
@@ -1669,7 +1694,7 @@ const int N_LAYER, const float tau)
   dim3 gridDim( 1+sqrtf(NXY_PUPIL)/16 , 1+sqrtf(NXY_PUPIL)/16, src->N_SRC);
   rayTracingKern LLL gridDim, blockDim RRR(
   x_PUPIL, y_PUPIL, 
-  src->wavefront.phase, NXY_PUPIL, 
+  phase_screen_PUPIL, NXY_PUPIL, 
   src->dev_ptr, src->N_SRC,
   layers,
   WIDTH_LAYER, N_WIDTH_LAYER, 
