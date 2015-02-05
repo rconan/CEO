@@ -104,7 +104,6 @@ struct atmosphere {
   void rayTracing(const float* x_PUPIL,const float* y_PUPIL, 
 		  float* phase_screen_PUPIL, const int NXY_PUPIL, 
 		  const source* src, const int N_SOURCE,
-		  const layer* layers,
 		  const float* WIDTH_LAYER, const int* N_WIDTH_LAYER, 
 		  const float* LENGTH_LAYER, const int* N_LENGTH_LAYER, 
 		  float* phase_screen_LAYER, 
@@ -167,6 +166,8 @@ struct atmosphere {
 <<phase screen gradient (masked)>>
 <<phase screen circular centroids>>
 <<phase screen circular uplink centroids>>
+
+<<ray tracing>>
 @
 \subsection{Python}
 \label{sec:python}
@@ -345,22 +346,21 @@ def get_phase_values(self, cuFloatArray x,
 
 def ray_tracing(self,
                 cuFloatArray x_PUPIL,cuFloatArray y_PUPIL, 
-                cuFloatArray phase_screen_PUPIL, int NXY_PUPIL, 
+                int NXY_PUPIL, 
                 Source src, int N_SOURCE,
-                cuFloatArray WIDTH_LAYER, cuFloatArray N_WIDTH_LAYER, 
-                cuFloatArray LENGTH_LAYER, cuFloatArray N_LENGTH_LAYER, 
+                cuFloatArray WIDTH_LAYER, cuIntArray N_WIDTH_LAYER, 
+                cuFloatArray LENGTH_LAYER, cuIntArray N_LENGTH_LAYER, 
                 cuFloatArray phase_screen_LAYER, 
                 int N_LAYER, float tau):
-    ps = cuFloatArray(shape=x_PUPIL.shape,dev_malloc=True)
-    """
+    ps = cuFloatArray(host_data=np.zeros(x_PUPIL.shape, dtype=np.float32 , order='C'))
     self._c_atmosphere.rayTracing(x_PUPIL._c_gpu.dev_data, y_PUPIL._c_gpu.dev_data,
-                                  phase_screen_PUPIL._c_gpu.dev_data, NXY_PUPIL,
+                                  ps._c_gpu.dev_data, NXY_PUPIL,
                                   src._c_source, N_SOURCE,
                                   WIDTH_LAYER._c_gpu.dev_data, N_WIDTH_LAYER._c_gpu.dev_data,
                                   LENGTH_LAYER._c_gpu.dev_data, N_LENGTH_LAYER._c_gpu.dev_data,
                                   phase_screen_LAYER._c_gpu.dev_data,
                                   N_LAYER, tau)
-    """
+    return ps
 
 def get_phase_screen_gradient(self, Centroiding cog, int NL, float d, 
 			      Source src, float time):  
@@ -1584,7 +1584,7 @@ y += src[k_SOURCE].theta_y*layers[k_LAYER].altitude;
 They are written $$[[theta_x_SOURCE]]=\tan(\zeta)\cos(\alpha)$$ and $$[[theta_y_SOURCE]]=\tan(\zeta)\sin(\alpha)$$ with $\zeta$ and $\alpha$ the zenith and azimuth coordinates of the source.
 \item rotation according to the wind direction [[theta_wind]]; the phase screens being aligned with the wind vector, the pupil plane coordinates are rotated to be correctly aligned with the wind vector in the phase screens frame of reference
 <<coordinate transformation>>=
-sincosf(layers[k_LAYER].wind_direction - PI, &s, &c);
+sincosf(layers[k_LAYER].wind_direction, &s, &c);
 xi = x*c + y*s;
 yi = y*c - x*s;
 @ \item translation according to the wind speed [[mag_wind]] and time step [[tau]]; the phase screens are carried by the wind which is blowing along the x--axis in the phase screen frame of reference, the pupil plane coordinates in this frame are then translated along the phase screens x--axis
@@ -1691,7 +1691,7 @@ float* phase_screen_LAYER,
 const int N_LAYER, const float tau)
 {
   dim3 blockDim(16,16);
-  dim3 gridDim( 1+sqrtf(NXY_PUPIL)/16 , 1+sqrtf(NXY_PUPIL)/16, src->N_SRC);
+  dim3 gridDim( ceilf(sqrt(NXY_PUPIL)/16) , ceilf(sqrt(NXY_PUPIL)/16), src->N_SRC);
   rayTracingKern LLL gridDim, blockDim RRR(
   x_PUPIL, y_PUPIL, 
   phase_screen_PUPIL, NXY_PUPIL, 
@@ -1699,10 +1699,8 @@ const int N_LAYER, const float tau)
   layers,
   WIDTH_LAYER, N_WIDTH_LAYER, 
   LENGTH_LAYER, N_LENGTH_LAYER, 
-  h_LAYER, theta_wind, 
-  mag_wind, phase_screen_LAYER, 
+  phase_screen_LAYER, 
   N_LAYER, tau);
-  )
 }
 @ 
 \section{Tests}

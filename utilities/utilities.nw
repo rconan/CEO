@@ -120,6 +120,7 @@ void host2dev( float **dev_data, float *host_data, int N);
 void freedev( float **dev_data );
 
 <<gpu data structure>>
+<<gpu int data structure>>
 
 void wavefront_finite_difference(float *sx, float *sy, int NL, float *phi, int n, float d);
 void wavefront_finite_difference(float *sx, float *sy, int NL, float *phi, int n, float d, mask *pupil);
@@ -172,6 +173,7 @@ int round_up_to_nhp2(int n) {
 <<free device>>
 
 <<gpu data structure function>>
+<<gpu int data structure function>>
 
 <<wavefront differentiation>>
 <<wavefront differentiation (with mask)>>
@@ -1357,28 +1359,64 @@ void freedev( float **dev_data ) {
 <<gpu data structure>>=
 struct gpu {
   float *dev_data, *host_data;
-  int N;
+  int N, nb;
   stats S;
+  void setup(void);
   void dev_malloc(void);
   void free_dev(void);
   void dev2host(void);
   void host2dev(void);
 };
 <<gpu data structure function>>=
+void gpu::setup(void) {
+  nb = sizeof(float);
+}
 void gpu::dev_malloc(void) {
-    HANDLE_ERROR( cudaMalloc( (void**)&dev_data, N*sizeof(float)) );
+    HANDLE_ERROR( cudaMalloc( (void**)&dev_data, N*nb) );
 }
 void gpu::free_dev(void) {
     HANDLE_ERROR( cudaFree( dev_data ) );
 }
 void gpu::dev2host(void) {
      HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
-			       N*sizeof(float), cudaMemcpyDeviceToHost ) ) ;
+			       N*nb, cudaMemcpyDeviceToHost ) ) ;
      HANDLE_ERROR( cudaDeviceSynchronize() ); 
 }
 void gpu::host2dev(void) {
     HANDLE_ERROR( cudaMemcpy( dev_data, host_data, 
-			       N*sizeof(float), cudaMemcpyHostToDevice ) ) ;
+			       N*nb, cudaMemcpyHostToDevice ) ) ;
+    HANDLE_ERROR( cudaDeviceSynchronize() );
+}
+@ 
+<<gpu int data structure>>=
+struct gpu_int {
+  int *dev_data, *host_data;
+  int N, nb;
+  stats S;
+  void setup(void);
+  void dev_malloc(void);
+  void free_dev(void);
+  void dev2host(void);
+  void host2dev(void);
+};
+<<gpu int data structure function>>=
+void gpu_int::setup(void) {
+  nb = sizeof(int);
+}
+void gpu_int::dev_malloc(void) {
+    HANDLE_ERROR( cudaMalloc( (void**)&dev_data, N*nb) );
+}
+void gpu_int::free_dev(void) {
+    HANDLE_ERROR( cudaFree( dev_data ) );
+}
+void gpu_int::dev2host(void) {
+     HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
+			       N*nb, cudaMemcpyDeviceToHost ) ) ;
+     HANDLE_ERROR( cudaDeviceSynchronize() ); 
+}
+void gpu_int::host2dev(void) {
+    HANDLE_ERROR( cudaMemcpy( dev_data, host_data, 
+			       N*nb, cudaMemcpyHostToDevice ) ) ;
     HANDLE_ERROR( cudaDeviceSynchronize() );
 }
 @
@@ -1388,13 +1426,23 @@ void gpu::host2dev(void) {
     void host2dev( float **dev_data, float *host_data, int N)
     void freedev( float **dev_data )
 @ 
-The cu<Type>Array class is a cython class that is a container for CUDA variables:
+The cu$<$Type$>$Array class is a cython class that is a container for CUDA variables:
 <<ceo.pxd>>=
 cdef extern from "utilities.h":
     cdef cppclass gpu:
         float *dev_data
         float *host_data
         int N
+        void setup()
+        void dev_malloc()
+        void free_dev()
+        void dev2host()
+        void host2dev()
+    cdef cppclass gpu_int:
+        int *dev_data
+        int *host_data
+        int N
+        void setup()
         void dev_malloc()
         void free_dev()
         void dev2host()
@@ -1429,6 +1477,7 @@ cdef class cuFloatArray:
 
     def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
         self._c_gpu = new ceo.gpu()
+        self._c_gpu.setup();
         self.dev_malloc = dev_malloc
         if shape is not None:
             self.shape = shape
@@ -1475,7 +1524,83 @@ cdef class cuFloatArray:
             self.host_data = self.host_data*self.units[units]
         return self.host_data
 @ 
+@ 
+<<ceo.pyx>>=
+cdef class cuIntArray:
+    """
+    A class to interact with a cuda integer array
 
+    Parameters
+    ---------
+    shape: (int,int), optional
+        Number of rows and colums
+    host_array: data object, optional
+        Host data to copy to the device
+    dev_malloc: boolean, optional
+        Allocated memory on device (default: False)
+    
+    Returns
+    -------
+    out: cuFloatArray 
+        A cuFloatArray object
+    """
+     
+    cdef ceo.gpu_int *_c_gpu
+    cdef public int size
+    cdef public shape
+    cdef dev_malloc
+    cdef public np.ndarray host_data
+    cdef units
+
+    def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
+        self._c_gpu = new ceo.gpu_int()
+        self._c_gpu.setup();
+        self.dev_malloc = dev_malloc
+        if shape is not None:
+            self.shape = shape
+            self.size = np.prod(shape)
+            self._c_gpu.N = self.size
+        if self.dev_malloc:
+            self._c_gpu.N = self.size
+            self._c_gpu.dev_malloc()           
+        if host_data is not None:
+            self.host_data = np.array( host_data , dtype=np.int32 , order='C')
+            self.shape = host_data.shape
+            self.size = np.prod(self.shape)
+            self._c_gpu.N = self.size
+            if not self.dev_malloc:
+                self._c_gpu.dev_malloc()
+            self._c_gpu.host_data = <int *>self.host_data.data;
+            self._c_gpu.host2dev()
+            self.dev_malloc = True    
+        self.units = {'micron': 1e6, 'nm': 1e9, 'arcsec': 180*3600/math.pi}
+
+    def __dealloc__(self):
+         if self.dev_malloc:
+            self._c_gpu.free_dev()
+
+    def host(self,units=None,zm=False,mask=None,shape=None):
+        """
+        Copies the data from the device to the host and returns the associated ndarray
+        """
+        if self.shape==(0,0) or self.shape is None:
+            raise ValueError("Data must have a size greater than zero!!")
+        if shape is not None:
+            self.shape = shape
+        self.host_data = np.zeros(self.shape,order='c',dtype=np.int32)
+        self._c_gpu.host_data = <int *>self.host_data.data;
+        self._c_gpu.dev2host()
+        if zm:
+            if mask is None:
+                self.host_data -= self.host_data.mean()
+            else:
+                mask = np.reshape(mask,self.shape)
+                mean_host_data = np.sum(self.host_data*mask)/np.sum(mask)
+                self.host_data = mask*(self.host_data-mean_host_data)
+        if units is not None:
+            self.host_data = self.host_data*self.units[units]
+        return self.host_data
+@
 
 \subsection{Atmospheric dispersion}
 \label{sec:atmosph-disp}
