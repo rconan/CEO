@@ -33,7 +33,8 @@ struct layer {
   <<layer parameters>>
 
   void setup(float _altitude, float _xi0,
-               float _wind_speed_, float _wind_direction);
+	     float _wind_speed_, float _wind_direction,
+	     float _L, int _NXY_PUPIL);
 
 };
 
@@ -55,6 +56,10 @@ struct atmosphere {
   void setup(float r0_, float L0, int N_LAYER,
 	     float *altitude, float *xi0,
 	     float *wind_speed, float *wind_direction);
+  void setup(float r0_, float L0, int N_LAYER,
+	     float *altitude, float *xi0,
+	     float *wind_speed, float *wind_direction,
+	     float _L_, int _NXY_PUPIL_);
   void gmt_setup();
   void gmt_setup(float r0_, float L0);
 
@@ -103,11 +108,11 @@ struct atmosphere {
 
   void rayTracing(const float* x_PUPIL,const float* y_PUPIL, 
 		  float* phase_screen_PUPIL, const int NXY_PUPIL, 
-		  const source* src, const int N_SOURCE,
-		  const float* WIDTH_LAYER, const int* N_WIDTH_LAYER, 
-		  const float* LENGTH_LAYER, const int* N_LENGTH_LAYER, 
-		  float* phase_screen_LAYER, 
-		  const int N_LAYER, const float tau);
+		  const source* src, const float tau);
+  void rayTracing(source *src,
+		  const float delta_x, const int N_X,
+		  const float delta_y, const int N_Y,
+		  const float tau);
 };
 
 #endif // __ATMOSPHERE_H__
@@ -120,6 +125,7 @@ struct atmosphere {
 <<sinc (atm)>>
 
 <<ray tracing kernel>>
+<<ray tracing kernel (regular)>>
 
 <<phase screen circular centroids kernel>>
 <<phase screen circular uplink centroids kernel>>
@@ -144,6 +150,7 @@ struct atmosphere {
 <<profile cleanup>>
 
 <<atmosphere setup>>
+<<atmosphere setup (ray tracing)>>
 <<atmosphere setup (GMT)>>
 <<atmosphere setup (GMT prm)>>
 
@@ -168,6 +175,7 @@ struct atmosphere {
 <<phase screen circular uplink centroids>>
 
 <<ray tracing>>
+<<ray tracing (regular)>>
 @
 \subsection{Python}
 \label{sec:python}
@@ -176,6 +184,7 @@ struct atmosphere {
 cdef extern from "atmosphere.h":
     cdef cppclass atmosphere:
         void setup(float , float, int, float *, float *, float *, float *)
+        void setup(float , float, int, float *, float *, float *, float *, float, int)
         void gmt_setup(float , float)
         void cleanup()
         void info()
@@ -190,12 +199,12 @@ cdef extern from "atmosphere.h":
         void get_phase_screen_circ_uplink_centroids(centroiding *,  float, source *,
 						    int , float, char )
         void rayTracing(float*, float*, 
-                   float*, int, 
-                   source*, int,
-                   float*, int*, 
-                   float*, int*, 
-                   float*, 
-                   int, float)
+			float*, int, 
+			source*, float)
+        void rayTracing(source*,
+			float, int,
+                        float, int,
+			float)
 @ 
 <<ceo.pyx>>=
 @cython.boundscheck(False)
@@ -210,7 +219,8 @@ cdef class AtmosphereAbstract:
     def __cinit__(self, float r0, float L0, 
                   N_LAYER=1,
                   altitude=0.0, xi0=1.0, 
-                  wind_speed=0.0, wind_direction=0.0):
+                  wind_speed=0.0, wind_direction=0.0,
+		  L=0.0, NXY_PUPIL=0):
 	self._c_atmosphere = new ceo.atmosphere()
         self.r0 = r0
         self.L0 = L0
@@ -263,18 +273,27 @@ cdef class Atmosphere(AtmosphereAbstract):
     def __cinit__(self, float r0, float L0, 
                   N_LAYER=1,
                   altitude=0.0, xi0=1.0, 
-                  wind_speed=0.0, wind_direction=0.0):
+                  wind_speed=0.0, wind_direction=0.0,
+                  L=0.0, NXY_PUPIL=0):
         AtmosphereAbstract.__init__(self,r0,L0,
                                     N_LAYER=N_LAYER,
                                     altitude=altitude, 
                                     xi0=xi0, 
                                     wind_speed=wind_speed, 
                                     wind_direction=wind_direction)
-        self._c_atmosphere.setup(self.r0, self.L0, self.N_LAYER,
-				 <float *>self.altitude.data,
-                                 <float *>self.xi0.data,
-				 <float *>self.wind_speed.data, 
-                                 <float *>self.wind_direction.data)
+        if NXY_PUPIL==0:
+            self._c_atmosphere.setup(self.r0, self.L0, self.N_LAYER,
+                                     <float *>self.altitude.data,
+                                     <float *>self.xi0.data,
+                                     <float *>self.wind_speed.data, 
+                                     <float *>self.wind_direction.data)
+        else:
+            self._c_atmosphere.setup(self.r0, self.L0, self.N_LAYER,
+                                     <float *>self.altitude.data,
+                                     <float *>self.xi0.data,
+                                     <float *>self.wind_speed.data, 
+                                     <float *>self.wind_direction.data,
+                                     <float> L, <int> NXY_PUPIL)            
 
 
 cdef class GmtAtmosphere(AtmosphereAbstract):
@@ -344,23 +363,24 @@ def get_phase_values(self, cuFloatArray x,
                                         src._c_source, time)
     return ps
 
+"""
 def ray_tracing(self,
                 cuFloatArray x_PUPIL,cuFloatArray y_PUPIL, 
                 int NXY_PUPIL, 
-                Source src, int N_SOURCE,
-                cuFloatArray WIDTH_LAYER, cuIntArray N_WIDTH_LAYER, 
-                cuFloatArray LENGTH_LAYER, cuIntArray N_LENGTH_LAYER, 
-                cuFloatArray phase_screen_LAYER, 
-                int N_LAYER, float tau):
+                Source src, float tau):
     ps = cuFloatArray(host_data=np.zeros(x_PUPIL.shape, dtype=np.float32 , order='C'))
     self._c_atmosphere.rayTracing(x_PUPIL._c_gpu.dev_data, y_PUPIL._c_gpu.dev_data,
                                   ps._c_gpu.dev_data, NXY_PUPIL,
-                                  src._c_source, N_SOURCE,
-                                  WIDTH_LAYER._c_gpu.dev_data, N_WIDTH_LAYER._c_gpu.dev_data,
-                                  LENGTH_LAYER._c_gpu.dev_data, N_LENGTH_LAYER._c_gpu.dev_data,
-                                  phase_screen_LAYER._c_gpu.dev_data,
-                                  N_LAYER, tau)
+                                  src._c_source, tau)
     return ps
+"""
+def ray_tracing(self, Source src, 
+                float delta_x, int N_X,
+		float delta_y, int N_Y,
+                float tau):
+    self._c_atmosphere.rayTracing(src._c_source, 
+				  delta_x, N_X, delta_y, N_Y,
+                                  tau)
 
 def get_phase_screen_gradient(self, Centroiding cog, int NL, float d, 
 			      Source src, float time):  
@@ -432,6 +452,12 @@ float wavelength, r0, wavenumber;
 @ \item the number of atmospheric layers
 <<atmosphere parameters>>=
 int N_LAYER;
+@ \item the size of the pupil in meter
+<<atmosphere parameters>>=
+float L;
+@ \item the size of the pupil in pixel
+<<atmosphere parameters>>=
+int NXY_PUPIL;
 @ \item the outer scale
 <<profile parameters>>=
 float  L0;      
@@ -448,6 +474,15 @@ float xi0;
 @ \item the wind vector
 <<layer parameters>>=
 float wind_speed, wind_direction, vx, vy;
+@ \item the width and length of the phase screen in meter
+<<layer parameters>>=
+float WIDTH_LAYER, LENGTH_LAYER;
+@ \item the width and length of the phase screen in pixel
+<<layer parameters>>=
+int N_WIDTH_LAYER, N_LENGTH_LAYER;
+@ \item layers phase screen
+<<atmosphere parameters>>=
+float *phase_screen_LAYER;
 @ \end{itemize}
 
 
@@ -580,10 +615,58 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
   wavenumber = wavelength/2/PI;
   r0 = r0_;
   N_LAYER = _NLAYER;
+  L = 0;
+  NXY_PUPIL = 0;
   turbulence.L0 = L0;
   turbulence.setup(altitude, xi0,
 		   wind_speed, wind_direction, N_LAYER);
   <<allocation>>
+}
+@ 
+<<atmosphere setup (ray tracing)>>=
+void atmosphere::setup(float r0_, float L0, int _NLAYER,
+		       float *altitude, float *xi0,
+		       float *wind_speed, float *wind_direction,
+                       float _W_, int _N_W_) {
+  wavelength = 550e-9;
+  wavenumber = wavelength/2/PI;
+  r0 = r0_;
+  N_LAYER = _NLAYER;
+  L = _W_;
+  NXY_PUPIL = _N_W_;
+  turbulence.L0 = L0;
+  turbulence.setup(altitude, xi0,
+		   wind_speed, wind_direction, N_LAYER);
+  <<allocation>>
+  int k_LAYER, N_L, N_PHASE_LAYER_byte;
+  float L, delta_W;
+  delta_W = _W_/(_N_W_-1);
+  
+  printf("__ Layer Phase Screen __\n"); 
+  for (k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++) {
+    L = _W_ + wind_speed[0];
+    N_L = (int) ceilf( L/delta_W );
+    L = (N_L-1)*delta_W;
+    N_PHASE_LAYER_byte = _N_W_*N_L*sizeof(float);
+    printf(" #%d: (%5.2fX%5.2f) meters & (%dX%d) pixels ==> %.2fMB \n",
+	   k_LAYER,L,_W_,N_L,_N_W_,N_PHASE_LAYER_byte/powf(2,20));
+  }
+  dim3 blockDimLayers(16,16);
+  dim3 gridDimLayers( 1+_N_W_/16 , 1+N_L/16);
+  //  float delta = L/(NXY_PUPIL-1);
+  source src;
+  src.setup("V",0.0,0.0,INFINITY);
+  HANDLE_ERROR( cudaMalloc( (void**)&phase_screen_LAYER, N_PHASE_LAYER_byte ) );
+  for (k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++) {
+    square_plps LLL gridDimLayers , blockDimLayers RRR (phase_screen_LAYER,
+					    delta_W, _N_W_, delta_W, N_L, 
+					    d__turbulence, 
+					    wavenumber*powf(r0,-5.0/6.0),
+					    layers, N_LAYER,
+					    zeta1, eta1, zeta2, eta2,
+					    src.dev_ptr, 0.0);
+
+  }
 }
 @ For the GMT simulations, the GMT standard atmosphere model is called with:
 <<atmosphere setup (GMT)>>=
@@ -593,6 +676,8 @@ void atmosphere::gmt_setup() {
   r0 = 15e-2;
   turbulence.L0 = 60;
   N_LAYER = 7;
+  L = 0;
+  NXY_PUPIL = 0;
   float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
               xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
               wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
@@ -608,6 +693,8 @@ void atmosphere::gmt_setup(float r0_, float L0) {
   r0 = r0_;
   turbulence.L0 = L0;
   N_LAYER = 7;
+  L = 0;
+  NXY_PUPIL = 0;
   float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
               xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
               wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
@@ -685,7 +772,8 @@ void profile::cleanup(void) {
 An atmospheric layer parameters are set with:
 <<layer setup>>=
 void layer::setup(float _altitude, float _xi0,
-                 float _wind_speed, float _wind_direction)
+		  float _wind_speed, float _wind_direction,
+		  float _L, int _NXY_PUPIL)
 {
     altitude       = _altitude;
     xi0            = _xi0;
@@ -693,6 +781,10 @@ void layer::setup(float _altitude, float _xi0,
     wind_direction = _wind_direction;
     vx = wind_speed*cosf(wind_direction);
     vy = wind_speed*sinf(wind_direction);
+    WIDTH_LAYER    = _L;
+    LENGTH_LAYER   = _L;
+    N_WIDTH_LAYER  = _NXY_PUPIL;
+    N_LENGTH_LAYER = _NXY_PUPIL;
 }
 @ The [[layer]] structures are filled with their parameters and copied to the device
 <<layer to device>>=
@@ -700,7 +792,8 @@ HANDLE_ERROR( cudaMalloc( (void**)&layers, sizeof(layer)*N_LAYER ) );
 layer one_layer;
 for (int i_LAYER=0; i_LAYER<N_LAYER; i_LAYER++) {
     one_layer.setup(altitude[i_LAYER], xi0[i_LAYER], 
-		    wind_speed[i_LAYER], wind_direction[i_LAYER]);
+		    wind_speed[i_LAYER], wind_direction[i_LAYER],
+		    L, NXY_PUPIL);
     HANDLE_ERROR( cudaMemcpy( layers + i_LAYER, &one_layer,
                               sizeof(layer),
                               cudaMemcpyHostToDevice ) );
@@ -767,6 +860,7 @@ void atmosphere::cleanup(void) {
   HANDLE_ERROR( cudaFree( zeta2 ) );
   HANDLE_ERROR( cudaFree( eta2 ) );
   HANDLE_ERROR( cudaFree( layers ) );
+  HANDLE_ERROR( cudaFree( phase_screen_LAYER ) );
 }
 @
 The phase screen are defined in the telescope pupil at the ground 
@@ -1574,8 +1668,8 @@ At a given layer $[[k_LAYER]]\in[0,\dots,[[N_LAYER-1]]]$ for the source $[[k_SOU
 g = 1 - layers[k_LAYER].altitude/src[k_SOURCE].height;
 @ where [[iz_SOURCE]] is the inverse of the source height, leading to
 <<coordinate transformation>>=
-x = g*x_PUPIL[ij];
-y = g*y_PUPIL[ij];
+x = g*xP;
+y = g*yP;
 @ \item translation based on the intersection between the ray going from the center of the pupil to the source and the atmosphere layer plane
 <<coordinate transformation>>=
 x += src[k_SOURCE].theta_x*layers[k_LAYER].altitude;
@@ -1603,8 +1697,8 @@ The phase screens have been computed on Cartesian grids of pixel size [[N_WIDTH_
 The phase screen of one layer is stored in a vector of length $[[N_WIDTH_LAYER]]\times[[N_WIDTH_LAYER]]$ and all the phase screens from all the layers are concatenated into a single vector [[phase_screen_LAYER]].
 The first phase value of the layer [[k_LAYER]] is read with
 <<bilinear interpolation>>=
-N_L = N_LENGTH_LAYER[k_LAYER];
-N_W = N_WIDTH_LAYER[k_LAYER];
+N_L = layers[k_LAYER].N_LENGTH_LAYER;
+N_W = layers[k_LAYER].N_WIDTH_LAYER;
 z = phase_screen_LAYER + pitch;
 pitch += N_L*N_W;
 @ [[pitch]] must first be initialized to 0.
@@ -1612,18 +1706,20 @@ pitch += N_L*N_W;
  The interpolation starts with normalizing the coordinates to the pixel size of the phase screen i.e.
 <<bilinear interpolation>>=
 s = (N_L - 1 )
-  *(xi + WIDTH_LAYER[k_LAYER]*0.5)/LENGTH_LAYER[k_LAYER];
+  *(xi + layers[k_LAYER].WIDTH_LAYER*0.5)/layers[k_LAYER].LENGTH_LAYER;
 t = (N_W - 1 )
-  *(yi/WIDTH_LAYER[k_LAYER] + 0.5);
+  *(yi/layers[k_LAYER].WIDTH_LAYER + 0.5);
 @  and taking the floor integer part to locate the bottom--left coordinate of the pixels surrounding [[xi]] and [[yi]]
 <<bilinear interpolation>>=
+if (s<0) { s=0.0; }
 fs  = floorf(s);
+if (t<0) { t=0.0; }
 ft  = floorf(t);
 ndx = __float2int_rd( ft + fs*N_W );
 @ Next, one checks if the edge of the phase screens have been reached
 <<bilinear interpolation>>=
-if (s==(N_L-1)) { s += 1 - fs; ndx -= N_W; } else { s -= fs; }    
-if (t==(N_W-1)) { t += 1 - ft; ndx -= 1; }   else { t -= ft; }
+if (fs==(N_L-1)) { s += 1 - fs; ndx -= N_W; } else { s -= fs; }    
+if (ft==(N_W-1)) { t += 1 - ft; ndx -= 1; }   else { t -= ft; }
 @ and finally the interpolation is computed as
 <<bilinear interpolation>>=	 
 onemt = 1 - t;
@@ -1638,7 +1734,7 @@ zi = ( z[ndx]*onemt + z[ndx+1]*t )*(1-s) +
 The codes in the former sections have implicitly declared several variable that we are declaring formally now
 <<ray tracing variables>>=
 int N_L, N_W, k_LAYER, k_SOURCE, ij, ndx, ix, iy, pitch;
-float x, y, xi, yi, zi, s, c, t, fs, ft, g, onemt;
+float x, y, xi, yi, zi, s, c, t, fs, ft, g, onemt, xP, yP;
 float *z;
 @ The GPU thhread block and grid sizes are set such as the x and y threads process the telescope pupil coordinates and the z thread span the different sources.
 <<threads to pupil and source mapping>>=
@@ -1646,17 +1742,28 @@ ix = blockIdx.x * blockDim.x + threadIdx.x;
 iy = blockIdx.y * blockDim.y + threadIdx.y;
 pitch = gridDim.x * blockDim.x;
 ij = iy * pitch + ix;
+xP = x_PUPIL[ij];
+yP = y_PUPIL[ij];
 k_SOURCE = threadIdx.z;
 pitch = 0;
-@ The kernel itself is written has follows
+@ 
+<<threads to pupil and source mapping (regular)>>=
+ix = blockIdx.x * blockDim.x + threadIdx.x;
+iy = blockIdx.y * blockDim.y + threadIdx.y;
+pitch = gridDim.x * blockDim.x;
+ij = iy * N_X + ix;
+xP = delta_x*( iy - (N_X-1)*0.5 );
+yP = delta_y*( ix - (N_Y-1)*0.5 );
+k_SOURCE = threadIdx.z;
+pitch = 0;
+int NXY_PUPIL = N_X*N_Y;
+@ The kernel itself is written has follows for coordinates [[x_PUPIL]] and [[y_PUPIL]]:
 <<ray tracing kernel>>=
 __global__ void rayTracingKern(
 const float* x_PUPIL,const float* y_PUPIL, 
 float* phase_screen_PUPIL,const int NXY_PUPIL, 
 const source* src, const int N_SOURCE,
 const layer* layers,
-const float* WIDTH_LAYER, const int* N_WIDTH_LAYER, 
-const float* LENGTH_LAYER, const int* N_LENGTH_LAYER, 
 float* phase_screen_LAYER, 
 const int N_LAYER, const float tau)
 {
@@ -1674,7 +1781,36 @@ const int N_LAYER, const float tau)
 
       <<bilinear interpolation>>
 
-      phase_screen_PUPIL[ij+k_SOURCE*NXY_PUPIL] += zi;
+	phase_screen_PUPIL[ij+k_SOURCE*NXY_PUPIL] += zi;
+    }
+  }
+}
+@ or for a regular grid with spacing [[delta_x]] and [[delta_y]] and size [[N_X]] and [[N_Y]].
+<<ray tracing kernel (regular)>>=
+__global__ void rayTracingKernReg(
+const float delta_x, const int N_X,
+const float delta_y, const int N_Y,
+float* phase_screen_PUPIL, 
+const source* src, const int N_SOURCE,
+const layer* layers,
+float* phase_screen_LAYER, 
+const int N_LAYER, const float tau)
+{
+
+  <<ray tracing variables>>
+
+ <<threads to pupil and source mapping (regular)>>
+
+    if ( ((ix<N_X) && (iy<N_Y) ) && (k_SOURCE<N_SOURCE) )
+  {
+    for (k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++)
+    {
+
+      <<coordinate transformation>>
+
+      <<bilinear interpolation>>
+
+	phase_screen_PUPIL[ij+k_SOURCE*NXY_PUPIL] += zi;
     }
   }
 }
@@ -1684,21 +1820,34 @@ The kernel is called with
 void atmosphere::rayTracing(
 const float* x_PUPIL,const float* y_PUPIL, 
 float* phase_screen_PUPIL, const int NXY_PUPIL, 
-const source *src, const int N_SOURCE,
-const float* WIDTH_LAYER, const int* N_WIDTH_LAYER, 
-const float* LENGTH_LAYER, const int* N_LENGTH_LAYER, 
-float* phase_screen_LAYER, 
-const int N_LAYER, const float tau)
+const source *src, const float tau)
 {
   dim3 blockDim(16,16);
-  dim3 gridDim( ceilf(sqrt(NXY_PUPIL)/16) , ceilf(sqrt(NXY_PUPIL)/16), src->N_SRC);
+  dim3 gridDim( ceilf(sqrtf(NXY_PUPIL)/16) , ceilf(sqrtf(NXY_PUPIL)/16), src->N_SRC);
   rayTracingKern LLL gridDim, blockDim RRR(
   x_PUPIL, y_PUPIL, 
   phase_screen_PUPIL, NXY_PUPIL, 
   src->dev_ptr, src->N_SRC,
   layers,
-  WIDTH_LAYER, N_WIDTH_LAYER, 
-  LENGTH_LAYER, N_LENGTH_LAYER, 
+  phase_screen_LAYER, 
+  N_LAYER, tau);
+}
+@ where the phase screen are computed for the coordinates vector [[x_PUPIL]] and [[y_PUPIL]].
+Instead the phase screens can be computed on regular grid with spacing [[delta_x]] and [[delta_y]] and size [[N_X]] and [[N_Y]].
+<<ray tracing (regular)>>=
+void atmosphere::rayTracing(source *src,
+			    const float delta_x, const int N_X,
+			    const float delta_y, const int N_Y,
+			    const float tau)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim( 1+N_X/16 , 1+N_Y/16, src->N_SRC);
+  rayTracingKernReg LLL gridDim, blockDim RRR(
+  delta_x, N_X,
+  delta_y, N_Y,
+  src->wavefront.phase,
+  src->dev_ptr, src->N_SRC,
+  layers,
   phase_screen_LAYER, 
   N_LAYER, tau);
 }
