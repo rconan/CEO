@@ -59,7 +59,8 @@ struct atmosphere {
   void setup(float r0_, float L0, int N_LAYER,
 	     float *altitude, float *xi0,
 	     float *wind_speed, float *wind_direction,
-	     float _L_, int _NXY_PUPIL_);
+	     float _L_, int _NXY_PUPIL_,
+	     float field_size_ARCSEC);
   void gmt_setup();
   void gmt_setup(float r0_, float L0);
 
@@ -140,6 +141,7 @@ struct atmosphere {
 <<phase screen kernel>>
 
 <<phase screen kernel (square)>>
+<<phase screen kernel (layers)>>
 <<phase screen kernel (square and masked)>>
 
 <<phase screen gradient kernel>>
@@ -184,7 +186,8 @@ struct atmosphere {
 cdef extern from "atmosphere.h":
     cdef cppclass atmosphere:
         void setup(float , float, int, float *, float *, float *, float *)
-        void setup(float , float, int, float *, float *, float *, float *, float, int)
+        void setup(float , float, int, float *, float *, float *, float *, 
+		   float, int, float)
         void gmt_setup(float , float)
         void cleanup()
         void info()
@@ -220,7 +223,7 @@ cdef class AtmosphereAbstract:
                   N_LAYER=1,
                   altitude=0.0, xi0=1.0, 
                   wind_speed=0.0, wind_direction=0.0,
-		  L=0.0, NXY_PUPIL=0):
+		  L=0.0, NXY_PUPIL=0, fov=0.0):
 	self._c_atmosphere = new ceo.atmosphere()
         self.r0 = r0
         self.L0 = L0
@@ -274,7 +277,7 @@ cdef class Atmosphere(AtmosphereAbstract):
                   N_LAYER=1,
                   altitude=0.0, xi0=1.0, 
                   wind_speed=0.0, wind_direction=0.0,
-                  L=0.0, NXY_PUPIL=0):
+                  L=0.0, NXY_PUPIL=0, fov=0.0):
         AtmosphereAbstract.__init__(self,r0,L0,
                                     N_LAYER=N_LAYER,
                                     altitude=altitude, 
@@ -293,7 +296,7 @@ cdef class Atmosphere(AtmosphereAbstract):
                                      <float *>self.xi0.data,
                                      <float *>self.wind_speed.data, 
                                      <float *>self.wind_direction.data,
-                                     <float> L, <int> NXY_PUPIL)            
+                                     <float> L, <int> NXY_PUPIL, <float> fov)            
 
 
 cdef class GmtAtmosphere(AtmosphereAbstract):
@@ -623,7 +626,8 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
 void atmosphere::setup(float r0_, float L0, int _NLAYER,
 		       float *altitude, float *xi0,
 		       float *wind_speed, float *wind_direction,
-                       float W, int N_W) {
+                       float W, int N_W,
+		       float field_size_ARCSEC) {
   wavelength = 550e-9;
   wavenumber = wavelength/2/PI;
   r0 = r0_;
@@ -634,10 +638,10 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
   int k_LAYER, N_L, N_PHASE_LAYER_byte;
   float L, delta_W;
   delta_W = W/(N_W-1);
-  
-  printf("__ Layer Phase Screen __\n"); 
+
+  printf("\n@(CEO)>atmosphere: __ Layer Phase Screen __\n"); 
   for (k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++) {
-    L = W + wind_speed[0];
+    L = W + 2*altitude[k_LAYER]*tanf(0.5*field_size_ARCSEC/RADIAN2ARCSEC) + wind_speed[0];
     N_L = (int) ceilf( L/delta_W ) + 1;
     L = (N_L-1)*delta_W;
     N_PHASE_LAYER_byte = N_W*N_L*sizeof(float);
@@ -654,7 +658,7 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
   src.setup("V",0.0,0.0,INFINITY);
   HANDLE_ERROR( cudaMalloc( (void**)&phase_screen_LAYER, N_PHASE_LAYER_byte ) );
   for (k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++) {
-    square_plps LLL gridDimLayers , blockDimLayers RRR (phase_screen_LAYER,
+    square_plps_layers LLL gridDimLayers , blockDimLayers RRR (phase_screen_LAYER,
 					    delta_W, N_L, delta_W, N_W, 
 					    d__turbulence, 
 					    wavenumber*powf(r0,-5.0/6.0),
@@ -1145,6 +1149,40 @@ void atmosphere::get_phase_screen(source *src, int N_SRC,
       phase_screen[kl] = 1.4*r0*sum;
     }
 }
+@ 
+<<phase screen kernel (layers)>>=
+  __global__ void square_plps_layers(float *phase_screen,
+		       float const delta_x, int N_x, float const delta_y, int N_y, 
+       		       profile *turb, float r0, layer *layers, int N_LAYER,
+		       float *zeta1, float *eta1, float *zeta2, float *eta2,
+		       source *src, float time)
+{
+  <<declarations>>
+
+  <<thread to coordinate index (layers)>>
+  
+  sum = 0;
+  if ( (i<N_x) && (j<N_y) )
+    {
+
+      <<variables>>
+
+      for (i=0;i<turb->N_k;i++)
+	{
+	  <<frequency magnitude sum>>
+          for (j=0;j<turb->N_a;j++)
+	    {
+	      <<frequency angle sum>>
+	      for (l=0;l<N_LAYER;l++)
+		{
+		  <<layer sum>>
+		}
+	      sum += sqrt_spectrum_kernel*sum_l;
+	    }
+	}
+      phase_screen[kl] = 1.4*r0*sum;
+    }
+}
 @  or if the wavefront of the source is masked:
 <<phase screen kernel (square and masked)>>=
 __global__ void square_plps_masked(float *phase_screen, char *mask,
@@ -1187,6 +1225,14 @@ j = blockIdx.y * blockDim.y + threadIdx.y;
 i_source = blockIdx.z;
 kl = i * N_y + j + i_source*N_x*N_y;
 x_kl0 = i*delta_x - (N_x-1)*delta_x*0.5;
+y_kl0 = j*delta_y - (N_y-1)*delta_y*0.5;
+@
+<<thread to coordinate index (layers)>>=
+i = blockIdx.x * blockDim.x + threadIdx.x;
+j = blockIdx.y * blockDim.y + threadIdx.y;
+i_source = blockIdx.z;
+kl = i * N_y + j + i_source*N_x*N_y;
+x_kl0 = i*delta_x - (N_y-1)*delta_x*0.5;
 y_kl0 = j*delta_y - (N_y-1)*delta_y*0.5;
 @
 \subsection{Phase screen gradient}
@@ -1744,7 +1790,7 @@ pitch = gridDim.x * blockDim.x;
 ij = iy * pitch + ix;
 xP = x_PUPIL[ij];
 yP = y_PUPIL[ij];
-k_SOURCE = threadIdx.z;
+k_SOURCE = blockIdx.z;
 pitch = 0;
 @ 
 <<threads to pupil and source mapping (regular)>>=
@@ -1754,7 +1800,7 @@ pitch = gridDim.x * blockDim.x;
 ij = iy * N_X + ix;
 xP = delta_x*( iy - (N_X-1)*0.5 );
 yP = delta_y*( ix - (N_Y-1)*0.5 );
-k_SOURCE = threadIdx.z;
+k_SOURCE = blockIdx.z;
 pitch = 0;
 int NXY_PUPIL = N_X*N_Y;
 @ The kernel itself is written has follows for coordinates [[x_PUPIL]] and [[y_PUPIL]]:
@@ -1801,7 +1847,7 @@ const int N_LAYER, const float tau)
 
  <<threads to pupil and source mapping (regular)>>
 
-    if ( ((ix<N_X) && (iy<N_Y) ) && (k_SOURCE<N_SOURCE) )
+    if ( (ix<N_X) && (iy<N_Y) )
   {
     for (k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++)
     {
