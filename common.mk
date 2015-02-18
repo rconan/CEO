@@ -1,4 +1,4 @@
-CEOPATH	        = /home/ubuntu/Dropbox/CEO
+CEOPATH	        = /home/rconan/Dropbox/CEO
 CUDAPATH	= /usr/local/cuda
 PYTHONPATH      = /home/ubuntu/anaconda
 CEOPYPATH	= $(CEOPATH)/python/ceo
