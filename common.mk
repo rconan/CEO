@@ -1,6 +1,7 @@
-CEOPATH	        = /home/rconan/Dropbox/CEO
+USER		= rconan
+CEOPATH	        = /home/$(USER)/Dropbox/CEO
 CUDAPATH	= /usr/local/cuda
-PYTHONPATH      = /home/ubuntu/anaconda
+PYTHONPATH      = /home/$(USER)/anaconda
 CEOPYPATH	= $(CEOPATH)/python/ceo
 NVCC          	= $(CUDAPATH)/bin/nvcc
 CUDALIBPATH   	= $(CUDAPATH)/lib64
@@ -15,7 +16,7 @@ TEXTOPDF  	= pdflatex
 NVCCFLAGS	= -gencode=arch=compute_20,code=\"sm_20,compute_20\" \
 		--compiler-options=-ansi,-D_GNU_SOURCE,-fwrapv,-fPIC,-fno-omit-frame-pointer,-pthread,-fno-strict-aliasing -O2
 LIBS 		= -L$(CEOPATH)/lib $(CUDALIBPATH:%=-L%) -lceo -lcurl -ljsmn $(CUDALIBS:%=-l%)
-INCS		= -I. -I$(CEOPATH)/include #$(MATLABINCS)
+INCS		= -I. -I$(CEOPATH)/include -I/usr/local/cuda/include/ -I$(PYTHONPATH)/include #$(MATLABINCS)
 SHELL		= /bin/bash
 
 texsrc = $(nwsrc:%.nw=%.tex)
