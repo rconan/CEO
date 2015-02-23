@@ -62,11 +62,13 @@ void reflect(bundle *rays);
 <<bundle coordinates kernel>>
 <<gathering ray coordinates kernel>>
 <<gathering ray directions kernel>>
+<<gathering ray optical path length kernel>>
 
 <<ray bundle setup>>
 <<ray bundle cleanup>>
 <<gathering ray coordinates>>
 <<gathering ray directions>>
+<<gathering ray optical path length>>
 
 <<suface data type setup generic>>
 <<suface data type setup>>
@@ -105,7 +107,7 @@ cdef extern from "rayTracing.h":
         vector coordinates
         vector directions
         vector gradient
-        vector optical_path_length
+        rtd optical_path_length
     ctypedef struct coordinate_sys:
         float *float_R        
     cdef cppclass bundle:
@@ -115,6 +117,7 @@ cdef extern from "rayTracing.h":
         void cleanup()
         void get_coordinates(float *)
         void get_directions(float *)
+        void get_optical_path_length(float *)
     cdef cppclass conic:
         coordinate_sys ref_frame
         void setup(rtd , rtd , vector , vector )
@@ -152,6 +155,12 @@ cdef class Bundle:
         def __get__(self):
             x = cuFloatArray(shape=(self._c_bundle.N_RAY,3),dev_malloc=True)
             self._c_bundle.get_directions(x._c_gpu.dev_data)
+            return x
+
+    property optical_path_length:
+        def __get__(self):
+            x = cuFloatArray(shape=(self._c_bundle.N_RAY,1),dev_malloc=True)
+            self._c_bundle.get_optical_path_length(x._c_gpu.dev_data)
             return x
 # conic
 cdef class Conic:
@@ -248,7 +257,8 @@ struct bundle {
   void setup(source *src, rtd RADIUS, int N_RADIUS, int N_THETA, vector origin);
   void cleanup(void);
   void get_coordinates(float *d__coord);
-    void get_directions(float *d__dir);
+  void get_directions(float *d__dir);
+  void get_optical_path_length(float *d__opl);
 };
 @ 
 A bundle allocates an array of [[N_RAY]] rays on the device
@@ -307,21 +317,7 @@ The conic surface is defined with
  \label{eq:4}
   F(x,y,z) = z - {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} } = 0.
 \end{equation}
-<<conic equation>>=
-float conic_surface(vector *v, const float k, const float c)
-{
-  if (c==0)
-    return v->z;
-  else {    
-    float rho2;
-    rho2 = c*v->rho2();
-    if (k==0)
-      return v->z - rho2*0.5;
-    else
-      return v->z - rho2/( 1 + sqrt(1 - k*c*rho2) );
-  }
-}
-@
+
 <<conic surface>>=
 __device__ inline rtd conic_surface(vector *v, const rtd k, const rtd c)
 {
@@ -511,6 +507,25 @@ __global__ void get_directions_kernel(float *d__dir, ray *d__ray, int N_RAY)
     d__dir[3*k+1] = (float) d__ray[k].directions.y;
     d__dir[3*k+2] = (float) d__ray[k].directions.z;
   }
+}
+@ 
+<<gathering ray optical path length>>=
+void bundle::get_optical_path_length(float *d__opl)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_RAY/256+1,1);
+  get_optical_path_length_kernel LLL gridDim , blockDim RRR (d__opl, d__ray, N_RAY);
+}
+@ 
+<<gathering ray optical path length kernel>>=
+__global__ void get_optical_path_length_kernel(float *d__opl, ray *d__ray, int N_RAY)
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( k<N_RAY )
+    d__opl[k]   = (float) d__ray[k].optical_path_length;
 }
 @ 
 \subsubsection{Conic}
