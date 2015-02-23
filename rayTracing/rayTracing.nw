@@ -68,6 +68,10 @@ void reflect(bundle *rays);
 <<gathering ray coordinates>>
 <<gathering ray directions>>
 
+<<suface data type setup generic>>
+<<suface data type setup>>
+<<suface data type cleanup>>
+
 <<conic setup>>
 <<conic cleanup>>
 <<conic setup generic>>
@@ -102,6 +106,8 @@ cdef extern from "rayTracing.h":
         vector directions
         vector gradient
         vector optical_path_length
+    ctypedef struct coordinate_sys:
+        float *float_R        
     cdef cppclass bundle:
         int N_RAY
         ray *d__ray
@@ -110,7 +116,7 @@ cdef extern from "rayTracing.h":
         void get_coordinates(float *)
         void get_directions(float *)
     cdef cppclass conic:
-        float *float_R
+        coordinate_sys ref_frame
         void setup(rtd , rtd , vector , vector )
         void cleanup()
     void transform_to_S(bundle *, conic *)
@@ -165,7 +171,7 @@ cdef class Conic:
         __euler_angles.x = <float>euler_angles[0]
         __euler_angles.y = <float>euler_angles[1]
         __euler_angles.z = <float>euler_angles[2]
-        self._c_conic.float_R = <float *> self.R.data;
+        self._c_conic.ref_frame.float_R = <float *> self.R.data;
         self._c_conic.setup(c, k, __origin, __euler_angles)
 
     def __dealloc__(self):
@@ -265,6 +271,9 @@ They are gathered in a new coordinate system data type
 <<surface data type>>=
 typedef struct {
   <<surface data>>
+  void setup(void);
+  void setup(vector _origin_, vector _euler_angles_);
+  void cleanup(void);
 } coordinate_sys;
 @ 
 A conic surface is represented with the [[conic]] structure:
@@ -282,7 +291,7 @@ struct conic {
 coordinate_sys ref_frame; 
 @
 The rotation matrix [[R]] used to transform the ray coordinates into the surface coordinates is defined with
-<<conic parameters>>=
+<<surface data>>=
 rtd R[9], *d__R;
 float *float_R;
 vector *d__origin;
@@ -298,9 +307,23 @@ The conic surface is defined with
  \label{eq:4}
   F(x,y,z) = z - {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} } = 0.
 \end{equation}
-
+<<conic equation>>=
+float conic_surface(vector *v, const float k, const float c)
+{
+  if (c==0)
+    return v->z;
+  else {    
+    float rho2;
+    rho2 = c*v->rho2();
+    if (k==0)
+      return v->z - rho2*0.5;
+    else
+      return v->z - rho2/( 1 + sqrt(1 - k*c*rho2) );
+  }
+}
+@
 <<conic surface>>=
-   __device__ inline rtd conic_surface(vector *v, const rtd k, const rtd c)
+__device__ inline rtd conic_surface(vector *v, const rtd k, const rtd c)
 {
   if (c==0)
     return v->z;
@@ -499,10 +522,16 @@ void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_)
 {
   c = _c_;
   k = _k_;
-  ref_frame.origin = _origin_;
-  ref_frame.euler_angles = _euler_angles_;
+  ref_frame.setup(_origin_, _euler_angles_);
+}
+@ with
+<<suface data type setup generic>>=
+void coordinate_sys::setup(vector _origin_, vector _euler_angles_)
+{
+  origin = _origin_;
+  euler_angles = _euler_angles_;
   <<rotation matrix eval>>
-  <<allocation>>
+  <<allocation>>  
 }
 @ 
 A conic surface that sets in the GCS is simply defined with
@@ -511,14 +540,20 @@ void conic::setup(rtd _c_, rtd _k_)
 {
   c = _c_;
   k = _k_;
-  ref_frame.origin.x = 0;
-  ref_frame.origin.y = 0;
-  ref_frame.origin.z = 0;
-  ref_frame.euler_angles.x = 0;
-  ref_frame.euler_angles.y = 0;
-  ref_frame.euler_angles.z = 0;
+  ref_frame.setup();
+}
+@ with
+<<suface data type setup>>=
+void coordinate_sys::setup(void)
+{
+  origin.x = 0;
+  origin.y = 0;
+  origin.z = 0;
+  euler_angles.x = 0;
+  euler_angles.y = 0;
+  euler_angles.z = 0;
   <<rotation matrix eval>>
-  <<allocation>>
+  <<allocation>>  
 }
 @ 
 Device allocation
@@ -527,7 +562,7 @@ HANDLE_ERROR( cudaMalloc((void**)&d__R, sizeof(rtd)*9 ) );
 HANDLE_ERROR( cudaMemcpy( d__R, R, 
 			    sizeof(rtd)*9, cudaMemcpyHostToDevice ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
-HANDLE_ERROR( cudaMemcpy( d__origin, &(ref_frame.origin), 
+HANDLE_ERROR( cudaMemcpy( d__origin, &(origin), 
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
 @
 The rotation matrix to transform the ray coordinates in the LCS is given by
@@ -564,12 +599,12 @@ $\alpha$, $\beta$ and $\gamma$ are the Euler angles along the x, y and z axis re
 The matrix is computed with
 <<rotation matrix eval>>=
 rtd ca, sa, cb, sb, cg, sg;
-ca = cos(ref_frame.euler_angles.x);
-sa = sin(ref_frame.euler_angles.x);
-cb = cos(ref_frame.euler_angles.y);
-sb = sin(ref_frame.euler_angles.y);
-cg = cos(ref_frame.euler_angles.z);
-sg = sin(ref_frame.euler_angles.z);
+ca = cos(euler_angles.x);
+sa = sin(euler_angles.x);
+cb = cos(euler_angles.y);
+sb = sin(euler_angles.y);
+cg = cos(euler_angles.z);
+sg = sin(euler_angles.z);
 R[0] = cb*cg;
 R[1] = -sa*sb*cg - ca*sg;
 R[2] = -ca*sb*cg + sa*sg;
@@ -582,8 +617,15 @@ R[8] = ca*cb;
 for (int k=0;k<9;k++)
    *(float_R+k) = (float) R[k];
 @ where the elements of $R$ are stored in the row major format.
+Memory is freed with
 <<conic cleanup>>=
 void conic::cleanup(void)
+{
+  ref_frame.cleanup();
+}
+@  and
+<<suface data type cleanup>>=
+void coordinate_sys::cleanup(void)
 {
   HANDLE_ERROR( cudaFree( d__R ) );
   HANDLE_ERROR( cudaFree( d__origin ) );
@@ -637,7 +679,7 @@ void transform_to_S(bundle *rays, conic *F)
   dim3 blockDim(16,16);
   dim3 gridDim(rays->N_RAY/256+1,1);
   transform_to_S_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
-					     F->d__R, F->d__origin);
+					     F->ref_frame.d__R, F->ref_frame.d__origin);
 }
 @ 
 <<transformation to surface system kernel>>=
@@ -683,7 +725,7 @@ void transform_to_R(bundle *rays, conic *F)
   dim3 blockDim(16,16);
   dim3 gridDim(rays->N_RAY/256+1,1);
   transform_to_R_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
-        	 				     F->d__R, F->d__origin);
+        	 				     F->ref_frame.d__R, F->ref_frame.d__origin);
 }
 @ 
 <<transformation to rays system kernel>>=
