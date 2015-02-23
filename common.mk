@@ -1,7 +1,6 @@
-USER		= rconan
-CEOPATH	        = /home/$(USER)/Dropbox/CEO
+CEOPATH	        = $(HOME)/Dropbox/CEO
 CUDAPATH	= /usr/local/cuda
-PYTHONPATH      = /home/$(USER)/anaconda
+PYTHONPATH      = $(HOME)/anaconda
 CEOPYPATH	= $(CEOPATH)/python/ceo
 NVCC          	= $(CUDAPATH)/bin/nvcc
 CUDALIBPATH   	= $(CUDAPATH)/lib64

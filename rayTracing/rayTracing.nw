@@ -1,0 +1,1030 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+
+The ray tracing method involves 4 steps \cite{}:
+\begin{enumerate}
+\item the ray coordinates are transformed into the coordinate system of the surface their interact with,
+\item the intersection of the ray with the surface is found,
+\item the directions of the ray after the surface is computed according to Snell''s law,
+\item the coordinates and directions of the ray is transformed back into its original coordinate systems
+\end{enumerate}
+
+\section{The files}
+\label{sec:files}
+
+\subsection{Header}
+\label{sec:header}
+
+<<rayTracing.h>>=
+#ifndef __RAYTRACING_H__
+#define __RAYTRACING_H__
+
+#ifndef __SOURCE_H__
+#include "source.h"
+#endif
+
+#define N_ITERATION 50
+#define TOL 50E-9
+
+<<ray tracing data type>>
+
+<<vector data type>>
+
+<<ray data type>>
+
+<<ray bundle structure>>
+
+<<surface data type>>
+
+<<conic structure>>
+
+<<conic surface>>
+
+<<conic surface x partial>>
+<<conic surface y partial>>
+<<conic surface z partial>>
+
+void transform_to_S(bundle *rays, conic *F);
+void transform_to_R(bundle *rays, conic *F);
+void intersect(bundle *rays, conic *F);
+void refract(bundle *rays, const rtd mu);
+void reflect(bundle *rays);
+
+#endif // __RAYTRACING_H__
+@ 
+\subsection{Source}
+\label{sec:source}
+
+<<rayTracing.cu>>=
+#include "rayTracing.h"
+
+<<vector functions>>
+
+<<bundle coordinates kernel>>
+<<gathering ray coordinates kernel>>
+<<gathering ray directions kernel>>
+
+<<ray bundle setup>>
+<<ray bundle cleanup>>
+<<gathering ray coordinates>>
+<<gathering ray directions>>
+
+<<conic setup>>
+<<conic cleanup>>
+<<conic setup generic>>
+
+<<transformation to surface system kernel>>
+<<transformation to rays system kernel>>
+
+<<transformation to surface system>>
+<<transformation to rays system>>
+
+<<intersection with surface kernel>>
+<<intersection with surface>>
+
+<<refraction kernel>>
+<<refraction>>
+
+<<reflection kernel>>
+<<reflection>>
+@ 
+\subsection{Python}
+\label{sec:python}
+
+<<ceo.pxd>>=
+cdef extern from "rayTracing.h":
+    ctypedef double rtd
+    ctypedef struct vector:
+        rtd x
+        rtd y
+        rtd z
+    ctypedef struct ray:
+        vector coordinates
+        vector directions
+        vector gradient
+        vector optical_path_length
+    cdef cppclass bundle:
+        int N_RAY
+        ray *d__ray
+        void setup(source *, rtd , int , int , vector )
+        void cleanup()
+        void get_coordinates(float *)
+        void get_directions(float *)
+    cdef cppclass conic:
+        float *float_R
+        void setup(rtd , rtd , vector , vector )
+        void cleanup()
+    void transform_to_S(bundle *, conic *)
+    void transform_to_R(bundle *, conic *)
+    void intersect(bundle *, conic *)
+    void reflect(bundle *)
+@ 
+<<ceo.pyx>>=
+# bundle
+cdef class Bundle:
+    """
+    """
+    cdef ceo.bundle *_c_bundle
+
+    def __cinit__(self, Source src, rtd RADIUS, int N_RADIUS, int N_THETA, _origin_=[0.0,0.0,0.0]):
+        self._c_bundle = new ceo.bundle()
+        cdef vector origin
+        origin.x = <float>_origin_[0]
+        origin.y = <float>_origin_[1]
+        origin.z = <float>_origin_[2]
+        self._c_bundle.setup(src._c_source, RADIUS, N_RADIUS, N_THETA, origin)
+
+    def __dealloc__(self):
+        self._c_bundle.cleanup()
+
+    property coordinates:
+        def __get__(self):
+            x = cuFloatArray(shape=(self._c_bundle.N_RAY,3),dev_malloc=True)
+            self._c_bundle.get_coordinates(x._c_gpu.dev_data)
+            return x
+
+    property directions:
+        def __get__(self):
+            x = cuFloatArray(shape=(self._c_bundle.N_RAY,3),dev_malloc=True)
+            self._c_bundle.get_directions(x._c_gpu.dev_data)
+            return x
+# conic
+cdef class Conic:
+    """
+    """
+    cdef ceo.conic *_c_conic
+    cdef public np.ndarray R
+
+    def __cinit__(self,rtd c, rtd k, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0]):
+        self._c_conic = new ceo.conic()
+        self.R = np.zeros((3,3),order='c',dtype=np.float32)
+        cdef vector __origin
+        __origin.x = <float>origin[0]
+        __origin.y = <float>origin[1]
+        __origin.z = <float>origin[2]
+        cdef vector __euler_angles
+        __euler_angles.x = <float>euler_angles[0]
+        __euler_angles.y = <float>euler_angles[1]
+        __euler_angles.z = <float>euler_angles[2]
+        self._c_conic.float_R = <float *> self.R.data;
+        self._c_conic.setup(c, k, __origin, __euler_angles)
+
+    def __dealloc__(self):
+        self._c_conic.cleanup()
+# ray tracing
+def Transform_to_S(Bundle rays, Conic F):
+    transform_to_S(rays._c_bundle, F._c_conic)
+def Transform_to_R(Bundle rays, Conic F):
+    transform_to_R(rays._c_bundle, F._c_conic)
+def Intersect(Bundle rays, Conic F):
+    intersect(rays._c_bundle, F._c_conic)
+def Reflect(Bundle rays):
+    reflect(rays._c_bundle)
+
+@ 
+\section{Parameters}
+\label{sec:parameters}
+
+The accuracy of the ray tracing is partly depending upon the data type used to hold data values of rays and surfaces.
+GPU are faster in single precision than in double precision but double precision may still be required for accuracy.
+So lets defined a ray tracing type:
+<<ray tracing data type>>=
+typedef double rtd;
+@ 
+A new vector data type is defined 
+<<vector data type>>=
+typedef struct {
+  rtd x;
+  rtd y;
+  rtd z;
+  __host__ __device__ rtd rho2(void);
+} vector;
+@ that represents the 3 coordinates in space of the tip of vector.
+The square of the magnitude of a vector projected in the x,y--plane i.e. $[[x]]^2+[[y]]^2$ is computed with 
+<<vector functions>>=
+__host__ __device__ rtd vector::rho2(void) {
+  return x*x + y*y;
+}
+@
+
+\subsection{Ray}
+\label{sec:ray}
+
+A type for the rays is also defined:
+<<ray data type>>=
+typedef struct {
+  <<ray data>>
+} ray;
+@ 
+It contains the ray coordinates:
+<<ray data>>=
+vector coordinates;
+@ 
+the direction cosines of the ray:
+<<ray data>>=
+vector directions;
+@ 
+the gradient at the surface it intersected with the last time:
+<<ray data>>=
+vector gradient;
+@ 
+and the optical path length
+<<ray data>>=
+rtd optical_path_length;
+
+@
+\subsection{Ray bundle}
+\label{sec:ray-bundle}
+
+Collections of rays are gathered into bundles:
+<<ray bundle structure>>=
+struct bundle {
+  <<ray bundle parameters>>
+  void setup(source *src, rtd RADIUS, int N_RADIUS, int N_THETA, vector origin);
+  void cleanup(void);
+  void get_coordinates(float *d__coord);
+    void get_directions(float *d__dir);
+};
+@ 
+A bundle allocates an array of [[N_RAY]] rays on the device
+<<ray bundle parameters>>=
+int N_RAY;
+ray *d__ray;
+vector *d__origin;
+@
+\subsection{Surface}
+\label{sec:surface}
+
+The surface location and orientation with respect to the GCS is specified with a coordinate vector:
+<<surface data>>=
+vector origin;
+@ and with 3 Euler angles with respected to the x, y and z axis.
+<<surface data>>=
+vector euler_angles;
+@
+They are gathered in a new coordinate system data type
+<<surface data type>>=
+typedef struct {
+  <<surface data>>
+} coordinate_sys;
+@ 
+A conic surface is represented with the [[conic]] structure:
+<<conic structure>>=
+struct conic {
+
+  <<conic parameters>>
+  
+  void setup(rtd _c_, rtd _k_);
+  void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_);
+  void cleanup(void);
+};
+@
+<<conic parameters>>=
+coordinate_sys ref_frame; 
+@
+The rotation matrix [[R]] used to transform the ray coordinates into the surface coordinates is defined with
+<<conic parameters>>=
+rtd R[9], *d__R;
+float *float_R;
+vector *d__origin;
+@
+The conic shape is specified with two parameters:
+<<conic parameters>>=
+rtd c, k;
+@ 
+where [[c]] is the vertex curvature and [[k]] is the conic parameter.
+
+The conic surface is defined with
+\begin{equation}
+ \label{eq:4}
+  F(x,y,z) = z - {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} } = 0.
+\end{equation}
+
+<<conic surface>>=
+   __device__ inline rtd conic_surface(vector *v, const rtd k, const rtd c)
+{
+  if (c==0)
+    return v->z;
+  else {    
+    rtd rho2;
+    rho2 = c*v->rho2();
+    if (k==0)
+      return v->z - rho2*0.5;
+    else
+      return v->z - rho2/( 1 + sqrt(1 - k*c*rho2) );
+  }
+}
+@ 
+The partial derivative of the conic equation are written
+\begin{itemize}
+\item
+  \begin{equation}
+    { \partial F(x,y,z) \over \partial x } = -x {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
+  \end{equation}
+<<conic surface x partial>>=
+__device__ inline rtd partial_x_conic_surface(vector *v, const rtd k, const rtd c)
+{
+  if (c==0)
+    return 0.0;
+  else    
+    if (k==0)
+      return -v->x*c;
+    else {
+      rtd rho2;
+      rho2 = c*v->rho2();
+      return -v->x*c*rsqrt(1 - k*c*rho2);
+    }
+}
+@
+\item
+  \begin{equation}
+    { \partial F(x,y,z) \over \partial y } = -y {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
+  \end{equation}
+<<conic surface y partial>>=
+__device__ inline rtd partial_y_conic_surface(vector *v, const rtd k, const rtd c)
+{
+  if (c==0)
+    return 0.0;
+  else    
+    if (k==0)
+      return -v->y*c;
+    else {
+      rtd rho2;
+      rho2 = c*v->rho2();
+      return -v->y*c*rsqrt(1 - k*c*rho2);
+    }
+}
+@
+\item
+  \begin{equation}
+    { \partial F(x,y,z) \over \partial z } = 1
+  \end{equation}
+<<conic surface z partial>>=
+__device__ inline rtd partial_z_conic_surface(void)
+{
+  return 1.0;
+}
+@
+\end{itemize}
+@
+\section{Functions}
+\label{sec:functions}
+
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
+\subsubsection{Ray bundle}
+\label{sec:ray-bundle-1}
+
+A ray bundle is specified with the polar coordinates of the rays at a given origin.
+The direction cosine are derived from the coordinates of a source object.
+The polar coordinates are defined with the sampling of the radius [[N_RADIUS]] from 0 to [[RADIUS]] and with the sampling of the azimuth [[N_THETA]].
+<<ray bundle setup>>=
+void bundle::setup(source *src, rtd RADIUS, int N_RADIUS, 
+		   int N_THETA, vector origin)
+{
+  N_RAY = N_RADIUS*N_THETA;
+  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
+  HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
+			    sizeof(vector), cudaMemcpyHostToDevice ) );
+  <<bundle coordinates>>
+}
+@ 
+The direction cosines $(k,l,m)$ of the rays are defined from the source zenith $\zeta$ and azimuth $\xi$ angles as
+\begin{eqnarray}
+  \label{eq:2}
+  k &=& \sin(\zeta)\cos(\xi) \\
+  l &=& \sin(\zeta)\sin(\xi) \\
+  k &=& \cos(\zeta)
+\end{eqnarray}
+The polar coordinates $\rho$ and $\theta$ of the rays are given by
+\begin{equation}
+  \rho = [[RADIUS]] {k \over [[N_RADIUS]] - 1 } \forall k \in [0,[[N_RADIUS]] - 1]
+\end{equation}
+and
+\begin{equation}
+  \theta = 2\pi {k \over [[N_THETA]] } \forall k \in [0,[[N_THETA-1]]]
+\end{equation}
+<<bundle coordinates>>=
+dim3 blockDim(16,16);
+dim3 gridDim(N_RADIUS/16+1,N_THETA/16+1);
+ray_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
+                                            RADIUS, N_RADIUS, N_THETA, d__origin);
+@ 
+<<bundle coordinates kernel>>=
+__global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
+                            rtd RADIUS, int N_RADIUS, int N_THETA, vector *origin)
+{
+  int i, j, k;
+  rtd rho, theta;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  //k = j * gridDim.x * blockDim.x + i;
+  if ( (i<N_RADIUS) && (j<N_THETA) )
+  {
+    rho   = RADIUS*i/(N_RADIUS-1);
+    theta = 2*PI*j/N_THETA; 
+    k = j*N_RADIUS + i;
+    d__ray[k].coordinates.x = rho*cos(theta) + origin->x; 
+    d__ray[k].coordinates.y = rho*sin(theta) + origin->y; 
+    d__ray[k].coordinates.z = origin->z;
+    d__ray[k].directions.x  = sin(src->zenith)*cos(src->azimuth);
+    d__ray[k].directions.y  = sin(src->zenith)*sin(src->azimuth);
+    d__ray[k].directions.z  = cos(src->zenith);
+    d__ray[k].optical_path_length = 0.0;
+  }
+}
+@ 
+Memory is freed with
+<<ray bundle cleanup>>=
+void bundle::cleanup(void) 
+{
+  HANDLE_ERROR( cudaFree( d__ray ) );
+  HANDLE_ERROR( cudaFree( d__origin ) );
+}
+@ 
+<<gathering ray coordinates>>=
+void bundle::get_coordinates(float *d__coord)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_RAY/256+1,1);
+  get_coordinates_kernel LLL gridDim , blockDim RRR (d__coord, d__ray, N_RAY);
+}
+@ 
+<<gathering ray coordinates kernel>>=
+__global__ void get_coordinates_kernel(float *d__coord, ray *d__ray, int N_RAY)
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( k<N_RAY )
+  {
+    d__coord[3*k]   = (float) d__ray[k].coordinates.x;
+    d__coord[3*k+1] = (float) d__ray[k].coordinates.y;
+    d__coord[3*k+2] = (float) d__ray[k].coordinates.z;
+  }
+}
+@ 
+<<gathering ray directions>>=
+void bundle::get_directions(float *d__dir)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_RAY/256+1,1);
+  get_directions_kernel LLL gridDim , blockDim RRR (d__dir, d__ray, N_RAY);
+}
+@ 
+<<gathering ray directions kernel>>=
+__global__ void get_directions_kernel(float *d__dir, ray *d__ray, int N_RAY)
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( k<N_RAY )
+  {
+    d__dir[3*k]   = (float) d__ray[k].directions.x;
+    d__dir[3*k+1] = (float) d__ray[k].directions.y;
+    d__dir[3*k+2] = (float) d__ray[k].directions.z;
+  }
+}
+@ 
+\subsubsection{Conic}
+\label{sec:conic}
+
+A conic surface is initialized with the [[setup]] routine:
+<<conic setup generic>>=
+void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_)
+{
+  c = _c_;
+  k = _k_;
+  ref_frame.origin = _origin_;
+  ref_frame.euler_angles = _euler_angles_;
+  <<rotation matrix eval>>
+  <<allocation>>
+}
+@ 
+A conic surface that sets in the GCS is simply defined with
+<<conic setup>>=
+void conic::setup(rtd _c_, rtd _k_)
+{
+  c = _c_;
+  k = _k_;
+  ref_frame.origin.x = 0;
+  ref_frame.origin.y = 0;
+  ref_frame.origin.z = 0;
+  ref_frame.euler_angles.x = 0;
+  ref_frame.euler_angles.y = 0;
+  ref_frame.euler_angles.z = 0;
+  <<rotation matrix eval>>
+  <<allocation>>
+}
+@ 
+Device allocation
+<<allocation>>=
+HANDLE_ERROR( cudaMalloc((void**)&d__R, sizeof(rtd)*9 ) );
+HANDLE_ERROR( cudaMemcpy( d__R, R, 
+			    sizeof(rtd)*9, cudaMemcpyHostToDevice ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
+HANDLE_ERROR( cudaMemcpy( d__origin, &(ref_frame.origin), 
+			    sizeof(vector), cudaMemcpyHostToDevice ) );
+@
+The rotation matrix to transform the ray coordinates in the LCS is given by
+\begin{eqnarray}
+R &=& \left[ 
+  \begin{array}{ccc}
+    c\gamma & -s\gamma & 0 \\
+    s\gamma &  c\gamma & 0 \\
+    0       &  0       & 1
+  \end{array}
+  \right] \left[
+  \begin{array}{ccc}
+    c\beta & 0 & -s\beta \\
+    0      & 1 &  0 \\
+    s\beta & 0 &  c\beta
+  \end{array}
+  \right] \left[
+    \begin{array}{ccc}
+      1       &  0       & 0 \\
+      0       &  c\alpha & -s\alpha \\
+      0       &  s\alpha &  c\alpha 
+    \end{array}
+\right] \\
+&=& \left[
+  \begin{array}{ccc}
+    c\beta c\gamma &  s\alpha s\beta s\gamma + s\alpha s\gamma & -c\alpha s\beta c\gamma + s\alpha s\gamma \\
+    c\beta s\gamma & -s\alpha s\beta s\gamma + c\alpha c\gamma & -c\alpha s\beta s\gamma - s\alpha c\gamma \\
+    s\beta         &  s\alpha c\beta                           &  c\alpha c\beta
+  \end{array}
+\right]
+\end{eqnarray}
+@ where $cx$ and $sx$ stands for $\sin(x)$ and $\cos(x)$, respectively.
+$\alpha$, $\beta$ and $\gamma$ are the Euler angles along the x, y and z axis respectively.
+The matrix is computed with
+<<rotation matrix eval>>=
+rtd ca, sa, cb, sb, cg, sg;
+ca = cos(ref_frame.euler_angles.x);
+sa = sin(ref_frame.euler_angles.x);
+cb = cos(ref_frame.euler_angles.y);
+sb = sin(ref_frame.euler_angles.y);
+cg = cos(ref_frame.euler_angles.z);
+sg = sin(ref_frame.euler_angles.z);
+R[0] = cb*cg;
+R[1] = -sa*sb*cg - ca*sg;
+R[2] = -ca*sb*cg + sa*sg;
+R[3] = cb*sg;
+R[4] = -sa*sb*sg + ca*cg;
+R[5] = -ca*sb*sg - sa*cg;
+R[6] = sb;
+R[7] = sa*cb;
+R[8] = ca*cb;
+for (int k=0;k<9;k++)
+   *(float_R+k) = (float) R[k];
+@ where the elements of $R$ are stored in the row major format.
+<<conic cleanup>>=
+void conic::cleanup(void)
+{
+  HANDLE_ERROR( cudaFree( d__R ) );
+  HANDLE_ERROR( cudaFree( d__origin ) );
+}
+@
+\subsection{Coordinates transformation}
+\label{sec:coord-transf}
+
+The coordinates and cosine directions of the rays need to be transformed into the surface coordinates system first.
+The matrix [[R]] in the conic structure transforms the coordinates in the LCS $(x,y,z)$ into the GCS $(\bar x,\bar y,\bar z)$ i.e.
+\begin{equation}
+  \left[
+  \begin{array}{c}
+    \bar x - \bar x_o \\
+    \bar y - \bar y_o \\
+    \bar z - \bar z_o
+  \end{array}
+  \right] = R \left[
+    \begin{array}{c}
+      x \\
+      y \\
+      z
+    \end{array}
+\right]
+\end{equation}
+The reverse transform is simply
+\begin{equation}
+  \left[
+    \begin{array}{c}
+      x \\
+      y \\
+      z
+    \end{array}
+\right] = R^T \left[
+  \begin{array}{c}
+    \bar x - \bar x_o \\
+    \bar y - \bar y_o \\
+    \bar z - \bar z_o
+  \end{array}
+  \right] = \left( \left[
+  \begin{array}{c}
+    \bar x - \bar x_o \\
+    \bar y - \bar y_o \\
+    \bar z - \bar z_o
+  \end{array}
+  \right]^T R \right)^T 
+\end{equation}
+<<transformation to surface system>>=
+void transform_to_S(bundle *rays, conic *F)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(rays->N_RAY/256+1,1);
+  transform_to_S_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+					     F->d__R, F->d__origin);
+}
+@ 
+<<transformation to surface system kernel>>=
+__global__ void transform_to_S_kernel(ray *d__ray, int N_RAY, 
+				      rtd *d__R, vector *d__origin)
+{
+  int i, j, k;
+  rtd x, y, z, u, v, w;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if (k<N_RAY)
+  {
+    u = d__ray[k].coordinates.x - d__origin->x;
+    v = d__ray[k].coordinates.y - d__origin->y;
+    w = d__ray[k].coordinates.z - d__origin->z;
+
+    x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
+    y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
+    z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
+ 
+    d__ray[k].coordinates.x = x;
+    d__ray[k].coordinates.y = y;
+    d__ray[k].coordinates.z = z;    
+
+    u = d__ray[k].directions.x;
+    v = d__ray[k].directions.y;
+    w = d__ray[k].directions.z;
+
+    x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
+    y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
+    z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
+
+    d__ray[k].directions.x = x;
+    d__ray[k].directions.y = y;
+    d__ray[k].directions.z = z;    
+  }
+}
+@ 
+<<transformation to rays system>>=
+void transform_to_R(bundle *rays, conic *F)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(rays->N_RAY/256+1,1);
+  transform_to_R_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+        	 				     F->d__R, F->d__origin);
+}
+@ 
+<<transformation to rays system kernel>>=
+__global__ void transform_to_R_kernel(ray *d__ray, int N_RAY,
+                                      rtd *d__R, vector *d__origin)
+{
+  int i, j, k;
+  rtd x, y, z, u, v, w;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if (k<N_RAY)
+  {
+    u = d__ray[k].coordinates.x;
+    v = d__ray[k].coordinates.y;
+    w = d__ray[k].coordinates.z;
+
+    x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
+    y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
+    z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
+
+    d__ray[k].coordinates.x = x + d__origin->x;
+    d__ray[k].coordinates.y = y + d__origin->y;
+    d__ray[k].coordinates.z = z + d__origin->z;    
+
+    u = d__ray[k].directions.x;
+    v = d__ray[k].directions.y;
+    w = d__ray[k].directions.z;
+
+    x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
+    y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
+    z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
+
+    d__ray[k].directions.x = x;
+    d__ray[k].directions.y = y;
+    d__ray[k].directions.z = z;    
+  }
+}
+@ 
+
+\subsection{Surface intersection}
+\label{sec:surface-intersection}
+
+<<intersection with surface>>=
+void intersect(bundle *rays, conic *F)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(rays->N_RAY/256+1,1);
+  intersect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, F->k, F->c);
+}
+
+<<intersection with surface kernel>>=
+__global__ void intersect_kernel(ray *d__ray, int N_RAY, const rtd Fk, const rtd Fc)
+{
+  int i, j, ij;
+  rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
+  vector v;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if (ij<N_RAY)
+  {
+    <<intersection with z=0 plane>>
+    d__ray[ij].optical_path_length += s0;
+    s0 = s1 = 0;
+    for (j=0; j<N_ITERATION; j++)
+    {
+      <<Newton-Raphson>>
+	s0 = s1;
+    }
+  }
+}
+@
+The intersection of a ray with the surface is derived using the parametric equations of the ray
+\begin{eqnarray}
+  \label{eq:3}
+  x &=& x_0 + ks \\
+  y &=& y_0 + ls \\
+  z &=& z_0 + ms   
+\end{eqnarray}
+where $s$ is the distance along the ray from the point $(x_0,y_0,z_0)$.
+Eq.~(\ref{eq:3}) are inserted into the surface definition Eq.~(\ref{eq:4}) that is solved for $s$.
+
+The intersection with the plane $z=0$ in the LCS is derived first leading to 
+\begin{eqnarray}
+  \label{eq:5}
+  s_0 &=& z_0/m \\
+  x_1 &=& x_0 + ks_0 \\
+  y_1 &=& y_0 + ls_0 
+\end{eqnarray}
+<<intersection with z=0 plane>>=
+k  = d__ray[ij].directions.x;
+l  = d__ray[ij].directions.y;
+m  = d__ray[ij].directions.z;
+if (m==0) { return; }
+s0 = d__ray[ij].coordinates.z/m;
+x1 = d__ray[ij].coordinates.x + k*s0;
+y1 = d__ray[ij].coordinates.y + l*s0;
+@
+and giving a new set of parametric equations
+\begin{eqnarray}
+  \label{eq:6}
+  x &=& x_1 + ks \\
+  y &=& y_1 + ls \\
+  z &=& ms     
+\end{eqnarray}
+ 
+The distance $s$ to the surface is obtained with the Newton--Raphson iterative method
+\begin{equation}
+  \label{eq:7}
+  s_{j+1} = s_j - { F(x_j,y_j,z_j) \over F^\prime(x_j,y_j,z_j) }
+\end{equation}
+where
+\begin{eqnarray}
+  \label{eq:8}
+  x_j &=& x_1 + ks_j \\
+  y_j &=& y_1 + ls_j \\
+  z_j &=& ms_j       
+\end{eqnarray}
+<<Newton-Raphson>>=
+v.x = x1 + k*s0;
+v.y = y1 + l*s0;
+v.z = m*s0;
+@ and where
+\begin{eqnarray}
+  \label{eq:9}
+  F^\prime(x_j,y_j,z_j) &=& \left. { {\mathrm d} F \over {\mathrm d} s  } \right|_{s=s_j} \\
+                      &=& k\left.{ \partial F(x,y,z) \over \partial x } \right|_j + l\left. { \partial F(x,y,z) \over \partial y }\right|_j + m\left.{ \partial F(x,y,z) \over \partial z }\right|_j
+\end{eqnarray}
+<<Newton-Raphson>>=
+S = conic_surface(&v, Fk, Fc);
+K = partial_x_conic_surface(&v, Fk, Fc);
+L = partial_y_conic_surface(&v, Fk, Fc);
+M = partial_z_conic_surface();
+dSds = K*k + L*l + M*m;
+if (dSds==0) { return; }
+s1 = s0 - S/dSds;
+if (abs(s1-s0)<TOL)
+{
+  d__ray[ij].coordinates.x = x1 + k*s1;
+  d__ray[ij].coordinates.y = y1 + l*s1;
+  d__ray[ij].coordinates.z = m*s1;
+  d__ray[ij].gradient.x    = partial_x_conic_surface(&(d__ray[ij].coordinates), Fk, Fc);
+  d__ray[ij].gradient.y    = partial_y_conic_surface(&(d__ray[ij].coordinates), Fk, Fc);
+  d__ray[ij].gradient.z    = partial_z_conic_surface();
+  d__ray[ij].optical_path_length += s1;
+  return;
+}
+@
+The iterative process is started with
+\begin{equation}
+  \label{eq:11}
+  s_1 = 0,
+\end{equation}
+and is terminated when
+\begin{equation}
+  \label{eq:12}
+  \left|s_{j+1} - s_j \right| < \epsilon,
+\end{equation}
+where $\epsilon$ is a tolerance set by the required accuracy.
+
+The final distance along a ray from the point $(x_0,y_0,z_0)$ is
+\begin{equation}
+  \label{eq:13}
+  s = s_0 + s_{j+1}.
+\end{equation}
+
+The surface normal at the intersection point will be needed to compute the refracted ray:
+\begin{eqnarray}
+  \label{eq:1}
+  K &=& \left.{ \partial F(x,y,z) \over \partial x } \right|_{j+1} \\
+  L &=& \left.{ \partial F(x,y,z) \over \partial y } \right|_{j+1} \\
+  M &=& \left.{ \partial F(x,y,z) \over \partial z } \right|_{j+1}.
+\end{eqnarray}
+@
+
+\subsection{Snell's law}
+\label{sec:snells-law}
+
+\subsubsection{Refraction}
+\label{sec:refraction}
+
+\def\np{n^\prime}
+\def\kp{k^\prime}
+\def\lp{l^\prime}
+\def\mp{m^\prime}
+\def\Sp{S^\prime}
+
+The Snell's law can be written as
+\begin{equation}
+  \label{eq:10}
+  \np \vec \Sp \times \vec r = n \vec S \times \vec r.
+\end{equation}
+$\vec S:(k,l,m)$ and $\vec \Sp:(\kp,\lp,\mp)$ are both unit vectors along the incident and refracted rays, respectively.
+$\vec r:(K,L,M)$ is a unit vector normal to the refraction surface at the ray intersection point.
+$n$ and $\np$ are the refractive indices for the incident and refracted rays, respectively.
+
+Eq.~(\ref{eq:10}) implies that the three vectors $\vec S$, $\vec \Sp$ and $\vec r$ are co--planar, from which it follows that
+\begin{equation}
+  \label{eq:14}
+  \vec \Sp = \mu \vec S + \Gamma \vec r,
+\end{equation}
+where $\mu=n/\np$ and $\Gamma$ has to be determined.
+$\Gamma$ is derived by solving
+\begin{equation}
+  \label{eq:15}
+  \left| \vec \Sp \right|^2 - \left| \mu \vec S + \Gamma \vec r \right|^2 = 0
+\end{equation}
+Developing Eq.~(\ref{eq:15}) leads to $\Gamma$ being the solution of a quadratic equation
+\begin{equation}
+  \label{eq:16}
+  \Gamma^2 + 2a\Gamma + b = 0
+\end{equation}
+where
+\begin{equation}
+  \label{eq:17}
+  a = \mu { kK +lL + mM \over K^2 + L^2 + M^2 },
+\end{equation}
+<<a equation>>=
+K = d__ray[ij].gradient.x;
+L = d__ray[ij].gradient.y;
+M = d__ray[ij].gradient.z;
+G2 = K*K + L*L + M*M;
+k = d__ray[ij].directions.x;
+l = d__ray[ij].directions.y;
+m = d__ray[ij].directions.z;
+a = mu*(k*K + l*L + m*M)/G2;
+@  and
+\begin{equation}
+  \label{eq:18}
+  b = { \mu^2 -1 \over K^2 + L^2 + M^2 }.
+\end{equation}
+<<b equation>>=
+b = (mu*mu-1)/G2;
+@ 
+Eq.~(\ref{eq:16}) is solved with the Newton--Raphson iterative method by introducing the new function
+\begin{equation}
+  \label{eq:19}
+  V(\Gamma) = \Gamma^2 + 2a\Gamma + b,
+\end{equation}
+and writing $\Gamma$ as
+\begin{equation}
+  \label{eq:20}
+  \Gamma_{j+1} = \Gamma_j - { V(\Gamma_j) \over V^\prime(\Gamma_j) }.
+\end{equation}
+Noting that
+\begin{equation}
+  \label{eq:21}
+  V^\prime(\Gamma_j) = \left. { \mathrm d V \over \mathrm d \Gamma } \right|_j = 2\left( \Gamma_j + a \right),
+\end{equation}
+Eq.~(\ref{eq:20}) becomes
+\begin{equation}
+  \label{eq:22}
+  \Gamma_{j+1} = { \Gamma_j^2 - b \over 2(\Gamma_j + a) }.
+\end{equation}
+with
+\begin{equation}
+  \label{eq:23}
+  \Gamma_1 = {-b \over 2a }.
+\end{equation}
+
+<<refraction>>=
+void refract(bundle *rays, const rtd mu)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(rays->N_RAY/256+1,1);
+  refract_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, mu);
+}
+@ 
+<<refraction kernel>>=
+__global__ void refract_kernel(ray *d__ray, int N_RAY, const rtd mu)
+{
+  int i, j, ij;
+  rtd k, l, m, K, L ,M, G2, a, b, gamma0, gamma1, gamma_relative_error;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if (ij<N_RAY)
+  {
+    <<a equation>>
+    <<b equation>>
+    gamma0 = -0.5*b/a;
+    for (j=0; j<N_ITERATION; j++)
+    {
+      gamma1 = 0.5*(gamma0*gamma0-b)/(gamma0+a);
+      gamma_relative_error = abs( gamma1/gamma0 - 1.0 );
+      if (gamma_relative_error<0.01)
+      {
+        d__ray[ij].directions.x = mu*k + gamma1*K;
+        d__ray[ij].directions.y = mu*l + gamma1*L;
+        d__ray[ij].directions.z = mu*m + gamma1*M;
+        return;
+      }
+      gamma0 = gamma1;
+    }
+  }
+}
+@
+\subsubsection{Reflection}
+\label{sec:reflection}
+
+In the case of reflection, one have $\mu=1$, $b=0$ and
+\begin{equation}
+  \label{eq:24}
+  \Gamma = -2a.
+\end{equation}
+Eq.~(\ref{eq:14}) thus becomes
+\begin{equation}
+  \label{eq:25}
+    \vec \Sp = \vec S -2a \vec r.
+\end{equation}
+<<reflection>>=
+void reflect(bundle *rays)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(rays->N_RAY/256+1,1);
+  reflect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY);
+}
+@ 
+<<reflection kernel>>=
+__global__ void reflect_kernel(ray *d__ray, int N_RAY)
+{
+  int i, j, ij;
+  rtd k, l, m, K, L ,M, G2, mu,  a;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if (ij<N_RAY)
+  {
+    mu = 1.0;
+    <<a equation>>
+    a *= -2.0;
+    d__ray[ij].directions.x = k + a*K;
+    d__ray[ij].directions.y = l + a*L;
+    d__ray[ij].directions.z = m + a*M;
+  }
+}
+@
+\subsection{Input/Output}
+\label{sec:inputoutput}
+
+\section{Tests}
+\label{sec:tests}
+
