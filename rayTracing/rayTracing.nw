@@ -22,7 +22,7 @@ The ray tracing method involves 4 steps \cite{}:
 #include "source.h"
 #endif
 
-#define N_ITERATION 50
+#define N_ITERATION 100
 #define TOL 50E-9
 
 <<ray tracing data type>>
@@ -48,6 +48,7 @@ void transform_to_R(bundle *rays, conic *F);
 void intersect(bundle *rays, conic *F);
 void refract(bundle *rays, const rtd mu);
 void reflect(bundle *rays);
+void thin_lens(bundle *rays);
 
 #endif // __RAYTRACING_H__
 @ 
@@ -92,6 +93,7 @@ void reflect(bundle *rays);
 
 <<reflection kernel>>
 <<reflection>>
+<<thin lens>>
 @ 
 \subsection{Python}
 \label{sec:python}
@@ -126,6 +128,7 @@ cdef extern from "rayTracing.h":
     void transform_to_R(bundle *, conic *)
     void intersect(bundle *, conic *)
     void reflect(bundle *)
+    void thin_lens(bundle *)
 @ 
 <<ceo.pyx>>=
 # bundle
@@ -194,6 +197,8 @@ def Intersect(Bundle rays, Conic F):
     intersect(rays._c_bundle, F._c_conic)
 def Reflect(Bundle rays):
     reflect(rays._c_bundle)
+def ThinLens(Bundle rays):
+    thin_lens(rays._c_bundle)
 
 @ 
 \section{Parameters}
@@ -452,6 +457,8 @@ __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
     d__ray[k].directions.y  = sin(src->zenith)*sin(src->azimuth);
     d__ray[k].directions.z  = cos(src->zenith);
     d__ray[k].optical_path_length = 0.0;
+    d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
+    d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
   }
 }
 @ 
@@ -1057,25 +1064,33 @@ void reflect(bundle *rays)
 {
   dim3 blockDim(16,16);
   dim3 gridDim(rays->N_RAY/256+1,1);
-  reflect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY);
+  reflect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, 1.0);
+}
+@ 
+Setting $\mu=-1$ makes the mirror behaving like a thin lens:
+<<thin lens>>=
+void thin_lens(bundle *rays)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(rays->N_RAY/256+1,1);
+  reflect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, -1.0);
 }
 @ 
 <<reflection kernel>>=
-__global__ void reflect_kernel(ray *d__ray, int N_RAY)
+    __global__ void reflect_kernel(ray *d__ray, int N_RAY, float mu)
 {
   int i, j, ij;
-  rtd k, l, m, K, L ,M, G2, mu,  a;
+  rtd k, l, m, K, L ,M, G2, a;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
   if (ij<N_RAY)
   {
-    mu = 1.0;
     <<a equation>>
     a *= -2.0;
-    d__ray[ij].directions.x = k + a*K;
-    d__ray[ij].directions.y = l + a*L;
-    d__ray[ij].directions.z = m + a*M;
+    d__ray[ij].directions.x = mu*k + a*K;
+    d__ray[ij].directions.y = mu*l + a*L;
+    d__ray[ij].directions.z = mu*m + a*M;
   }
 }
 @
