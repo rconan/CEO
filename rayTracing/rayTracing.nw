@@ -406,7 +406,7 @@ The polar coordinates are defined with the sampling of the radius [[N_RADIUS]] f
 void bundle::setup(source *src, rtd RADIUS, int N_RADIUS, 
 		   int N_THETA, vector origin)
 {
-  N_RAY = N_RADIUS*N_THETA;
+  N_RAY = (N_RADIUS-1)*N_THETA + 1;
   HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
@@ -433,29 +433,34 @@ and
 <<bundle coordinates>>=
 dim3 blockDim(16,16);
 dim3 gridDim(N_RADIUS/16+1,N_THETA/16+1);
-ray_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
+ray_coordinates LLL gridDim , blockDim, src->N_SRC RRR (d__ray, N_RAY, src->dev_ptr,
                                             RADIUS, N_RADIUS, N_THETA, d__origin);
 @ 
 <<bundle coordinates kernel>>=
 __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
                             rtd RADIUS, int N_RADIUS, int N_THETA, vector *origin)
 {
-  int i, j, k;
+  int i, j, k, iSource;
   rtd rho, theta;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
   //k = j * gridDim.x * blockDim.x + i;
   if ( (i<N_RADIUS) && (j<N_THETA) )
   {
     rho   = RADIUS*i/(N_RADIUS-1);
+    if (i==0) {
+      j = 0;
+      k = 0;
+    } else
+      k = j + (i - 1)*N_THETA + 1;
     theta = 2*PI*j/N_THETA; 
-    k = j*N_RADIUS + i;
     d__ray[k].coordinates.x = rho*cos(theta) + origin->x; 
     d__ray[k].coordinates.y = rho*sin(theta) + origin->y; 
     d__ray[k].coordinates.z = origin->z;
-    d__ray[k].directions.x  = sin(src->zenith)*cos(src->azimuth);
-    d__ray[k].directions.y  = sin(src->zenith)*sin(src->azimuth);
-    d__ray[k].directions.z  = cos(src->zenith);
+    d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
+    d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
+    d__ray[k].directions.z  = cos(src[iSource].zenith);
     d__ray[k].optical_path_length = 0.0;
     d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
     d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
