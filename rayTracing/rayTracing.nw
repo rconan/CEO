@@ -117,9 +117,9 @@ cdef extern from "rayTracing.h":
         ray *d__ray
         void setup(source *, rtd , int , int , vector )
         void cleanup()
-        void get_coordinates(float *)
-        void get_directions(float *)
-        void get_optical_path_length(float *)
+        void get_coordinates(double *)
+        void get_directions(double *)
+        void get_optical_path_length(double *)
     cdef cppclass conic:
         coordinate_sys ref_frame
         void setup(rtd , rtd , vector , vector )
@@ -150,19 +150,19 @@ cdef class Bundle:
 
     property coordinates:
         def __get__(self):
-            x = cuFloatArray(shape=(self._c_bundle.N_RAY,3),dev_malloc=True)
+            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,3),dev_malloc=True)
             self._c_bundle.get_coordinates(x._c_gpu.dev_data)
             return x
 
     property directions:
         def __get__(self):
-            x = cuFloatArray(shape=(self._c_bundle.N_RAY,3),dev_malloc=True)
+            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,3),dev_malloc=True)
             self._c_bundle.get_directions(x._c_gpu.dev_data)
             return x
 
     property optical_path_length:
         def __get__(self):
-            x = cuFloatArray(shape=(self._c_bundle.N_RAY,1),dev_malloc=True)
+            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,1),dev_malloc=True)
             self._c_bundle.get_optical_path_length(x._c_gpu.dev_data)
             return x
 # conic
@@ -261,9 +261,9 @@ struct bundle {
   <<ray bundle parameters>>
   void setup(source *src, rtd RADIUS, int N_RADIUS, int N_THETA, vector origin);
   void cleanup(void);
-  void get_coordinates(float *d__coord);
-  void get_directions(float *d__dir);
-  void get_optical_path_length(float *d__opl);
+  void get_coordinates(double *d__coord);
+  void get_directions(double *d__dir);
+  void get_optical_path_length(double *d__opl);
 };
 @ 
 A bundle allocates an array of [[N_RAY]] rays on the device
@@ -476,7 +476,7 @@ void bundle::cleanup(void)
 }
 @ 
 <<gathering ray coordinates>>=
-void bundle::get_coordinates(float *d__coord)
+void bundle::get_coordinates(double *d__coord)
 {
   dim3 blockDim(16,16);
   dim3 gridDim(N_RAY/256+1,1);
@@ -484,7 +484,7 @@ void bundle::get_coordinates(float *d__coord)
 }
 @ 
 <<gathering ray coordinates kernel>>=
-__global__ void get_coordinates_kernel(float *d__coord, ray *d__ray, int N_RAY)
+__global__ void get_coordinates_kernel(double *d__coord, ray *d__ray, int N_RAY)
 {
   int i, j, k;
   i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -492,14 +492,14 @@ __global__ void get_coordinates_kernel(float *d__coord, ray *d__ray, int N_RAY)
   k = j * gridDim.x * blockDim.x + i;
   if ( k<N_RAY )
   {
-    d__coord[3*k]   = (float) d__ray[k].coordinates.x;
-    d__coord[3*k+1] = (float) d__ray[k].coordinates.y;
-    d__coord[3*k+2] = (float) d__ray[k].coordinates.z;
+    d__coord[3*k]   = d__ray[k].coordinates.x;
+    d__coord[3*k+1] = d__ray[k].coordinates.y;
+    d__coord[3*k+2] = d__ray[k].coordinates.z;
   }
 }
 @ 
 <<gathering ray directions>>=
-void bundle::get_directions(float *d__dir)
+void bundle::get_directions(double *d__dir)
 {
   dim3 blockDim(16,16);
   dim3 gridDim(N_RAY/256+1,1);
@@ -507,7 +507,7 @@ void bundle::get_directions(float *d__dir)
 }
 @ 
 <<gathering ray directions kernel>>=
-__global__ void get_directions_kernel(float *d__dir, ray *d__ray, int N_RAY)
+__global__ void get_directions_kernel(double *d__dir, ray *d__ray, int N_RAY)
 {
   int i, j, k;
   i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -515,14 +515,14 @@ __global__ void get_directions_kernel(float *d__dir, ray *d__ray, int N_RAY)
   k = j * gridDim.x * blockDim.x + i;
   if ( k<N_RAY )
   {
-    d__dir[3*k]   = (float) d__ray[k].directions.x;
-    d__dir[3*k+1] = (float) d__ray[k].directions.y;
-    d__dir[3*k+2] = (float) d__ray[k].directions.z;
+    d__dir[3*k]   = d__ray[k].directions.x;
+    d__dir[3*k+1] = d__ray[k].directions.y;
+    d__dir[3*k+2] = d__ray[k].directions.z;
   }
 }
 @ 
 <<gathering ray optical path length>>=
-void bundle::get_optical_path_length(float *d__opl)
+void bundle::get_optical_path_length(double *d__opl)
 {
   dim3 blockDim(16,16);
   dim3 gridDim(N_RAY/256+1,1);
@@ -530,14 +530,14 @@ void bundle::get_optical_path_length(float *d__opl)
 }
 @ 
 <<gathering ray optical path length kernel>>=
-__global__ void get_optical_path_length_kernel(float *d__opl, ray *d__ray, int N_RAY)
+__global__ void get_optical_path_length_kernel(double *d__opl, ray *d__ray, int N_RAY)
 {
   int i, j, k;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
   if ( k<N_RAY )
-    d__opl[k]   = (float) d__ray[k].optical_path_length;
+    d__opl[k]   = d__ray[k].optical_path_length;
 }
 @ 
 \subsubsection{Conic}
