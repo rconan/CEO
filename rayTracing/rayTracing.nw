@@ -300,7 +300,7 @@ the direction cosines of the ray:
 <<ray data>>=
 vector directions;
 @ 
-the surface_normal at the surface it intersected with the last time:
+the [[surface_normal]] at the surface it intersected with the last time:
 <<ray data>>=
 vector surface_normal;
 @ 
@@ -309,8 +309,9 @@ the optical path length:
 rtd optical_path_length;
 @ the vignetting flag [[v]], $[[v]]=0$ means the ray is vignetted:
 <<ray data>>=
-unsigned int v;
+char v;
 @ and the number of iterative steps for the Raphson--Newton method:
+<<ray data>>=
 int n_iteration;
 
 @
@@ -553,7 +554,7 @@ __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
     d__ray[k].optical_path_length = 0.0;
     d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
     d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
-    d__ray[k].v = 0;
+    d__ray[k].v = 1;
   }
 }
 @ 
@@ -705,7 +706,7 @@ __global__ void get_vignetting_kernel(double *d__v, ray *d__ray, int N_RAY)
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
   if ( k<N_RAY )
-    d__v[k]   = (double) d__ray[k].v;//==1) ? 1.0 : 0.0;
+    d__v[k]   = (d__ray[k].v) ? 1.0 : 0.0;
 }
 @ 
 \subsubsection{Conic}
@@ -888,7 +889,7 @@ __global__ void vignetting_kernel(char *mask, ray *d__ray, int N_RAY, float inne
     rho2 = d__ray[k].coordinates.rho2();
     if ( (rho2>=inner2) && (rho2<=outer2) )
       {
-	d__ray[k].v = 1;//d__ray[k].v || 1;
+	d__ray[k].v = d__ray[k].v || 1;
 	mask[k] = mask[k] || 1;
       }
   }
@@ -954,7 +955,7 @@ __global__ void transform_to_S_kernel(ray *d__ray, int N_RAY,
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
-  if ( (k<N_RAY) && (d__ray[k].v==1) )
+  if ( (k<N_RAY) && (d__ray[k].v) )
   {
     u = d__ray[k].coordinates.x - d__origin->x;
     v = d__ray[k].coordinates.y - d__origin->y;
@@ -1000,7 +1001,7 @@ __global__ void transform_to_R_kernel(ray *d__ray, int N_RAY,
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
-  if ( (k<N_RAY) && (d__ray[k].v==1) )
+  if ( (k<N_RAY) && (d__ray[k].v) )
   {
     u = d__ray[k].coordinates.x;
     v = d__ray[k].coordinates.y;
@@ -1049,7 +1050,7 @@ __global__ void intersect_kernel(ray *d__ray, int N_RAY, const rtd Fk, const rtd
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
-  if ( (ij<N_RAY) && (d__ray[ij].v==1) )
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
   {
     <<intersection with z=0 plane>>
     d__ray[ij].optical_path_length += s0;
@@ -1266,7 +1267,7 @@ __global__ void refract_kernel(ray *d__ray, int N_RAY, const rtd mu)
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
-  if ( (ij<N_RAY) && (d__ray[ij].v==1) )
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
   {
     <<a equation>>
     <<b equation>>
@@ -1325,7 +1326,7 @@ void thin_lens(bundle *rays)
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
-  if ( (ij<N_RAY) && (d__ray[ij].v==1) )
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
   {
     <<a equation>>
     a *= -2.0;
