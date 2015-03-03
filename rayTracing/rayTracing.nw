@@ -33,7 +33,7 @@ The ray tracing method involves 4 steps \cite{}:
 
 <<ray bundle structure>>
 
-<<surface data type>>
+<<coordinate system data type>>
 
 <<conic structure>>
 
@@ -42,6 +42,8 @@ The ray tracing method involves 4 steps \cite{}:
 <<conic surface x partial>>
 <<conic surface y partial>>
 <<conic surface z partial>>
+
+<<aperture structure>>
 
 void transform_to_S(bundle *rays, conic *F);
 void transform_to_R(bundle *rays, conic *F);
@@ -61,15 +63,19 @@ void thin_lens(bundle *rays);
 <<vector functions>>
 
 <<bundle coordinates kernel>>
+<<bundle coordinates kernel (box)>>
 <<gathering ray coordinates kernel>>
 <<gathering ray directions kernel>>
 <<gathering ray optical path length kernel>>
+<<gathering ray vignetting map kernel>>
 
 <<ray bundle setup>>
+<<ray bundle setup (box)>>
 <<ray bundle cleanup>>
 <<gathering ray coordinates>>
 <<gathering ray directions>>
 <<gathering ray optical path length>>
+<<gathering ray vignetting map>>
 
 <<suface data type setup generic>>
 <<suface data type setup>>
@@ -78,6 +84,9 @@ void thin_lens(bundle *rays);
 <<conic setup>>
 <<conic cleanup>>
 <<conic setup generic>>
+
+<<vignetting kernel>>
+<<aperture functions>>
 
 <<transformation to surface system kernel>>
 <<transformation to rays system kernel>>
@@ -94,6 +103,7 @@ void thin_lens(bundle *rays);
 <<reflection kernel>>
 <<reflection>>
 <<thin lens>>
+
 @ 
 \subsection{Python}
 \label{sec:python}
@@ -108,22 +118,29 @@ cdef extern from "rayTracing.h":
     ctypedef struct ray:
         vector coordinates
         vector directions
-        vector gradient
+        vector surface_normal
         rtd optical_path_length
-    ctypedef struct coordinate_sys:
+    ctypedef struct coordinate_system:
         float *float_R        
     cdef cppclass bundle:
         int N_RAY
         ray *d__ray
         void setup(source *, rtd , int , int , vector )
+        void setup(source *, rtd , int , vector )
         void cleanup()
         void get_coordinates(double *)
         void get_directions(double *)
         void get_optical_path_length(double *)
+        void get_vignetting(double *)
     cdef cppclass conic:
-        coordinate_sys ref_frame
+        coordinate_system ref_frame
         void setup(rtd , rtd , vector , vector )
         void cleanup()
+    cdef cppclass aperture:
+        coordinate_system ref_frame
+        void setup(float, float, int, vector , vector) 
+        void cleanup()
+        void vignetting(bundle *)
     void transform_to_S(bundle *, conic *)
     void transform_to_R(bundle *, conic *)
     void intersect(bundle *, conic *)
@@ -131,40 +148,54 @@ cdef extern from "rayTracing.h":
     void thin_lens(bundle *)
 @ 
 <<ceo.pyx>>=
-# bundle
+# polar bundle
 cdef class Bundle:
     """
     """
     cdef ceo.bundle *_c_bundle
 
-    def __cinit__(self, Source src, rtd RADIUS, int N_RADIUS, int N_THETA, _origin_=[0.0,0.0,0.0]):
+    def __cinit__(self, Source src, rtd RADIUS, int N_RADIUS, int N_THETA=0,
+                  _origin_=[0.0,0.0,0.0], type="polar"):
         self._c_bundle = new ceo.bundle()
         cdef vector origin
         origin.x = <float>_origin_[0]
         origin.y = <float>_origin_[1]
         origin.z = <float>_origin_[2]
-        self._c_bundle.setup(src._c_source, RADIUS, N_RADIUS, N_THETA, origin)
+        if type=="box":
+            self._c_bundle.setup(src._c_source, RADIUS, N_RADIUS, origin)
+        else:
+            self._c_bundle.setup(src._c_source, RADIUS, N_RADIUS, N_THETA, origin)
 
-    def __dealloc__(self):
-        self._c_bundle.cleanup()
+    <<bundle common>>
+@ 
+<<bundle common>>=
+def __dealloc__(self):
+    self._c_bundle.cleanup()
 
-    property coordinates:
-        def __get__(self):
-            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,3),dev_malloc=True)
-            self._c_bundle.get_coordinates(x._c_gpu.dev_data)
-            return x
+property coordinates:
+    def __get__(self):
+        x = cuDoubleArray(shape=(self._c_bundle.N_RAY,3),dev_malloc=True)
+        self._c_bundle.get_coordinates(x._c_gpu.dev_data)
+        return x
 
-    property directions:
-        def __get__(self):
-            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,3),dev_malloc=True)
-            self._c_bundle.get_directions(x._c_gpu.dev_data)
-            return x
+property directions:
+    def __get__(self):
+        x = cuDoubleArray(shape=(self._c_bundle.N_RAY,3),dev_malloc=True)
+        self._c_bundle.get_directions(x._c_gpu.dev_data)
+        return x
 
-    property optical_path_length:
+property optical_path_length:
         def __get__(self):
             x = cuDoubleArray(shape=(self._c_bundle.N_RAY,1),dev_malloc=True)
             self._c_bundle.get_optical_path_length(x._c_gpu.dev_data)
             return x
+
+property vignetting:
+        def __get__(self):
+            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,1),dev_malloc=True)
+            self._c_bundle.get_vignetting(x._c_gpu.dev_data)
+            return x
+<<ceo.pyx>>=
 # conic
 cdef class Conic:
     """
@@ -188,6 +219,32 @@ cdef class Conic:
 
     def __dealloc__(self):
         self._c_conic.cleanup()
+# aperture
+cdef class Aperture:
+    """
+    """
+    cdef ceo.aperture *_c_aperture
+    cdef public np.ndarray R
+    
+    def __cinit__(self, float D, float ri, int D_px, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0]):
+        self._c_aperture = new ceo.aperture()
+        self.R = np.zeros((3,3),order='c',dtype=np.float32)
+        cdef vector __origin
+        __origin.x = <float>origin[0]
+        __origin.y = <float>origin[1]
+        __origin.z = <float>origin[2]
+        cdef vector __euler_angles
+        __euler_angles.x = <float>euler_angles[0]
+        __euler_angles.y = <float>euler_angles[1]
+        __euler_angles.z = <float>euler_angles[2]
+        self._c_aperture.ref_frame.float_R = <float *> self.R.data;
+        self._c_aperture.setup(D, ri, D_px, __origin, __euler_angles)
+
+    def __dealloc__(self):
+        self._c_aperture.cleanup()
+
+    def vignetting(self, Bundle rays):
+        self._c_aperture.vignetting(rays._c_bundle)
 # ray tracing
 def Transform_to_S(Bundle rays, Conic F):
     transform_to_S(rays._c_bundle, F._c_conic)
@@ -243,13 +300,18 @@ the direction cosines of the ray:
 <<ray data>>=
 vector directions;
 @ 
-the gradient at the surface it intersected with the last time:
+the surface_normal at the surface it intersected with the last time:
 <<ray data>>=
-vector gradient;
+vector surface_normal;
 @ 
-and the optical path length
+the optical path length:
 <<ray data>>=
 rtd optical_path_length;
+@ the vignetting flag [[v]], $[[v]]=0$ means the ray is vignetted:
+<<ray data>>=
+unsigned int v;
+@ and the number of iterative steps for the Raphson--Newton method:
+int n_iteration;
 
 @
 \subsection{Ray bundle}
@@ -260,10 +322,12 @@ Collections of rays are gathered into bundles:
 struct bundle {
   <<ray bundle parameters>>
   void setup(source *src, rtd RADIUS, int N_RADIUS, int N_THETA, vector origin);
+  void setup(source *src, rtd L, int N_L, vector origin);
   void cleanup(void);
   void get_coordinates(double *d__coord);
   void get_directions(double *d__dir);
   void get_optical_path_length(double *d__opl);
+  void get_vignetting(double *d__v);
 };
 @ 
 A bundle allocates an array of [[N_RAY]] rays on the device
@@ -276,20 +340,20 @@ vector *d__origin;
 \label{sec:surface}
 
 The surface location and orientation with respect to the GCS is specified with a coordinate vector:
-<<surface data>>=
+<<coordinate system data>>=
 vector origin;
 @ and with 3 Euler angles with respected to the x, y and z axis.
-<<surface data>>=
+<<coordinate system data>>=
 vector euler_angles;
 @
 They are gathered in a new coordinate system data type
-<<surface data type>>=
+<<coordinate system data type>>=
 typedef struct {
-  <<surface data>>
+  <<coordinate system data>>
   void setup(void);
   void setup(vector _origin_, vector _euler_angles_);
   void cleanup(void);
-} coordinate_sys;
+} coordinate_system;
 @ 
 A conic surface is represented with the [[conic]] structure:
 <<conic structure>>=
@@ -303,10 +367,10 @@ struct conic {
 };
 @
 <<conic parameters>>=
-coordinate_sys ref_frame; 
+coordinate_system ref_frame; 
 @
 The rotation matrix [[R]] used to transform the ray coordinates into the surface coordinates is defined with
-<<surface data>>=
+<<coordinate system data>>=
 rtd R[9], *d__R;
 float *float_R;
 vector *d__origin;
@@ -389,6 +453,31 @@ __device__ inline rtd partial_z_conic_surface(void)
 }
 @
 \end{itemize}
+
+\subsection{Aperture}
+\label{sec:aperture}
+
+An aperture is a bounded surface used to clip a bundle of ray to the aperture shape.
+<<aperture structure>>=
+struct aperture {
+  <<aperture parameters>>
+  void setup(float _D_, int _D_px_, vector _origin_, vector _euler_angles_);
+  void setup(float _D_, float _ri_, int _D_px_, vector _origin_, vector _euler_angles_);
+  void cleanup(void);
+  void vignetting(bundle *rays);
+
+};
+@
+A circular aperture is defined by its diameter [[D]] in meter of [[D_px]] in pixel.
+If the aperture is annular [[ri]] defines the ratio between the inner and outer diameter.
+The location of the aperture is defined within a given coordinate system [[ref_frame]].
+A mask [[V]] is used to select the rays that are not vignetted by the aperture.
+<<aperture parameters>>= 
+int D_px;
+float D, ri;
+mask V;
+coordinate_system ref_frame;
+
 @
 \section{Functions}
 \label{sec:functions}
@@ -399,15 +488,15 @@ __device__ inline rtd partial_z_conic_surface(void)
 \subsubsection{Ray bundle}
 \label{sec:ray-bundle-1}
 
-A ray bundle is specified with the polar coordinates of the rays at a given origin.
+A ray bundle is specified with either the polar or cartesian coordinates of the rays at a given origin.
 The direction cosine are derived from the coordinates of a source object.
+
 The polar coordinates are defined with the sampling of the radius [[N_RADIUS]] from 0 to [[RADIUS]] and with the sampling of the azimuth [[N_THETA]].
 <<ray bundle setup>>=
 void bundle::setup(source *src, rtd RADIUS, int N_RADIUS, 
 		   int N_THETA, vector origin)
 {
   N_RAY = (N_RADIUS-1)*N_THETA + 1;
-  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
@@ -464,13 +553,73 @@ __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
     d__ray[k].optical_path_length = 0.0;
     d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
     d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
+    d__ray[k].v = 0;
   }
 }
 @ 
+
+The cartesian coordinates are defined with the sampling of the square box length [[N_L]] from $-[[L]]$ to [[L]].
+<<ray bundle setup (box)>>=
+void bundle::setup(source *src, rtd L, int N_L, vector origin)
+{
+  N_RAY = N_L*N_L;
+  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
+  HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
+			    sizeof(vector), cudaMemcpyHostToDevice ) );
+  <<bundle coordinates (box)>>
+}
+@ 
+The direction cosines $(k,l,m)$ of the rays are defined from the source zenith $\zeta$ and azimuth $\xi$ angles as
+\begin{eqnarray}
+  \label{eq:2}
+  k &=& \sin(\zeta)\cos(\xi) \\
+  l &=& \sin(\zeta)\sin(\xi) \\
+  k &=& \cos(\zeta)
+\end{eqnarray}
+The cartesian coordinates $x$ and $y$ of the rays are given by
+\begin{eqnarray}
+  x &=& L*(i-([[N_L]]-1)/2)/([[N_L]]-1) \\
+  y &=& L*(j-([[N_L]]-1)/2)/([[N_L]]-1)
+\end{eqnarray}
+<<bundle coordinates (box)>>=
+dim3 blockDim(16,16);
+dim3 gridDim(N_L/16+1,N_L/16+1);
+ray_coordinates_box LLL gridDim , blockDim, src->N_SRC RRR (d__ray, N_RAY, src->dev_ptr,
+                                                            L, N_L, d__origin);
+@ 
+<<bundle coordinates kernel (box)>>=
+__global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
+                                    rtd L, int N_L, vector *origin)
+{
+  int i, j, k, iSource;
+  rtd x, y;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  if ( (i<N_L) && (j<N_L) )
+  {
+    x   = L*(i - (N_L-1)*0.5)/(N_L-1);
+    y   = L*(j - (N_L-1)*0.5)/(N_L-1);
+    k = j + i*N_L;
+    d__ray[k].coordinates.x = x + origin->x; 
+    d__ray[k].coordinates.y = y + origin->y; 
+    d__ray[k].coordinates.z = origin->z;
+    d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
+    d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
+    d__ray[k].directions.z  = cos(src[iSource].zenith);
+    d__ray[k].optical_path_length = 0.0;
+    d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
+    d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
+    d__ray[k].v = 0;
+  }
+}
+@
 Memory is freed with
 <<ray bundle cleanup>>=
 void bundle::cleanup(void) 
 {
+  fprintf(stdout,"@(CEO)>bundle: freeing memory!\n");
   HANDLE_ERROR( cudaFree( d__ray ) );
   HANDLE_ERROR( cudaFree( d__origin ) );
 }
@@ -540,6 +689,25 @@ __global__ void get_optical_path_length_kernel(double *d__opl, ray *d__ray, int 
     d__opl[k]   = d__ray[k].optical_path_length;
 }
 @ 
+<<gathering ray vignetting map>>=
+void bundle::get_vignetting(double *d__v)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_RAY/256+1,1);
+  get_vignetting_kernel LLL gridDim , blockDim RRR (d__v, d__ray, N_RAY);
+}
+@ 
+<<gathering ray vignetting map kernel>>=
+__global__ void get_vignetting_kernel(double *d__v, ray *d__ray, int N_RAY)
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( k<N_RAY )
+    d__v[k]   = (double) d__ray[k].v;//==1) ? 1.0 : 0.0;
+}
+@ 
 \subsubsection{Conic}
 \label{sec:conic}
 
@@ -553,7 +721,7 @@ void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_)
 }
 @ with
 <<suface data type setup generic>>=
-void coordinate_sys::setup(vector _origin_, vector _euler_angles_)
+void coordinate_system::setup(vector _origin_, vector _euler_angles_)
 {
   origin = _origin_;
   euler_angles = _euler_angles_;
@@ -571,7 +739,7 @@ void conic::setup(rtd _c_, rtd _k_)
 }
 @ with
 <<suface data type setup>>=
-void coordinate_sys::setup(void)
+void coordinate_system::setup(void)
 {
   origin.x = 0;
   origin.y = 0;
@@ -652,10 +820,78 @@ void conic::cleanup(void)
 }
 @  and
 <<suface data type cleanup>>=
-void coordinate_sys::cleanup(void)
+void coordinate_system::cleanup(void)
 {
   HANDLE_ERROR( cudaFree( d__R ) );
   HANDLE_ERROR( cudaFree( d__origin ) );
+}
+@ 
+
+\subsubsection{Aperture}
+\label{sec:aperture-1}
+
+An aperture is initialized with:
+\begin{itemize}
+\item for a circular aperture,
+<<aperture functions>>=
+void aperture::setup(float _D_, int _D_px_, vector _origin_, vector _euler_angles_) 
+{
+  D_px = _D_px_;
+  D    = _D_;
+  ri   = 0.0;
+  V.setup(D_px,D);
+  ref_frame.setup(_origin_, _euler_angles_);
+}
+@  \item for an annular aperture,
+<<aperture functions>>=
+void aperture::setup(float _D_, float _ri_, int _D_px_, vector _origin_, vector _euler_angles_) 
+{
+  D_px = _D_px_;
+  D    = _D_;
+  ri   = _ri_;
+  V.setup(D_px,D);
+  ref_frame.setup(_origin_, _euler_angles_);
+}
+@
+\end{itemize}
+The memory is freed with
+<<aperture functions>>=
+void aperture::cleanup(void)
+{
+  V.cleanup();
+  ref_frame.cleanup();
+}
+@ 
+The vignetting of the rays are done with
+<<aperture functions>>=
+void aperture::vignetting(bundle *rays)
+{
+  float R2, Rri2;
+  R2 = D*D*0.25;
+  Rri2 = R2*ri*ri;
+  fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
+  dim3 blockDim(16,16);
+  dim3 gridDim(rays->N_RAY/256+1,1);
+  vignetting_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, Rri2, R2);
+}
+@ calling the device kernel:
+<<vignetting kernel>>=
+__global__ void vignetting_kernel(char *mask, ray *d__ray, int N_RAY, float inner2, float outer2)
+{
+  int i, j, k;
+  rtd rho2;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( k<N_RAY )
+  {
+    rho2 = d__ray[k].coordinates.rho2();
+    if ( (rho2>=inner2) && (rho2<=outer2) )
+      {
+	d__ray[k].v = 1;//d__ray[k].v || 1;
+	mask[k] = mask[k] || 1;
+      }
+  }
 }
 @
 \subsection{Coordinates transformation}
@@ -718,7 +954,7 @@ __global__ void transform_to_S_kernel(ray *d__ray, int N_RAY,
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
-  if (k<N_RAY)
+  if ( (k<N_RAY) && (d__ray[k].v==1) )
   {
     u = d__ray[k].coordinates.x - d__origin->x;
     v = d__ray[k].coordinates.y - d__origin->y;
@@ -764,7 +1000,7 @@ __global__ void transform_to_R_kernel(ray *d__ray, int N_RAY,
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
-  if (k<N_RAY)
+  if ( (k<N_RAY) && (d__ray[k].v==1) )
   {
     u = d__ray[k].coordinates.x;
     v = d__ray[k].coordinates.y;
@@ -813,7 +1049,7 @@ __global__ void intersect_kernel(ray *d__ray, int N_RAY, const rtd Fk, const rtd
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
-  if (ij<N_RAY)
+  if ( (ij<N_RAY) && (d__ray[ij].v==1) )
   {
     <<intersection with z=0 plane>>
     d__ray[ij].optical_path_length += s0;
@@ -895,9 +1131,9 @@ if (abs(s1-s0)<TOL)
   d__ray[ij].coordinates.x = x1 + k*s1;
   d__ray[ij].coordinates.y = y1 + l*s1;
   d__ray[ij].coordinates.z = m*s1;
-  d__ray[ij].gradient.x    = partial_x_conic_surface(&(d__ray[ij].coordinates), Fk, Fc);
-  d__ray[ij].gradient.y    = partial_y_conic_surface(&(d__ray[ij].coordinates), Fk, Fc);
-  d__ray[ij].gradient.z    = partial_z_conic_surface();
+  d__ray[ij].surface_normal.x    = partial_x_conic_surface(&(d__ray[ij].coordinates), Fk, Fc);
+  d__ray[ij].surface_normal.y    = partial_y_conic_surface(&(d__ray[ij].coordinates), Fk, Fc);
+  d__ray[ij].surface_normal.z    = partial_z_conic_surface();
   d__ray[ij].optical_path_length += s1;
   return;
 }
@@ -972,9 +1208,9 @@ where
   a = \mu { kK +lL + mM \over K^2 + L^2 + M^2 },
 \end{equation}
 <<a equation>>=
-K = d__ray[ij].gradient.x;
-L = d__ray[ij].gradient.y;
-M = d__ray[ij].gradient.z;
+K = d__ray[ij].surface_normal.x;
+L = d__ray[ij].surface_normal.y;
+M = d__ray[ij].surface_normal.z;
 G2 = K*K + L*L + M*M;
 k = d__ray[ij].directions.x;
 l = d__ray[ij].directions.y;
@@ -1030,7 +1266,7 @@ __global__ void refract_kernel(ray *d__ray, int N_RAY, const rtd mu)
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
-  if (ij<N_RAY)
+  if ( (ij<N_RAY) && (d__ray[ij].v==1) )
   {
     <<a equation>>
     <<b equation>>
@@ -1089,7 +1325,7 @@ void thin_lens(bundle *rays)
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
-  if (ij<N_RAY)
+  if ( (ij<N_RAY) && (d__ray[ij].v==1) )
   {
     <<a equation>>
     a *= -2.0;
