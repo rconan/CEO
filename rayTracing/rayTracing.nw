@@ -46,7 +46,9 @@ The ray tracing method involves 4 steps \cite{}:
 <<aperture structure>>
 
 void transform_to_S(bundle *rays, conic *F);
+void transform_to_S(bundle *rays, aperture *A);
 void transform_to_R(bundle *rays, conic *F);
+void transform_to_R(bundle *rays, aperture *A);
 void intersect(bundle *rays, conic *F);
 void refract(bundle *rays, const rtd mu);
 void reflect(bundle *rays);
@@ -68,6 +70,7 @@ void thin_lens(bundle *rays);
 <<gathering ray directions kernel>>
 <<gathering ray optical path length kernel>>
 <<gathering ray vignetting map kernel>>
+<<bundle reset kernel>>
 
 <<ray bundle setup>>
 <<ray bundle setup (box)>>
@@ -76,6 +79,7 @@ void thin_lens(bundle *rays);
 <<gathering ray directions>>
 <<gathering ray optical path length>>
 <<gathering ray vignetting map>>
+<<bundle reset>>
 
 <<suface data type setup generic>>
 <<suface data type setup>>
@@ -132,6 +136,7 @@ cdef extern from "rayTracing.h":
         void get_directions(double *)
         void get_optical_path_length(double *)
         void get_vignetting(double *)
+	void reset()
     cdef cppclass conic:
         coordinate_system ref_frame
         void setup(rtd , rtd , vector , vector )
@@ -142,7 +147,9 @@ cdef extern from "rayTracing.h":
         void cleanup()
         void vignetting(bundle *)
     void transform_to_S(bundle *, conic *)
+    void transform_to_S(bundle *, aperture *)
     void transform_to_R(bundle *, conic *)
+    void transform_to_R(bundle *, aperture *)
     void intersect(bundle *, conic *)
     void reflect(bundle *)
     void thin_lens(bundle *)
@@ -171,6 +178,9 @@ cdef class Bundle:
 <<bundle common>>=
 def __dealloc__(self):
     self._c_bundle.cleanup()
+
+def reset(self):
+    self._c_bundle.reset()
 
 property coordinates:
     def __get__(self):
@@ -248,8 +258,12 @@ cdef class Aperture:
 # ray tracing
 def Transform_to_S(Bundle rays, Conic F):
     transform_to_S(rays._c_bundle, F._c_conic)
+def Transform_to_S_from_A(Bundle rays, Aperture A):
+    transform_to_S(rays._c_bundle, A._c_aperture)
 def Transform_to_R(Bundle rays, Conic F):
     transform_to_R(rays._c_bundle, F._c_conic)
+def Transform_to_R_from_A(Bundle rays, Aperture A):
+    transform_to_R(rays._c_bundle, A._c_aperture)
 def Intersect(Bundle rays, Conic F):
     intersect(rays._c_bundle, F._c_conic)
 def Reflect(Bundle rays):
@@ -329,6 +343,7 @@ struct bundle {
   void get_directions(double *d__dir);
   void get_optical_path_length(double *d__opl);
   void get_vignetting(double *d__v);
+  void reset(void);
 };
 @ 
 A bundle allocates an array of [[N_RAY]] rays on the device
@@ -602,7 +617,7 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
   {
     x   = L*(i - (N_L-1)*0.5)/(N_L-1);
     y   = L*(j - (N_L-1)*0.5)/(N_L-1);
-    k = j + i*N_L;
+    k = i + j*N_L;
     d__ray[k].coordinates.x = x + origin->x; 
     d__ray[k].coordinates.y = y + origin->y; 
     d__ray[k].coordinates.z = origin->z;
@@ -612,7 +627,7 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
     d__ray[k].optical_path_length = 0.0;
     d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
     d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
-    d__ray[k].v = 0;
+    d__ray[k].v = 1;
   }
 }
 @
@@ -707,6 +722,26 @@ __global__ void get_vignetting_kernel(double *d__v, ray *d__ray, int N_RAY)
   k = j * gridDim.x * blockDim.x + i;
   if ( k<N_RAY )
     d__v[k]   = (d__ray[k].v) ? 1.0 : 0.0;
+}
+@ 
+The ray vignetting is reset with
+<<bundle reset>>=
+void bundle::reset(void) 
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_RAY/256+1,1);  
+  reset_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY);
+}
+@ with 
+<<bundle reset kernel>>=
+__global__ void reset_kernel(ray *d__ray, int N_RAY)
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( k<N_RAY )
+    d__ray[k].v = 0;
 }
 @ 
 \subsubsection{Conic}
@@ -873,24 +908,38 @@ void aperture::vignetting(bundle *rays)
   fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
   dim3 blockDim(16,16);
   dim3 gridDim(rays->N_RAY/256+1,1);
-  vignetting_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, Rri2, R2);
+  vignetting_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
+						Rri2, R2,
+						ref_frame.d__R,
+						ref_frame.d__origin);
 }
 @ calling the device kernel:
 <<vignetting kernel>>=
-__global__ void vignetting_kernel(char *mask, ray *d__ray, int N_RAY, float inner2, float outer2)
+__global__ void vignetting_kernel(char *mask, ray *d__ray, int N_RAY, 
+				  float inner2, float outer2,
+				  rtd *d__R, vector *d__origin)
 {
-  int i, j, k;
+  int i, j, ij;
   rtd rho2;
+  rtd x, y, z, u, v, w, x1, y1, s0, k, l, m;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
-  k = j * gridDim.x * blockDim.x + i;
-  if ( k<N_RAY )
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( ij<N_RAY )
   {
-    rho2 = d__ray[k].coordinates.rho2();
+    <<rays coordinates to surface>>
+    k  = d__ray[ij].directions.x;
+    l  = d__ray[ij].directions.y;
+    m  = d__ray[ij].directions.z;
+    if (m==0) { return; }
+    s0 = -d__ray[ij].coordinates.z/m;
+    x1 = d__ray[ij].coordinates.x + k*s0;
+    y1 = d__ray[ij].coordinates.y + l*s0;
+    rho2 = x1*x1 + y1*y1;
     if ( (rho2>=inner2) && (rho2<=outer2) )
       {
-	d__ray[k].v = d__ray[k].v || 1;
-	mask[k] = mask[k] || 1;
+	d__ray[ij].v = d__ray[ij].v || 1;
+	mask[ij] = mask[ij] || 1;
       }
   }
 }
@@ -945,43 +994,53 @@ void transform_to_S(bundle *rays, conic *F)
   transform_to_S_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
 					     F->ref_frame.d__R, F->ref_frame.d__origin);
 }
+void transform_to_S(bundle *rays, aperture *A)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(rays->N_RAY/256+1,1);
+  transform_to_S_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+					     A->ref_frame.d__R, A->ref_frame.d__origin);
+}
 @ 
 <<transformation to surface system kernel>>=
 __global__ void transform_to_S_kernel(ray *d__ray, int N_RAY, 
 				      rtd *d__R, vector *d__origin)
 {
-  int i, j, k;
+  int i, j, ij;
   rtd x, y, z, u, v, w;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
-  k = j * gridDim.x * blockDim.x + i;
-  if ( (k<N_RAY) && (d__ray[k].v) )
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
   {
-    u = d__ray[k].coordinates.x - d__origin->x;
-    v = d__ray[k].coordinates.y - d__origin->y;
-    w = d__ray[k].coordinates.z - d__origin->z;
-
-    x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
-    y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
-    z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
- 
-    d__ray[k].coordinates.x = x;
-    d__ray[k].coordinates.y = y;
-    d__ray[k].coordinates.z = z;    
-
-    u = d__ray[k].directions.x;
-    v = d__ray[k].directions.y;
-    w = d__ray[k].directions.z;
-
-    x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
-    y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
-    z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
-
-    d__ray[k].directions.x = x;
-    d__ray[k].directions.y = y;
-    d__ray[k].directions.z = z;    
+    <<rays coordinates to surface>>
   }
 }
+@ with the projection of the ray coordinates in the surface reference frame LCS:
+<<rays coordinates to surface>>=
+u = d__ray[ij].coordinates.x - d__origin->x;
+v = d__ray[ij].coordinates.y - d__origin->y;
+w = d__ray[ij].coordinates.z - d__origin->z;
+
+x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
+y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
+z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
+
+d__ray[ij].coordinates.x = x;
+d__ray[ij].coordinates.y = y;
+d__ray[ij].coordinates.z = z;    
+
+u = d__ray[ij].directions.x;
+v = d__ray[ij].directions.y;
+w = d__ray[ij].directions.z;
+
+x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
+y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
+z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
+
+d__ray[ij].directions.x = x;
+d__ray[ij].directions.y = y;
+d__ray[ij].directions.z = z;    
 @ 
 <<transformation to rays system>>=
 void transform_to_R(bundle *rays, conic *F)
@@ -990,6 +1049,13 @@ void transform_to_R(bundle *rays, conic *F)
   dim3 gridDim(rays->N_RAY/256+1,1);
   transform_to_R_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
         	 				     F->ref_frame.d__R, F->ref_frame.d__origin);
+}
+void transform_to_R(bundle *rays, aperture *A)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(rays->N_RAY/256+1,1);
+  transform_to_R_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+        	 				     A->ref_frame.d__R, A->ref_frame.d__origin);
 }
 @ 
 <<transformation to rays system kernel>>=
@@ -1003,17 +1069,8 @@ __global__ void transform_to_R_kernel(ray *d__ray, int N_RAY,
   k = j * gridDim.x * blockDim.x + i;
   if ( (k<N_RAY) && (d__ray[k].v) )
   {
-    u = d__ray[k].coordinates.x;
-    v = d__ray[k].coordinates.y;
-    w = d__ray[k].coordinates.z;
 
-    x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
-    y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
-    z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
-
-    d__ray[k].coordinates.x = x + d__origin->x;
-    d__ray[k].coordinates.y = y + d__origin->y;
-    d__ray[k].coordinates.z = z + d__origin->z;    
+    <<rays coordinates to rays>>
 
     u = d__ray[k].directions.x;
     v = d__ray[k].directions.y;
@@ -1028,6 +1085,19 @@ __global__ void transform_to_R_kernel(ray *d__ray, int N_RAY,
     d__ray[k].directions.z = z;    
   }
 }
+@ with the projection of the ray coordinates in the rays reference frame LCS:
+<<rays coordinates to rays>>=
+u = d__ray[k].coordinates.x;
+v = d__ray[k].coordinates.y;
+w = d__ray[k].coordinates.z;
+
+x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
+y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
+z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
+
+d__ray[k].coordinates.x = x + d__origin->x;
+d__ray[k].coordinates.y = y + d__origin->y;
+d__ray[k].coordinates.z = z + d__origin->z;    
 @ 
 
 \subsection{Surface intersection}
