@@ -81,9 +81,7 @@ void thin_lens(bundle *rays);
 <<gathering ray vignetting map>>
 <<bundle reset>>
 
-<<suface data type setup generic>>
-<<suface data type setup>>
-<<suface data type cleanup>>
+<<coordinate system functions>>
 
 <<conic setup>>
 <<conic cleanup>>
@@ -144,6 +142,7 @@ cdef extern from "rayTracing.h":
     cdef cppclass aperture:
         coordinate_system ref_frame
         void setup(float, float, int, vector , vector) 
+        void setup_GMT_M1(float, int)
         void cleanup()
         void vignetting(bundle *)
     void transform_to_S(bundle *, conic *)
@@ -255,6 +254,24 @@ cdef class Aperture:
 
     def vignetting(self, Bundle rays):
         self._c_aperture.vignetting(rays._c_bundle)
+# GMT M1
+cdef class GMT_M1:
+    """
+    """
+    cdef ceo.aperture *_c_aperture
+    cdef public np.ndarray R
+    
+    def __cinit__(self, float D, int D_px):
+        self._c_aperture = new ceo.aperture()
+        self.R = np.zeros((3*7,3),order='c',dtype=np.float32)
+        self._c_aperture.ref_frame.float_R = <float *> self.R.data;
+        self._c_aperture.setup_GMT_M1(D, D_px)
+
+    def __dealloc__(self):
+        self._c_aperture.cleanup()
+
+    def vignetting(self, Bundle rays):
+        self._c_aperture.vignetting(rays._c_bundle)
 # ray tracing
 def Transform_to_S(Bundle rays, Conic F):
     transform_to_S(rays._c_bundle, F._c_conic)
@@ -272,8 +289,8 @@ def ThinLens(Bundle rays):
     thin_lens(rays._c_bundle)
 
 @ 
-\section{Parameters}
-\label{sec:parameters}
+\section{Custom types}
+\label{sec:custom-types}
 
 The accuracy of the ray tracing is partly depending upon the data type used to hold data values of rays and surfaces.
 GPU are faster in single precision than in double precision but double precision may still be required for accuracy.
@@ -297,7 +314,7 @@ __host__ __device__ rtd vector::rho2(void) {
 }
 @
 
-\subsection{Ray}
+\section{Ray}
 \label{sec:ray}
 
 A type for the rays is also defined:
@@ -329,7 +346,7 @@ char v;
 int n_iteration;
 
 @
-\subsection{Ray bundle}
+\section{Ray bundle}
 \label{sec:ray-bundle}
 
 Collections of rays are gathered into bundles:
@@ -352,157 +369,8 @@ int N_RAY;
 ray *d__ray;
 vector *d__origin;
 @
-\subsection{Surface}
-\label{sec:surface}
-
-The surface location and orientation with respect to the GCS is specified with a coordinate vector:
-<<coordinate system data>>=
-vector origin;
-@ and with 3 Euler angles with respected to the x, y and z axis.
-<<coordinate system data>>=
-vector euler_angles;
-@
-They are gathered in a new coordinate system data type
-<<coordinate system data type>>=
-typedef struct {
-  <<coordinate system data>>
-  void setup(void);
-  void setup(vector _origin_, vector _euler_angles_);
-  void cleanup(void);
-} coordinate_system;
-@ 
-A conic surface is represented with the [[conic]] structure:
-<<conic structure>>=
-struct conic {
-
-  <<conic parameters>>
-  
-  void setup(rtd _c_, rtd _k_);
-  void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_);
-  void cleanup(void);
-};
-@
-<<conic parameters>>=
-coordinate_system ref_frame; 
-@
-The rotation matrix [[R]] used to transform the ray coordinates into the surface coordinates is defined with
-<<coordinate system data>>=
-rtd R[9], *d__R;
-float *float_R;
-vector *d__origin;
-@
-The conic shape is specified with two parameters:
-<<conic parameters>>=
-rtd c, k;
-@ 
-where [[c]] is the vertex curvature and [[k]] is the conic parameter.
-
-The conic surface is defined with
-\begin{equation}
- \label{eq:4}
-  F(x,y,z) = z - {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} } = 0.
-\end{equation}
-
-<<conic surface>>=
-__device__ inline rtd conic_surface(vector *v, const rtd k, const rtd c)
-{
-  if (c==0)
-    return v->z;
-  else {    
-    rtd rho2;
-    rho2 = c*v->rho2();
-    if (k==0)
-      return v->z - rho2*0.5;
-    else
-      return v->z - rho2/( 1 + sqrt(1 - k*c*rho2) );
-  }
-}
-@ 
-The partial derivative of the conic equation are written
-\begin{itemize}
-\item
-  \begin{equation}
-    { \partial F(x,y,z) \over \partial x } = -x {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
-  \end{equation}
-<<conic surface x partial>>=
-__device__ inline rtd partial_x_conic_surface(vector *v, const rtd k, const rtd c)
-{
-  if (c==0)
-    return 0.0;
-  else    
-    if (k==0)
-      return -v->x*c;
-    else {
-      rtd rho2;
-      rho2 = c*v->rho2();
-      return -v->x*c*rsqrt(1 - k*c*rho2);
-    }
-}
-@
-\item
-  \begin{equation}
-    { \partial F(x,y,z) \over \partial y } = -y {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
-  \end{equation}
-<<conic surface y partial>>=
-__device__ inline rtd partial_y_conic_surface(vector *v, const rtd k, const rtd c)
-{
-  if (c==0)
-    return 0.0;
-  else    
-    if (k==0)
-      return -v->y*c;
-    else {
-      rtd rho2;
-      rho2 = c*v->rho2();
-      return -v->y*c*rsqrt(1 - k*c*rho2);
-    }
-}
-@
-\item
-  \begin{equation}
-    { \partial F(x,y,z) \over \partial z } = 1
-  \end{equation}
-<<conic surface z partial>>=
-__device__ inline rtd partial_z_conic_surface(void)
-{
-  return 1.0;
-}
-@
-\end{itemize}
-
-\subsection{Aperture}
-\label{sec:aperture}
-
-An aperture is a bounded surface used to clip a bundle of ray to the aperture shape.
-<<aperture structure>>=
-struct aperture {
-  <<aperture parameters>>
-  void setup(float _D_, int _D_px_, vector _origin_, vector _euler_angles_);
-  void setup(float _D_, float _ri_, int _D_px_, vector _origin_, vector _euler_angles_);
-  void cleanup(void);
-  void vignetting(bundle *rays);
-
-};
-@
-A circular aperture is defined by its diameter [[D]] in meter of [[D_px]] in pixel.
-If the aperture is annular [[ri]] defines the ratio between the inner and outer diameter.
-The location of the aperture is defined within a given coordinate system [[ref_frame]].
-A mask [[V]] is used to select the rays that are not vignetted by the aperture.
-<<aperture parameters>>= 
-int D_px;
-float D, ri;
-mask V;
-coordinate_system ref_frame;
-
-@
-\section{Functions}
-\label{sec:functions}
-
 \subsection{Setup \& Cleanup}
-\label{sec:setup--cleanup}
-
-\subsubsection{Ray bundle}
-\label{sec:ray-bundle-1}
+\label{sec:bundle-setup--cleanup}
 
 A ray bundle is specified with either the polar or cartesian coordinates of the rays at a given origin.
 The direction cosine are derived from the coordinates of a source object.
@@ -743,58 +611,103 @@ __global__ void reset_kernel(ray *d__ray, int N_RAY)
   if ( k<N_RAY )
     d__ray[k].v = 0;
 }
-@ 
-\subsubsection{Conic}
-\label{sec:conic}
+@
 
-A conic surface is initialized with the [[setup]] routine:
-<<conic setup generic>>=
-void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_)
-{
-  c = _c_;
-  k = _k_;
-  ref_frame.setup(_origin_, _euler_angles_);
-}
-@ with
-<<suface data type setup generic>>=
+\section{Coordinate system}
+\label{sec:coordinate-system}
+
+The surface location and orientation with respect to the GCS is specified with a coordinate vector:
+<<coordinate system data>>=
+vector *origin;
+@ and with 3 Euler angles with respected to the x, y and z axis.
+<<coordinate system data>>=
+vector *euler_angles;
+@ The surface can be made of [[N]] identical segments
+<<coordinate system data>>=
+int N; 
+@
+The rotation matrix [[R]] used to transform the ray coordinates into the surface coordinates (and back!) is defined with
+<<coordinate system data>>=
+rtd *R, *d__R;
+float *float_R;
+vector *d__origin;
+@ 
+They are gathered in a new coordinate system data type
+<<coordinate system data type>>=
+typedef struct {
+  <<coordinate system data>>
+  void setup(void);
+  void setup(vector _origin_, vector _euler_angles_);
+  void setup(vector *_origin_, vector *_euler_angles_, int _N_);
+  void cleanup(void);
+  void info(void);
+} coordinate_system;
+@ 
+
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
+A coordinate system structure is initialized with
+\begin{itemize}
+\item a single origin and orientation,
+<<coordinate system functions>>=
 void coordinate_system::setup(vector _origin_, vector _euler_angles_)
 {
-  origin = _origin_;
-  euler_angles = _euler_angles_;
+  N = 1;
+  int n_byte = sizeof(vector)*N;
+  origin = (vector *)malloc( n_byte );
+  memcpy( origin , &_origin_ , n_byte);
+  euler_angles = (vector *)malloc( n_byte );
+  memcpy(euler_angles,  &_euler_angles_, n_byte);
   <<rotation matrix eval>>
   <<allocation>>  
+  info();
 }
 @ 
-A conic surface that sets in the GCS is simply defined with
-<<conic setup>>=
-void conic::setup(rtd _c_, rtd _k_)
-{
-  c = _c_;
-  k = _k_;
-  ref_frame.setup();
-}
-@ with
-<<suface data type setup>>=
+\item origin and orientation align to the main coordinate system,
+<<coordinate system functions>>=
 void coordinate_system::setup(void)
 {
-  origin.x = 0;
-  origin.y = 0;
-  origin.z = 0;
-  euler_angles.x = 0;
-  euler_angles.y = 0;
-  euler_angles.z = 0;
+  N = 1;
+  int n_byte = sizeof(vector)*N;
+  origin = (vector *)malloc( n_byte );
+  euler_angles = (vector *)malloc( n_byte );
+  origin[0].x = 0;
+  origin[0].y = 0;
+  origin[0].z = 0;
+  euler_angles[0].x = 0;
+  euler_angles[0].y = 0;
+  euler_angles[0].z = 0;
   <<rotation matrix eval>>
   <<allocation>>  
+  info();
 }
 @ 
+\item an array of [[N]] origins and orientations
+<<coordinate system functions>>=
+void coordinate_system::setup(vector *_origin_, vector *_euler_angles_, int _N_)
+{
+  N = _N_;
+  int n_byte = sizeof(vector)*N;
+  origin = (vector *)malloc( n_byte );
+  memcpy( origin , _origin_ , n_byte);
+  euler_angles = (vector *)malloc( n_byte );
+  memcpy(euler_angles,  _euler_angles_, n_byte);
+  <<rotation matrix eval>>
+  <<allocation>>  
+  info();
+}
+@
+\end{itemize}
+
 Device allocation
 <<allocation>>=
-HANDLE_ERROR( cudaMalloc((void**)&d__R, sizeof(rtd)*9 ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__R, sizeof(rtd)*9*N ) );
 HANDLE_ERROR( cudaMemcpy( d__R, R, 
-			    sizeof(rtd)*9, cudaMemcpyHostToDevice ) );
-HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
-HANDLE_ERROR( cudaMemcpy( d__origin, &(origin), 
-			    sizeof(vector), cudaMemcpyHostToDevice ) );
+			    sizeof(rtd)*9*N, cudaMemcpyHostToDevice ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector)*N ) );
+HANDLE_ERROR( cudaMemcpy( d__origin, origin, 
+			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
 @
 The rotation matrix to transform the ray coordinates in the LCS is given by
 \begin{eqnarray}
@@ -829,67 +742,307 @@ R &=& \left[
 $\alpha$, $\beta$ and $\gamma$ are the Euler angles along the x, y and z axis respectively.
 The matrix is computed with
 <<rotation matrix eval>>=
+R = (rtd *)malloc( sizeof(rtd)*9*N );
 rtd ca, sa, cb, sb, cg, sg;
-ca = cos(euler_angles.x);
-sa = sin(euler_angles.x);
-cb = cos(euler_angles.y);
-sb = sin(euler_angles.y);
-cg = cos(euler_angles.z);
-sg = sin(euler_angles.z);
-R[0] = cb*cg;
-R[1] = -sa*sb*cg - ca*sg;
-R[2] = -ca*sb*cg + sa*sg;
-R[3] = cb*sg;
-R[4] = -sa*sb*sg + ca*cg;
-R[5] = -ca*sb*sg - sa*cg;
-R[6] = sb;
-R[7] = sa*cb;
-R[8] = ca*cb;
+int k, idx;
+for (k=0; k<N; k++)
+  {
+    idx = k;
+    ca = cos(euler_angles[idx].x);
+    sa = sin(euler_angles[idx].x);
+    cb = cos(euler_angles[idx].y);
+    sb = sin(euler_angles[idx].y);
+    cg = cos(euler_angles[idx].z);
+    sg = sin(euler_angles[idx].z);
+    idx *= 9;
+    R[idx++] = cb*cg;
+    R[idx++] = -sa*sb*cg - ca*sg;
+    R[idx++] = -ca*sb*cg + sa*sg;
+    R[idx++] = cb*sg;
+    R[idx++] = -sa*sb*sg + ca*cg;
+    R[idx++] = -ca*sb*sg - sa*cg;
+    R[idx++] = sb;
+    R[idx++] = sa*cb;
+    R[idx++] = ca*cb;
+  }
 for (int k=0;k<9;k++)
    *(float_R+k) = (float) R[k];
 @ where the elements of $R$ are stored in the row major format.
+<<coordinate system functions>>=
+void coordinate_system::cleanup(void)
+{
+  free( origin );
+  free( euler_angles );
+  free(R);
+  HANDLE_ERROR( cudaFree( d__R ) );
+  HANDLE_ERROR( cudaFree( d__origin ) );
+}
+@ 
+\subsection{Input/Output}
+\label{sec:inputoutput}
+
+The main parameters of the coordinate systems are displayed with the [[info]] routine:
+<<coordinate system functions>>=
+void coordinate_system::info(void)
+{
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n","coordinate_system");
+  fprintf(stdout," ID   (Tx     Ty      Tz)[m]     (Ox      Oy     Oz)[deg]\n");
+  float c = 180.0/PI;
+  int k;
+  for (k=0; k<N; k++)
+     fprintf(stdout," %2d %6.2f %6.2f %6.2f   %6.2f %6.2f %6.2f\n", k,
+	  origin[k].x, origin[k].y, origin[k].z,
+	  euler_angles[k].x*c, euler_angles[k].y*c, euler_angles[k].z*c);
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+}
+@ 
+
+\section{Surface}
+\label{sec:surface}
+
+A conic surface is represented with the [[conic]] structure:
+<<conic structure>>=
+struct conic {
+
+  <<conic parameters>>
+  
+  void setup(rtd _c_, rtd _k_);
+  void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_);
+  void cleanup(void);
+};
+@
+<<conic parameters>>=
+coordinate_system ref_frame; 
+@
+The conic shape is specified with two parameters:
+<<conic parameters>>=
+rtd c, k;
+@ 
+where [[c]] is the vertex curvature and [[k]] is the conic parameter.
+
+The conic surface is defined with
+\begin{equation}
+ \label{eq:4}
+  F(x,y,z) = z - {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} } = 0.
+\end{equation}
+
+<<conic surface>>=
+__device__ inline rtd conic_surface(vector *v, const rtd k, const rtd c)
+{
+  if (c==0)
+    return v->z;
+  else {    
+    rtd rho2;
+    rho2 = c*v->rho2();
+    if (k==0)
+      return v->z - rho2*0.5;
+    else
+      return v->z - rho2/( 1 + sqrt(1 - k*c*rho2) );
+  }
+}
+@ 
+The partial derivative of the conic equation are written
+\begin{itemize}
+\item
+  \begin{equation}
+    { \partial F(x,y,z) \over \partial x } = -x {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
+  \end{equation}
+<<conic surface x partial>>=
+__device__ inline rtd partial_x_conic_surface(vector *v, const rtd k, const rtd c)
+{
+  if (c==0)
+    return 0.0;
+  else    
+    if (k==0)
+      return -v->x*c;
+    else {
+      rtd rho2;
+      rho2 = c*v->rho2();
+      return -v->x*c*rsqrt(1 - k*c*rho2);
+    }
+}
+@
+\item
+  \begin{equation}
+    { \partial F(x,y,z) \over \partial y } = -y {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
+  \end{equation}
+<<conic surface y partial>>=
+__device__ inline rtd partial_y_conic_surface(vector *v, const rtd k, const rtd c)
+{
+  if (c==0)
+    return 0.0;
+  else    
+    if (k==0)
+      return -v->y*c;
+    else {
+      rtd rho2;
+      rho2 = c*v->rho2();
+      return -v->y*c*rsqrt(1 - k*c*rho2);
+    }
+}
+@
+\item
+  \begin{equation}
+    { \partial F(x,y,z) \over \partial z } = 1
+  \end{equation}
+<<conic surface z partial>>=
+__device__ inline rtd partial_z_conic_surface(void)
+{
+  return 1.0;
+}
+@
+\end{itemize}
+
+\subsection{Setup \& Cleanup}
+\label{sec:surf-setup--cleanup}
+
+A conic surface is initialized with the [[setup]] routine:
+<<conic setup generic>>=
+void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_)
+{
+  c = _c_;
+  k = _k_;
+  ref_frame.setup(_origin_, _euler_angles_);
+}
+@
+A conic surface that sets in the GCS is simply defined with
+<<conic setup>>=
+void conic::setup(rtd _c_, rtd _k_)
+{
+  c = _c_;
+  k = _k_;
+  ref_frame.setup();
+}
+@
 Memory is freed with
 <<conic cleanup>>=
 void conic::cleanup(void)
 {
   ref_frame.cleanup();
 }
-@  and
-<<suface data type cleanup>>=
-void coordinate_system::cleanup(void)
-{
-  HANDLE_ERROR( cudaFree( d__R ) );
-  HANDLE_ERROR( cudaFree( d__origin ) );
-}
-@ 
+@
 
-\subsubsection{Aperture}
-\label{sec:aperture-1}
+\section{Aperture}
+\label{sec:aperture}
+
+An aperture is a bounded surface used to clip a bundle of ray to the aperture shape.
+<<aperture structure>>=
+struct aperture {
+  <<aperture parameters>>
+  void setup(float _D_, int _D_px_, 
+	     vector _origin_, vector _euler_angles_);
+  void setup(float _D_, float _ri_, int _D_px_, 
+	     vector _origin_, vector _euler_angles_);
+  void setup(float _D_, float _ri_, float _D_seg_, int _D_px_, 
+	     vector *_origin_, vector *_euler_angles_, int N_segment);
+  void setup_GMT_M1(float _D_, int _D_px_);
+  void cleanup(void);
+  void vignetting(bundle *rays);
+
+};
+@
+A circular aperture is defined by its diameter [[D]] in meter of [[D_px]] in pixel.
+If the aperture is annular [[ri]] defines the ratio between the inner and outer diameter.
+The aperture can be segmented with [[N]] identical segments of diameter [[D_seg]].
+The location of the aperture segments is defined within a given coordinate system [[ref_frame]].
+A mask [[V]] is used to select the rays that are not vignetted by the aperture.
+<<aperture parameters>>= 
+int D_px;
+float D, ri, D_seg;
+int N;
+mask V;
+coordinate_system ref_frame;
+
+@
+\subsection{Setup \& Cleanup}
+\label{sec:aper-setup--cleanup}
 
 An aperture is initialized with:
 \begin{itemize}
 \item for a circular aperture,
 <<aperture functions>>=
-void aperture::setup(float _D_, int _D_px_, vector _origin_, vector _euler_angles_) 
+void aperture::setup(float _D_, int _D_px_, 
+		     vector _origin_, vector _euler_angles_) 
 {
   D_px = _D_px_;
-  D    = _D_;
+  D_seg = D = _D_;
   ri   = 0.0;
-  V.setup(D_px,D);
+  N = 1;
+  V.setup(D_px*D_px);
   ref_frame.setup(_origin_, _euler_angles_);
 }
 @  \item for an annular aperture,
 <<aperture functions>>=
-void aperture::setup(float _D_, float _ri_, int _D_px_, vector _origin_, vector _euler_angles_) 
+void aperture::setup(float _D_, float _ri_, int _D_px_, 
+		     vector _origin_, vector _euler_angles_) 
 {
   D_px = _D_px_;
-  D    = _D_;
+  D_seg = D = _D_;
   ri   = _ri_;
-  V.setup(D_px,D);
+  N = 1;
+  V.setup(D_px*D_px);
   ref_frame.setup(_origin_, _euler_angles_);
 }
 @
+\item for an aperture with [[N_segment]] circular segment of diameter [[D_seg]], each segment with a different coordinate system,
+<<aperture functions>>=
+void aperture::setup(float _D_, float _ri_, float _D_seg_, int _D_px_, 
+		     vector *_origin_, vector *_euler_angles_, int N_segment)
+{
+  D_px  = _D_px_;
+  D     = _D_;
+  D_seg = _D_seg_;
+  ri    = _ri_;
+  N = N_segment;
+  V.setup(D_px*D_px*N);
+  ref_frame.setup(_origin_, _euler_angles_, N);
+}
+@
 \end{itemize}
+
+Based on the above, one can defined specific segmented apertures like
+\begin{description}
+\item[GMT M1] 
+The GMT M1 segment have all the same clear aperture of 8.365m diameter.
+The center segment has a hole of 1.78m diameter.
+The center aperture is centered on the vertex of the conic surface that defines M1.
+The vertex is set as the origin of the global coordinate system (GCS).
+The center of the peripheral segments are evenly located on a circle of radius 8.710m with a phase of 30 degrees.
+The peripheral segments also tilted inwards by 13.522 degrees.
+<<aperture functions>>=
+void aperture::setup_GMT_M1(float _D_, int _D_px_)
+{
+  D_px  = _D_px_;
+  D     = _D_;
+  D_seg = 8.365;
+  ri    = 1.780/8.365;
+  N = 7;
+  vector origin[7];
+  vector euler_angles[7];
+  origin[0].x = origin[0].y = origin[0].z = 0.0;
+  euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
+  rtd D_c, o, zo, sa;
+  sa = sin(13.522*PI/180);
+  D_c = 8.710 - (0.691-0.445)*sa;
+  zo = 8.417*sa*0.5 + 0.691 - 0.445;
+  int k;  
+  for (k=1; k<N; k++)
+  {
+    o = PI*(2*k-1)/6.0;
+    origin[k].x = D_c*cosf(o);
+    origin[k].y = D_c*sinf(o);
+    origin[k].z = zo;
+    euler_angles[k].x = 0.0;
+    euler_angles[k].y = 13.522*PI/180.0;
+    euler_angles[k].z = o;
+  }
+  V.setup(D_px*D_px*N);
+  ref_frame.setup(origin, euler_angles, N);
+}
+@ 
+\end{description}
+
+
 The memory is freed with
 <<aperture functions>>=
 void aperture::cleanup(void)
@@ -903,11 +1056,12 @@ The vignetting of the rays are done with
 void aperture::vignetting(bundle *rays)
 {
   float R2, Rri2;
-  R2 = D*D*0.25;
+  R2 = D_seg*D_seg*0.25;
   Rri2 = R2*ri*ri;
   fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
   dim3 blockDim(16,16);
-  dim3 gridDim(rays->N_RAY/256+1,1);
+  dim3 gridDim(rays->N_RAY/256+1,N);
+  rays->reset();
   vignetting_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
 						Rri2, R2,
 						ref_frame.d__R,
@@ -919,31 +1073,58 @@ __global__ void vignetting_kernel(char *mask, ray *d__ray, int N_RAY,
 				  float inner2, float outer2,
 				  rtd *d__R, vector *d__origin)
 {
-  int i, j, ij;
+  int i, j, ij, iCoordSys, idx;
   rtd rho2;
   rtd x, y, z, u, v, w, x1, y1, s0, k, l, m;
   i = blockIdx.x * blockDim.x + threadIdx.x;
-  j = blockIdx.y * blockDim.y + threadIdx.y;
+  j = threadIdx.y;
+  iCoordSys = blockIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
   if ( ij<N_RAY )
   {
-    <<rays coordinates to surface>>
-    k  = d__ray[ij].directions.x;
-    l  = d__ray[ij].directions.y;
-    m  = d__ray[ij].directions.z;
+
+    idx = iCoordSys;
+
+    u = d__ray[ij].coordinates.x - d__origin[idx].x;
+    v = d__ray[ij].coordinates.y - d__origin[idx].y;
+    w = d__ray[ij].coordinates.z - d__origin[idx].z;
+
+    idx = iCoordSys*9;
+
+    x = d__R[0+idx]*u + d__R[3+idx]*v + d__R[6+idx]*w;
+    y = d__R[1+idx]*u + d__R[4+idx]*v + d__R[7+idx]*w;
+    z = d__R[2+idx]*u + d__R[5+idx]*v + d__R[8+idx]*w;
+
+    u = d__ray[ij].directions.x;
+    v = d__ray[ij].directions.y;
+    w = d__ray[ij].directions.z;
+
+    k = d__R[0+idx]*u + d__R[3+idx]*v + d__R[6+idx]*w;
+    l = d__R[1+idx]*u + d__R[4+idx]*v + d__R[7+idx]*w;
+    m = d__R[2+idx]*u + d__R[5+idx]*v + d__R[8+idx]*w;
+
     if (m==0) { return; }
-    s0 = -d__ray[ij].coordinates.z/m;
-    x1 = d__ray[ij].coordinates.x + k*s0;
-    y1 = d__ray[ij].coordinates.y + l*s0;
+    s0 = -z/m;
+    x1 = x + k*s0;
+    y1 = y + l*s0;
     rho2 = x1*x1 + y1*y1;
-    if ( (rho2>=inner2) && (rho2<=outer2) )
+    if (rho2<=outer2)
       {
-	d__ray[ij].v = d__ray[ij].v || 1;
-	mask[ij] = mask[ij] || 1;
+	d__ray[ij].v = 1;
+	mask[ij] = 1;
+      }
+    if ( (iCoordSys==0) && (rho2<inner2) )
+      {
+	d__ray[ij].v = 0;
+	mask[ij] = 0;
       }
   }
 }
 @
+
+\section{Ray tracing routines}
+\label{sec:ray-tracing-routines}
+
 \subsection{Coordinates transformation}
 \label{sec:coord-transf}
 
