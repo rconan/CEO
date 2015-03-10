@@ -1319,42 +1319,42 @@ void transform_to_R(bundle *rays, aperture *A)
 __global__ void transform_to_R_kernel(ray *d__ray, int N_RAY,
                                       rtd *d__R, vector *d__origin)
 {
-  int i, j, k;
+  int i, j, ij;
   rtd x, y, z, u, v, w;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
-  k = j * gridDim.x * blockDim.x + i;
-  if ( (k<N_RAY) && (d__ray[k].v) )
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
   {
 
     <<rays coordinates to rays>>
 
-    u = d__ray[k].directions.x;
-    v = d__ray[k].directions.y;
-    w = d__ray[k].directions.z;
+    u = d__ray[ij].directions.x;
+    v = d__ray[ij].directions.y;
+    w = d__ray[ij].directions.z;
 
     x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
     y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
     z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
 
-    d__ray[k].directions.x = x;
-    d__ray[k].directions.y = y;
-    d__ray[k].directions.z = z;    
+    d__ray[ij].directions.x = x;
+    d__ray[ij].directions.y = y;
+    d__ray[ij].directions.z = z;    
   }
 }
 @ with the projection of the ray coordinates in the rays reference frame LCS:
 <<rays coordinates to rays>>=
-u = d__ray[k].coordinates.x;
-v = d__ray[k].coordinates.y;
-w = d__ray[k].coordinates.z;
+u = d__ray[ij].coordinates.x;
+v = d__ray[ij].coordinates.y;
+w = d__ray[ij].coordinates.z;
 
 x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
 y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
 z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
 
-d__ray[k].coordinates.x = x + d__origin->x;
-d__ray[k].coordinates.y = y + d__origin->y;
-d__ray[k].coordinates.z = z + d__origin->z;    
+d__ray[ij].coordinates.x = x + d__origin->x;
+d__ray[ij].coordinates.y = y + d__origin->y;
+d__ray[ij].coordinates.z = z + d__origin->z;    
 @ 
 
 \subsection{Surface intersection}
@@ -1753,25 +1753,47 @@ void gmt_m1::setup(float _D_, int _D_px_)
 
   vector origin[7];
   vector euler_angles[7];
-  origin[0].x = origin[0].y = origin[0].z = 0.0;
-  euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
   rtd D_c, o, zo, sbeta;
-  sbeta = sin(beta);
-  D_c = L - depth*sbeta;
-  zo = D_full*sbeta*0.5 + depth;
-  int k;  
-  for (k=1; k<N; k++)
-  {
-    o = PI*(2*k-1)/6.0;
-    origin[k].x = D_c*cosf(o);
-    origin[k].y = D_c*sinf(o);
-    origin[k].z = zo;
-    euler_angles[k].x = 0.0;
-    euler_angles[k].y = beta;
-    euler_angles[k].z = o;
-  }
+  
+  <<M1 aperture definition>>
+
   V.setup(D_px*D_px);
   aperture_CS.setup(origin, euler_angles, N);
+}
+@ The origin and coordinates system of the aperture is defined with
+<<M1 aperture definition>>=
+origin[0].x = origin[0].y = origin[0].z = 0.0;
+euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
+sbeta = sin(beta);
+D_c = L - depth*sbeta;
+zo = D_full*sbeta*0.5 + depth;
+int k;  
+for (k=1; k<N; k++)
+{
+  o = PI*(2*k-1)/6.0;
+  origin[k].x = D_c*cosf(o);
+  origin[k].y = D_c*sinf(o);
+  origin[k].z = zo;
+  euler_angles[k].x = 0.0;
+  euler_angles[k].y = beta;
+  euler_angles[k].z = o;
+}
+@ The origin and coordinates system of the conic is defined with
+<<M1 conic definition>>=
+origin[0].x = origin[0].y = origin[0].z = 0.0;
+euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
+D_c = L - depth*sbeta;
+zo = D_full*sbeta*0.5 + depth;
+int k;  
+for (k=1; k<N; k++)
+{
+  o = PI*(2*k-1)/6.0;
+  origin[k].x = D_c*cosf(o);
+  origin[k].y = D_c*sinf(o);
+  origin[k].z = zo;
+  euler_angles[k].x = 0.0;
+  euler_angles[k].y = beta;
+  euler_angles[k].z = o;
 }
 @ 
 Memory is freed with
@@ -1822,15 +1844,19 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
     <<M1 intersection with aperture plane>>
 
     rho2 = x1*x1 + y1*y1;
-    if (rho2<=outer2)
-      {
-	d__ray[ij].v = 1;
-	mask[ij] = 1;
-      }
     if ( (iCoordSys==0) && (rho2<inner2) )
       {
 	d__ray[ij].v = 0;
 	mask[ij] = 0;
+	return;
+      }
+    if (rho2<=outer2)
+      {
+	d__ray[ij].v = 1;
+	mask[ij] = 1;
+
+	<<M1 transformation to conic coordinate system>>
+        <<M1 transformation to global coordinate system>>
       }
   }
 }
@@ -1863,6 +1889,68 @@ if (m==0) { return; }
 s0 = -z/m;
 x1 = x + k*s0;
 y1 = y + l*s0;
+@ The rays coordinates and cosine directions are transformed into the aperture coordinates system:
+<<M1 transformation to conic coordinate system>>=
+idx = iCoordSys;
+
+u = d__ray[ij].coordinates.x - d__origin[idx].x;
+v = d__ray[ij].coordinates.y - d__origin[idx].y;
+w = d__ray[ij].coordinates.z - d__origin[idx].z;
+
+idx = iCoordSys*9;
+
+x = d__R[0+idx]*u + d__R[3+idx]*v + d__R[6+idx]*w;
+y = d__R[1+idx]*u + d__R[4+idx]*v + d__R[7+idx]*w;
+z = d__R[2+idx]*u + d__R[5+idx]*v + d__R[8+idx]*w;
+
+d__ray[ij].coordinates.x = x;
+d__ray[ij].coordinates.y = y;
+d__ray[ij].coordinates.z = z;    
+
+u = d__ray[ij].directions.x;
+v = d__ray[ij].directions.y;
+w = d__ray[ij].directions.z;
+
+k = d__R[0+idx]*u + d__R[3+idx]*v + d__R[6+idx]*w;
+l = d__R[1+idx]*u + d__R[4+idx]*v + d__R[7+idx]*w;
+m = d__R[2+idx]*u + d__R[5+idx]*v + d__R[8+idx]*w;
+
+d__ray[ij].directions.x = k;
+d__ray[ij].directions.y = l;
+d__ray[ij].directions.z = m;  
+@ The intersection with the plane $z=0$ in the conic coordinate transformed is computed with  
+@ The rays coordinates and cosine directions are transformed back into the global coordinate system:
+<<M1 transformation to global coordinate system>>=
+idx = iCoordSys;
+
+u = d__ray[ij].coordinates.x;
+v = d__ray[ij].coordinates.y;
+w = d__ray[ij].coordinates.z;
+
+idx = iCoordSys*9;
+
+x = d__R[0+idx]*u + d__R[1+idx]*v + d__R[2+idx]*w;
+y = d__R[3+idx]*u + d__R[4+idx]*v + d__R[5+idx]*w;
+z = d__R[6+idx]*u + d__R[7+idx]*v + d__R[8+idx]*w;
+
+idx = iCoordSys;
+d__ray[ij].coordinates.x = x + d__origin[idx].x;
+d__ray[ij].coordinates.y = y + d__origin[idx].y;
+d__ray[ij].coordinates.z = z + d__origin[idx].z;    
+
+u = d__ray[ij].directions.x;
+v = d__ray[ij].directions.y;
+w = d__ray[ij].directions.z;
+
+idx = iCoordSys*9;
+
+x = d__R[0+idx]*u + d__R[1+idx]*v + d__R[2+idx]*w;
+y = d__R[3+idx]*u + d__R[4+idx]*v + d__R[5+idx]*w;
+z = d__R[6+idx]*u + d__R[7+idx]*v + d__R[8+idx]*w;
+
+d__ray[ij].directions.x = x;
+d__ray[ij].directions.y = y;
+d__ray[ij].directions.z = z;    
 @
 \section{Input/Output}
 \label{sec:inputoutput}
