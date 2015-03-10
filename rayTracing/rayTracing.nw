@@ -31,17 +31,13 @@ The ray tracing method involves 4 steps \cite{}:
 
 <<ray data type>>
 
-<<ray bundle structure>>
-
 <<coordinate system data type>>
+
+<<ray bundle structure>>
 
 <<conic structure>>
 
-<<conic surface>>
-
-<<conic surface x partial>>
-<<conic surface y partial>>
-<<conic surface z partial>>
+<<conic equations>>
 
 <<aperture structure>>
 
@@ -305,12 +301,21 @@ typedef struct {
   rtd y;
   rtd z;
   __host__ __device__ rtd rho2(void);
+  __host__ __device__ rtd rho2(rtd x0, rtd y0);
 } vector;
 @ that represents the 3 coordinates in space of the tip of vector.
 The square of the magnitude of a vector projected in the x,y--plane i.e. $[[x]]^2+[[y]]^2$ is computed with 
 <<vector functions>>=
 __host__ __device__ rtd vector::rho2(void) {
   return x*x + y*y;
+}
+@
+<<vector functions>>=
+__host__ __device__ rtd vector::rho2(rtd x0, rtd y0) {
+  rtd xp, yp;
+  xp = x - x0;
+  yp = y - y0;
+  return xp*xp + yp*yp;
 }
 @
 
@@ -786,7 +791,7 @@ The main parameters of the coordinate systems are displayed with the [[info]] ro
 void coordinate_system::info(void)
 {
   fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n","coordinate_system");
-  fprintf(stdout," ID   (Tx     Ty      Tz)[m]     (Ox      Oy     Oz)[deg]\n");
+  fprintf(stdout," ID   (Tx     Ty     Tz)[m]  (Ox     Oy     Oz)[deg]\n");
   float c = 180.0/PI;
   int k;
   for (k=0; k<N; k++)
@@ -811,8 +816,10 @@ struct conic {
   void cleanup(void);
 };
 @
+A conic surface is defined at a given location within a given coordinate system:
 <<conic parameters>>=
 coordinate_system ref_frame; 
+vector origin, *d__origin;
 @
 The conic shape is specified with two parameters:
 <<conic parameters>>=
@@ -826,18 +833,33 @@ The conic surface is defined with
   F(x,y,z) = z - {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} } = 0.
 \end{equation}
 
-<<conic surface>>=
-__device__ inline rtd conic_surface(vector *v, const rtd k, const rtd c)
+<<conic equations>>=
+__device__ inline rtd conic_equation(vector *v, vector *v0, const rtd k, const rtd c)
 {
   if (c==0)
-    return v->z;
+    return 0.0;
   else {    
     rtd rho2;
-    rho2 = c*v->rho2();
+    rho2 = c*v->rho2(v0->x,v0->y);
     if (k==0)
-      return v->z - rho2*0.5;
+      return rho2*0.5;
     else
-      return v->z - rho2/( 1 + sqrt(1 - k*c*rho2) );
+      return rho2/( 1 + sqrt(1 - k*c*rho2) );
+  }
+}
+@ 
+<<conic equations>>=
+__device__ inline rtd conic_surface(vector *v, vector *v0, const rtd k, const rtd c)
+{
+  if (c==0)
+    return v->z - v0->z;
+  else {    
+    rtd rho2;
+    rho2 = c*v->rho2(v0->x,v0->y);
+    if (k==0)
+      return v->z - rho2*0.5 - v0->z;
+    else
+      return v->z - rho2/( 1 + sqrt(1 - k*c*rho2) ) - v0->z;
   }
 }
 @ 
@@ -847,18 +869,18 @@ The partial derivative of the conic equation are written
   \begin{equation}
     { \partial F(x,y,z) \over \partial x } = -x {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
   \end{equation}
-<<conic surface x partial>>=
-__device__ inline rtd partial_x_conic_surface(vector *v, const rtd k, const rtd c)
+<<conic equations>>=
+__device__ inline rtd partial_x_conic_surface(vector *v, vector *v0, const rtd k, const rtd c)
 {
   if (c==0)
     return 0.0;
   else    
     if (k==0)
-      return -v->x*c;
+      return -(v->x - v0->x)*c;
     else {
       rtd rho2;
-      rho2 = c*v->rho2();
-      return -v->x*c*rsqrt(1 - k*c*rho2);
+      rho2 = c*v->rho2(v0->x,v0->y);
+      return -(v->x - v0->x)*c*rsqrt(1 - k*c*rho2);
     }
 }
 @
@@ -866,18 +888,18 @@ __device__ inline rtd partial_x_conic_surface(vector *v, const rtd k, const rtd 
   \begin{equation}
     { \partial F(x,y,z) \over \partial y } = -y {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
   \end{equation}
-<<conic surface y partial>>=
-__device__ inline rtd partial_y_conic_surface(vector *v, const rtd k, const rtd c)
+<<conic equations>>=
+__device__ inline rtd partial_y_conic_surface(vector *v, vector *v0, const rtd k, const rtd c)
 {
   if (c==0)
     return 0.0;
   else    
     if (k==0)
-      return -v->y*c;
+      return -(v->y - v0->y)*c;
     else {
       rtd rho2;
-      rho2 = c*v->rho2();
-      return -v->y*c*rsqrt(1 - k*c*rho2);
+      rho2 = c*v->rho2(v0->x,v0->y);
+      return -(v->y - v0->y)*c*rsqrt(1 - k*c*rho2);
     }
 }
 @
@@ -885,7 +907,7 @@ __device__ inline rtd partial_y_conic_surface(vector *v, const rtd k, const rtd 
   \begin{equation}
     { \partial F(x,y,z) \over \partial z } = 1
   \end{equation}
-<<conic surface z partial>>=
+<<conic equations>>=
 __device__ inline rtd partial_z_conic_surface(void)
 {
   return 1.0;
@@ -902,7 +924,11 @@ void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_)
 {
   c = _c_;
   k = _k_;
+  origin.x = 0;
+  origin.y = 0;
+  origin.z = 0;
   ref_frame.setup(_origin_, _euler_angles_);
+  <<conic allocation>>
 }
 @
 A conic surface that sets in the GCS is simply defined with
@@ -911,7 +937,46 @@ void conic::setup(rtd _c_, rtd _k_)
 {
   c = _c_;
   k = _k_;
+  origin.x = 0;
+  origin.y = 0;
+  origin.z = 0;
   ref_frame.setup();
+  <<conic allocation>>
+}
+<<conic allocation>>=
+HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
+HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
+			    sizeof(vector), cudaMemcpyHostToDevice ) );
+@ 
+The GMT M1 segmented conic is defined with
+<<conic functions>>=
+void conic::setup_GMT_M1(void)
+{
+  c = 1./36.0;
+  k = 1 - 0.9982857;
+  D_seg = 8.365;
+  ri    = 2.4412/8.365;
+  N = 7;
+  vector origin[7];
+  vector euler_angles[7];
+  origin[0].x = origin[0].y = origin[0].z = 0.0;
+  euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
+  rtd D_c, o, zo, sa;
+  sa = sin(13.522*PI/180);
+  D_c = 8.710 - (0.691-0.445)*sa;
+  zo = 8.417*sa*0.5 + 0.691 - 0.445;
+  int k;  
+  for (k=1; k<N; k++)
+  {
+    o = PI*(2*k-1)/6.0;
+    origin[k].x = D_c*cosf(o);
+    origin[k].y = D_c*sinf(o);
+    origin[k].z = zo;
+    euler_angles[k].x = 0.0;
+    euler_angles[k].y = 0.0
+    euler_angles[k].z = 0.0;
+  }
+  ref_frame.setup(origin, euler_angles, N);
 }
 @
 Memory is freed with
@@ -919,6 +984,7 @@ Memory is freed with
 void conic::cleanup(void)
 {
   ref_frame.cleanup();
+  HANDLE_ERROR( cudaFree( d__origin ) );
 }
 @
 
@@ -1004,7 +1070,7 @@ Based on the above, one can defined specific segmented apertures like
 \begin{description}
 \item[GMT M1] 
 The GMT M1 segment have all the same clear aperture of 8.365m diameter.
-The center segment has a hole of 1.78m diameter.
+The center segment has a hole of 2.4412m diameter.
 The center aperture is centered on the vertex of the conic surface that defines M1.
 The vertex is set as the origin of the global coordinate system (GCS).
 The center of the peripheral segments are evenly located on a circle of radius 8.710m with a phase of 30 degrees.
@@ -1015,7 +1081,7 @@ void aperture::setup_GMT_M1(float _D_, int _D_px_)
   D_px  = _D_px_;
   D     = _D_;
   D_seg = 8.365;
-  ri    = 1.780/8.365;
+  ri    = 2.4412/8.365;
   N = 7;
   vector origin[7];
   vector euler_angles[7];
@@ -1289,11 +1355,14 @@ void intersect(bundle *rays, conic *F)
 {
   dim3 blockDim(16,16);
   dim3 gridDim(rays->N_RAY/256+1,1);
-  intersect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, F->k, F->c);
+  intersect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, 
+					       F->k, F->c, F->d__origin);
 }
 
 <<intersection with surface kernel>>=
-__global__ void intersect_kernel(ray *d__ray, int N_RAY, const rtd Fk, const rtd Fc)
+__global__ void intersect_kernel(ray *d__ray, int N_RAY, 
+				 const rtd Fk, const rtd Fc,
+				 vector *d__origin)
 {
   int i, j, ij;
   rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
@@ -1371,9 +1440,9 @@ v.z = m*s0;
                       &=& k\left.{ \partial F(x,y,z) \over \partial x } \right|_j + l\left. { \partial F(x,y,z) \over \partial y }\right|_j + m\left.{ \partial F(x,y,z) \over \partial z }\right|_j
 \end{eqnarray}
 <<Newton-Raphson>>=
-S = conic_surface(&v, Fk, Fc);
-K = partial_x_conic_surface(&v, Fk, Fc);
-L = partial_y_conic_surface(&v, Fk, Fc);
+S = conic_surface(&v, d__origin, Fk, Fc);
+K = partial_x_conic_surface(&v, d__origin, Fk, Fc);
+L = partial_y_conic_surface(&v, d__origin, Fk, Fc);
 M = partial_z_conic_surface();
 dSds = K*k + L*l + M*m;
 if (dSds==0) { return; }
@@ -1383,8 +1452,10 @@ if (abs(s1-s0)<TOL)
   d__ray[ij].coordinates.x = x1 + k*s1;
   d__ray[ij].coordinates.y = y1 + l*s1;
   d__ray[ij].coordinates.z = m*s1;
-  d__ray[ij].surface_normal.x    = partial_x_conic_surface(&(d__ray[ij].coordinates), Fk, Fc);
-  d__ray[ij].surface_normal.y    = partial_y_conic_surface(&(d__ray[ij].coordinates), Fk, Fc);
+  d__ray[ij].surface_normal.x    = 
+    partial_x_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc);
+  d__ray[ij].surface_normal.y    =
+    partial_y_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc);
   d__ray[ij].surface_normal.z    = partial_z_conic_surface();
   d__ray[ij].optical_path_length += s1;
   return;
