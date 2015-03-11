@@ -148,6 +148,7 @@ cdef extern from "rayTracing.h":
         void vignetting(bundle *)
     cdef cppclass gmt_m1:
         coordinate_system aperture_CS
+        coordinate_system conic_CS
         void setup(float , int )
         void cleanup()
         void trace(bundle *)
@@ -265,12 +266,14 @@ cdef class GMT_M1:
     """
     """
     cdef ceo.gmt_m1 *_c_gmt_m1
-    cdef public np.ndarray R
+    cdef public np.ndarray aperture_R, conic_R
     
     def __cinit__(self, float D, int D_px):
         self._c_gmt_m1 = new ceo.gmt_m1()
-        self.R = np.zeros((3*7,3),order='c',dtype=np.float32)
-        self._c_gmt_m1.aperture_CS.float_R = <float *> self.R.data;
+        self.aperture_R = np.zeros((3*7,3),order='c',dtype=np.float32)
+        self._c_gmt_m1.aperture_CS.float_R = <float *> self.aperture_R.data;
+        self.conic_R = np.zeros((3*7,3),order='c',dtype=np.float32)
+        self._c_gmt_m1.conic_CS.float_R = <float *> self.conic_R.data;
         self._c_gmt_m1.setup(D, D_px)
 
     def __dealloc__(self):
@@ -1376,7 +1379,7 @@ __global__ void intersect_kernel(ray *d__ray, int N_RAY,
 {
   int i, j, ij;
   rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
-  vector v;
+  vector vv;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
@@ -1440,9 +1443,9 @@ where
   z_j &=& ms_j       
 \end{eqnarray}
 <<Newton-Raphson>>=
-v.x = x1 + k*s0;
-v.y = y1 + l*s0;
-v.z = m*s0;
+vv.x = x1 + k*s0;
+vv.y = y1 + l*s0;
+vv.z = m*s0;
 @ and where
 \begin{eqnarray}
   \label{eq:9}
@@ -1450,9 +1453,9 @@ v.z = m*s0;
                       &=& k\left.{ \partial F(x,y,z) \over \partial x } \right|_j + l\left. { \partial F(x,y,z) \over \partial y }\right|_j + m\left.{ \partial F(x,y,z) \over \partial z }\right|_j
 \end{eqnarray}
 <<Newton-Raphson>>=
-S = conic_surface(&v, d__origin, Fk, Fc);
-K = partial_x_conic_surface(&v, d__origin, Fk, Fc);
-L = partial_y_conic_surface(&v, d__origin, Fk, Fc);
+S = conic_surface(&vv, d__origin, Fk, Fc);
+K = partial_x_conic_surface(&vv, d__origin, Fk, Fc);
+L = partial_y_conic_surface(&vv, d__origin, Fk, Fc);
 M = partial_z_conic_surface();
 dSds = K*k + L*l + M*m;
 if (dSds==0) { return; }
@@ -1720,6 +1723,15 @@ rtd depth;
 <<GMT M1 parameters>>=
 coordinate_system aperture_CS;
 @
+\item the reference frames and origins of M1 conics:
+<<GMT M1 parameters>>=
+coordinate_system conic_CS;
+vector conic_origin[7], *d__conic_origin;
+@
+\item the conic parameters:
+<<GMT M1 parameters>>=
+rtd conic_c, conic_k;
+@
 \item the M1 pupil mask [[V]]:
 <<GMT M1 parameters>>=
 mask V;
@@ -1750,24 +1762,28 @@ void gmt_m1::setup(float _D_, int _D_px_)
   L       = 8.710;
   depth   = 0.691-0.445;
   N       = 7;
+  conic_c = -1.0/36.0;
+  conic_k = 1-0.9982857;
 
   vector origin[7];
   vector euler_angles[7];
-  rtd D_c, o, zo, sbeta;
-  
+  rtd D_c, o, zo, sbeta, cbeta;
+  int k;    
+
   <<M1 aperture definition>>
 
+  <<M1 conic definition>>
+
   V.setup(D_px*D_px);
-  aperture_CS.setup(origin, euler_angles, N);
 }
 @ The origin and coordinates system of the aperture is defined with
 <<M1 aperture definition>>=
-origin[0].x = origin[0].y = origin[0].z = 0.0;
+origin[0].x = origin[0].y = 0.0;
+origin[0].z = depth;
 euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
 sbeta = sin(beta);
 D_c = L - depth*sbeta;
 zo = D_full*sbeta*0.5 + depth;
-int k;  
 for (k=1; k<N; k++)
 {
   o = PI*(2*k-1)/6.0;
@@ -1778,13 +1794,14 @@ for (k=1; k<N; k++)
   euler_angles[k].y = beta;
   euler_angles[k].z = o;
 }
+aperture_CS.setup(origin, euler_angles, N);
 @ The origin and coordinates system of the conic is defined with
 <<M1 conic definition>>=
 origin[0].x = origin[0].y = origin[0].z = 0.0;
 euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
-D_c = L - depth*sbeta;
-zo = D_full*sbeta*0.5 + depth;
-int k;  
+cbeta = cos(beta);
+D_c = L;
+zo = D_full*sbeta*0.5 + depth*(1-cbeta);
 for (k=1; k<N; k++)
 {
   o = PI*(2*k-1)/6.0;
@@ -1792,9 +1809,16 @@ for (k=1; k<N; k++)
   origin[k].y = D_c*sinf(o);
   origin[k].z = zo;
   euler_angles[k].x = 0.0;
-  euler_angles[k].y = beta;
-  euler_angles[k].z = o;
+  euler_angles[k].y = 0.0;
+  euler_angles[k].z = 0.0;
+  conic_origin[k].x = -origin[k].x;
+  conic_origin[k].y = -origin[k].y;
+  conic_origin[k].z = -origin[k].z;
 }
+conic_CS.setup(origin, euler_angles, N);
+HANDLE_ERROR( cudaMalloc((void**)&d__conic_origin, sizeof(vector)*N ) );
+HANDLE_ERROR( cudaMemcpy( d__conic_origin, conic_origin, 
+			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
 @ 
 Memory is freed with
 <<GMT M1 functions>>=
@@ -1802,6 +1826,8 @@ void gmt_m1::cleanup(void)
 {
   V.cleanup();
   aperture_CS.cleanup();
+  conic_CS.cleanup();
+  HANDLE_ERROR( cudaFree( d__conic_origin ) );
 }
 @
 \subsection{Ray tracing}
@@ -1819,19 +1845,29 @@ void gmt_m1::trace(bundle *rays)
   dim3 gridDim(rays->N_RAY/256+1,N);
   rays->reset();
   m1_trace_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
-  Rri2, R2,
-  aperture_CS.d__R,
-  aperture_CS.d__origin);
+					      Rri2, R2,
+					      aperture_CS.d__R,
+					      aperture_CS.d__origin,
+					      conic_CS.d__R,
+					      conic_CS.d__origin,
+					      conic_k, conic_c,
+					      d__conic_origin);
 }
 @ with the kernel
 <<M1 ray tracing kernel>>=
 __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY, 
-				  float inner2, float outer2,
-				  rtd *d__R, vector *d__origin)
+				float inner2, float outer2,
+				rtd *d__aperture_R, vector *d__aperture_origin,
+				rtd *d__conic_R, vector *d__conic_origin,
+                                const rtd Fk, const rtd Fc,
+                                vector *d__conic_self_origin)
 {
   int i, j, ij, iCoordSys, idx;
   rtd rho2;
   rtd x, y, z, u, v, w, x1, y1, s0, k, l, m;
+  rtd s1, S, K, L ,M, dSds;
+  rtd G2, mu, a;
+  vector vv, *d__origin;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = threadIdx.y;
   iCoordSys = blockIdx.y;
@@ -1856,34 +1892,48 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 	mask[ij] = 1;
 
 	<<M1 transformation to conic coordinate system>>
+	    
         <<M1 transformation to global coordinate system>>
+        
       }
   }
 }
+<<TEMP>>=
+	d__origin = d__conic_self_origin + iCoordSys;
+        <<M1 intersection with conic>>
+	    
+	mu = 1.0;
+	<<a equation>>
+	a *= -2.0;
+	d__ray[ij].directions.x = mu*k + a*K;
+	d__ray[ij].directions.y = mu*l + a*L;
+	d__ray[ij].directions.z = mu*m + a*M;
+        <<M1 transformation to global coordinate system>>
+
 @
 The rays coordinates and cosine directions are transformed into the aperture coordinates system:
 <<M1 transformation to aperture coordinate system>>=
  idx = iCoordSys;
 
- u = d__ray[ij].coordinates.x - d__origin[idx].x;
- v = d__ray[ij].coordinates.y - d__origin[idx].y;
- w = d__ray[ij].coordinates.z - d__origin[idx].z;
+ u = d__ray[ij].coordinates.x - d__aperture_origin[idx].x;
+ v = d__ray[ij].coordinates.y - d__aperture_origin[idx].y;
+ w = d__ray[ij].coordinates.z - d__aperture_origin[idx].z;
 
  idx = iCoordSys*9;
 
- x = d__R[0+idx]*u + d__R[3+idx]*v + d__R[6+idx]*w;
- y = d__R[1+idx]*u + d__R[4+idx]*v + d__R[7+idx]*w;
- z = d__R[2+idx]*u + d__R[5+idx]*v + d__R[8+idx]*w;
+ x = d__aperture_R[0+idx]*u + d__aperture_R[3+idx]*v + d__aperture_R[6+idx]*w;
+ y = d__aperture_R[1+idx]*u + d__aperture_R[4+idx]*v + d__aperture_R[7+idx]*w;
+ z = d__aperture_R[2+idx]*u + d__aperture_R[5+idx]*v + d__aperture_R[8+idx]*w;
 
  u = d__ray[ij].directions.x;
  v = d__ray[ij].directions.y;
  w = d__ray[ij].directions.z;
 
- k = d__R[0+idx]*u + d__R[3+idx]*v + d__R[6+idx]*w;
- l = d__R[1+idx]*u + d__R[4+idx]*v + d__R[7+idx]*w;
- m = d__R[2+idx]*u + d__R[5+idx]*v + d__R[8+idx]*w;
+ k = d__aperture_R[0+idx]*u + d__aperture_R[3+idx]*v + d__aperture_R[6+idx]*w;
+ l = d__aperture_R[1+idx]*u + d__aperture_R[4+idx]*v + d__aperture_R[7+idx]*w;
+ m = d__aperture_R[2+idx]*u + d__aperture_R[5+idx]*v + d__aperture_R[8+idx]*w;
 @
-The intersction with the aperture plane is computed with
+The intersection with the aperture plane is computed with
 <<M1 intersection with aperture plane>>=
 if (m==0) { return; }
 s0 = -z/m;
@@ -1893,15 +1943,15 @@ y1 = y + l*s0;
 <<M1 transformation to conic coordinate system>>=
 idx = iCoordSys;
 
-u = d__ray[ij].coordinates.x - d__origin[idx].x;
-v = d__ray[ij].coordinates.y - d__origin[idx].y;
-w = d__ray[ij].coordinates.z - d__origin[idx].z;
+u = d__ray[ij].coordinates.x - d__conic_origin[idx].x;
+v = d__ray[ij].coordinates.y - d__conic_origin[idx].y;
+w = d__ray[ij].coordinates.z - d__conic_origin[idx].z;
 
 idx = iCoordSys*9;
 
-x = d__R[0+idx]*u + d__R[3+idx]*v + d__R[6+idx]*w;
-y = d__R[1+idx]*u + d__R[4+idx]*v + d__R[7+idx]*w;
-z = d__R[2+idx]*u + d__R[5+idx]*v + d__R[8+idx]*w;
+x = d__conic_R[0+idx]*u + d__conic_R[3+idx]*v + d__conic_R[6+idx]*w;
+y = d__conic_R[1+idx]*u + d__conic_R[4+idx]*v + d__conic_R[7+idx]*w;
+z = d__conic_R[2+idx]*u + d__conic_R[5+idx]*v + d__conic_R[8+idx]*w;
 
 d__ray[ij].coordinates.x = x;
 d__ray[ij].coordinates.y = y;
@@ -1911,14 +1961,45 @@ u = d__ray[ij].directions.x;
 v = d__ray[ij].directions.y;
 w = d__ray[ij].directions.z;
 
-k = d__R[0+idx]*u + d__R[3+idx]*v + d__R[6+idx]*w;
-l = d__R[1+idx]*u + d__R[4+idx]*v + d__R[7+idx]*w;
-m = d__R[2+idx]*u + d__R[5+idx]*v + d__R[8+idx]*w;
+k = d__conic_R[0+idx]*u + d__conic_R[3+idx]*v + d__conic_R[6+idx]*w;
+l = d__conic_R[1+idx]*u + d__conic_R[4+idx]*v + d__conic_R[7+idx]*w;
+m = d__conic_R[2+idx]*u + d__conic_R[5+idx]*v + d__conic_R[8+idx]*w;
 
 d__ray[ij].directions.x = k;
 d__ray[ij].directions.y = l;
 d__ray[ij].directions.z = m;  
 @ The intersection with the plane $z=0$ in the conic coordinate transformed is computed with  
+<<M1 intersection with conic>>=
+<<intersection with z=0 plane>>
+vv.x = x1 + k*s0;
+vv.y = y1 + l*s0;
+vv.z = m*s0;
+d__ray[ij].optical_path_length += s0;
+s0 = s1 = 0;
+for (j=0; j<N_ITERATION; j++)
+{
+  S = conic_surface(&vv, d__origin, Fk, Fc);
+  K = partial_x_conic_surface(&vv, d__origin, Fk, Fc);
+  L = partial_y_conic_surface(&vv, d__origin, Fk, Fc);
+  M = partial_z_conic_surface();
+  dSds = K*k + L*l + M*m;
+  if (dSds==0) { break; }
+  s1 = s0 - S/dSds;
+  if (abs(s1-s0)<TOL)
+    {
+      d__ray[ij].coordinates.x = x1 + k*s1;
+      d__ray[ij].coordinates.y = y1 + l*s1;
+      d__ray[ij].coordinates.z = m*s1;
+      d__ray[ij].surface_normal.x    = 
+	partial_x_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc);
+      d__ray[ij].surface_normal.y    =
+	partial_y_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc);
+      d__ray[ij].surface_normal.z    = partial_z_conic_surface();
+      d__ray[ij].optical_path_length += s1;
+      break;
+    }
+  s0 = s1;
+}
 @ The rays coordinates and cosine directions are transformed back into the global coordinate system:
 <<M1 transformation to global coordinate system>>=
 idx = iCoordSys;
@@ -1929,14 +2010,14 @@ w = d__ray[ij].coordinates.z;
 
 idx = iCoordSys*9;
 
-x = d__R[0+idx]*u + d__R[1+idx]*v + d__R[2+idx]*w;
-y = d__R[3+idx]*u + d__R[4+idx]*v + d__R[5+idx]*w;
-z = d__R[6+idx]*u + d__R[7+idx]*v + d__R[8+idx]*w;
+x = d__conic_R[0+idx]*u + d__conic_R[1+idx]*v + d__conic_R[2+idx]*w;
+y = d__conic_R[3+idx]*u + d__conic_R[4+idx]*v + d__conic_R[5+idx]*w;
+z = d__conic_R[6+idx]*u + d__conic_R[7+idx]*v + d__conic_R[8+idx]*w;
 
 idx = iCoordSys;
-d__ray[ij].coordinates.x = x + d__origin[idx].x;
-d__ray[ij].coordinates.y = y + d__origin[idx].y;
-d__ray[ij].coordinates.z = z + d__origin[idx].z;    
+d__ray[ij].coordinates.x = x + d__conic_origin[idx].x;
+d__ray[ij].coordinates.y = y + d__conic_origin[idx].y;
+d__ray[ij].coordinates.z = z + d__conic_origin[idx].z;    
 
 u = d__ray[ij].directions.x;
 v = d__ray[ij].directions.y;
@@ -1944,9 +2025,9 @@ w = d__ray[ij].directions.z;
 
 idx = iCoordSys*9;
 
-x = d__R[0+idx]*u + d__R[1+idx]*v + d__R[2+idx]*w;
-y = d__R[3+idx]*u + d__R[4+idx]*v + d__R[5+idx]*w;
-z = d__R[6+idx]*u + d__R[7+idx]*v + d__R[8+idx]*w;
+x = d__conic_R[0+idx]*u + d__conic_R[1+idx]*v + d__conic_R[2+idx]*w;
+y = d__conic_R[3+idx]*u + d__conic_R[4+idx]*v + d__conic_R[5+idx]*w;
+z = d__conic_R[6+idx]*u + d__conic_R[7+idx]*v + d__conic_R[8+idx]*w;
 
 d__ray[ij].directions.x = x;
 d__ray[ij].directions.y = y;
