@@ -82,9 +82,7 @@ void thin_lens(bundle *rays);
 
 <<coordinate system functions>>
 
-<<conic setup>>
-<<conic cleanup>>
-<<conic setup generic>>
+<<conic functions>>
 
 <<vignetting kernel>>
 <<aperture functions>>
@@ -138,7 +136,7 @@ cdef extern from "rayTracing.h":
 	void reset()
     cdef cppclass conic:
         coordinate_system ref_frame
-        void setup(rtd , rtd , vector , vector )
+        void setup(rtd , rtd , vector , vector , vector)
         void cleanup()
     cdef cppclass aperture:
         coordinate_system ref_frame
@@ -219,7 +217,9 @@ cdef class Conic:
     cdef ceo.conic *_c_conic
     cdef public np.ndarray R
 
-    def __cinit__(self,rtd c, rtd k, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0]):
+    def __cinit__(self,rtd c, rtd k, 
+                  origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0],
+                  conic_origin=[0.0,0.0,0.0]):
         self._c_conic = new ceo.conic()
         self.R = np.zeros((3,3),order='c',dtype=np.float32)
         cdef vector __origin
@@ -230,8 +230,12 @@ cdef class Conic:
         __euler_angles.x = <float>euler_angles[0]
         __euler_angles.y = <float>euler_angles[1]
         __euler_angles.z = <float>euler_angles[2]
+        cdef vector __conic_origin
+        __conic_origin.x = <float>conic_origin[0]
+        __conic_origin.y = <float>conic_origin[1]
+        __conic_origin.z = <float>conic_origin[2]
         self._c_conic.ref_frame.float_R = <float *> self.R.data;
-        self._c_conic.setup(c, k, __origin, __euler_angles)
+        self._c_conic.setup(c, k, __origin, __euler_angles, __conic_origin)
 
     def __dealloc__(self):
         self._c_conic.cleanup()
@@ -789,6 +793,7 @@ for (int k=0;k<9;k++)
 <<coordinate system functions>>=
 void coordinate_system::cleanup(void)
 {
+  fprintf(stdout,"@(CEO)>coordinate_system: freeing memory!\n");
   free( origin );
   free( euler_angles );
   free(R);
@@ -826,6 +831,7 @@ struct conic {
   
   void setup(rtd _c_, rtd _k_);
   void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_);
+  void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, vector conic_origin);
   void cleanup(void);
 };
 @
@@ -932,7 +938,7 @@ __device__ inline rtd partial_z_conic_surface(void)
 \label{sec:surf-setup--cleanup}
 
 A conic surface is initialized with the [[setup]] routine:
-<<conic setup generic>>=
+<<conic functions>>=
 void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_)
 {
   c = _c_;
@@ -943,9 +949,21 @@ void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_)
   ref_frame.setup(_origin_, _euler_angles_);
   <<conic allocation>>
 }
+@ or with a surface centered on [[origin]]
+<<conic functions>>=
+void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, vector conic_origin)
+{
+  c = _c_;
+  k = _k_;
+  origin.x = conic_origin.x;
+  origin.y = conic_origin.y;
+  origin.z = conic_origin.z;
+  ref_frame.setup(_origin_, _euler_angles_);
+  <<conic allocation>>
+}
 @
 A conic surface that sets in the GCS is simply defined with
-<<conic setup>>=
+<<conic functions>>=
 void conic::setup(rtd _c_, rtd _k_)
 {
   c = _c_;
@@ -962,7 +980,7 @@ HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
 @ 
 The GMT M1 segmented conic is defined with
-<<conic functions>>=
+<<conic functions (opt-out)>>=
 void conic::setup_GMT_M1(void)
 {
   c = 1./36.0;
@@ -993,9 +1011,10 @@ void conic::setup_GMT_M1(void)
 }
 @
 Memory is freed with
-<<conic cleanup>>=
+<<conic functions>>=
 void conic::cleanup(void)
 {
+  fprintf(stdout,"@(CEO)>conic: freeing memory!\n");
   ref_frame.cleanup();
   HANDLE_ERROR( cudaFree( d__origin ) );
 }
@@ -1126,6 +1145,7 @@ The memory is freed with
 <<aperture functions>>=
 void aperture::cleanup(void)
 {
+  fprintf(stdout,"@(CEO)>aperture: freeing memory!\n");
   V.cleanup();
   ref_frame.cleanup();
 }
@@ -1824,6 +1844,7 @@ Memory is freed with
 <<GMT M1 functions>>=
 void gmt_m1::cleanup(void)
 {
+  fprintf(stdout,"@(CEO)>gmt_m1: freeing memory!\n");
   V.cleanup();
   aperture_CS.cleanup();
   conic_CS.cleanup();
@@ -1872,7 +1893,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
   j = threadIdx.y;
   iCoordSys = blockIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
-  if ( ij<N_RAY )
+    if  ( ( ij<N_RAY ) & (iCoordSys<7) )
   {
 
     <<M1 transformation to aperture coordinate system>>
@@ -1892,23 +1913,23 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 	mask[ij] = 1;
 
 	<<M1 transformation to conic coordinate system>>
-	    
-        <<M1 transformation to global coordinate system>>
-        
-      }
-  }
-}
-<<TEMP>>=
+
 	d__origin = d__conic_self_origin + iCoordSys;
         <<M1 intersection with conic>>
-	    
+
 	mu = 1.0;
 	<<a equation>>
 	a *= -2.0;
 	d__ray[ij].directions.x = mu*k + a*K;
 	d__ray[ij].directions.y = mu*l + a*L;
 	d__ray[ij].directions.z = mu*m + a*M;
+
         <<M1 transformation to global coordinate system>>
+      }
+  }
+}
+<<TEMP>>=
+	    
 
 @
 The rays coordinates and cosine directions are transformed into the aperture coordinates system:
@@ -1971,13 +1992,13 @@ d__ray[ij].directions.z = m;
 @ The intersection with the plane $z=0$ in the conic coordinate transformed is computed with  
 <<M1 intersection with conic>>=
 <<intersection with z=0 plane>>
-vv.x = x1 + k*s0;
-vv.y = y1 + l*s0;
-vv.z = m*s0;
 d__ray[ij].optical_path_length += s0;
 s0 = s1 = 0;
 for (j=0; j<N_ITERATION; j++)
 {
+    vv.x = x1 + k*s0;
+    vv.y = y1 + l*s0;
+    vv.z = m*s0;
   S = conic_surface(&vv, d__origin, Fk, Fc);
   K = partial_x_conic_surface(&vv, d__origin, Fk, Fc);
   L = partial_y_conic_surface(&vv, d__origin, Fk, Fc);
