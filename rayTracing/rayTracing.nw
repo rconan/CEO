@@ -23,7 +23,7 @@ The ray tracing method involves 4 steps \cite{}:
 #endif
 
 #define N_ITERATION 100
-#define TOL 50E-9
+#define TOL 50E-8
 
 <<ray tracing data type>>
 
@@ -1863,7 +1863,7 @@ void gmt_m1::trace(bundle *rays)
   Rri2 = R2*ri*ri;
  // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
   dim3 blockDim(16,16);
-  dim3 gridDim(rays->N_RAY/256+1,N);
+  dim3 gridDim(rays->N_RAY/256+1,1);
   rays->reset();
   m1_trace_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
 					      Rri2, R2,
@@ -1891,46 +1891,46 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
   vector vv, *d__origin;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = threadIdx.y;
-  iCoordSys = blockIdx.y;
+  //  iCoordSys = blockIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
-    if  ( ( ij<N_RAY ) & (iCoordSys<7) )
+  if  ( ij<N_RAY )// & (iCoordSys<1) )
   {
 
-    <<M1 transformation to aperture coordinate system>>
-
-    <<M1 intersection with aperture plane>>
-
-    rho2 = x1*x1 + y1*y1;
-    if ( (iCoordSys==0) && (rho2<inner2) )
+    for (iCoordSys=0; iCoordSys<7; iCoordSys++)
       {
-	d__ray[ij].v = 0;
-	mask[ij] = 0;
-	return;
-      }
-    if (rho2<=outer2)
-      {
-	d__ray[ij].v = 1;
-	mask[ij] = 1;
+	<<M1 transformation to aperture coordinate system>>
 
-	<<M1 transformation to conic coordinate system>>
+        <<M1 intersection with aperture plane>>
 
-	d__origin = d__conic_self_origin + iCoordSys;
-        <<M1 intersection with conic>>
+        rho2 = x1*x1 + y1*y1;
+	if ( (iCoordSys==0) && (rho2<inner2) )
+	  {
+	    d__ray[ij].v = 0;
+	    mask[ij] = 0;
+	    return;
+	  }
+	if (rho2<=outer2)
+	  {
+	    d__ray[ij].v = 1;
+	    mask[ij] = 1;
 
-	mu = 1.0;
-	<<a equation>>
-	a *= -2.0;
-	d__ray[ij].directions.x = mu*k + a*K;
-	d__ray[ij].directions.y = mu*l + a*L;
-	d__ray[ij].directions.z = mu*m + a*M;
+	    <<M1 transformation to conic coordinate system>>
 
-        <<M1 transformation to global coordinate system>>
+	    d__origin = d__conic_self_origin + iCoordSys;
+	    <<M1 intersection with conic>>
+
+	    mu = 1.0;
+	    <<a equation>>
+	    a *= -2.0;
+	    d__ray[ij].directions.x = mu*k + a*K;
+	    d__ray[ij].directions.y = mu*l + a*L;
+	    d__ray[ij].directions.z = mu*m + a*M;
+
+	    <<M1 transformation to global coordinate system>>
+	   }
       }
   }
 }
-<<TEMP>>=
-	    
-
 @
 The rays coordinates and cosine directions are transformed into the aperture coordinates system:
 <<M1 transformation to aperture coordinate system>>=
