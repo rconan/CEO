@@ -42,6 +42,7 @@ The ray tracing method involves 4 steps \cite{}:
 <<aperture structure>>
 
 <<GMT M1 structure>>
+<<GMT M2 structure>>
 
 void transform_to_S(bundle *rays, conic *F);
 void transform_to_S(bundle *rays, aperture *A);
@@ -69,7 +70,9 @@ void thin_lens(bundle *rays);
 <<gathering ray optical path length kernel>>
 <<gathering ray vignetting map kernel>>
 <<bundle reset kernel>>
-<<M1 ray tracing kernel>>
+<<GMT ray tracing kernel>>
+<<GMT blocking kernel>>
+<<GMT aperture intersection>>
 
 <<ray bundle setup>>
 <<ray bundle setup (box)>>
@@ -88,6 +91,7 @@ void thin_lens(bundle *rays);
 <<aperture functions>>
 
 <<GMT M1 functions>>
+<<GMT M2 functions>>
 
 <<transformation to surface system kernel>>
 <<transformation to rays system kernel>>
@@ -150,6 +154,14 @@ cdef extern from "rayTracing.h":
         void setup(float , int )
         void cleanup()
         void trace(bundle *)
+        void blocking(bundle *)
+    cdef cppclass gmt_m2:
+        coordinate_system aperture_CS
+        coordinate_system conic_CS
+        void setup(float , int )
+        void cleanup()
+        void trace(bundle *)
+        void blocking(bundle *)
     void transform_to_S(bundle *, conic *)
     void transform_to_S(bundle *, aperture *)
     void transform_to_R(bundle *, conic *)
@@ -285,6 +297,32 @@ cdef class GMT_M1:
 
     def trace(self, Bundle rays):
         self._c_gmt_m1.trace(rays._c_bundle)
+
+    def blocking(self, Bundle rays):
+        self._c_gmt_m1.blocking(rays._c_bundle)
+# GMT M2
+cdef class GMT_M2:
+    """
+    """
+    cdef ceo.gmt_m2 *_c_gmt_m2
+    cdef public np.ndarray aperture_R, conic_R
+    
+    def __cinit__(self, float D, int D_px):
+        self._c_gmt_m2 = new ceo.gmt_m2()
+        self.aperture_R = np.zeros((3*7,3),order='c',dtype=np.float32)
+        self._c_gmt_m2.aperture_CS.float_R = <float *> self.aperture_R.data;
+        self.conic_R = np.zeros((3*7,3),order='c',dtype=np.float32)
+        self._c_gmt_m2.conic_CS.float_R = <float *> self.conic_R.data;
+        self._c_gmt_m2.setup(D, D_px)
+
+    def __dealloc__(self):
+        self._c_gmt_m2.cleanup()
+
+    def trace(self, Bundle rays):
+        self._c_gmt_m2.trace(rays._c_bundle)
+
+    def blocking(self, Bundle rays):
+        self._c_gmt_m2.blocking(rays._c_bundle)
 # ray tracing
 def Transform_to_S(Bundle rays, Conic F):
     transform_to_S(rays._c_bundle, F._c_conic)
@@ -853,7 +891,7 @@ The conic surface is defined with
 \end{equation}
 
 <<conic equations>>=
-__device__ inline rtd conic_equation(vector *v, vector *v0, const rtd k, const rtd c)
+__host__ __device__ inline rtd conic_equation(vector *v, vector *v0, const rtd k, const rtd c)
 {
   if (c==0)
     return 0.0;
@@ -1695,65 +1733,70 @@ void thin_lens(bundle *rays)
 \section{GMT M1}
 \label{sec:gmt-m1}
 
-A new structure to hold GMT M1 parameters and functions is defined.
+A new structure to hold GMT M1 and M2 parameters and functions is defined.
 <<GMT M1 structure>>=
 struct gmt_m1 {
-  <<GMT M1 parameters>>
+  <<GMT M12 parameters>>
   void setup(float _D_, int _D_px_);
   void cleanup(void);
   void trace(bundle *rays);
+  void blocking(bundle *rays);
 };
 @ 
-The GMT M1 parameters are:
+The GMT M12 parameters are:
 \begin{itemize}
 \item the segment clear aperture diameter $[[D_clear]]=8.365$m:
-<<GMT M1 parameters>>=
+<<GMT M12 parameters>>=
 rtd D_clear;
 @
 \item the segment full aperture diameter $[[D_full]]=8.417$m:
-<<GMT M1 parameters>>=
+<<GMT M12 parameters>>=
 rtd D_full;
 @
 \item the obscuration ratio of the center segment $[[ri]]=2.4412/8.365$
-<<GMT M1 parameters>>=
+<<GMT M12 parameters>>=
 rtd ri;
 @
 \item the tilt angle of the peripheral segment $[[beta]]=13.522$degree
-<<GMT M1 parameters>>=
+<<GMT M12 parameters>>=
 rtd beta;
 @
 \item the distance from the optical axis to the center of the tilted peripheral segments $[[L]]=8.710$m:
-<<GMT M1 parameters>>=
+<<GMT M12 parameters>>=
 rtd L;
 @
 \item the size of the square array containing M1 in meter and pixel [[D]] and [[D_px]]:
-<<GMT M1 parameters>>=
+<<GMT M12 parameters>>=
 rtd D;
 int D_px;
 @
 \item the number of segment $[[N]]=7$
-<<GMT M1 parameters>>=
+<<GMT M12 parameters>>=
 int N;
 @
 \item the edge to center depth of the segment conic $[[depth]]=(0.691-0.445)$m:
-<<GMT M1 parameters>>=
+<<GMT M12 parameters>>=
 rtd depth;
 @
 \item the reference frames of M1 apertures:
-<<GMT M1 parameters>>=
+<<GMT M12 parameters>>=
 coordinate_system aperture_CS;
 @
 \item the reference frames and origins of M1 conics:
-<<GMT M1 parameters>>=
+<<GMT M12 parameters>>=
 coordinate_system conic_CS;
 vector conic_origin[7], *d__conic_origin;
 @
 \item the conic parameters:
-<<GMT M1 parameters>>=
+<<GMT M12 parameters>>=
 rtd conic_c, conic_k;
 @
+\item the mirror height
+<<GMT M12 parameters>>=
+rtd height;
+@
 \item the M1 pupil mask [[V]]:
-<<GMT M1 parameters>>=
+<<GMT M12 parameters>>=
 mask V;
 @
 \end{itemize}
@@ -1778,28 +1821,36 @@ void gmt_m1::setup(float _D_, int _D_px_)
   D_full  = 8.417;
   D_clear = 8.365;
   ri      = 2.4412/8.365;
-  beta    = 13.522*PI/180.0;
+  beta    = -13.522*PI/180.0;
   L       = 8.710;
-  depth   = 0.691-0.445;
   N       = 7;
   conic_c = -1.0/36.0;
   conic_k = 1-0.9982857;
+  height  = 0.0;
 
-  vector origin[7];
-  vector euler_angles[7];
-  rtd D_c, o, zo, sbeta, cbeta;
-  int k;    
-
-  <<M1 aperture definition>>
-
-  <<M1 conic definition>>
-
-  V.setup(D_px*D_px);
+  <<GMT setup common>>
 }
+@  with
+<<GMT setup common>>=
+vector __v0 = {0.0,0.0,0.0};
+vector __v = {D_full*0.5,0.0,0.0};
+// printf(" depth = %6.5f\n",conic_equation(&v,&v0,conic_k,fabs(conic_c)));
+depth = conic_equation(&__v,&__v0,conic_k,(conic_c));
+
+vector origin[7];
+vector euler_angles[7];
+rtd D_c, o, zo, sbeta, cbeta;
+int k;    
+
+<<M12 aperture definition>>
+
+<<M12 conic definition>>
+
+V.setup(D_px*D_px);
 @ The origin and coordinates system of the aperture is defined with
-<<M1 aperture definition>>=
+<<M12 aperture definition>>=
 origin[0].x = origin[0].y = 0.0;
-origin[0].z = depth;
+origin[0].z = height + depth;
 euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
 sbeta = sin(beta);
 D_c = L - depth*sbeta;
@@ -1809,15 +1860,16 @@ for (k=1; k<N; k++)
   o = PI*(2*k-1)/6.0;
   origin[k].x = D_c*cosf(o);
   origin[k].y = D_c*sinf(o);
-  origin[k].z = zo;
+  origin[k].z = height + zo;
   euler_angles[k].x = 0.0;
   euler_angles[k].y = beta;
   euler_angles[k].z = o;
 }
 aperture_CS.setup(origin, euler_angles, N);
 @ The origin and coordinates system of the conic is defined with
-<<M1 conic definition>>=
-origin[0].x = origin[0].y = origin[0].z = 0.0;
+<<M12 conic definition>>=
+origin[0].x = origin[0].y = 0.0; 
+origin[0].z = height;
 euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
 cbeta = cos(beta);
 D_c = L;
@@ -1827,13 +1879,13 @@ for (k=1; k<N; k++)
   o = PI*(2*k-1)/6.0;
   origin[k].x = D_c*cosf(o);
   origin[k].y = D_c*sinf(o);
-  origin[k].z = zo;
+  origin[k].z = height+ zo;
   euler_angles[k].x = 0.0;
   euler_angles[k].y = 0.0;
   euler_angles[k].z = 0.0;
   conic_origin[k].x = -origin[k].x;
   conic_origin[k].y = -origin[k].y;
-  conic_origin[k].z = -origin[k].z;
+  conic_origin[k].z = -zo;
 }
 conic_CS.setup(origin, euler_angles, N);
 HANDLE_ERROR( cudaMalloc((void**)&d__conic_origin, sizeof(vector)*N ) );
@@ -1844,11 +1896,71 @@ Memory is freed with
 <<GMT M1 functions>>=
 void gmt_m1::cleanup(void)
 {
-  fprintf(stdout,"@(CEO)>gmt_m1: freeing memory!\n");
-  V.cleanup();
-  aperture_CS.cleanup();
-  conic_CS.cleanup();
-  HANDLE_ERROR( cudaFree( d__conic_origin ) );
+  <<GMT cleanup common>>
+}
+@ with
+<<GMT cleanup common>>=
+fprintf(stdout,"@(CEO)>gmt_m1: freeing memory!\n");
+V.cleanup();
+aperture_CS.cleanup();
+conic_CS.cleanup();
+HANDLE_ERROR( cudaFree( d__conic_origin ) );
+@
+\subsection{Blocking}
+\label{sec:blocking}
+
+The rays blocking with M1 is computed with
+<<GMT M1 functions>>=
+void gmt_m1::blocking(bundle *rays)
+{
+  <<GMT blocking common>>
+}
+@ where
+<<GMT blocking common>>=
+ float R2, Rri2;
+ R2 = D_clear*D_clear*0.25;
+ Rri2 = R2*ri*ri;
+ // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
+ dim3 blockDim(16,16);
+ dim3 gridDim(rays->N_RAY/256+1,1);
+ m1_blocking_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
+					     Rri2, R2,
+					     aperture_CS.d__R,
+					     aperture_CS.d__origin);
+ GMT_intersection LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY);
+@ and with the kernel
+<<GMT blocking kernel>>=
+__global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY, 
+				float inner2, float outer2,
+				rtd *d__aperture_R, vector *d__aperture_origin)
+{
+  int i, j, ij, iCoordSys, idx;
+  rtd rho2;
+  rtd x, y, z, u, v, w, x1, y1, s0, k, l, m;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = threadIdx.y;
+  //  iCoordSys = blockIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if  ( ( ij<N_RAY ) && (d__ray[ij].v) )// & (iCoordSys<1) )
+  {
+
+    for (iCoordSys=0; iCoordSys<7; iCoordSys++)
+      {
+	<<GMT transformation to aperture coordinate system>>
+
+        <<GMT intersection with aperture plane>>
+
+        rho2 = x1*x1 + y1*y1;
+	if ( (iCoordSys==0) && (rho2<inner2) )
+	  {
+	    return;
+	  }
+	if (rho2<=outer2)
+	  {
+	    mask[ij] = 0;
+          }
+       }
+   }
 }
 @
 \subsection{Ray tracing}
@@ -1858,24 +1970,28 @@ The rays propagation through M1 is computed with
 <<GMT M1 functions>>=
 void gmt_m1::trace(bundle *rays)
 {
-  float R2, Rri2;
-  R2 = D_clear*D_clear*0.25;
-  Rri2 = R2*ri*ri;
- // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
-  dim3 blockDim(16,16);
-  dim3 gridDim(rays->N_RAY/256+1,1);
-  rays->reset();
-  m1_trace_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
-					      Rri2, R2,
-					      aperture_CS.d__R,
-					      aperture_CS.d__origin,
-					      conic_CS.d__R,
-					      conic_CS.d__origin,
-					      conic_k, conic_c,
-					      d__conic_origin);
+  <<GMT trace common>>
 }
-@ with the kernel
-<<M1 ray tracing kernel>>=
+@ where
+<<GMT trace common>>=
+ float R2, Rri2;
+ R2 = D_clear*D_clear*0.25;
+ Rri2 = R2*ri*ri;
+ // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
+ dim3 blockDim(16,16);
+ dim3 gridDim(rays->N_RAY/256+1,1);
+ HANDLE_ERROR( cudaMemset(V.m, 0, sizeof(char)*rays->N_RAY ) );
+ m1_trace_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
+					     Rri2, R2,
+					     aperture_CS.d__R,
+					     aperture_CS.d__origin,
+					     conic_CS.d__R,
+					     conic_CS.d__origin,
+					     conic_k, conic_c,
+					     d__conic_origin);
+ GMT_intersection LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY);
+@ and with the kernel
+<<GMT ray tracing kernel>>=
 __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY, 
 				float inner2, float outer2,
 				rtd *d__aperture_R, vector *d__aperture_origin,
@@ -1893,31 +2009,28 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
   j = threadIdx.y;
   //  iCoordSys = blockIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
-  if  ( ij<N_RAY )// & (iCoordSys<1) )
+  if  ( ( ij<N_RAY ) && (d__ray[ij].v) )// & (iCoordSys<1) )
   {
 
     for (iCoordSys=0; iCoordSys<7; iCoordSys++)
       {
-	<<M1 transformation to aperture coordinate system>>
+	<<GMT transformation to aperture coordinate system>>
 
-        <<M1 intersection with aperture plane>>
+        <<GMT intersection with aperture plane>>
 
         rho2 = x1*x1 + y1*y1;
 	if ( (iCoordSys==0) && (rho2<inner2) )
 	  {
-	    d__ray[ij].v = 0;
-	    mask[ij] = 0;
 	    return;
 	  }
 	if (rho2<=outer2)
 	  {
-	    d__ray[ij].v = 1;
 	    mask[ij] = 1;
 
-	    <<M1 transformation to conic coordinate system>>
+	    <<GMT transformation to conic coordinate system>>
 
 	    d__origin = d__conic_self_origin + iCoordSys;
-	    <<M1 intersection with conic>>
+	    <<GMT intersection with conic>>
 
 	    mu = 1.0;
 	    <<a equation>>
@@ -1926,14 +2039,27 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 	    d__ray[ij].directions.y = mu*l + a*L;
 	    d__ray[ij].directions.z = mu*m + a*M;
 
-	    <<M1 transformation to global coordinate system>>
+	    <<GMT transformation to global coordinate system>>
 	   }
       }
   }
 }
+@ and
+<<GMT aperture intersection>>=
+__global__ void GMT_intersection(char *mask, ray *d__ray, int N_RAY)
+{
+  int i, j, ij;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if  ( ij<N_RAY )
+  {
+    d__ray[ij].v &= mask[ij];
+  }
+}
 @
 The rays coordinates and cosine directions are transformed into the aperture coordinates system:
-<<M1 transformation to aperture coordinate system>>=
+<<GMT transformation to aperture coordinate system>>=
  idx = iCoordSys;
 
  u = d__ray[ij].coordinates.x - d__aperture_origin[idx].x;
@@ -1955,13 +2081,13 @@ The rays coordinates and cosine directions are transformed into the aperture coo
  m = d__aperture_R[2+idx]*u + d__aperture_R[5+idx]*v + d__aperture_R[8+idx]*w;
 @
 The intersection with the aperture plane is computed with
-<<M1 intersection with aperture plane>>=
+<<GMT intersection with aperture plane>>=
 if (m==0) { return; }
 s0 = -z/m;
 x1 = x + k*s0;
 y1 = y + l*s0;
 @ The rays coordinates and cosine directions are transformed into the aperture coordinates system:
-<<M1 transformation to conic coordinate system>>=
+<<GMT transformation to conic coordinate system>>=
 idx = iCoordSys;
 
 u = d__ray[ij].coordinates.x - d__conic_origin[idx].x;
@@ -1990,7 +2116,7 @@ d__ray[ij].directions.x = k;
 d__ray[ij].directions.y = l;
 d__ray[ij].directions.z = m;  
 @ The intersection with the plane $z=0$ in the conic coordinate transformed is computed with  
-<<M1 intersection with conic>>=
+<<GMT intersection with conic>>=
 <<intersection with z=0 plane>>
 d__ray[ij].optical_path_length += s0;
 s0 = s1 = 0;
@@ -2022,7 +2148,7 @@ for (j=0; j<N_ITERATION; j++)
   s0 = s1;
 }
 @ The rays coordinates and cosine directions are transformed back into the global coordinate system:
-<<M1 transformation to global coordinate system>>=
+<<GMT transformation to global coordinate system>>=
 idx = iCoordSys;
 
 u = d__ray[ij].coordinates.x;
@@ -2053,6 +2179,66 @@ z = d__conic_R[6+idx]*u + d__conic_R[7+idx]*v + d__conic_R[8+idx]*w;
 d__ray[ij].directions.x = x;
 d__ray[ij].directions.y = y;
 d__ray[ij].directions.z = z;    
+@
+\section{GMT M2}
+\label{sec:gmt-m2}
+
+A new structure to hold GMT M1 parameters and functions is defined.
+<<GMT M2 structure>>=
+struct gmt_m2 {
+  <<GMT M12 parameters>>
+  void setup(float _D_, int _D_px_);
+  void cleanup(void);
+  void trace(bundle *rays);
+  void blocking(bundle *rays);
+};
+@
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup-2}
+
+<<GMT M2 functions>>=
+void gmt_m2::setup(float _D_, int _D_px_)
+{
+  D_px    = _D_px_;
+  D       = _D_;
+  D_full  = 1.0425;
+  D_clear = 1.0415;
+  ri      = 0.0;//2.4412/8.365;
+  beta    = 14.706*PI/180.0;
+  L       = 1.08774;
+  N       = 7;
+  conic_c = 1.0/4.163901;
+  conic_k = 1-0.7169273;
+  height  = (float) -20.262476;
+  <<GMT setup common>>
+}
+@ 
+Memory is freed with
+<<GMT M2 functions>>=
+void gmt_m2::cleanup(void)
+{
+  <<GMT cleanup common>>
+}
+@
+\subsection{Blocking}
+\label{sec:blocking-2}
+
+The rays blocking with M2 is computed with
+<<GMT M2 functions>>=
+void gmt_m2::blocking(bundle *rays)
+{
+  <<GMT blocking common>>
+}
+@
+\subsection{Ray tracing}
+\label{sec:ray-tracing-2}
+
+The rays propagation through M1 is computed with
+<<GMT M2 functions>>=
+void gmt_m2::trace(bundle *rays)
+{
+  <<GMT trace common>>
+}
 @
 \section{Input/Output}
 \label{sec:inputoutput}
