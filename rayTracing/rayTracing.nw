@@ -163,6 +163,8 @@ cdef extern from "rayTracing.h":
     cdef cppclass gmt_m1:
         coordinate_system aperture_CS
         coordinate_system conic_CS
+        coordinate_system rigid_body_CS
+        coordinate_system motion_CS
         void setup(float , int )
         void cleanup()
         void trace(bundle *)
@@ -170,6 +172,8 @@ cdef extern from "rayTracing.h":
     cdef cppclass gmt_m2:
         coordinate_system aperture_CS
         coordinate_system conic_CS
+        coordinate_system rigid_body_CS
+        coordinate_system motion_CS
         void setup(float , int )
         void cleanup()
         void trace(bundle *)
@@ -294,14 +298,24 @@ cdef class GMT_M1:
     """
     """
     cdef ceo.gmt_m1 *_c_gmt_m1
-    cdef public np.ndarray aperture_R, conic_R
+    cdef public np.ndarray aperture_R, conic_R, rigid_body_R, motion_R
     
     def __cinit__(self, float D, int D_px):
         self._c_gmt_m1 = new ceo.gmt_m1()
+        
+        # aperture
         self.aperture_R = np.zeros((3*7,3),order='c',dtype=np.float32)
         self._c_gmt_m1.aperture_CS.float_R = <float *> self.aperture_R.data;
+        # conic
         self.conic_R = np.zeros((3*7,3),order='c',dtype=np.float32)
         self._c_gmt_m1.conic_CS.float_R = <float *> self.conic_R.data;
+        # rigid body
+        self.rigid_body_R = np.zeros((3*7,3),order='c',dtype=np.float32)
+        self._c_gmt_m1.rigid_body_CS.float_R = <float *> self.rigid_body_R.data;
+        # motion
+        self.motion_R = np.zeros((3*7,3),order='c',dtype=np.float32)
+        self._c_gmt_m1.motion_CS.float_R = <float *> self.motion_R.data;
+
         self._c_gmt_m1.setup(D, D_px)
 
     def __dealloc__(self):
@@ -317,14 +331,24 @@ cdef class GMT_M2:
     """
     """
     cdef ceo.gmt_m2 *_c_gmt_m2
-    cdef public np.ndarray aperture_R, conic_R
+    cdef public np.ndarray aperture_R, conic_R, rigid_body_R, motion_R
     
     def __cinit__(self, float D, int D_px):
         self._c_gmt_m2 = new ceo.gmt_m2()
+        
+        # aperture
         self.aperture_R = np.zeros((3*7,3),order='c',dtype=np.float32)
         self._c_gmt_m2.aperture_CS.float_R = <float *> self.aperture_R.data;
+        # conic
         self.conic_R = np.zeros((3*7,3),order='c',dtype=np.float32)
         self._c_gmt_m2.conic_CS.float_R = <float *> self.conic_R.data;
+        # rigid body
+        self.rigid_body_R = np.zeros((3*7,3),order='c',dtype=np.float32)
+        self._c_gmt_m2.rigid_body_CS.float_R = <float *> self.rigid_body_R.data;
+        # motion
+        self.motion_R = np.zeros((3*7,3),order='c',dtype=np.float32)
+        self._c_gmt_m2.motion_CS.float_R = <float *> self.motion_R.data;
+
         self._c_gmt_m2.setup(D, D_px)
 
     def __dealloc__(self):
@@ -704,6 +728,10 @@ rtd *R, *d__R;
 float *float_R;
 vector *d__origin;
 @ 
+Coordinate systems can be tagged:
+<<coordinate system data>>=
+char tag[16];
+@ 
 They are gathered in a new coordinate system data type
 <<coordinate system data type>>=
 typedef struct {
@@ -711,6 +739,7 @@ typedef struct {
   void setup(void);
   void setup(vector _origin_, vector _euler_angles_);
   void setup(vector *_origin_, vector *_euler_angles_, int _N_);
+  void setup(vector *_origin_, vector *_euler_angles_, int _N_, char *_tag_);
   void cleanup(void);
   void info(void);
 } coordinate_system;
@@ -733,6 +762,7 @@ void coordinate_system::setup(vector _origin_, vector _euler_angles_)
   memcpy(euler_angles,  &_euler_angles_, n_byte);
   <<rotation matrix eval>>
   <<allocation>>  
+  strcpy(tag,"coordinate_system");
   info();
 }
 @ 
@@ -752,24 +782,41 @@ void coordinate_system::setup(void)
   euler_angles[0].z = 0;
   <<rotation matrix eval>>
   <<allocation>>  
+  strcpy(tag,"coordinate_system");
   info();
 }
 @ 
 \item an array of [[N]] origins and orientations
+  \begin{itemize}
+  \item 
 <<coordinate system functions>>=
 void coordinate_system::setup(vector *_origin_, vector *_euler_angles_, int _N_)
 {
-  N = _N_;
-  int n_byte = sizeof(vector)*N;
-  origin = (vector *)malloc( n_byte );
-  memcpy( origin , _origin_ , n_byte);
-  euler_angles = (vector *)malloc( n_byte );
-  memcpy(euler_angles,  _euler_angles_, n_byte);
-  <<rotation matrix eval>>
-  <<allocation>>  
-  info();
+  strcpy(tag,"coordinate_system");
+  <<coordinate system setup common>>
 }
 @
+\item or with a tag:
+<<coordinate system functions>>=
+void coordinate_system::setup(vector *_origin_, vector *_euler_angles_, int _N_, char *_tag_)
+{
+  strcpy(tag,_tag_);
+  <<coordinate system setup common>>
+}
+@  
+\end{itemize}
+where 
+<<coordinate system setup common>>=
+N = _N_;
+int n_byte = sizeof(vector)*N;
+origin = (vector *)malloc( n_byte );
+memcpy( origin , _origin_ , n_byte);
+euler_angles = (vector *)malloc( n_byte );
+memcpy(euler_angles,  _euler_angles_, n_byte);
+<<rotation matrix eval>>
+<<allocation>>  
+info();
+@ 
 \end{itemize}
 
 Device allocation
@@ -858,7 +905,7 @@ The main parameters of the coordinate systems are displayed with the [[info]] ro
 <<coordinate system functions>>=
 void coordinate_system::info(void)
 {
-  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n","coordinate_system");
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   fprintf(stdout," ID   (Tx     Ty     Tz)[m]  (Ox     Oy     Oz)[deg]\n");
   float c = 180.0/PI;
   int k;
@@ -1806,6 +1853,10 @@ struct gmt_m1 {
 @ 
 The GMT M12 parameters are:
 \begin{itemize}
+\item the mirror ID:
+<<GMT M12 parameters>>=
+int M_ID;
+@
 \item the segment clear aperture diameter $[[D_clear]]=8.365$m:
 <<GMT M12 parameters>>=
 rtd D_clear;
@@ -1839,11 +1890,11 @@ int N;
 <<GMT M12 parameters>>=
 rtd depth;
 @
-\item the reference frames of M1 apertures:
+\item the reference frames of the apertures:
 <<GMT M12 parameters>>=
 coordinate_system aperture_CS;
 @
-\item the reference frames and origins of M1 conics:
+\item the reference frames and origins of the conics:
 <<GMT M12 parameters>>=
 coordinate_system conic_CS;
 vector conic_origin[7], *d__conic_origin;
@@ -1851,6 +1902,14 @@ vector conic_origin[7], *d__conic_origin;
 \item the conic parameters:
 <<GMT M12 parameters>>=
 rtd conic_c, conic_k;
+@
+\item the reference frames of the rigid bodies:
+<<GMT M12 parameters>>=
+coordinate_system rigid_body_CS;
+@
+\item the reference frames of the motions:
+<<GMT M12 parameters>>=
+coordinate_system motion_CS;
 @
 \item the mirror height
 <<GMT M12 parameters>>=
@@ -1877,6 +1936,7 @@ The size must be 25.5m or more to contain M1 fully.
 <<GMT M1 functions>>=
 void gmt_m1::setup(float _D_, int _D_px_)
 {
+  M_ID    = 1;
   D_px    = _D_px_;
   D       = _D_;
   D_full  = 8.417;
@@ -1907,8 +1967,12 @@ int k;
 
 <<M12 conic definition>>
 
+<<M12 rigid body definition>>
+
+<<M12 motion definition>>
+
 V.setup(D_px*D_px);
-@ The origin and coordinates system of the aperture is defined with
+@ The origin and coordinates system of the apertures are defined with
 <<M12 aperture definition>>=
 origin[0].x = origin[0].y = 0.0;
 origin[0].z = height + depth;
@@ -1926,8 +1990,10 @@ for (k=1; k<N; k++)
   euler_angles[k].y = beta;
   euler_angles[k].z = o;
 }
-aperture_CS.setup(origin, euler_angles, N);
-@ The origin and coordinates system of the conic is defined with
+char tag[16];
+sprintf(tag,"M%d APERTURE",M_ID);
+aperture_CS.setup(origin, euler_angles, N, tag);
+@ The origin and coordinates system of the conics are defined with
 <<M12 conic definition>>=
 origin[0].x = origin[0].y = 0.0; 
 origin[0].z = height;
@@ -1948,10 +2014,43 @@ for (k=1; k<N; k++)
   conic_origin[k].y = -origin[k].y;
   conic_origin[k].z = -zo;
 }
-conic_CS.setup(origin, euler_angles, N);
+sprintf(tag,"M%d CONIC",M_ID);
+ conic_CS.setup(origin, euler_angles, N, tag);
 HANDLE_ERROR( cudaMalloc((void**)&d__conic_origin, sizeof(vector)*N ) );
 HANDLE_ERROR( cudaMemcpy( d__conic_origin, conic_origin, 
 			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
+@ The origin and coordinates system of the rigid bodies are defined with
+<<M12 rigid body definition>>=
+origin[0].x = origin[0].y = 0.0;
+origin[0].z = height;
+euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
+D_c = L;
+zo = D_full*sbeta*0.5 + depth*(1-cbeta);
+for (k=1; k<N; k++)
+{
+  o = PI*(2*k-1)/6.0;
+  origin[k].x = D_c*cosf(o);
+  origin[k].y = D_c*sinf(o);
+  origin[k].z = height + zo;
+  euler_angles[k].x = 0.0;
+  euler_angles[k].y = beta;
+  euler_angles[k].z = o;
+}
+sprintf(tag,"M%d RIGID BODY",M_ID);
+rigid_body_CS.setup(origin, euler_angles, N, tag);
+@ The origin and coordinates system of the motions are defined with
+<<M12 motion definition>>=
+for (k=0; k<N; k++)
+{
+  origin[k].x = 0.0;
+  origin[k].y = 0.0;
+  origin[k].z = 0.0;
+  euler_angles[k].x = 0.0;
+  euler_angles[k].y = 0.0;
+  euler_angles[k].z = 0.0;
+}
+sprintf(tag,"M%d MOTION",M_ID);
+motion_CS.setup(origin, euler_angles, N, tag);
 @ 
 Memory is freed with
 <<GMT M1 functions>>=
@@ -1965,6 +2064,8 @@ fprintf(stdout,"@(CEO)>gmt_m1: freeing memory!\n");
 V.cleanup();
 aperture_CS.cleanup();
 conic_CS.cleanup();
+rigid_body_CS.cleanup();
+motion_CS.cleanup();
 HANDLE_ERROR( cudaFree( d__conic_origin ) );
 @
 \subsection{Blocking}
@@ -2049,7 +2150,11 @@ void gmt_m1::trace(bundle *rays)
 					     conic_CS.d__R,
 					     conic_CS.d__origin,
 					     conic_k, conic_c,
-					     d__conic_origin);
+					     d__conic_origin,
+					     rigid_body_CS.d__R,
+					     rigid_body_CS.d__origin,
+					     motion_CS.d__R,
+					     motion_CS.d__origin);
  GMT_intersection LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY);
 @ and with the kernel
 <<GMT ray tracing kernel>>=
@@ -2058,14 +2163,16 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 				rtd *d__aperture_R, vector *d__aperture_origin,
 				rtd *d__conic_R, vector *d__conic_origin,
                                 const rtd Fk, const rtd Fc,
-                                vector *d__conic_self_origin)
+                                vector *d__conic_self_origin,
+				rtd *d__rigid_body_R, vector *d__rigid_body_origin,
+				rtd *d__motion_R, vector *d__motion_origin)
 {
   int i, j, ij, iCoordSys;
   rtd rho2;
   rtd x, y, z, x1, y1, s0, k, l, m;
   rtd s1, S, K, L ,M, dSds;
-  rtd G2, mu, a;
-  vector vv, *d__origin, xyz, klm;
+  rtd G2, a;
+  vector *d__origin, xyz, klm;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = threadIdx.y;
   //  iCoordSys = blockIdx.y;
@@ -2077,8 +2184,18 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
       {
 
 	forward_transform(&xyz, &(d__ray[ij].coordinates),
-			  d__aperture_R+iCoordSys*9, d__aperture_origin+iCoordSys);
+			  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
 	forward_transform_centered(&klm, &(d__ray[ij].directions),
+				   d__rigid_body_R+iCoordSys*9);
+
+	backward_transform(&xyz, &xyz,
+			   d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
+	backward_transform_centered(&klm, &klm,
+				    d__rigid_body_R+iCoordSys*9);
+
+	forward_transform(&xyz, &xyz,
+			  d__aperture_R+iCoordSys*9, d__aperture_origin+iCoordSys);
+	forward_transform_centered(&klm, &klm,
 				   d__aperture_R+iCoordSys*9);
 	x = xyz.x;
 	y = xyz.y;
@@ -2098,24 +2215,25 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 	  {
 	    mask[ij] = 1;
 
-	    forward_transform(&(d__ray[ij].coordinates), &(d__ray[ij].coordinates),
+	    forward_transform(&xyz, &(d__ray[ij].coordinates),
 			      d__conic_R+iCoordSys*9, d__conic_origin+iCoordSys);
-	    forward_transform_centered(&(d__ray[ij].directions), &(d__ray[ij].directions),
+	    forward_transform_centered(&klm, &(d__ray[ij].directions),
 				       d__conic_R+iCoordSys*9);
 
 	    d__origin = d__conic_self_origin + iCoordSys;
 	    <<GMT intersection with conic>>
 
-	    mu = 1.0;
-	    <<a equation>>
-	    a *= -2.0;
-	    d__ray[ij].directions.x = mu*k + a*K;
-	    d__ray[ij].directions.y = mu*l + a*L;
-	    d__ray[ij].directions.z = mu*m + a*M;
+	    G2 = K*K + L*L + M*M;
+	    a  = k*K + l*L + m*M;
 
-	    backward_transform(&(d__ray[ij].coordinates), &(d__ray[ij].coordinates),
+	    a *= -2.0/G2;
+	    klm.x += a*K;
+	    klm.y += a*L;
+	    klm.z += a*M;
+
+	    backward_transform(&(d__ray[ij].coordinates), &xyz,
 			       d__conic_R+iCoordSys*9, d__conic_origin+iCoordSys);
-	    backward_transform_centered(&(d__ray[ij].directions), &(d__ray[ij].directions),
+	    backward_transform_centered(&(d__ray[ij].directions), &klm,
 					d__conic_R+iCoordSys*9);
 	   }
       }
@@ -2194,32 +2312,39 @@ d__ray[ij].directions.y = l;
 d__ray[ij].directions.z = m;  
 @ The intersection with the plane $z=0$ in the conic coordinate transformed is computed with  
 <<GMT intersection with conic>>=
-<<intersection with z=0 plane>>
+k  = klm.x;
+l  = klm.y;
+m  = klm.z;
+if (m==0) { return; }
+s0 = -xyz.z/m;
+x1 = xyz.x + k*s0;
+y1 = xyz.y + l*s0;
 d__ray[ij].optical_path_length += s0;
 s0 = s1 = 0;
 for (j=0; j<N_ITERATION; j++)
 {
-    vv.x = x1 + k*s0;
-    vv.y = y1 + l*s0;
-    vv.z = m*s0;
-  S = conic_surface(&vv, d__origin, Fk, Fc);
-  K = partial_x_conic_surface(&vv, d__origin, Fk, Fc);
-  L = partial_y_conic_surface(&vv, d__origin, Fk, Fc);
+  xyz.x = x1 + k*s0;
+  xyz.y = y1 + l*s0;
+  xyz.z = m*s0;
+  S = conic_surface(&xyz, d__origin, Fk, Fc);
+  K = partial_x_conic_surface(&xyz, d__origin, Fk, Fc);
+  L = partial_y_conic_surface(&xyz, d__origin, Fk, Fc);
   M = partial_z_conic_surface();
   dSds = K*k + L*l + M*m;
   if (dSds==0) { break; }
   s1 = s0 - S/dSds;
   if (abs(s1-s0)<TOL)
     {
-      d__ray[ij].coordinates.x = x1 + k*s1;
-      d__ray[ij].coordinates.y = y1 + l*s1;
-      d__ray[ij].coordinates.z = m*s1;
-      d__ray[ij].surface_normal.x    = 
-	partial_x_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc);
-      d__ray[ij].surface_normal.y    =
-	partial_y_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc);
-      d__ray[ij].surface_normal.z    = partial_z_conic_surface();
+      xyz.x = x1 + k*s1;
+      xyz.y = y1 + l*s1;
+      xyz.z = m*s1;
+      K    = 
+	partial_x_conic_surface(&xyz, d__origin, Fk, Fc);
+      L    =
+	partial_y_conic_surface(&xyz, d__origin, Fk, Fc);
+      M    = partial_z_conic_surface();
       d__ray[ij].optical_path_length += s1;
+      d__ray[ij].n_iteration = j;
       break;
     }
   s0 = s1;
@@ -2276,6 +2401,7 @@ struct gmt_m2 {
 <<GMT M2 functions>>=
 void gmt_m2::setup(float _D_, int _D_px_)
 {
+  M_ID    = 2;
   D_px    = _D_px_;
   D       = _D_;
   D_full  = 1.0425;
@@ -2313,8 +2439,8 @@ void gmt_m2::blocking(bundle *rays)
 The rays propagation through M1 is computed with
 <<GMT M2 functions>>=
 void gmt_m2::trace(bundle *rays)
-{
-  <<GMT trace common>>
+{ 
+ <<GMT trace common>>
 }
 @
 \section{Input/Output}
