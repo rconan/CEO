@@ -44,6 +44,16 @@ The ray tracing method involves 4 steps \cite{}:
 <<GMT M1 structure>>
 <<GMT M2 structure>>
 
+__device__  void forward_transform(vector *v_out, vector *v_in,
+				   rtd *d__R, vector *d__origin);
+__device__  void forward_transform_centered(vector *v_out, vector *v_in,
+					    rtd *d__R);
+__device__  void backward_transform(vector *v_out, vector *v_in,
+                                    rtd *d__R, vector *d__origin);
+__device__  void backward_transform_centered(vector *v_out, vector *v_in,
+					     rtd *d__R);
+
+
 void transform_to_S(bundle *rays, conic *F);
 void transform_to_S(bundle *rays, aperture *A);
 void transform_to_R(bundle *rays, conic *F);
@@ -62,6 +72,8 @@ void thin_lens(bundle *rays);
 #include "rayTracing.h"
 
 <<vector functions>>
+<<coordinates forward transform>>
+<<coordinates backward transform>>
 
 <<bundle coordinates kernel>>
 <<bundle coordinates kernel (box)>>
@@ -364,7 +376,7 @@ The square of the magnitude of a vector projected in the x,y--plane i.e. $[[x]]^
 __host__ __device__ rtd vector::rho2(void) {
   return x*x + y*y;
 }
-@
+@ Vector radius square:
 <<vector functions>>=
 __host__ __device__ rtd vector::rho2(rtd x0, rtd y0) {
   rtd xp, yp;
@@ -1325,16 +1337,43 @@ __global__ void transform_to_S_kernel(ray *d__ray, int N_RAY,
 				      rtd *d__R, vector *d__origin)
 {
   int i, j, ij;
-  rtd x, y, z, u, v, w;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
   if ( (ij<N_RAY) && (d__ray[ij].v) )
   {
-    <<rays coordinates to surface>>
+    forward_transform(&(d__ray[ij].coordinates), &(d__ray[ij].coordinates),
+		      d__R, d__origin);
+    forward_transform_centered(&(d__ray[ij].directions), &(d__ray[ij].directions),
+			       d__R);
   }
 }
 @ with the projection of the ray coordinates in the surface reference frame LCS:
+<<coordinates forward transform>>=
+__device__  void forward_transform(vector *v_out, vector *v_in,
+					 rtd *d__R, vector *d__origin)
+{
+  rtd u, v, w;
+  u = v_in->x - d__origin->x;
+  v = v_in->y - d__origin->y;
+  w = v_in->z - d__origin->z;
+
+  v_out->x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
+  v_out->y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
+  v_out->z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
+}  
+__device__  void forward_transform_centered(vector *v_out, vector *v_in,
+						  rtd *d__R)
+{
+  rtd u, v, w;
+  u = v_in->x;
+  v = v_in->y;
+  w = v_in->z;
+
+  v_out->x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
+  v_out->y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
+  v_out->z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
+}  
 <<rays coordinates to surface>>=
 u = d__ray[ij].coordinates.x - d__origin->x;
 v = d__ray[ij].coordinates.y - d__origin->y;
@@ -1381,29 +1420,51 @@ __global__ void transform_to_R_kernel(ray *d__ray, int N_RAY,
                                       rtd *d__R, vector *d__origin)
 {
   int i, j, ij;
-  rtd x, y, z, u, v, w;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
   if ( (ij<N_RAY) && (d__ray[ij].v) )
   {
-
-    <<rays coordinates to rays>>
-
-    u = d__ray[ij].directions.x;
-    v = d__ray[ij].directions.y;
-    w = d__ray[ij].directions.z;
-
-    x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
-    y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
-    z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
-
-    d__ray[ij].directions.x = x;
-    d__ray[ij].directions.y = y;
-    d__ray[ij].directions.z = z;    
+    backward_transform(&(d__ray[ij].coordinates), &(d__ray[ij].coordinates),
+		       d__R, d__origin);
+    backward_transform_centered(&(d__ray[ij].directions), &(d__ray[ij].directions),
+				d__R);
   }
 }
 @ with the projection of the ray coordinates in the rays reference frame LCS:
+@ 
+<<coordinates backward transform>>=
+__device__  void backward_transform(vector *v_out, vector *v_in,
+                                    rtd *d__R, vector *d__origin)
+{
+  rtd u, v, w;
+
+  u = v_in->x;
+  v = v_in->y;
+  w = v_in->z;
+
+  v_out->x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
+  v_out->y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
+  v_out->z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
+
+  v_out->x += d__origin->x;
+  v_out->y += d__origin->y;
+  v_out->z += d__origin->z;    
+}  
+__device__  void backward_transform_centered(vector *v_out, vector *v_in,
+						  rtd *d__R)
+{
+  rtd u, v, w;
+
+  u = v_in->x;
+  v = v_in->y;
+  w = v_in->z;
+
+  v_out->x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
+  v_out->y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
+  v_out->z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
+}  
+@ 
 <<rays coordinates to rays>>=
 u = d__ray[ij].coordinates.x;
 v = d__ray[ij].coordinates.y;
@@ -1999,12 +2060,12 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
                                 const rtd Fk, const rtd Fc,
                                 vector *d__conic_self_origin)
 {
-  int i, j, ij, iCoordSys, idx;
+  int i, j, ij, iCoordSys;
   rtd rho2;
-  rtd x, y, z, u, v, w, x1, y1, s0, k, l, m;
+  rtd x, y, z, x1, y1, s0, k, l, m;
   rtd s1, S, K, L ,M, dSds;
   rtd G2, mu, a;
-  vector vv, *d__origin;
+  vector vv, *d__origin, xyz, klm;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = threadIdx.y;
   //  iCoordSys = blockIdx.y;
@@ -2014,7 +2075,17 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 
     for (iCoordSys=0; iCoordSys<7; iCoordSys++)
       {
-	<<GMT transformation to aperture coordinate system>>
+
+	forward_transform(&xyz, &(d__ray[ij].coordinates),
+			  d__aperture_R+iCoordSys*9, d__aperture_origin+iCoordSys);
+	forward_transform_centered(&klm, &(d__ray[ij].directions),
+				   d__aperture_R+iCoordSys*9);
+	x = xyz.x;
+	y = xyz.y;
+	z = xyz.z;
+	k = klm.x;
+	l = klm.y;
+	m = klm.z;
 
         <<GMT intersection with aperture plane>>
 
@@ -2027,7 +2098,10 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 	  {
 	    mask[ij] = 1;
 
-	    <<GMT transformation to conic coordinate system>>
+	    forward_transform(&(d__ray[ij].coordinates), &(d__ray[ij].coordinates),
+			      d__conic_R+iCoordSys*9, d__conic_origin+iCoordSys);
+	    forward_transform_centered(&(d__ray[ij].directions), &(d__ray[ij].directions),
+				       d__conic_R+iCoordSys*9);
 
 	    d__origin = d__conic_self_origin + iCoordSys;
 	    <<GMT intersection with conic>>
@@ -2039,7 +2113,10 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 	    d__ray[ij].directions.y = mu*l + a*L;
 	    d__ray[ij].directions.z = mu*m + a*M;
 
-	    <<GMT transformation to global coordinate system>>
+	    backward_transform(&(d__ray[ij].coordinates), &(d__ray[ij].coordinates),
+			       d__conic_R+iCoordSys*9, d__conic_origin+iCoordSys);
+	    backward_transform_centered(&(d__ray[ij].directions), &(d__ray[ij].directions),
+					d__conic_R+iCoordSys*9);
 	   }
       }
   }
