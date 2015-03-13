@@ -2041,7 +2041,8 @@ aperture_CS.setup(origin, euler_angles, N, tag);
 origin[0].x = origin[0].y = 0.0; 
 origin[0].z = height;
 euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
-conic_origin[0].x = conic_origin[0].y = conic_origin[0].z = 0.0; 
+conic_origin[0].x = conic_origin[0].y = 0.0;
+conic_origin[0].z = height; 
 cbeta = cos(beta);
 D_c = L;
 zo = D_full*sbeta*0.5 + depth*(1-cbeta);
@@ -2054,9 +2055,9 @@ for (k=1; k<N; k++)
   euler_angles[k].x = 0.0;
   euler_angles[k].y = 0.0;
   euler_angles[k].z = 0.0;
-  conic_origin[k].x = -origin[k].x;
-  conic_origin[k].y = -origin[k].y;
-  conic_origin[k].z = -zo;
+  conic_origin[k].x = 0;
+  conic_origin[k].y = 0;
+  conic_origin[k].z = height;
 }
 sprintf(tag,"M%d CONIC",M_ID);
  conic_CS.setup(origin, euler_angles, N, tag);
@@ -2223,7 +2224,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
   rtd x, y, z, x1, y1, s0, k, l, m;
   rtd s1, S, K, L ,M, dSds;
   rtd G2, a;
-  vector *d__origin, xyz, klm, xyz_GS, klm_GS;
+  vector d__origin, xyz, klm, xyz_GS, klm_GS;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = threadIdx.y;
   //  iCoordSys = blockIdx.y;
@@ -2234,27 +2235,27 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
     for (iCoordSys=0; iCoordSys<7; iCoordSys++)
       {
 
-	d__origin = d__conic_self_origin + iCoordSys;
+	//	d__origin = d__conic_self_origin + iCoordSys;
 	// RIGID BODY >>>  
 	forward_transform(&xyz, &(d__ray[ij].coordinates),
 			  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
-	/* forward_transform(d__origin, d__origin, */
-	/* 		  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys); */
+	forward_transform(&d__origin, d__conic_self_origin+iCoordSys,
+			  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
 	forward_transform_centered(&klm, &(d__ray[ij].directions),
 				   d__rigid_body_R+iCoordSys*9);
 	// Perturbation
 	forward_transform(&xyz, &xyz,
 			  d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
-	/* forward_transform(d__origin, d__origin, */
-	/* 		  d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys); */
+	forward_transform(&d__origin, &d__origin,
+			  d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
 	forward_transform_centered(&klm, &klm,
 				   d__motion_R+iCoordSys*9);
 
 	// RIGID BODY <<<
 	backward_transform(&xyz_GS, &xyz,
 			   d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
-	/* backward_transform(d__origin, d__origin, */
-	/* 		  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys); */
+	backward_transform(&d__origin, &d__origin,
+			  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
 	backward_transform_centered(&klm_GS, &klm,
 				    d__rigid_body_R+iCoordSys*9);
 
@@ -2283,6 +2284,8 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 
 	    // CONIC >>>
 	    forward_transform(&xyz, &xyz_GS,
+			      d__conic_R+iCoordSys*9, d__conic_origin+iCoordSys);
+	    forward_transform(&d__origin, &d__origin,
 			      d__conic_R+iCoordSys*9, d__conic_origin+iCoordSys);
 	    forward_transform_centered(&klm, &klm_GS,
 				       d__conic_R+iCoordSys*9);
@@ -2393,9 +2396,9 @@ for (j=0; j<N_ITERATION; j++)
   xyz.x = x1 + k*s0;
   xyz.y = y1 + l*s0;
   xyz.z = m*s0;
-  S = conic_surface(&xyz, d__origin, Fk, Fc);
-  K = partial_x_conic_surface(&xyz, d__origin, Fk, Fc);
-  L = partial_y_conic_surface(&xyz, d__origin, Fk, Fc);
+  S = conic_surface(&xyz, &d__origin, Fk, Fc);
+  K = partial_x_conic_surface(&xyz, &d__origin, Fk, Fc);
+  L = partial_y_conic_surface(&xyz, &d__origin, Fk, Fc);
   M = partial_z_conic_surface();
   dSds = K*k + L*l + M*m;
   if (dSds==0) { break; }
@@ -2406,9 +2409,9 @@ for (j=0; j<N_ITERATION; j++)
       xyz.y = y1 + l*s1;
       xyz.z = m*s1;
       K    = 
-	partial_x_conic_surface(&xyz, d__origin, Fk, Fc);
+	partial_x_conic_surface(&xyz, &d__origin, Fk, Fc);
       L    =
-	partial_y_conic_surface(&xyz, d__origin, Fk, Fc);
+	partial_y_conic_surface(&xyz, &d__origin, Fk, Fc);
       M    = partial_z_conic_surface();
       d__ray[ij].optical_path_length += s1;
       d__ray[ij].n_iteration = j;
