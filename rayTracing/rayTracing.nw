@@ -167,6 +167,7 @@ cdef extern from "rayTracing.h":
         coordinate_system motion_CS
         void setup(float , int )
         void cleanup()
+        void update(vector , vector ,int )
         void trace(bundle *)
         void blocking(bundle *)
     cdef cppclass gmt_m2:
@@ -326,6 +327,17 @@ cdef class GMT_M1:
 
     def blocking(self, Bundle rays):
         self._c_gmt_m1.blocking(rays._c_bundle)
+
+    def update(self, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0], int idx=0):
+        cdef vector __origin
+        __origin.x = <float>origin[0]
+        __origin.y = <float>origin[1]
+        __origin.z = <float>origin[2]
+        cdef vector __euler_angles
+        __euler_angles.x = <float>euler_angles[0]
+        __euler_angles.y = <float>euler_angles[1]
+        __euler_angles.z = <float>euler_angles[2]
+        self._c_gmt_m1.update(__origin, __euler_angles, idx)
 # GMT M2
 cdef class GMT_M2:
     """
@@ -742,6 +754,7 @@ typedef struct {
   void setup(vector *_origin_, vector *_euler_angles_, int _N_, char *_tag_);
   void cleanup(void);
   void info(void);
+  void update(vector _origin_, vector _euler_angles_,int idx);
 } coordinate_system;
 @ 
 
@@ -755,13 +768,14 @@ A coordinate system structure is initialized with
 void coordinate_system::setup(vector _origin_, vector _euler_angles_)
 {
   N = 1;
+  HANDLE_ERROR( cudaMalloc((void**)&d__R, sizeof(rtd)*9*N ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector)*N ) );
   int n_byte = sizeof(vector)*N;
   origin = (vector *)malloc( n_byte );
-  memcpy( origin , &_origin_ , n_byte);
   euler_angles = (vector *)malloc( n_byte );
+  memcpy( origin , &_origin_ , n_byte);
   memcpy(euler_angles,  &_euler_angles_, n_byte);
   <<rotation matrix eval>>
-  <<allocation>>  
   strcpy(tag,"coordinate_system");
   info();
 }
@@ -771,6 +785,8 @@ void coordinate_system::setup(vector _origin_, vector _euler_angles_)
 void coordinate_system::setup(void)
 {
   N = 1;
+  HANDLE_ERROR( cudaMalloc((void**)&d__R, sizeof(rtd)*9*N ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector)*N ) );
   int n_byte = sizeof(vector)*N;
   origin = (vector *)malloc( n_byte );
   euler_angles = (vector *)malloc( n_byte );
@@ -781,14 +797,13 @@ void coordinate_system::setup(void)
   euler_angles[0].y = 0;
   euler_angles[0].z = 0;
   <<rotation matrix eval>>
-  <<allocation>>  
   strcpy(tag,"coordinate_system");
   info();
 }
 @ 
-\item an array of [[N]] origins and orientations
+\item an array of [[N]] origins and orientations:
   \begin{itemize}
-  \item 
+  \item without a tag:
 <<coordinate system functions>>=
 void coordinate_system::setup(vector *_origin_, vector *_euler_angles_, int _N_)
 {
@@ -798,7 +813,8 @@ void coordinate_system::setup(vector *_origin_, vector *_euler_angles_, int _N_)
 @
 \item or with a tag:
 <<coordinate system functions>>=
-void coordinate_system::setup(vector *_origin_, vector *_euler_angles_, int _N_, char *_tag_)
+void coordinate_system::setup(vector *_origin_, vector *_euler_angles_, 
+                              int _N_, char *_tag_)
 {
   strcpy(tag,_tag_);
   <<coordinate system setup common>>
@@ -808,26 +824,18 @@ void coordinate_system::setup(vector *_origin_, vector *_euler_angles_, int _N_,
 where 
 <<coordinate system setup common>>=
 N = _N_;
+HANDLE_ERROR( cudaMalloc((void**)&d__R, sizeof(rtd)*9*N ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector)*N ) );
 int n_byte = sizeof(vector)*N;
 origin = (vector *)malloc( n_byte );
-memcpy( origin , _origin_ , n_byte);
 euler_angles = (vector *)malloc( n_byte );
+memcpy( origin , _origin_ , n_byte);
 memcpy(euler_angles,  _euler_angles_, n_byte);
 <<rotation matrix eval>>
-<<allocation>>  
 info();
 @ 
 \end{itemize}
 
-Device allocation
-<<allocation>>=
-HANDLE_ERROR( cudaMalloc((void**)&d__R, sizeof(rtd)*9*N ) );
-HANDLE_ERROR( cudaMemcpy( d__R, R, 
-			    sizeof(rtd)*9*N, cudaMemcpyHostToDevice ) );
-HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector)*N ) );
-HANDLE_ERROR( cudaMemcpy( d__origin, origin, 
-			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
-@
 The rotation matrix to transform the ray coordinates in the LCS is given by
 \begin{eqnarray}
 R &=& \left[ 
@@ -884,8 +892,12 @@ for (k=0; k<N; k++)
     R[idx++] = sa*cb;
     R[idx++] = ca*cb;
   }
-for (int k=0;k<9;k++)
-   *(float_R+k) = (float) R[k];
+HANDLE_ERROR( cudaMemcpy( d__R, R, 
+			    sizeof(rtd)*9*N, cudaMemcpyHostToDevice ) );
+HANDLE_ERROR( cudaMemcpy( d__origin, origin, 
+			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
+/* for (int k=0;k<9;k++) */
+/*    *(float_R+k) = (float) R[k]; */
 @ where the elements of $R$ are stored in the row major format.
 <<coordinate system functions>>=
 void coordinate_system::cleanup(void)
@@ -896,6 +908,36 @@ void coordinate_system::cleanup(void)
   free(R);
   HANDLE_ERROR( cudaFree( d__R ) );
   HANDLE_ERROR( cudaFree( d__origin ) );
+}
+@ 
+The coordinate system is updated with
+<<coordinate system functions>>=
+void coordinate_system::update(vector _origin_, vector _euler_angles_,int idx)
+{
+  int n_byte = sizeof(vector);
+  memcpy( origin + idx , &_origin_ , n_byte);
+  memcpy(euler_angles + idx,  &_euler_angles_, n_byte);
+  rtd ca, sa, cb, sb, cg, sg;
+  ca = cos(euler_angles[idx].x);
+  sa = sin(euler_angles[idx].x);
+  cb = cos(euler_angles[idx].y);
+  sb = sin(euler_angles[idx].y);
+  cg = cos(euler_angles[idx].z);
+  sg = sin(euler_angles[idx].z);
+  idx *= 9;
+  R[idx++] = cb*cg;
+  R[idx++] = -sa*sb*cg - ca*sg;
+  R[idx++] = -ca*sb*cg + sa*sg;
+  R[idx++] = cb*sg;
+  R[idx++] = -sa*sb*sg + ca*cg;
+  R[idx++] = -ca*sb*sg - sa*cg;
+  R[idx++] = sb;
+  R[idx++] = sa*cb;
+  R[idx++] = ca*cb;
+  HANDLE_ERROR( cudaMemcpy( d__R, R, 
+			    sizeof(rtd)*9*N, cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMemcpy( d__origin, origin, 
+			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
 }
 @ 
 \subsection{Input/Output}
@@ -1847,6 +1889,7 @@ struct gmt_m1 {
   <<GMT M12 parameters>>
   void setup(float _D_, int _D_px_);
   void cleanup(void);
+  void update(vector _origin_, vector _euler_angles_,int idx);
   void trace(bundle *rays);
   void blocking(bundle *rays);
 };
@@ -1998,6 +2041,7 @@ aperture_CS.setup(origin, euler_angles, N, tag);
 origin[0].x = origin[0].y = 0.0; 
 origin[0].z = height;
 euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
+conic_origin[0].x = conic_origin[0].y = conic_origin[0].z = 0.0; 
 cbeta = cos(beta);
 D_c = L;
 zo = D_full*sbeta*0.5 + depth*(1-cbeta);
@@ -2068,6 +2112,13 @@ rigid_body_CS.cleanup();
 motion_CS.cleanup();
 HANDLE_ERROR( cudaFree( d__conic_origin ) );
 @
+The rigid body motion parameters are updated with:
+<<GMT M1 functions>>=
+void gmt_m1::update(vector _origin_, vector _euler_angles_,int idx)
+{
+    motion_CS.update(_origin_, _euler_angles_, idx);
+}
+@ 
 \subsection{Blocking}
 \label{sec:blocking}
 
@@ -2172,7 +2223,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
   rtd x, y, z, x1, y1, s0, k, l, m;
   rtd s1, S, K, L ,M, dSds;
   rtd G2, a;
-  vector *d__origin, xyz, klm;
+  vector *d__origin, xyz, klm, xyz_GS, klm_GS;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = threadIdx.y;
   //  iCoordSys = blockIdx.y;
@@ -2183,19 +2234,34 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
     for (iCoordSys=0; iCoordSys<7; iCoordSys++)
       {
 
+	d__origin = d__conic_self_origin + iCoordSys;
+	// RIGID BODY >>>  
 	forward_transform(&xyz, &(d__ray[ij].coordinates),
 			  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
+	/* forward_transform(d__origin, d__origin, */
+	/* 		  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys); */
 	forward_transform_centered(&klm, &(d__ray[ij].directions),
 				   d__rigid_body_R+iCoordSys*9);
+	// Perturbation
+	forward_transform(&xyz, &xyz,
+			  d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
+	/* forward_transform(d__origin, d__origin, */
+	/* 		  d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys); */
+	forward_transform_centered(&klm, &klm,
+				   d__motion_R+iCoordSys*9);
 
-	backward_transform(&xyz, &xyz,
+	// RIGID BODY <<<
+	backward_transform(&xyz_GS, &xyz,
 			   d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
-	backward_transform_centered(&klm, &klm,
+	/* backward_transform(d__origin, d__origin, */
+	/* 		  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys); */
+	backward_transform_centered(&klm_GS, &klm,
 				    d__rigid_body_R+iCoordSys*9);
 
-	forward_transform(&xyz, &xyz,
+	// APERTURE >>>
+	forward_transform(&xyz, &xyz_GS,
 			  d__aperture_R+iCoordSys*9, d__aperture_origin+iCoordSys);
-	forward_transform_centered(&klm, &klm,
+	forward_transform_centered(&klm, &klm_GS,
 				   d__aperture_R+iCoordSys*9);
 	x = xyz.x;
 	y = xyz.y;
@@ -2215,12 +2281,12 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 	  {
 	    mask[ij] = 1;
 
-	    forward_transform(&xyz, &(d__ray[ij].coordinates),
+	    // CONIC >>>
+	    forward_transform(&xyz, &xyz_GS,
 			      d__conic_R+iCoordSys*9, d__conic_origin+iCoordSys);
-	    forward_transform_centered(&klm, &(d__ray[ij].directions),
+	    forward_transform_centered(&klm, &klm_GS,
 				       d__conic_R+iCoordSys*9);
 
-	    d__origin = d__conic_self_origin + iCoordSys;
 	    <<GMT intersection with conic>>
 
 	    G2 = K*K + L*L + M*M;
@@ -2231,6 +2297,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 	    klm.y += a*L;
 	    klm.z += a*M;
 
+	    // CONIC <<<
 	    backward_transform(&(d__ray[ij].coordinates), &xyz,
 			       d__conic_R+iCoordSys*9, d__conic_origin+iCoordSys);
 	    backward_transform_centered(&(d__ray[ij].directions), &klm,
