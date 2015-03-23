@@ -2017,56 +2017,6 @@ int k;
 <<M12 motion definition>>
 
 V.setup(D_px*D_px);
-@ The origin and coordinates system of the apertures are defined with
-<<M12 aperture definition>>=
-origin[0].x = origin[0].y = 0.0;
-origin[0].z = height + depth;
-euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
-sbeta = sin(beta);
-D_c = L - depth*sbeta;
-zo = D_full*sbeta*0.5 + depth;
-for (k=1; k<N; k++)
-{
-  o = PI*(2*k-1)/6.0;
-  origin[k].x = D_c*cosf(o);
-  origin[k].y = D_c*sinf(o);
-  origin[k].z = height + zo;
-  euler_angles[k].x = 0.0;
-  euler_angles[k].y = beta;
-  euler_angles[k].z = o;
-}
-char tag[16];
-sprintf(tag,"M%d APERTURE",M_ID);
-aperture_CS.setup(origin, euler_angles, N, tag);
-@ The origin and coordinates system of the conics are defined with
-<<M12 conic definition>>=
-origin[0].x = origin[0].y = 0.0; 
-origin[0].z = height;
-euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
-conic_origin[0].x = conic_origin[0].y = 0.0;
-conic_origin[0].z = 0.0; 
-cbeta = cos(beta);
-D_c = L;
-zo = D_full*sbeta*0.5 + depth*(1-cbeta);
-for (k=1; k<N; k++)
-{
-  o = PI*(2*k-1)/6.0;
-  origin[k].x = D_c*cosf(o);
-  origin[k].y = D_c*sinf(o);
-  origin[k].z = height+ zo;
-  euler_angles[k].x = 0.0;
-  euler_angles[k].y = 0.0;
-  euler_angles[k].z = 0.0;
-  conic_origin[k].x = -origin[k].x;
-  conic_origin[k].y = -origin[k].y;
-  conic_origin[k].z = -zo;
-}
-//euler_angles[0].x = 30.0*PI/180.0/3600.0;
-sprintf(tag,"M%d CONIC",M_ID);
-conic_CS.setup(origin, euler_angles, N, tag);
-HANDLE_ERROR( cudaMalloc((void**)&d__conic_origin, sizeof(vector)*N ) );
-HANDLE_ERROR( cudaMemcpy( d__conic_origin, conic_origin, 
-			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
 @ The origin and coordinates system of the rigid bodies are defined with
 <<M12 rigid body definition>>=
 origin[0].x = origin[0].y = 0.0;
@@ -2086,16 +2036,66 @@ for (k=1; k<N; k++)
 }
 sprintf(tag,"M%d RIGID BODY",M_ID);
 rigid_body_CS.setup(origin, euler_angles, N, tag);
-@ The origin and coordinates system of the motions are defined with
-<<M12 motion definition>>=
-for (k=0; k<N; k++)
+@ The origin and coordinates system of the apertures are defined with
+<<M12 aperture definition>>=
+origin[0].x = origin[0].y = 0.0;
+origin[0].z = depth;
+euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
+sbeta = sin(beta);
+D_c = L - depth*sbeta;
+zo = D_full*sbeta*0.5 + depth;
+for (k=1; k<N; k++)
 {
+  o = PI*(2*k-1)/6.0;
+  origin[k].x = 0.0;
+  origin[k].y = 0.0;
+  origin[k].z = depth;
+  euler_angles[k].x = 0.0;
+  euler_angles[k].y = 0.0;
+  euler_angles[k].z = 0.0;
+}
+char tag[16];
+sprintf(tag,"M%d APERTURE",M_ID);
+aperture_CS.setup(origin, euler_angles, N, tag);
+@ The origin and coordinates system of the conics are defined with
+<<M12 conic definition>>=
+origin[0].x = origin[0].y = 0.0; 
+origin[0].z = 0.0;
+euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
+conic_origin[0].x = conic_origin[0].y = 0.0;
+conic_origin[0].z = 0.0; 
+cbeta = cos(beta);
+D_c = L;
+zo = D_full*sbeta*0.5 + depth*(1-cbeta);
+for (k=1; k<N; k++)
+{
+  o = PI*(2*k-1)/6.0;
   origin[k].x = 0.0;
   origin[k].y = 0.0;
   origin[k].z = 0.0;
   euler_angles[k].x = 0.0;
-  euler_angles[k].y = 0.0;
-  euler_angles[k].z = 0.0;
+  euler_angles[k].y = beta;
+  euler_angles[k].z = o;
+  conic_origin[k].x = -D_c*cosf(o);
+  conic_origin[k].y = -D_c*sinf(o);
+  conic_origin[k].z = -zo;
+}
+//euler_angles[0].x = 30.0*PI/180.0/3600.0;
+sprintf(tag,"M%d CONIC",M_ID);
+conic_CS.setup(origin, euler_angles, N, tag);
+HANDLE_ERROR( cudaMalloc((void**)&d__conic_origin, sizeof(vector)*N ) );
+HANDLE_ERROR( cudaMemcpy( d__conic_origin, conic_origin, 
+			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
+@ The origin and coordinates system of the motions are defined with
+<<M12 motion definition>>=
+for (k=0; k<N; k++)
+{
+  origin[k].x = rigid_body_CS.origin[k].x;
+  origin[k].y = rigid_body_CS.origin[k].y;
+  origin[k].z = rigid_body_CS.origin[k].z;
+  euler_angles[k].x = rigid_body_CS.euler_angles[k].x;
+  euler_angles[k].y = rigid_body_CS.euler_angles[k].y;
+  euler_angles[k].z = rigid_body_CS.euler_angles[k].z;
 }
 sprintf(tag,"M%d MOTION",M_ID);
 motion_CS.setup(origin, euler_angles, N, tag);
@@ -2120,54 +2120,36 @@ The rigid body motion parameters are updated with:
 <<GMT M1 functions>>=
 void gmt_m1::update(vector _origin_, vector _euler_angles_,int idx)
 {
-  vector v1p, v2p, v12, O;
-
     fprintf(stdout,"\n\x1B[31m");
 
-    motion_CS.update(_origin_, _euler_angles_, idx);
+    int k;
+    char tag[16];
+    vector origin[7], euler_angles[7];
+    
+    motion_CS.cleanup();
+
+    for (k=0; k<N; k++)
+      {
+	origin[k].x = rigid_body_CS.origin[k].x;
+	origin[k].y = rigid_body_CS.origin[k].y;
+	origin[k].z = rigid_body_CS.origin[k].z;
+	euler_angles[k].x = rigid_body_CS.euler_angles[k].x;
+	euler_angles[k].y = rigid_body_CS.euler_angles[k].y;
+	euler_angles[k].z = rigid_body_CS.euler_angles[k].z;
+      }
+
+    origin[idx].x = rigid_body_CS.origin[idx].x + _origin_.x;
+    origin[idx].y = rigid_body_CS.origin[idx].y + _origin_.y;
+    origin[idx].z = rigid_body_CS.origin[idx].z + _origin_.z;
+
+    euler_angles[idx].x = rigid_body_CS.euler_angles[idx].x + _euler_angles_.x;
+    euler_angles[idx].y = rigid_body_CS.euler_angles[idx].y + _euler_angles_.y;
+    euler_angles[idx].z = rigid_body_CS.euler_angles[idx].z + _euler_angles_.z;
+
+    sprintf(tag,"M%d MOTION",M_ID);
+    motion_CS.setup(origin, euler_angles, N, tag);
+
     motion_CS.info();
-
-    backward_transform(&v1p, motion_CS.origin + idx,
-    		       rigid_body_CS.R      + idx*9,
-    		       rigid_body_CS.origin + idx);
-
-    v12.x = aperture_CS.origin[idx].x - rigid_body_CS.origin[idx].x;
-    v12.y = aperture_CS.origin[idx].y - rigid_body_CS.origin[idx].y;
-    v12.z = aperture_CS.origin[idx].z - rigid_body_CS.origin[idx].z;
-
-    printf("v12=[%.2e,%.2e,%.2e]\n",v12.x,v12.y,v12.z);
-
-    forward_transform_centered(&v12, &v12, motion_CS.R + idx*9);
-
-    printf("v12=[%.2e,%.2e,%.2e]\n",v12.x,v12.y,v12.z);
-
-    v2p.x = v1p.x + v12.x;
-    v2p.y = v1p.y + v12.y;
-    v2p.z = v1p.z + v12.z; 
-    O.x = aperture_CS.euler_angles[idx].x + motion_CS.euler_angles[idx].x;
-    O.y = aperture_CS.euler_angles[idx].y + motion_CS.euler_angles[idx].y;
-    O.z = aperture_CS.euler_angles[idx].z + motion_CS.euler_angles[idx].z;
-    aperture_CS.update(v2p, O, idx);
-    aperture_CS.info();
-
-    v12.x = conic_CS.origin[idx].x - rigid_body_CS.origin[idx].x;
-    v12.y = conic_CS.origin[idx].y - rigid_body_CS.origin[idx].y;
-    v12.z = conic_CS.origin[idx].z - rigid_body_CS.origin[idx].z;
-
-    printf("v12=[%.2e,%.2e,%.2e]\n",v12.x,v12.y,v12.z);
-
-    forward_transform_centered(&v12, &v12, motion_CS.R + idx*9);
-
-    printf("v12=[%.2e,%.2e,%.2e]\n",v12.x,v12.y,v12.z);
-
-    v2p.x = v1p.x + v12.x;
-    v2p.y = v1p.y + v12.y;
-    v2p.z = v1p.z + v12.z; 
-    O.x = conic_CS.euler_angles[idx].x + motion_CS.euler_angles[idx].x;
-    O.y = conic_CS.euler_angles[idx].y + motion_CS.euler_angles[idx].y;
-    O.z = conic_CS.euler_angles[idx].z + motion_CS.euler_angles[idx].z;
-    conic_CS.update(v2p, O, idx);
-    conic_CS.info();
 }
 @ 
 \subsection{Blocking}
@@ -2287,39 +2269,10 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 
 	d__origin = d__conic_self_origin[iCoordSys];
 	// RIGID BODY >>>  
-	/* forward_transform(&xyz, &(d__ray[ij].coordinates), */
-	/* 		  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys); */
-	/* forward_transform(&d__origin, d__conic_self_origin+iCoordSys, */
-	/* 		  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys); */
-	/* forward_transform_centered(&klm, &(d__ray[ij].directions), */
-	/* 			   d__rigid_body_R+iCoordSys*9); */
-	/* // Perturbation */
-	/* forward_transform(&xyz, &xyz, */
-	/* 		  d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys); */
-	/* forward_transform(&d__origin, &d__origin, */
-	/* 		  d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys); */
-	/* forward_transform_centered(&klm, &klm, */
-	/* 			   d__motion_R+iCoordSys*9); */
-
-	/* // RIGID BODY <<< */
-	/* backward_transform(&xyz_GS, &xyz, */
-	/* 		   d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys); */
-	/* backward_transform(&d__origin, &d__origin, */
-	/* 		  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys); */
-	/* backward_transform_centered(&klm_GS, &klm, */
-	/* 			    d__rigid_body_R+iCoordSys*9); */
-
-	xyz_GS = d__ray[ij].coordinates;
-	klm_GS = d__ray[ij].directions;
-
-	/* backward_transform(&vo, d__motion_origin + iCoordSys, */
-	/* 		   d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys); */
-	/* vo.x += d__aperture_origin[iCoordSys].x; */
-	/* vo.y += d__aperture_origin[iCoordSys].y; */
-	/* vo.z += d__aperture_origin[iCoordSys].z; */
-	/* vo.x -= d__rigid_body_origin[iCoordSys].x; */
-	/* vo.y -= d__rigid_body_origin[iCoordSys].y; */
-	/* vo.z -= d__rigid_body_origin[iCoordSys].z; */
+	forward_transform(&xyz_GS, &(d__ray[ij].coordinates),
+			  d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
+	forward_transform_centered(&klm_GS, &(d__ray[ij].directions),
+				   d__motion_R+iCoordSys*9);
 
 	// APERTURE >>>
 	forward_transform(&xyz, &xyz_GS,
@@ -2327,6 +2280,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 			  d__aperture_origin+iCoordSys);
 	forward_transform_centered(&klm, &klm_GS,
 				   d__aperture_R+iCoordSys*9);
+
 	x = xyz.x;
 	y = xyz.y;
 	z = xyz.z;
@@ -2341,30 +2295,15 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 	  {
 	    return;
 	  }
+
 	if (rho2<=outer2)
 	  {
 	    mask[ij] = 1;
 
-	    /* vo = d__conic_origin[iCoordSys]; */
-	    /* vo.x += d__motion_origin[iCoordSys].x; */
-	    /* vo.y += d__motion_origin[iCoordSys].y; */
-	    /* vo.z += d__motion_origin[iCoordSys].z; */
-	/* backward_transform(&vo, d__motion_origin + iCoordSys, */
-	/* 		   d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys); */
-	/* vo.x += d__conic_origin[iCoordSys].x; */
-	/* vo.y += d__conic_origin[iCoordSys].y; */
-	/* vo.z += d__conic_origin[iCoordSys].z; */
-	/* vo.x -= d__rigid_body_origin[iCoordSys].x; */
-	/* vo.y -= d__rigid_body_origin[iCoordSys].y; */
-	/* vo.z -= d__rigid_body_origin[iCoordSys].z; */
-
 	    // CONIC >>>
-	    forward_transform(&xyz, &xyz_GS,
-			      d__conic_R+iCoordSys*9,
-			      d__conic_origin+iCoordSys);
-	    /* forward_transform(&d__origin, &d__origin, */
-	    /* 		      d__conic_R+iCoordSys*9, &vo); */
-	    forward_transform_centered(&klm, &klm_GS,
+	    backward_transform_centered(&xyz, &xyz_GS,
+				       d__conic_R+iCoordSys*9);
+	    backward_transform_centered(&klm, &klm_GS,
 				       d__conic_R+iCoordSys*9);
 
 	    <<GMT intersection with conic>>
@@ -2378,11 +2317,16 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 	    klm.z += a*M;
 
 	    // CONIC <<<
-	    backward_transform(&(d__ray[ij].coordinates), &xyz,
-			       d__conic_R+iCoordSys*9,
-			       d__conic_origin+iCoordSys);
-	    backward_transform_centered(&(d__ray[ij].directions), &klm,
+	    forward_transform_centered(&xyz_GS, &xyz,
 					d__conic_R+iCoordSys*9);
+	    forward_transform_centered(&klm_GS, &klm,
+					d__conic_R+iCoordSys*9);
+	    // RIGID_BODY <<<
+	    backward_transform(&(d__ray[ij].coordinates), &xyz_GS,
+			       d__motion_R+iCoordSys*9,
+			       d__motion_origin+iCoordSys);
+	    backward_transform_centered(&(d__ray[ij].directions), &klm_GS,
+					d__motion_R+iCoordSys*9);
 	   }
       }
   }
