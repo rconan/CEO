@@ -77,6 +77,7 @@ void thin_lens(bundle *rays);
 
 <<bundle coordinates kernel>>
 <<bundle coordinates kernel (box)>>
+<<to z plane kernel>>
 <<gathering ray coordinates kernel>>
 <<gathering ray directions kernel>>
 <<gathering ray optical path length kernel>>
@@ -86,14 +87,7 @@ void thin_lens(bundle *rays);
 <<GMT blocking kernel>>
 <<GMT aperture intersection>>
 
-<<ray bundle setup>>
-<<ray bundle setup (box)>>
-<<ray bundle cleanup>>
-<<gathering ray coordinates>>
-<<gathering ray directions>>
-<<gathering ray optical path length>>
-<<gathering ray vignetting map>>
-<<bundle reset>>
+<<ray bundle functions>>
 
 <<coordinate system functions>>
 
@@ -145,6 +139,7 @@ cdef extern from "rayTracing.h":
         void setup(source *, rtd , int , int , vector )
         void setup(source *, rtd , int , vector )
         void cleanup()
+        void to_z_plane(rtd)
         void get_coordinates(double *)
         void get_directions(double *)
         void get_optical_path_length(double *)
@@ -216,6 +211,9 @@ def __dealloc__(self):
 
 def reset(self):
     self._c_bundle.reset()
+
+def to_z_plane(self,rtd z_plane):
+    self._c_bundle.to_z_plane(z_plane)
 
 property coordinates:
     def __get__(self):
@@ -480,6 +478,7 @@ struct bundle {
   void setup(source *src, rtd RADIUS, int N_RADIUS, int N_THETA, vector origin);
   void setup(source *src, rtd L, int N_L, vector origin);
   void cleanup(void);
+  void to_z_plane(rtd z_in);
   void get_coordinates(double *d__coord);
   void get_directions(double *d__dir);
   void get_optical_path_length(double *d__opl);
@@ -489,9 +488,11 @@ struct bundle {
 @ 
 A bundle allocates an array of [[N_RAY]] rays on the device
 <<ray bundle parameters>>=
-int N_RAY;
+int N_RAY, N_L;
+rtd L;
 ray *d__ray;
 vector *d__origin;
+source *src;
 @
 \subsection{Setup \& Cleanup}
 \label{sec:bundle-setup--cleanup}
@@ -500,7 +501,7 @@ A ray bundle is specified with either the polar or cartesian coordinates of the 
 The direction cosine are derived from the coordinates of a source object.
 
 The polar coordinates are defined with the sampling of the radius [[N_RADIUS]] from 0 to [[RADIUS]] and with the sampling of the azimuth [[N_THETA]].
-<<ray bundle setup>>=
+<<ray bundle functions>>=
 void bundle::setup(source *src, rtd RADIUS, int N_RADIUS, 
 		   int N_THETA, vector origin)
 {
@@ -567,9 +568,12 @@ __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
 @ 
 
 The cartesian coordinates are defined with the sampling of the square box length [[N_L]] from $-[[L]]$ to [[L]].
-<<ray bundle setup (box)>>=
-void bundle::setup(source *src, rtd L, int N_L, vector origin)
+<<ray bundle functions>>=
+void bundle::setup(source *_src_, rtd _L_, int _N_L_, vector origin)
 {
+  N_L = _N_L_;
+  L = _L_;
+  src = _src_;
   N_RAY = N_L*N_L;
   HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
@@ -624,13 +628,49 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
 }
 @
 Memory is freed with
-<<ray bundle cleanup>>=
+<<ray bundle functions>>=
 void bundle::cleanup(void) 
 {
   fprintf(stdout,"@(CEO)>bundle: freeing memory!\n");
   HANDLE_ERROR( cudaFree( d__ray ) );
   HANDLE_ERROR( cudaFree( d__origin ) );
 }
+@
+The rays are propagated to the plane $z=[[z__in]]$ with
+<<ray bundle functions>>= 
+void bundle::to_z_plane(rtd z_in)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_RAY/256+1,1);
+  to_z_plane_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, z_in);
+}
+@ where
+<<to z plane kernel>>=
+__global__ void to_z_plane_kernel(ray *d__ray, int N_RAY, rtd z_plane)
+{
+  int i, j, k;
+  rtd s;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( (k<N_RAY ) && (d__ray[k].v) )
+  {
+    if (d__ray[k].directions.z==0)
+       return;
+    s = (z_plane - d__ray[k].coordinates.z)/d__ray[k].directions.z;
+    d__ray[k].coordinates.x = d__ray[k].coordinates.x + s*d__ray[k].directions.x;
+    d__ray[k].coordinates.y = d__ray[k].coordinates.y + s*d__ray[k].directions.y;
+    d__ray[k].coordinates.z = z_plane;
+    d__ray[k].optical_path_length += s;
+  }
+}
+@ 
+The coordinates, directions, optical path length and vignetting map are copied into arrays with the following functions:
+<<ray bundle functions>>= 
+<<gathering ray coordinates>>
+<<gathering ray directions>>
+<<gathering ray optical path length>>
+<<gathering ray vignetting map>>
 @ 
 <<gathering ray coordinates>>=
 void bundle::get_coordinates(double *d__coord)
@@ -717,12 +757,16 @@ __global__ void get_vignetting_kernel(double *d__v, ray *d__ray, int N_RAY)
 }
 @ 
 The ray vignetting is reset with
-<<bundle reset>>=
+<<ray bundle functions>>= 
 void bundle::reset(void) 
 {
+  /* dim3 blockDim(16,16); */
+  /* dim3 gridDim(N_RAY/256+1,1);   */
+  /* reset_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY); */
   dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1);  
-  reset_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY);
+  dim3 gridDim(N_L/16+1,N_L/16+1);
+  ray_coordinates_box LLL gridDim , blockDim, src->N_SRC RRR (d__ray, N_RAY, src->dev_ptr,
+							      L, N_L, d__origin);
 }
 @ with 
 <<bundle reset kernel>>=
@@ -1481,30 +1525,6 @@ __host__ __device__  void forward_transform_centered(vector *v_out, vector *v_in
   v_out->y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
   v_out->z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
 }  
-<<rays coordinates to surface>>=
-u = d__ray[ij].coordinates.x - d__origin->x;
-v = d__ray[ij].coordinates.y - d__origin->y;
-w = d__ray[ij].coordinates.z - d__origin->z;
-
-x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
-y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
-z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
-
-d__ray[ij].coordinates.x = x;
-d__ray[ij].coordinates.y = y;
-d__ray[ij].coordinates.z = z;    
-
-u = d__ray[ij].directions.x;
-v = d__ray[ij].directions.y;
-w = d__ray[ij].directions.z;
-
-x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
-y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
-z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
-
-d__ray[ij].directions.x = x;
-d__ray[ij].directions.y = y;
-d__ray[ij].directions.z = z;    
 @ 
 <<transformation to rays system>>=
 void transform_to_R(bundle *rays, conic *F)
@@ -1571,19 +1591,6 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
   v_out->y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
   v_out->z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
 }  
-@ 
-<<rays coordinates to rays>>=
-u = d__ray[ij].coordinates.x;
-v = d__ray[ij].coordinates.y;
-w = d__ray[ij].coordinates.z;
-
-x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
-y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
-z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
-
-d__ray[ij].coordinates.x = x + d__origin->x;
-d__ray[ij].coordinates.y = y + d__origin->y;
-d__ray[ij].coordinates.z = z + d__origin->z;    
 @ 
 
 \subsection{Surface intersection}
@@ -1905,13 +1912,16 @@ A new structure to hold GMT M1 and M2 parameters and functions is defined.
 <<GMT M1 structure>>=
 struct gmt_m1 {
   <<GMT M12 parameters>>
-  void setup(float _D_, int _D_px_);
-  void cleanup(void);
-  void update(vector _origin_, vector _euler_angles_,int idx);
-  void trace(bundle *rays);
-  void blocking(bundle *rays);
-  void test_ray_tracing(void);
+  <<GMT M12 functions>>
 };
+@  with
+<<GMT M12 functions>>=
+void setup(float _D_, int _D_px_);
+void cleanup(void);
+void update(vector _origin_, vector _euler_angles_,int idx);
+void trace(bundle *rays);
+void blocking(bundle *rays);
+void test_ray_tracing(void);
 @ 
 The GMT M12 parameters are:
 \begin{itemize}
@@ -2162,17 +2172,20 @@ void gmt_m1::blocking(bundle *rays)
  dim3 gridDim(rays->N_RAY/256+1,1);
  m1_blocking_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
 					     Rri2, R2,
+					     aperture_CS.d__R,
+					     aperture_CS.d__origin,
 					     rigid_body_CS.d__R,
 					     rigid_body_CS.d__origin,
-					     aperture_CS.d__R,
-					     aperture_CS.d__origin);
+					     motion_CS.d__R,
+					     motion_CS.d__origin);
  GMT_intersection LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY);
 @ and with the kernel
 <<GMT blocking kernel>>=
 __global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY, 
 				float inner2, float outer2,
+				rtd *d__aperture_R, vector *d__aperture_origin,
 				rtd *d__rigid_body_R, vector *d__rigid_body_origin,
-				rtd *d__aperture_R, vector *d__aperture_origin)
+				rtd *d__motion_R, vector *d__motion_origin)
 {
   int i, j, ij, iCoordSys;
   rtd rho2;
@@ -2187,18 +2200,8 @@ __global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY,
 
     for (iCoordSys=0; iCoordSys<7; iCoordSys++)
       {
-	// RIGID BODY >>>  
-	forward_transform(&xyz_GS, &(d__ray[ij].coordinates),
-			  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
-	forward_transform_centered(&klm_GS, &(d__ray[ij].directions),
-				   d__rigid_body_R+iCoordSys*9);
 
-	// APERTURE >>>
-	forward_transform(&xyz, &xyz_GS,
-			  d__aperture_R+iCoordSys*9,
-			  d__aperture_origin+iCoordSys);
-	forward_transform_centered(&klm, &klm_GS,
-				   d__aperture_R+iCoordSys*9);
+        <<from global CS to aperture CS>>
 
 	x = xyz.x;
 	y = xyz.y;
@@ -2281,24 +2284,8 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
       {
 
 	d__origin = d__conic_self_origin[iCoordSys];
-	// RIGID BODY >>>  
-	forward_transform(&xyz_GS, &(d__ray[ij].coordinates),
-			  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
-	forward_transform_centered(&klm_GS, &(d__ray[ij].directions),
-				   d__rigid_body_R+iCoordSys*9);
 
-	// MOTION >>>  
-	forward_transform(&xyz_GS, &xyz_GS,
-			  d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
-	forward_transform_centered(&klm_GS, &klm_GS,
-				   d__motion_R+iCoordSys*9);
-
-	// APERTURE >>>
-	forward_transform(&xyz, &xyz_GS,
-			  d__aperture_R+iCoordSys*9,
-			  d__aperture_origin+iCoordSys);
-	forward_transform_centered(&klm, &klm_GS,
-				   d__aperture_R+iCoordSys*9);
+        <<from global CS to aperture CS>>
 
 	x = xyz.x;
 	y = xyz.y;
@@ -2401,7 +2388,28 @@ void gmt_m1::test_ray_tracing(void)
     }
     
 }
-@ and
+@ 
+The transformation of the coordinates and directions of the rays is performed in 3 steps, (i) the rays are transformed into the CS of the segment, (ii) the segments are perturbed and (iii) the rays are transformed into the CS of the aperture:
+<<from global CS to aperture CS>>=
+// RIGID BODY >>> 
+forward_transform(&xyz_GS, &(d__ray[ij].coordinates),
+d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
+forward_transform_centered(&klm_GS, &(d__ray[ij].directions),
+d__rigid_body_R+iCoordSys*9);
+
+// MOTION >>>  
+forward_transform(&xyz_GS, &xyz_GS,
+d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
+forward_transform_centered(&klm_GS, &klm_GS,
+d__motion_R+iCoordSys*9);
+
+// APERTURE >>>
+forward_transform(&xyz, &xyz_GS,
+d__aperture_R+iCoordSys*9,
+d__aperture_origin+iCoordSys);
+forward_transform_centered(&klm, &klm_GS,
+d__aperture_R+iCoordSys*9);
+@ The vignetting by the aperture is computed as the intersection between the aperture mask and the ray vignetting flags: 
 <<GMT aperture intersection>>=
 __global__ void GMT_intersection(char *mask, ray *d__ray, int N_RAY)
 {
@@ -2415,64 +2423,14 @@ __global__ void GMT_intersection(char *mask, ray *d__ray, int N_RAY)
   }
 }
 @
-The rays coordinates and cosine directions are transformed into the aperture coordinates system:
-<<GMT transformation to aperture coordinate system>>=
- idx = iCoordSys;
-
- u = d__ray[ij].coordinates.x - d__aperture_origin[idx].x;
- v = d__ray[ij].coordinates.y - d__aperture_origin[idx].y;
- w = d__ray[ij].coordinates.z - d__aperture_origin[idx].z;
-
- idx = iCoordSys*9;
-
- x = d__aperture_R[0+idx]*u + d__aperture_R[3+idx]*v + d__aperture_R[6+idx]*w;
- y = d__aperture_R[1+idx]*u + d__aperture_R[4+idx]*v + d__aperture_R[7+idx]*w;
- z = d__aperture_R[2+idx]*u + d__aperture_R[5+idx]*v + d__aperture_R[8+idx]*w;
-
- u = d__ray[ij].directions.x;
- v = d__ray[ij].directions.y;
- w = d__ray[ij].directions.z;
-
- k = d__aperture_R[0+idx]*u + d__aperture_R[3+idx]*v + d__aperture_R[6+idx]*w;
- l = d__aperture_R[1+idx]*u + d__aperture_R[4+idx]*v + d__aperture_R[7+idx]*w;
- m = d__aperture_R[2+idx]*u + d__aperture_R[5+idx]*v + d__aperture_R[8+idx]*w;
-@
 The intersection with the aperture plane is computed with
 <<GMT intersection with aperture plane>>=
 if (m==0) { return; }
 s0 = -z/m;
 x1 = x + k*s0;
 y1 = y + l*s0;
-@ The rays coordinates and cosine directions are transformed into the aperture coordinates system:
-<<GMT transformation to conic coordinate system>>=
-idx = iCoordSys;
-
-u = d__ray[ij].coordinates.x - d__conic_origin[idx].x;
-v = d__ray[ij].coordinates.y - d__conic_origin[idx].y;
-w = d__ray[ij].coordinates.z - d__conic_origin[idx].z;
-
-idx = iCoordSys*9;
-
-x = d__conic_R[0+idx]*u + d__conic_R[3+idx]*v + d__conic_R[6+idx]*w;
-y = d__conic_R[1+idx]*u + d__conic_R[4+idx]*v + d__conic_R[7+idx]*w;
-z = d__conic_R[2+idx]*u + d__conic_R[5+idx]*v + d__conic_R[8+idx]*w;
-
-d__ray[ij].coordinates.x = x;
-d__ray[ij].coordinates.y = y;
-d__ray[ij].coordinates.z = z;    
-
-u = d__ray[ij].directions.x;
-v = d__ray[ij].directions.y;
-w = d__ray[ij].directions.z;
-
-k = d__conic_R[0+idx]*u + d__conic_R[3+idx]*v + d__conic_R[6+idx]*w;
-l = d__conic_R[1+idx]*u + d__conic_R[4+idx]*v + d__conic_R[7+idx]*w;
-m = d__conic_R[2+idx]*u + d__conic_R[5+idx]*v + d__conic_R[8+idx]*w;
-
-d__ray[ij].directions.x = k;
-d__ray[ij].directions.y = l;
-d__ray[ij].directions.z = m;  
-@ The intersection with the plane $z=0$ in the conic coordinate transformed is computed with  
+@ 
+The intersection with the plane $z=0$ in the conic coordinate transformed is computed with  
 <<GMT intersection with conic>>=
 k  = klm.x;
 l  = klm.y;
@@ -2511,38 +2469,6 @@ for (j=0; j<N_ITERATION; j++)
     }
   s0 = s1;
 }
-@ The rays coordinates and cosine directions are transformed back into the global coordinate system:
-<<GMT transformation to global coordinate system>>=
-idx = iCoordSys;
-
-u = d__ray[ij].coordinates.x;
-v = d__ray[ij].coordinates.y;
-w = d__ray[ij].coordinates.z;
-
-idx = iCoordSys*9;
-
-x = d__conic_R[0+idx]*u + d__conic_R[1+idx]*v + d__conic_R[2+idx]*w;
-y = d__conic_R[3+idx]*u + d__conic_R[4+idx]*v + d__conic_R[5+idx]*w;
-z = d__conic_R[6+idx]*u + d__conic_R[7+idx]*v + d__conic_R[8+idx]*w;
-
-idx = iCoordSys;
-d__ray[ij].coordinates.x = x + d__conic_origin[idx].x;
-d__ray[ij].coordinates.y = y + d__conic_origin[idx].y;
-d__ray[ij].coordinates.z = z + d__conic_origin[idx].z;    
-
-u = d__ray[ij].directions.x;
-v = d__ray[ij].directions.y;
-w = d__ray[ij].directions.z;
-
-idx = iCoordSys*9;
-
-x = d__conic_R[0+idx]*u + d__conic_R[1+idx]*v + d__conic_R[2+idx]*w;
-y = d__conic_R[3+idx]*u + d__conic_R[4+idx]*v + d__conic_R[5+idx]*w;
-z = d__conic_R[6+idx]*u + d__conic_R[7+idx]*v + d__conic_R[8+idx]*w;
-
-d__ray[ij].directions.x = x;
-d__ray[ij].directions.y = y;
-d__ray[ij].directions.z = z;    
 @
 \section{GMT M2}
 \label{sec:gmt-m2}
@@ -2551,11 +2477,7 @@ A new structure to hold GMT M1 parameters and functions is defined.
 <<GMT M2 structure>>=
 struct gmt_m2 {
   <<GMT M12 parameters>>
-  void setup(float _D_, int _D_px_);
-  void cleanup(void);
-  void trace(bundle *rays);
-  void blocking(bundle *rays);
-  void update(vector _origin_, vector _euler_angles_,int idx);
+  <<GMT M12 functions>>
 };
 @
 \subsection{Setup \& Cleanup}
