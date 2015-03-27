@@ -78,11 +78,9 @@ void thin_lens(bundle *rays);
 <<bundle coordinates kernel>>
 <<bundle coordinates kernel (box)>>
 <<to z plane kernel>>
-<<gathering ray coordinates kernel>>
-<<gathering ray directions kernel>>
-<<gathering ray optical path length kernel>>
-<<gathering ray vignetting map kernel>>
+<<ray bundle kernels>>
 <<bundle reset kernel>>
+<<GMT chief ray tracing kernel>>
 <<GMT ray tracing kernel>>
 <<GMT blocking kernel>>
 <<GMT aperture intersection>>
@@ -135,14 +133,17 @@ cdef extern from "rayTracing.h":
         float *float_R        
     cdef cppclass bundle:
         int N_RAY
-        ray *d__ray
+        ray *d__ray, *d__chief_ray
         void setup(source *, rtd , int , int , vector )
         void setup(source *, rtd , int , vector )
         void cleanup()
         void to_z_plane(rtd)
         void get_coordinates(double *)
+        void get_chief_coordinates(double *)
         void get_directions(double *)
         void get_optical_path_length(double *)
+        void get_chief_optical_path_length(double *)
+        void get_optical_path_difference(double *)
         void get_vignetting(double *)
 	void reset()
     cdef cppclass conic:
@@ -221,6 +222,12 @@ property coordinates:
         self._c_bundle.get_coordinates(x._c_gpu.dev_data)
         return x
 
+property chief_coordinates:
+    def __get__(self):
+        x = cuDoubleArray(shape=(1,3),dev_malloc=True)
+        self._c_bundle.get_chief_coordinates(x._c_gpu.dev_data)
+        return x
+
 property directions:
     def __get__(self):
         x = cuDoubleArray(shape=(self._c_bundle.N_RAY,3),dev_malloc=True)
@@ -231,6 +238,18 @@ property optical_path_length:
         def __get__(self):
             x = cuDoubleArray(shape=(self._c_bundle.N_RAY,1),dev_malloc=True)
             self._c_bundle.get_optical_path_length(x._c_gpu.dev_data)
+            return x
+
+property chief_optical_path_length:
+        def __get__(self):
+            x = cuDoubleArray(shape=(1,1),dev_malloc=True)
+            self._c_bundle.get_chief_optical_path_length(x._c_gpu.dev_data)
+            return x
+
+property optical_path_difference:
+        def __get__(self):
+            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,1),dev_malloc=True)
+            self._c_bundle.get_optical_path_difference(x._c_gpu.dev_data)
             return x
 
 property vignetting:
@@ -460,6 +479,10 @@ vector surface_normal;
 the optical path length:
 <<ray data>>=
 rtd optical_path_length;
+@ 
+the optical path difference
+<<ray data>>=
+rtd optical_path_difference;
 @ the vignetting flag [[v]], $[[v]]=0$ means the ray is vignetted:
 <<ray data>>=
 char v;
@@ -480,18 +503,33 @@ struct bundle {
   void cleanup(void);
   void to_z_plane(rtd z_in);
   void get_coordinates(double *d__coord);
+  void get_chief_coordinates(double *d__coord);
   void get_directions(double *d__dir);
+  void get_chief_optical_path_length(double *d__opl);
   void get_optical_path_length(double *d__opl);
+  void get_optical_path_difference(double *d__opd);
   void get_vignetting(double *d__v);
   void reset(void);
 };
 @ 
 A bundle allocates an array of [[N_RAY]] rays on the device
 <<ray bundle parameters>>=
-int N_RAY, N_L;
-rtd L;
+int N_RAY;
 ray *d__ray;
+@ 
+The x and y coordinates of the [[origin]] vector specifies the location of the center of the ray bundle when it crosses the (x,y) plane of the first surface.
+The z coordinate specifies the height of the ray bundle with respect to the first surface.
+<<ray bundle parameters>>=
 vector *d__origin;
+@ 
+The chief ray is defined with
+<<ray bundle parameters>>=
+ray *d__chief_ray; 
+vector *d__chief_origin;
+@
+<<ray bundle parameters>>=
+int N_L;
+rtd L;
 source *src;
 @
 \subsection{Setup \& Cleanup}
@@ -510,6 +548,7 @@ void bundle::setup(source *src, rtd RADIUS, int N_RADIUS,
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
+  <<chief ray allocation>>
   <<bundle coordinates>>
 }
 @ 
@@ -560,13 +599,26 @@ __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
     d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
     d__ray[k].directions.z  = cos(src[iSource].zenith);
     d__ray[k].optical_path_length = 0.0;
+    d__ray[k].optical_path_difference = 0.0;
     d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
     d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
     d__ray[k].v = 1;
   }
 }
-@ 
-
+@
+The chief ray is defined with
+<<chief ray allocation>>=
+vector chief_origin;
+chief_origin.x = 0.0;
+chief_origin.y = 0.0;
+chief_origin.z = origin.z;
+HANDLE_ERROR( cudaMalloc((void**)&d__chief_ray, sizeof(vector) ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__chief_origin, sizeof(vector) ) );
+HANDLE_ERROR( cudaMemcpy( d__chief_origin, &chief_origin, 
+                         sizeof(vector), cudaMemcpyHostToDevice ) );
+ray_coordinates LLL 1 , 1, src->N_SRC RRR (d__chief_ray, 1, src->dev_ptr,
+                                           0.0, 2, 1, d__chief_origin);
+@
 The cartesian coordinates are defined with the sampling of the square box length [[N_L]] from $-[[L]]$ to [[L]].
 <<ray bundle functions>>=
 void bundle::setup(source *_src_, rtd _L_, int _N_L_, vector origin)
@@ -579,6 +631,7 @@ void bundle::setup(source *_src_, rtd _L_, int _N_L_, vector origin)
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
+  <<chief ray allocation>>
   <<bundle coordinates (box)>>
 }
 @ 
@@ -621,6 +674,7 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
     d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
     d__ray[k].directions.z  = cos(src[iSource].zenith);
     d__ray[k].optical_path_length = 0.0;
+    d__ray[k].optical_path_difference = 0.0;
     d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
     d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
     d__ray[k].v = 1;
@@ -633,20 +687,27 @@ void bundle::cleanup(void)
 {
   fprintf(stdout,"@(CEO)>bundle: freeing memory!\n");
   HANDLE_ERROR( cudaFree( d__ray ) );
+  HANDLE_ERROR( cudaFree( d__chief_ray ) );
   HANDLE_ERROR( cudaFree( d__origin ) );
+  HANDLE_ERROR( cudaFree( d__chief_origin ) );
 }
 @
+
+\subsection{Propagation parametric geometric equation}
+\label{sec:prop-param-geom}
+
 The rays are propagated to the plane $z=[[z__in]]$ with
 <<ray bundle functions>>= 
 void bundle::to_z_plane(rtd z_in)
 {
+  to_z_plane_chief_kernel LLL 1 , 1 RRR (d__chief_ray, 1, z_in);
   dim3 blockDim(16,16);
   dim3 gridDim(N_RAY/256+1,1);
-  to_z_plane_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, z_in);
+  to_z_plane_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, z_in, d__chief_ray);
 }
 @ where
 <<to z plane kernel>>=
-__global__ void to_z_plane_kernel(ray *d__ray, int N_RAY, rtd z_plane)
+  __global__ void to_z_plane_kernel(ray *d__ray, int N_RAY, rtd z_plane, ray *d__chief_ray)
 {
   int i, j, k;
   rtd s;
@@ -661,16 +722,42 @@ __global__ void to_z_plane_kernel(ray *d__ray, int N_RAY, rtd z_plane)
     d__ray[k].coordinates.x = d__ray[k].coordinates.x + s*d__ray[k].directions.x;
     d__ray[k].coordinates.y = d__ray[k].coordinates.y + s*d__ray[k].directions.y;
     d__ray[k].coordinates.z = z_plane;
-    d__ray[k].optical_path_length += s;
+    d__ray[k].optical_path_length = s;
+    d__ray[k].optical_path_difference += 
+      d__ray[k].optical_path_length - d__chief_ray->optical_path_length;
   }
 }
+__global__ void to_z_plane_chief_kernel(ray *d__ray, int N_RAY, rtd z_plane)
+{
+  int k = 0;
+  rtd s;
+  if (d__ray[k].directions.z==0)
+    return;
+  s = (z_plane - d__ray[k].coordinates.z)/d__ray[k].directions.z;
+  d__ray[k].coordinates.x = d__ray[k].coordinates.x + s*d__ray[k].directions.x;
+  d__ray[k].coordinates.y = d__ray[k].coordinates.y + s*d__ray[k].directions.y;
+  d__ray[k].coordinates.z = z_plane;
+  d__ray[k].optical_path_length = s;
+}
 @ 
+
+\subsection{Gathering data}
+\label{sec:gathering-data}
+
 The coordinates, directions, optical path length and vignetting map are copied into arrays with the following functions:
 <<ray bundle functions>>= 
 <<gathering ray coordinates>>
 <<gathering ray directions>>
 <<gathering ray optical path length>>
+<<gathering ray optical path difference>>
 <<gathering ray vignetting map>>
+@ 
+<<ray bundle kernels>>= 
+<<gathering ray coordinates kernel>>
+<<gathering ray directions kernel>>
+<<gathering ray optical path length kernel>>
+<<gathering ray optical path difference kernel>>
+<<gathering ray vignetting map kernel>>
 @ 
 <<gathering ray coordinates>>=
 void bundle::get_coordinates(double *d__coord)
@@ -678,6 +765,12 @@ void bundle::get_coordinates(double *d__coord)
   dim3 blockDim(16,16);
   dim3 gridDim(N_RAY/256+1,1);
   get_coordinates_kernel LLL gridDim , blockDim RRR (d__coord, d__ray, N_RAY);
+}
+@ 
+<<gathering ray coordinates>>=
+void bundle::get_chief_coordinates(double *d__coord)
+{
+  get_coordinates_kernel LLL 1,1 RRR (d__coord, d__chief_ray, 1);
 }
 @ 
 <<gathering ray coordinates kernel>>=
@@ -726,6 +819,12 @@ void bundle::get_optical_path_length(double *d__opl)
   get_optical_path_length_kernel LLL gridDim , blockDim RRR (d__opl, d__ray, N_RAY);
 }
 @ 
+<<gathering ray optical path length>>=
+void bundle::get_chief_optical_path_length(double *d__opl)
+{
+  get_optical_path_length_kernel LLL 1 , 1 RRR (d__opl, d__chief_ray, 1);
+}
+@ 
 <<gathering ray optical path length kernel>>=
 __global__ void get_optical_path_length_kernel(double *d__opl, ray *d__ray, int N_RAY)
 {
@@ -735,6 +834,25 @@ __global__ void get_optical_path_length_kernel(double *d__opl, ray *d__ray, int 
   k = j * gridDim.x * blockDim.x + i;
   if ( k<N_RAY )
     d__opl[k]   = d__ray[k].optical_path_length;
+}
+@ 
+<<gathering ray optical path difference>>=
+void bundle::get_optical_path_difference(double *d__opd)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_RAY/256+1,1);
+  get_optical_path_difference_kernel LLL gridDim , blockDim RRR (d__opd, d__ray, N_RAY);
+}
+@ 
+<<gathering ray optical path difference kernel>>=
+__global__ void get_optical_path_difference_kernel(double *d__opd, ray *d__ray, int N_RAY)
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( k<N_RAY )
+    d__opd[k]   = d__ray[k].optical_path_difference;
 }
 @ 
 <<gathering ray vignetting map>>=
@@ -756,6 +874,10 @@ __global__ void get_vignetting_kernel(double *d__v, ray *d__ray, int N_RAY)
     d__v[k]   = (d__ray[k].v) ? 1.0 : 0.0;
 }
 @ 
+
+\subsection{Resetting}
+\label{sec:resetting}
+
 The ray vignetting is reset with
 <<ray bundle functions>>= 
 void bundle::reset(void) 
@@ -763,6 +885,8 @@ void bundle::reset(void)
   /* dim3 blockDim(16,16); */
   /* dim3 gridDim(N_RAY/256+1,1);   */
   /* reset_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY); */
+  ray_coordinates LLL 1 , 1, src->N_SRC RRR (d__chief_ray, 1, src->dev_ptr,
+					     0.0, 2, 1, d__chief_origin);
   dim3 blockDim(16,16);
   dim3 gridDim(N_L/16+1,N_L/16+1);
   ray_coordinates_box LLL gridDim , blockDim, src->N_SRC RRR (d__ray, N_RAY, src->dev_ptr,
@@ -2201,22 +2325,10 @@ __global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY,
     for (iCoordSys=0; iCoordSys<7; iCoordSys++)
       {
 
-        <<from global CS to aperture CS>>
+        <<from global CS to motion CS>>
 
-	x = xyz.x;
-	y = xyz.y;
-	z = xyz.z;
-	k = klm.x;
-	l = klm.y;
-	m = klm.z;
+	<<from motion CS to aperture intersection>>
 
-        <<GMT intersection with aperture plane>>
-
-        rho2 = x1*x1 + y1*y1;
-	if ( (iCoordSys==0) && (rho2<inner2) )
-	  {
-	    return;
-	  }
 	if (rho2<=outer2)
 	  {
 	    mask[ij] = 0;
@@ -2240,6 +2352,18 @@ void gmt_m1::trace(bundle *rays)
  R2 = D_clear*D_clear*0.25;
  Rri2 = R2*ri*ri;
  // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
+ m1_trace_chief_kernel LLL 1 , 1 RRR (V.m, rays->d__chief_ray, 1, 
+					     Rri2, R2,
+					     aperture_CS.d__R,
+					     aperture_CS.d__origin,
+					     conic_CS.d__R,
+					     conic_CS.d__origin,
+					     conic_k, conic_c,
+					     d__conic_origin,
+					     rigid_body_CS.d__R,
+					     rigid_body_CS.d__origin,
+					     motion_CS.d__R,
+					     motion_CS.d__origin);
  dim3 blockDim(16,16);
  dim3 gridDim(rays->N_RAY/256+1,1);
  HANDLE_ERROR( cudaMemset(V.m, 0, sizeof(char)*rays->N_RAY ) );
@@ -2254,7 +2378,8 @@ void gmt_m1::trace(bundle *rays)
 					     rigid_body_CS.d__R,
 					     rigid_body_CS.d__origin,
 					     motion_CS.d__R,
-					     motion_CS.d__origin);
+					     motion_CS.d__origin,
+					     rays->d__chief_ray);
  GMT_intersection LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY);
 @ and with the kernel
 <<GMT ray tracing kernel>>=
@@ -2265,7 +2390,8 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
                                 const rtd Fk, const rtd Fc,
                                 vector *d__conic_self_origin,
 				rtd *d__rigid_body_R, vector *d__rigid_body_origin,
-				rtd *d__motion_R, vector *d__motion_origin)
+				rtd *d__motion_R, vector *d__motion_origin,
+				ray *d__chief_ray)
 {
   int i, j, ij, iCoordSys;
   rtd rho2;
@@ -2285,63 +2411,53 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 
 	d__origin = d__conic_self_origin[iCoordSys];
 
-        <<from global CS to aperture CS>>
+        <<from global CS to motion CS>>
 
-	x = xyz.x;
-	y = xyz.y;
-	z = xyz.z;
-	k = klm.x;
-	l = klm.y;
-	m = klm.z;
-
-        <<GMT intersection with aperture plane>>
-
-        rho2 = x1*x1 + y1*y1;
-	if ( (iCoordSys==0) && (rho2<inner2) )
-	  {
-	    return;
-	  }
+	<<from motion CS to aperture intersection>>
 
 	if (rho2<=outer2)
 	  {
 	    mask[ij] = 1;
 
-	    // CONIC >>>
-	    backward_transform_centered(&xyz, &xyz_GS,
-				       d__conic_R+iCoordSys*9);
-	    backward_transform_centered(&klm, &klm_GS,
-				       d__conic_R+iCoordSys*9);
-
-	    <<GMT intersection with conic>>
-
-	    G2 = K*K + L*L + M*M;
-	    a  = k*K + l*L + m*M;
-
-	    a *= -2.0/G2;
-	    klm.x += a*K;
-	    klm.y += a*L;
-	    klm.z += a*M;
-
-	    // CONIC <<<
-	    forward_transform_centered(&xyz_GS, &xyz,
-					d__conic_R+iCoordSys*9);
-	    forward_transform_centered(&klm_GS, &klm,
-					d__conic_R+iCoordSys*9);
-	    // MOTION <<<
-	    backward_transform(&xyz_GS, &xyz_GS,
-			      d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
-	    backward_transform_centered(&klm_GS, &klm_GS,
-				       d__motion_R+iCoordSys*9);
-
-	    // RIGID_BODY <<<
-	    backward_transform(&(d__ray[ij].coordinates), &xyz_GS,
-			       d__rigid_body_R+iCoordSys*9,
-			       d__rigid_body_origin+iCoordSys);
-	    backward_transform_centered(&(d__ray[ij].directions), &klm_GS,
-					d__rigid_body_R+iCoordSys*9);
-	   }
+            <<from motion CS to conic intersection and back to global CS>>
+	    d__ray[ij].optical_path_difference += 
+              d__ray[ij].optical_path_length - d__chief_ray->optical_path_length;
+	  }
       }
   }
+}
+@ and the chief ray kernel
+<<GMT chief ray tracing kernel>>=
+__global__ void m1_trace_chief_kernel(char *mask, ray *d__ray, int N_RAY, 
+				float inner2, float outer2,
+				rtd *d__aperture_R, vector *d__aperture_origin,
+				rtd *d__conic_R, vector *d__conic_origin,
+                                const rtd Fk, const rtd Fc,
+                                vector *d__conic_self_origin,
+				rtd *d__rigid_body_R, vector *d__rigid_body_origin,
+				rtd *d__motion_R, vector *d__motion_origin)
+{
+  int i, j, ij, iCoordSys;
+  rtd x1, y1, s0, k, l, m;
+  rtd s1, S, K, L ,M, dSds;
+  rtd G2, a;
+  vector d__origin, xyz, klm, xyz_GS, klm_GS;
+  /* i = blockIdx.x * blockDim.x + threadIdx.x; */
+  /* j = threadIdx.y; */
+  /* //  iCoordSys = blockIdx.y; */
+  /* ij = j * gridDim.x * blockDim.x + i; */
+  /* if  ( ij<N_RAY ) */
+  /* { */
+
+  ij = 0;
+    iCoordSys = 0;
+    d__origin = d__conic_self_origin[iCoordSys];
+
+    <<from global CS to motion CS>>
+
+    <<from motion CS to conic intersection and back to global CS>>
+
+  /* } */
 }
 @ The following is a test routine to validate the sequence of transformation in the ray tracing kernel:
 <<GMT M1 functions>>=
@@ -2389,27 +2505,81 @@ void gmt_m1::test_ray_tracing(void)
     
 }
 @ 
-The transformation of the coordinates and directions of the rays is performed in 3 steps, (i) the rays are transformed into the CS of the segment, (ii) the segments are perturbed and (iii) the rays are transformed into the CS of the aperture:
-<<from global CS to aperture CS>>=
+The transformation of the coordinates and directions of the rays is performed in 3 steps, (i) the rays are transformed into the CS of the segment, (ii) the segments are perturbed
+<<from global CS to motion CS>>=
 // RIGID BODY >>> 
 forward_transform(&xyz_GS, &(d__ray[ij].coordinates),
-d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
+		  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
 forward_transform_centered(&klm_GS, &(d__ray[ij].directions),
-d__rigid_body_R+iCoordSys*9);
+			   d__rigid_body_R+iCoordSys*9);
 
 // MOTION >>>  
 forward_transform(&xyz_GS, &xyz_GS,
-d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
+		  d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
 forward_transform_centered(&klm_GS, &klm_GS,
-d__motion_R+iCoordSys*9);
-
+			    d__motion_R+iCoordSys*9);
+@  and (iii) the rays are transformed into the CS of the aperture:
+<<from motion CS to aperture intersection>>=
 // APERTURE >>>
 forward_transform(&xyz, &xyz_GS,
-d__aperture_R+iCoordSys*9,
-d__aperture_origin+iCoordSys);
+		  d__aperture_R+iCoordSys*9,
+		  d__aperture_origin+iCoordSys);
 forward_transform_centered(&klm, &klm_GS,
-d__aperture_R+iCoordSys*9);
-@ The vignetting by the aperture is computed as the intersection between the aperture mask and the ray vignetting flags: 
+			   d__aperture_R+iCoordSys*9);
+ 
+	x = xyz.x;
+	y = xyz.y;
+	z = xyz.z;
+	k = klm.x;
+	l = klm.y;
+	m = klm.z;
+
+        <<GMT intersection with aperture plane>>
+
+        rho2 = x1*x1 + y1*y1;
+	if ( (iCoordSys==0) && (rho2<inner2) )
+	  {
+	    return;
+	  }
+@
+The intersection with and reflection from the surface is dome with
+<<from motion CS to conic intersection and back to global CS>>=
+  // CONIC >>>
+  backward_transform_centered(&xyz, &xyz_GS,
+			      d__conic_R+iCoordSys*9);
+ backward_transform_centered(&klm, &klm_GS,
+			     d__conic_R+iCoordSys*9);
+
+ <<GMT intersection with conic>>
+
+     G2 = K*K + L*L + M*M;
+ a  = k*K + l*L + m*M;
+
+ a *= -2.0/G2;
+ klm.x += a*K;
+ klm.y += a*L;
+ klm.z += a*M;
+
+ // CONIC <<<
+ forward_transform_centered(&xyz_GS, &xyz,
+			    d__conic_R+iCoordSys*9);
+ forward_transform_centered(&klm_GS, &klm,
+			    d__conic_R+iCoordSys*9);
+ // MOTION <<<
+ backward_transform(&xyz_GS, &xyz_GS,
+		    d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
+ backward_transform_centered(&klm_GS, &klm_GS,
+			     d__motion_R+iCoordSys*9);
+
+ // RIGID_BODY <<<
+ backward_transform(&(d__ray[ij].coordinates), &xyz_GS,
+		    d__rigid_body_R+iCoordSys*9,
+		    d__rigid_body_origin+iCoordSys);
+ backward_transform_centered(&(d__ray[ij].directions), &klm_GS,
+			     d__rigid_body_R+iCoordSys*9);
+
+@
+The vignetting by the aperture is computed as the intersection between the aperture mask and the ray vignetting flags: 
 <<GMT aperture intersection>>=
 __global__ void GMT_intersection(char *mask, ray *d__ray, int N_RAY)
 {
@@ -2439,7 +2609,7 @@ if (m==0) { return; }
 s0 = -xyz.z/m;
 x1 = xyz.x + k*s0;
 y1 = xyz.y + l*s0;
-d__ray[ij].optical_path_length += s0;
+d__ray[ij].optical_path_length = s0;
 s0 = s1 = 0;
 for (j=0; j<N_ITERATION; j++)
 {
