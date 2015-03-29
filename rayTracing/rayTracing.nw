@@ -78,6 +78,7 @@ void thin_lens(bundle *rays);
 <<bundle coordinates kernel>>
 <<bundle coordinates kernel (box)>>
 <<to z plane kernel>>
+<<to sphere kernel>>
 <<ray bundle kernels>>
 <<bundle reset kernel>>
 <<GMT chief ray tracing kernel>>
@@ -138,6 +139,7 @@ cdef extern from "rayTracing.h":
         void setup(source *, rtd , int , vector )
         void cleanup()
         void to_z_plane(rtd)
+        void to_sphere(vector , rtd)
         void get_coordinates(double *)
         void get_chief_coordinates(double *)
         void get_directions(double *)
@@ -215,6 +217,13 @@ def reset(self):
 
 def to_z_plane(self,rtd z_plane):
     self._c_bundle.to_z_plane(z_plane)
+
+def to_sphere(self, sphere_origin, rtd radius):
+    cdef vector origin
+    origin.x = <double>sphere_origin[0]
+    origin.y = <double>sphere_origin[1]
+    origin.z = <double>sphere_origin[2]
+    self._c_bundle.to_sphere(origin,radius)
 
 property coordinates:
     def __get__(self):
@@ -502,6 +511,7 @@ struct bundle {
   void setup(source *src, rtd L, int N_L, vector origin);
   void cleanup(void);
   void to_z_plane(rtd z_in);
+  void to_sphere(vector sphere_origin, rtd sphere_radius);
   void get_coordinates(double *d__coord);
   void get_chief_coordinates(double *d__coord);
   void get_directions(double *d__dir);
@@ -696,14 +706,21 @@ void bundle::cleanup(void)
 \subsection{Propagation parametric geometric equation}
 \label{sec:prop-param-geom}
 
-The rays are propagated to the plane $z=[[z__in]]$ with
+The rays are propagated to the plane $z=[[z__plane]]$ with
+\begin{eqnarray}
+  \label{eq:26}
+  s &=& { [[z_plane]] - z \over m} \\\nonumber
+  x &=& x + s k \\\nonumber
+  y &=& y + s l \\\nonumber
+  z &=& [[z_plane]]
+\end{eqnarray}
 <<ray bundle functions>>= 
-void bundle::to_z_plane(rtd z_in)
+void bundle::to_z_plane(rtd z_plane)
 {
-  to_z_plane_chief_kernel LLL 1 , 1 RRR (d__chief_ray, 1, z_in);
+  to_z_plane_chief_kernel LLL 1 , 1 RRR (d__chief_ray, 1, z_plane);
   dim3 blockDim(16,16);
   dim3 gridDim(N_RAY/256+1,1);
-  to_z_plane_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, z_in, d__chief_ray);
+  to_z_plane_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, z_plane, d__chief_ray);
 }
 @ where
 <<to z plane kernel>>=
@@ -738,6 +755,97 @@ __global__ void to_z_plane_chief_kernel(ray *d__ray, int N_RAY, rtd z_plane)
   d__ray[k].coordinates.y = d__ray[k].coordinates.y + s*d__ray[k].directions.y;
   d__ray[k].coordinates.z = z_plane;
   d__ray[k].optical_path_length = s;
+}
+@ 
+
+\subsection{Reference sphere}
+\label{sec:reference-sphere}
+
+The optical path difference (OPD) is usually computed with respect to a reference sphere centered on the object.
+The OPD is given by the difference between the rays optical path length (OPL) to the sphere and the OPL of the chief ray to the sphere.
+The OPL $s$ is used to compute the intersection of a ray with the sphere from the parametric equation:
+\begin{eqnarray}
+  \label{eq:27}
+  x &=& x_{-1} + s k_{-1} \\\nonumber
+  y &=& y_{-1} + s l_{-1} \\\nonumber
+  z &=& z_{-1} + s m_{-1} 
+\end{eqnarray}
+where $(x_{-1},y_{-1},z_{-1})$ and  $(k_{-1},l_{-1},m_{-1})$ are the coordinates at and direction cosines from the last surface.
+Inserting $x$, $y$ and $z$ in the sphere equation,
+\begin{equation}
+  \label{eq:28}
+  (x - x_O)^2 + (y-y_O)^2 + (z-z_O)^2 = R^2 
+\end{equation}
+where $(x_O,y_O,z_O)$ is the object coordinate and $R$ the sphere radius, and solving for $S$ lead to
+\begin{equation}
+  \label{eq:29}
+  s = - \gamma + \sqrt{\gamma^2  - (\rho^2 - R^2)}
+\end{equation}
+with
+\begin{equation}
+  \label{eq:30}
+  \gamma = (x_{-1} - x_O)k_{-1} + (y_{-1} - y_O)l_{-1} + (z_{-1} - z_O)m_{-1} 
+\end{equation}
+and
+\begin{equation}
+  \label{eq:31}
+  \rho^2 = (x_{-1} - x_O)^2 + (y_{-1} - y_O)^2 + (z_{-1} - z_O)^2. 
+\end{equation}
+@ 
+The code corresponding to the above equation is:
+<<to sphere kernel common>>=
+x = d__ray[k].coordinates.x - sphere_origin->x;
+y = d__ray[k].coordinates.y - sphere_origin->y;
+z = d__ray[k].coordinates.z - sphere_origin->z;
+g = x*d__ray[k].directions.x + y*d__ray[k].directions.y + z*d__ray[k].directions.z;
+rho2 = x*x + y*y + z*z;
+s = sqrt( g*g - (rho2-sphere_radius*sphere_radius) ) - g;
+d__ray[k].optical_path_length = s;
+d__ray[k].coordinates.x += s*d__ray[k].directions.x; 
+d__ray[k].coordinates.y += s*d__ray[k].directions.y;
+d__ray[k].coordinates.z += s*d__ray[k].directions.z;
+@ 
+The routine is:
+<<ray bundle functions>>= 
+void bundle::to_sphere(vector sphere_origin, rtd sphere_radius)
+{
+  vector *d__sphere_origin;
+  HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin, sizeof(vector) ) );
+  HANDLE_ERROR( cudaMemcpy( d__sphere_origin, &sphere_origin, 
+			    sizeof(vector), cudaMemcpyHostToDevice ) );
+  to_sphere_chief_kernel LLL 1 , 1 RRR (d__chief_ray, 1, 
+					d__sphere_origin, sphere_radius);
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_RAY/256+1,1);
+  to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
+					       d__sphere_origin, sphere_radius, 
+					       d__chief_ray);
+  HANDLE_ERROR( cudaFree( d__sphere_origin ) );
+}
+@ where
+<<to sphere kernel>>=
+__global__ void to_sphere_kernel(ray *d__ray, int N_RAY, 
+				 vector *sphere_origin, rtd sphere_radius,
+				 ray *d__chief_ray)
+{
+  int i, j, k;
+  rtd s, x, y, z, g, rho2;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( (k<N_RAY ) && (d__ray[k].v) )
+  {
+    <<to sphere kernel common>>
+    d__ray[k].optical_path_difference += 
+      d__ray[k].optical_path_length - d__chief_ray->optical_path_length;
+  }
+}
+__global__ void to_sphere_chief_kernel(ray *d__ray, int N_RAY, 
+                                       vector *sphere_origin, rtd sphere_radius)
+{
+  int k = 0;
+  rtd s, x, y, z, g, rho2;
+  <<to sphere kernel common>>
 }
 @ 
 
@@ -853,6 +961,61 @@ __global__ void get_optical_path_difference_kernel(double *d__opd, ray *d__ray, 
   k = j * gridDim.x * blockDim.x + i;
   if ( k<N_RAY )
     d__opd[k]   = d__ray[k].optical_path_difference;
+}
+@ 
+The OPD is interpolated on a $N_x\times N_y$ grid with respective sampling $\delta_x$ and $\delta_y$.
+The $x_i$ and $y_i$ interpolation coordinates are written:
+\begin{eqnarray}
+  \label{eq:32}
+  x_i &=& \delta_x(i -(N_x-1)/2),\quad \forall 0\leq i \leq N_x-1 \\\nonumber
+  y_i &=& \delta_y(j -(N_y-1)/2),\quad \forall 0\leq j \leq N_y-1 
+\end{eqnarray}
+The coordinates are re--centered with respect to the original coordinate grid
+\begin{eqnarray} 
+  \label{eq:33}
+  x_i &\rightarrow& x_i + L/2 \\\nonumber
+  y_i &\rightarrow& y_i + L/2
+\end{eqnarray}
+and scale to that grid
+\begin{eqnarray}
+  \label{eq:34}
+  x_i &\rightarrow& x_i{N_L-1 \over L} \\\nonumber
+  y_i &\rightarrow& y_i{N_L-1 \over L}
+\end{eqnarray}
+<<OPD nearest neighbor interpolation>>=
+void bundle::get_optical_path_difference(double *d__opd,
+					 float const delta_x, int N_x, 
+					 float const delta_y, int N_y)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim( 1+N_x/16 , 1+N_y/16);
+  get_optical_path_difference_interp_kernel LLL gridDim , blockDim RRR (d__opd, d__ray, N_RAY);
+}
+@ with
+<<OPD nearest neighbor interpolation kernel>>=
+__global__ get_optical_path_difference_interp_kernel(double *d__opd,
+                                                     ray* d__ray, int N_RAY.
+                                        float const delta_x, int N_x, 
+				        float const delta_y, int N_y,
+                                        float const L, int const N_L)
+{
+int i, j, l, ij, ijl, kl, i_source;
+float x, y;
+i = blockIdx.x * blockDim.x + threadIdx.x;
+j = blockIdx.y * blockDim.y + threadIdx.y;
+i_source = blockIdx.z;
+kl = i * N_y + j + i_source*N_x*N_y;
+x = i*delta_x - (N_x-1)*delta_x*0.5;
+y = j*delta_y - (N_y-1)*delta_y*0.5;
+if ( ( (i<N_x) && (j<N_y) ) && (mask[i * N_x + j]) )
+{
+ x += 0.5*L;
+ y += 0.5*L;
+ xi *= (N_L-1)/L;
+ yi *= (N_L-1)/L;
+ i = (int) roundf( xi );
+ j = (int) roundf( yi );
+ d__opd[k] = d__ray[].optical_path_difference;
 }
 @ 
 <<gathering ray vignetting map>>=
@@ -2353,9 +2516,6 @@ void gmt_m1::trace(bundle *rays)
  Rri2 = R2*ri*ri;
  // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
  m1_trace_chief_kernel LLL 1 , 1 RRR (V.m, rays->d__chief_ray, 1, 
-					     Rri2, R2,
-					     aperture_CS.d__R,
-					     aperture_CS.d__origin,
 					     conic_CS.d__R,
 					     conic_CS.d__origin,
 					     conic_k, conic_c,
@@ -2429,35 +2589,26 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 @ and the chief ray kernel
 <<GMT chief ray tracing kernel>>=
 __global__ void m1_trace_chief_kernel(char *mask, ray *d__ray, int N_RAY, 
-				float inner2, float outer2,
-				rtd *d__aperture_R, vector *d__aperture_origin,
 				rtd *d__conic_R, vector *d__conic_origin,
                                 const rtd Fk, const rtd Fc,
                                 vector *d__conic_self_origin,
 				rtd *d__rigid_body_R, vector *d__rigid_body_origin,
 				rtd *d__motion_R, vector *d__motion_origin)
 {
-  int i, j, ij, iCoordSys;
+  int j, ij, iCoordSys;
   rtd x1, y1, s0, k, l, m;
   rtd s1, S, K, L ,M, dSds;
   rtd G2, a;
   vector d__origin, xyz, klm, xyz_GS, klm_GS;
-  /* i = blockIdx.x * blockDim.x + threadIdx.x; */
-  /* j = threadIdx.y; */
-  /* //  iCoordSys = blockIdx.y; */
-  /* ij = j * gridDim.x * blockDim.x + i; */
-  /* if  ( ij<N_RAY ) */
-  /* { */
 
   ij = 0;
-    iCoordSys = 0;
-    d__origin = d__conic_self_origin[iCoordSys];
+  iCoordSys = 0;
+  d__origin = d__conic_self_origin[iCoordSys];
 
-    <<from global CS to motion CS>>
+  <<from global CS to motion CS>>
 
-    <<from motion CS to conic intersection and back to global CS>>
+  <<from motion CS to conic intersection and back to global CS>>
 
-  /* } */
 }
 @ The following is a test routine to validate the sequence of transformation in the ray tracing kernel:
 <<GMT M1 functions>>=
