@@ -146,6 +146,9 @@ cdef extern from "rayTracing.h":
         void get_optical_path_length(double *)
         void get_chief_optical_path_length(double *)
         void get_optical_path_difference(double *)
+        void get_optical_path_difference(double *,
+					 float , int , 
+					 float , int )
         void get_vignetting(double *)
 	void reset()
     cdef cppclass conic:
@@ -224,6 +227,15 @@ def to_sphere(self, sphere_origin, rtd radius):
     origin.y = <double>sphere_origin[1]
     origin.z = <double>sphere_origin[2]
     self._c_bundle.to_sphere(origin,radius)
+
+def get_optical_path_difference(self,
+                                float delta_x, int N_x,
+                                float delta_y, int N_y):
+    opd = cuDoubleArray(shape=(N_x,N_y),dev_malloc=True)
+    self._c_bundle.get_optical_path_difference(opd._c_gpu.dev_data,
+                                               delta_x, N_x,
+                                               delta_y, N_y)
+    return opd
 
 property coordinates:
     def __get__(self):
@@ -518,6 +530,9 @@ struct bundle {
   void get_chief_optical_path_length(double *d__opl);
   void get_optical_path_length(double *d__opl);
   void get_optical_path_difference(double *d__opd);
+  void get_optical_path_difference(double *d__opd,
+				   float const delta_x, int N_x, 
+				   float const delta_y, int N_y);
   void get_vignetting(double *d__v);
   void reset(void);
 };
@@ -859,6 +874,7 @@ The coordinates, directions, optical path length and vignetting map are copied i
 <<gathering ray optical path length>>
 <<gathering ray optical path difference>>
 <<gathering ray vignetting map>>
+<<OPD nearest neighbor interpolation>>
 @ 
 <<ray bundle kernels>>= 
 <<gathering ray coordinates kernel>>
@@ -866,6 +882,7 @@ The coordinates, directions, optical path length and vignetting map are copied i
 <<gathering ray optical path length kernel>>
 <<gathering ray optical path difference kernel>>
 <<gathering ray vignetting map kernel>>
+<<OPD nearest neighbor interpolation kernel>>
 @ 
 <<gathering ray coordinates>>=
 void bundle::get_coordinates(double *d__coord)
@@ -947,6 +964,7 @@ __global__ void get_optical_path_length_kernel(double *d__opl, ray *d__ray, int 
 <<gathering ray optical path difference>>=
 void bundle::get_optical_path_difference(double *d__opd)
 {
+  HANDLE_ERROR( cudaMemset(d__opd, 0, sizeof(double)*N_RAY ) );
   dim3 blockDim(16,16);
   dim3 gridDim(N_RAY/256+1,1);
   get_optical_path_difference_kernel LLL gridDim , blockDim RRR (d__opd, d__ray, N_RAY);
@@ -959,7 +977,7 @@ __global__ void get_optical_path_difference_kernel(double *d__opd, ray *d__ray, 
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
-  if ( k<N_RAY )
+  if ( (k<N_RAY) && (d__ray[k].v) )
     d__opd[k]   = d__ray[k].optical_path_difference;
 }
 @ 
@@ -987,35 +1005,93 @@ void bundle::get_optical_path_difference(double *d__opd,
 					 float const delta_x, int N_x, 
 					 float const delta_y, int N_y)
 {
+  /* cublasHandle_t handle; */
+  /* cublasStatus_t status; */
+  /* double *d__coord; */
+  /* int N, idx; */
+
+  /* cublasCreate(&handle); */
+
+  /* N = N_RAY*3; */
+  /* HANDLE_ERROR( cudaMalloc((void**)&d__coord, sizeof(double)*N ) ); */
+  /* get_coordinates(d__coord); */
+
+  /* CUBLAS_ERROR( cublasIdamin(handle, N_RAY, d__coord, 3, &idx) ); */
+  /* printf("x min idx = %d\n",idx); */
+  /* CUBLAS_ERROR( cublasIdamax(handle, N_RAY, d__coord, 3, &idx) ); */
+  /* printf("x max idx = %d\n",idx); */
+  /* CUBLAS_ERROR( cublasIdamin(handle, N_RAY, d__coord+1, 3, &idx) ); */
+  /* printf("y min idx = %d\n",idx); */
+  /* CUBLAS_ERROR( cublasIdamax(handle, N_RAY, d__coord+1, 3, &idx) ); */
+  /* printf("y max idx = %d\n",idx); */
+
+  HANDLE_ERROR( cudaMemset(d__opd, 0, sizeof(double)*N_x*N_y ) );
   dim3 blockDim(16,16);
-  dim3 gridDim( 1+N_x/16 , 1+N_y/16);
-  get_optical_path_difference_interp_kernel LLL gridDim , blockDim RRR (d__opd, d__ray, N_RAY);
+  dim3 gridDim(N_RAY/256+1,1);
+  get_optical_path_difference_interp_kernel LLL gridDim , blockDim RRR (d__opd, d__ray, N_RAY,
+  									delta_x, N_x,
+  									delta_y, N_y,
+  									L, N_L);
+  /* cublasDestroy(handle); */
+  /* HANDLE_ERROR( cudaFree( d__coord) ); */
 }
 @ with
 <<OPD nearest neighbor interpolation kernel>>=
-__global__ get_optical_path_difference_interp_kernel(double *d__opd,
-                                                     ray* d__ray, int N_RAY.
-                                        float const delta_x, int N_x, 
-				        float const delta_y, int N_y,
-                                        float const L, int const N_L)
+__global__ void get_optical_path_difference_interp_kernel(double *d__opd,
+                                                     ray* d__ray, int N_RAY,
+						     float const delta_x, int N_x, 
+						     float const delta_y, int N_y,
+						     float const L, int const N_L)
 {
-int i, j, l, ij, ijl, kl, i_source;
-float x, y;
-i = blockIdx.x * blockDim.x + threadIdx.x;
-j = blockIdx.y * blockDim.y + threadIdx.y;
-i_source = blockIdx.z;
-kl = i * N_y + j + i_source*N_x*N_y;
-x = i*delta_x - (N_x-1)*delta_x*0.5;
-y = j*delta_y - (N_y-1)*delta_y*0.5;
-if ( ( (i<N_x) && (j<N_y) ) && (mask[i * N_x + j]) )
-{
- x += 0.5*L;
- y += 0.5*L;
- xi *= (N_L-1)/L;
- yi *= (N_L-1)/L;
- i = (int) roundf( xi );
- j = (int) roundf( yi );
- d__opd[k] = d__ray[].optical_path_difference;
+  /*
+  int i, j, k, kl;
+  float x, y;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( (k<N_RAY) && (d__ray[k].v) )
+    {
+      x = d__ray[k].coordinates.x;
+      y = d__ray[k].coordinates.y;
+      x /= delta_x;
+      y /= delta_y;
+      x += (N_x - 1)*0.5;
+      y += (N_y - 1)*0.5;
+      i = (int) roundf( x );
+      j = (int) roundf( y );
+      kl = i + N_x*j;
+      if ( (i<0) || (i>=N_x) )
+	{
+	  d__opd[kl] = 0;
+	  return;
+	}  
+      if ( (j<0) || (j>=N_y) )
+	{
+	  d__opd[kl] = 0;
+	  return;
+	}  
+      d__opd[k] = d__ray[k].optical_path_difference;
+    }
+  */
+  int i, j, k, l;
+  rtd x, y;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( (k<N_RAY) && (d__ray[k].v) )
+    {
+      x = d__ray[k].coordinates.x;
+      y = d__ray[k].coordinates.y;
+      x /= delta_x;
+      y /= delta_y;
+      x += (N_x - 1)*0.5;
+      y += (N_y - 1)*0.5;
+      i = (int) rint( x );
+      j = (int) rint( y );
+      l = i + N_x*j;
+      if ( ( (i>=0) && (i<N_x) ) && ( (i>=0) && (i<N_y) ) )
+	d__opd[l]   = d__ray[k].optical_path_difference;
+    }
 }
 @ 
 <<gathering ray vignetting map>>=
