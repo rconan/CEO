@@ -79,6 +79,7 @@ void thin_lens(bundle *rays);
 <<bundle coordinates kernel (box)>>
 <<to z plane kernel>>
 <<to sphere kernel>>
+<<reference sphere origin from chief ray>>
 <<ray bundle kernels>>
 <<bundle reset kernel>>
 <<GMT chief ray tracing kernel>>
@@ -140,9 +141,11 @@ cdef extern from "rayTracing.h":
         void cleanup()
         void to_z_plane(rtd)
         void to_sphere(vector , rtd)
+        void to_sphere(rtd , rtd)
         void get_coordinates(double *)
         void get_chief_coordinates(double *)
         void get_directions(double *)
+        void get_chief_directions(double *)
         void get_optical_path_length(double *)
         void get_chief_optical_path_length(double *)
         void get_optical_path_difference(double *)
@@ -229,6 +232,9 @@ def to_sphere(self, sphere_origin, rtd radius):
     origin.z = <double>sphere_origin[2]
     self._c_bundle.to_sphere(origin,radius)
 
+def go_sphere(self, rtd s, rtd radius):
+    self._c_bundle.to_sphere(s,radius)
+
 def get_optical_path_difference(self,
                                 float delta_x, int N_x,
                                 float delta_y, int N_y):
@@ -254,6 +260,12 @@ property directions:
     def __get__(self):
         x = cuDoubleArray(shape=(self._c_bundle.N_RAY,3),dev_malloc=True)
         self._c_bundle.get_directions(x._c_gpu.dev_data)
+        return x
+
+property chief_directions:
+    def __get__(self):
+        x = cuDoubleArray(shape=(1,3),dev_malloc=True)
+        self._c_bundle.get_chief_directions(x._c_gpu.dev_data)
         return x
 
 property optical_path_length:
@@ -530,9 +542,11 @@ struct bundle {
   void cleanup(void);
   void to_z_plane(rtd z_in);
   void to_sphere(vector sphere_origin, rtd sphere_radius);
+  void to_sphere(rtd s, rtd sphere_radius);
   void get_coordinates(double *d__coord);
   void get_chief_coordinates(double *d__coord);
   void get_directions(double *d__dir);
+  void get_chief_directions(double *d__dir);
   void get_chief_optical_path_length(double *d__opl);
   void get_optical_path_length(double *d__opl);
   void get_optical_path_difference(double *d__opd);
@@ -876,6 +890,34 @@ __global__ void to_sphere_chief_kernel(ray *d__ray, int N_RAY,
   <<to sphere kernel common>>
 }
 @ 
+The chief ray defines the location of the object and the reference sphere is centered on the object e.g. the origin of the reference sphere is on the chief ray.
+If the distance from the last surface to the object is known for the chief ray, then the origin of the reference sphere is given by:
+<<reference sphere origin from chief ray>>=
+__global__ void chief_parametric_equation(vector *d__v, ray *d__ray, int N_RAY, rtd s)
+{
+  int k = 0;
+  d__v->x = d__ray[k].coordinates.x + d__ray[k].directions.x*s;
+  d__v->y = d__ray[k].coordinates.y + d__ray[k].directions.y*s;
+  d__v->z = d__ray[k].coordinates.z + d__ray[k].directions.z*s;
+}
+@ 
+The rays intersection with the reference sphere is computed with
+<<ray bundle functions>>= 
+void bundle::to_sphere(rtd s, rtd sphere_radius)
+{
+  vector *d__sphere_origin;
+  HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin, sizeof(vector) ) );
+  chief_parametric_equation LLL 1 , 1 RRR (d__sphere_origin, d__chief_ray, 1, s);
+  to_sphere_chief_kernel LLL 1 , 1 RRR (d__chief_ray, 1, 
+					d__sphere_origin, sphere_radius);
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_RAY/256+1,1);
+  to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
+					       d__sphere_origin, sphere_radius, 
+					       d__chief_ray);
+  HANDLE_ERROR( cudaFree( d__sphere_origin ) );
+}
+@  
 
 \subsection{Gathering data}
 \label{sec:gathering-data}
@@ -934,6 +976,12 @@ void bundle::get_directions(double *d__dir)
   dim3 blockDim(16,16);
   dim3 gridDim(N_RAY/256+1,1);
   get_directions_kernel LLL gridDim , blockDim RRR (d__dir, d__ray, N_RAY);
+}
+@ 
+<<gathering ray directions>>=
+void bundle::get_chief_directions(double *d__dir)
+{
+  get_directions_kernel LLL 1 , 1 RRR (d__dir, d__chief_ray, N_RAY);
 }
 @ 
 <<gathering ray directions kernel>>=
