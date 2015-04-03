@@ -166,26 +166,10 @@ cdef extern from "rayTracing.h":
         void cleanup()
         void vignetting(bundle *)
     cdef cppclass gmt_m1:
-        coordinate_system aperture_CS
-        coordinate_system conic_CS
-        coordinate_system rigid_body_CS
-        coordinate_system motion_CS
-        void setup(float , int )
-        void cleanup()
-        void update(vector , vector ,int )
-        void trace(bundle *)
-        void blocking(bundle *)
         void test_ray_tracing()
+        <<python GMT M12 functions>>
     cdef cppclass gmt_m2:
-        coordinate_system aperture_CS
-        coordinate_system conic_CS
-        coordinate_system rigid_body_CS
-        coordinate_system motion_CS
-        void setup(float , int )
-        void cleanup()
-        void update(vector , vector ,int )
-        void trace(bundle *)
-        void blocking(bundle *)
+        <<python GMT M12 functions>>
     void transform_to_S(bundle *, conic *)
     void transform_to_S(bundle *, aperture *)
     void transform_to_R(bundle *, conic *)
@@ -193,6 +177,18 @@ cdef extern from "rayTracing.h":
     void intersect(bundle *, conic *)
     void reflect(bundle *)
     void thin_lens(bundle *)
+@  where
+<<python GMT M12 functions>>=
+coordinate_system aperture_CS
+coordinate_system conic_CS
+coordinate_system rigid_body_CS
+coordinate_system motion_CS
+void setup(float , int )
+void cleanup()
+void update(vector , vector ,int )
+void reset()
+void trace(bundle *)
+void blocking(bundle *)
 @ 
 <<ceo.pyx>>=
 # polar bundle
@@ -399,6 +395,9 @@ cdef class GMT_M1:
         __euler_angles.y = <float>euler_angles[1]
         __euler_angles.z = <float>euler_angles[2]
         self._c_gmt_m1.update(__origin, __euler_angles, idx)
+
+    def reset(self):
+        self._c_gmt_m1.reset()
 # GMT M2
 cdef class GMT_M2:
     """
@@ -443,6 +442,9 @@ cdef class GMT_M2:
         __euler_angles.y = <float>euler_angles[1]
         __euler_angles.z = <float>euler_angles[2]
         self._c_gmt_m2.update(__origin, __euler_angles, idx)
+
+    def reset(self):
+        self._c_gmt_m2.reset()
 # ray tracing
 def Transform_to_S(Bundle rays, Conic F):
     transform_to_S(rays._c_bundle, F._c_conic)
@@ -1179,7 +1181,7 @@ void bundle::get_vignetting(double *d__v)
 <<gathering wavefront>>=
 void bundle::get_wavefront(source *src)
 {
-  printf("Setting wavefront!\n");
+//  printf("Setting wavefront!\n");
   dim3 blockDim(16,16);
   dim3 gridDim(N_RAY/256+1,1);
   get_wavefront_kernel LLL gridDim , blockDim RRR (src->wavefront.amplitude, 
@@ -2380,6 +2382,7 @@ struct gmt_m1 {
 void setup(float _D_, int _D_px_);
 void cleanup(void);
 void update(vector _origin_, vector _euler_angles_,int idx);
+void reset(void);
 void trace(bundle *rays);
 void blocking(bundle *rays);
 void test_ray_tracing(void);
@@ -2608,11 +2611,30 @@ The rigid body motion parameters are updated with:
 <<GMT M1 functions>>=
 void gmt_m1::update(vector _origin_, vector _euler_angles_,int idx)
 {
-    fprintf(stdout,"\n\x1B[31m");
-
-    motion_CS.update( _origin_, _euler_angles_, idx);
-    motion_CS.info();
+    <<GMT M12 update>>
 }
+@ where
+<<GMT M12 update>>=
+fprintf(stdout,"\n\x1B[31m");
+motion_CS.update( _origin_, _euler_angles_, idx);
+motion_CS.info();
+@ 
+The rigid body motion are reset to 0 with:
+<<GMT M1 functions>>=
+void gmt_m1::reset(void)
+{
+    <<GMT M12 reset>>
+}
+@ where
+<<GMT M12 reset>>=
+vector zero;
+zero.x = 0.0;
+zero.y = 0.0;
+zero.z = 0.0;
+fprintf(stdout,"\n\x1B[31m");
+for (int k=0; k<N; k++)
+   motion_CS.update( zero, zero, k);
+motion_CS.info();
 @ 
 \subsection{Blocking}
 \label{sec:blocking}
@@ -2652,6 +2674,7 @@ __global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY,
   rtd rho2;
   rtd x, y, z, x1, y1, s0, k, l, m;
   vector xyz, klm, xyz_GS, klm_GS;
+  char chief=0;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = threadIdx.y;
   //  iCoordSys = blockIdx.y;
@@ -2733,6 +2756,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
   rtd s1, S, K, L ,M, dSds;
   rtd G2, a;
   vector d__origin, xyz, klm, xyz_GS, klm_GS;
+  char chief=0;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = threadIdx.y;
   //  iCoordSys = blockIdx.y;
@@ -2774,6 +2798,7 @@ __global__ void m1_trace_chief_kernel(char *mask, ray *d__ray, int N_RAY,
   rtd s1, S, K, L ,M, dSds;
   rtd G2, a;
   vector d__origin, xyz, klm, xyz_GS, klm_GS;
+  char chief=1;
 
   ij = 0;
   iCoordSys = 0;
@@ -2838,11 +2863,14 @@ forward_transform(&xyz_GS, &(d__ray[ij].coordinates),
 forward_transform_centered(&klm_GS, &(d__ray[ij].directions),
 			   d__rigid_body_R+iCoordSys*9);
 
+ if (chief==0)
+   {
 // MOTION >>>  
 forward_transform(&xyz_GS, &xyz_GS,
 		  d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
 forward_transform_centered(&klm_GS, &klm_GS,
 			    d__motion_R+iCoordSys*9);
+   }
 @  and (iii) the rays are transformed into the CS of the aperture:
 <<from motion CS to aperture intersection>>=
 // APERTURE >>>
@@ -2890,12 +2918,14 @@ The intersection with and reflection from the surface is dome with
 			    d__conic_R+iCoordSys*9);
  forward_transform_centered(&klm_GS, &klm,
 			    d__conic_R+iCoordSys*9);
+ if (chief==0)
+   {
  // MOTION <<<
  backward_transform(&xyz_GS, &xyz_GS,
 		    d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
  backward_transform_centered(&klm_GS, &klm_GS,
 			     d__motion_R+iCoordSys*9);
-
+   }
  // RIGID_BODY <<<
  backward_transform(&(d__ray[ij].coordinates), &xyz_GS,
 		    d__rigid_body_R+iCoordSys*9,
@@ -3027,10 +3057,14 @@ The rigid body motion parameters are updated with:
 <<GMT M2 functions>>=
 void gmt_m2::update(vector _origin_, vector _euler_angles_,int idx)
 {
-    fprintf(stdout,"\n\x1B[31m");
-
-    motion_CS.update( _origin_, _euler_angles_, idx);
-    motion_CS.info();
+    <<GMT M12 update>>
+}
+@ 
+The rigid body motion are reset to 0 with:
+<<GMT M2 functions>>=
+void gmt_m2::reset(void)
+{
+    <<GMT M12 reset>>
 }
 @
 \section{Input/Output}
