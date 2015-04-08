@@ -597,7 +597,7 @@ void bundle::setup(source *src, rtd RADIUS, int N_RADIUS,
 {
   N_RAY = (N_RADIUS-1)*N_THETA + 1;
   V.setup(N_RAY);
-  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY*src->N_SRC ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
@@ -622,8 +622,8 @@ and
 \end{equation}
 <<bundle coordinates>>=
 dim3 blockDim(16,16);
-dim3 gridDim(N_RADIUS/16+1,N_THETA/16+1);
-ray_coordinates LLL gridDim , blockDim, src->N_SRC RRR (d__ray, N_RAY, src->dev_ptr,
+dim3 gridDim(N_RADIUS/16+1,N_THETA/16+1, src->N_SRC);
+ray_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
                                             RADIUS, N_RADIUS, N_THETA, d__origin);
 @ 
 <<bundle coordinates kernel>>=
@@ -643,7 +643,7 @@ __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
       j = 0;
       k = 0;
     } else
-      k = j + (i - 1)*N_THETA + 1;
+      k = j + (i - 1)*N_THETA + 1 +iSource*N_RAY;
     theta = 2*PI*j/N_THETA; 
     d__ray[k].coordinates.x = rho*cos(theta) + origin->x; 
     d__ray[k].coordinates.y = rho*sin(theta) + origin->y; 
@@ -681,7 +681,7 @@ void bundle::setup(source *_src_, rtd _L_, int _N_L_, vector origin)
   src = _src_;
   N_RAY = N_L*N_L;
   V.setup(N_RAY);
-  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY*src->N_SRC ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
@@ -703,8 +703,8 @@ The cartesian coordinates $x$ and $y$ of the rays are given by
 \end{eqnarray}
 <<bundle coordinates (box)>>=
 dim3 blockDim(16,16);
-dim3 gridDim(N_L/16+1,N_L/16+1);
-ray_coordinates_box LLL gridDim , blockDim, src->N_SRC RRR (d__ray, N_RAY, src->dev_ptr,
+dim3 gridDim(N_L/16+1,N_L/16+1, src->N_SRC);
+ray_coordinates_box LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
                                                             L, N_L, d__origin);
 @ 
 <<bundle coordinates kernel (box)>>=
@@ -720,7 +720,7 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
   {
     x   = L*(i - (N_L-1)*0.5)/(N_L-1);
     y   = L*(j - (N_L-1)*0.5)/(N_L-1);
-    k = i + j*N_L;
+    k = i + j*N_L + iSource*N_RAY;
     d__ray[k].coordinates.x = x + origin->x; 
     d__ray[k].coordinates.y = y + origin->y; 
     d__ray[k].coordinates.z = origin->z;
@@ -761,22 +761,24 @@ The rays are propagated to the plane $z=[[z__plane]]$ with
 <<ray bundle functions>>= 
 void bundle::to_z_plane(rtd z_plane)
 {
-  to_z_plane_chief_kernel LLL 1 , 1 RRR (d__chief_ray, 1, z_plane);
+  to_z_plane_chief_kernel LLL 1, 1, src->N_SRC RRR (d__chief_ray, 1, z_plane);
   dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1);
+  dim3 gridDim(N_RAY/256+1,1,src->N_SRC);
   to_z_plane_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, z_plane, d__chief_ray);
 }
 @ where
 <<to z plane kernel>>=
   __global__ void to_z_plane_kernel(ray *d__ray, int N_RAY, rtd z_plane, ray *d__chief_ray)
 {
-  int i, j, k;
+  int i, j, k, iSource;
   rtd s;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
   k = j * gridDim.x * blockDim.x + i;
   if ( (k<N_RAY ) && (d__ray[k].v) )
   {
+    k += iSource*N_RAY;
     if (d__ray[k].directions.z==0)
        return;
     s = (z_plane - d__ray[k].coordinates.z)/d__ray[k].directions.z;
@@ -790,8 +792,10 @@ void bundle::to_z_plane(rtd z_plane)
 }
 __global__ void to_z_plane_chief_kernel(ray *d__ray, int N_RAY, rtd z_plane)
 {
-  int k = 0;
+  int k, iSource;
   rtd s;
+  iSource = blockIdx.z;
+  k = iSource;
   if (d__ray[k].directions.z==0)
     return;
   s = (z_plane - d__ray[k].coordinates.z)/d__ray[k].directions.z;
@@ -857,10 +861,10 @@ void bundle::to_sphere(vector sphere_origin, rtd sphere_radius)
   HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__sphere_origin, &sphere_origin, 
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
-  to_sphere_chief_kernel LLL 1 , 1 RRR (d__chief_ray, 1, 
+  to_sphere_chief_kernel LLL 1 , 1, src->N_SRC RRR (d__chief_ray, 1, 
 					d__sphere_origin, sphere_radius);
   dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1);
+  dim3 gridDim(N_RAY/256+1,1, src->N_SRC);
   to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
 					       d__sphere_origin, sphere_radius, 
 					       d__chief_ray);
@@ -872,13 +876,15 @@ __global__ void to_sphere_kernel(ray *d__ray, int N_RAY,
 				 vector *sphere_origin, rtd sphere_radius,
 				 ray *d__chief_ray)
 {
-  int i, j, k;
+  int i, j, k, iSource;
   rtd s, x, y, z, g, rho2;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
   if ( (k<N_RAY ) && (d__ray[k].v) )
   {
+    k += iSource*N_RAY;
     <<to sphere kernel common>>
     d__ray[k].optical_path_difference += 
       d__ray[k].optical_path_length - d__chief_ray->optical_path_length;
@@ -887,8 +893,10 @@ __global__ void to_sphere_kernel(ray *d__ray, int N_RAY,
 __global__ void to_sphere_chief_kernel(ray *d__ray, int N_RAY, 
                                        vector *sphere_origin, rtd sphere_radius)
 {
-  int k = 0;
+  int k, iSource;
   rtd s, x, y, z, g, rho2;
+  iSource = blockIdx.z;
+  k = iSource;
   <<to sphere kernel common>>
 }
 @ 
@@ -897,7 +905,9 @@ If the distance from the last surface to the object is known for the chief ray, 
 <<reference sphere origin from chief ray>>=
 __global__ void chief_parametric_equation(vector *d__v, ray *d__ray, int N_RAY, rtd s)
 {
-  int k = 0;
+  int k, iSource;
+  iSource = blockIdx.z;
+  k = iSource;
   d__v->x = d__ray[k].coordinates.x + d__ray[k].directions.x*s;
   d__v->y = d__ray[k].coordinates.y + d__ray[k].directions.y*s;
   d__v->z = d__ray[k].coordinates.z + d__ray[k].directions.z*s;
@@ -909,11 +919,11 @@ void bundle::to_sphere(rtd s, rtd sphere_radius)
 {
   vector *d__sphere_origin;
   HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin, sizeof(vector) ) );
-  chief_parametric_equation LLL 1 , 1 RRR (d__sphere_origin, d__chief_ray, 1, s);
-  to_sphere_chief_kernel LLL 1 , 1 RRR (d__chief_ray, 1, 
+  chief_parametric_equation LLL 1 , 1 , src->N_SRC RRR (d__sphere_origin, d__chief_ray, 1, s);
+  to_sphere_chief_kernel LLL 1 , 1 , src->N_SRC RRR (d__chief_ray, 1, 
 					d__sphere_origin, sphere_radius);
   dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1);
+  dim3 gridDim(N_RAY/256+1,1, src->N_SRC);
   to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
 					       d__sphere_origin, sphere_radius, 
 					       d__chief_ray);
