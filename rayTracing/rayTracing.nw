@@ -136,6 +136,7 @@ cdef extern from "rayTracing.h":
     cdef cppclass bundle:
         int N_RAY
         ray *d__ray, *d__chief_ray
+        source *src
         void setup(source *, rtd , int , int , vector )
         void setup(source *, rtd , int , vector )
         void cleanup()
@@ -242,13 +243,13 @@ def get_optical_path_difference(self,
 
 property coordinates:
     def __get__(self):
-        x = cuDoubleArray(shape=(self._c_bundle.N_RAY,3),dev_malloc=True)
+        x = cuDoubleArray(shape=(self._c_bundle.N_RAY*self._c_bundle.src.N_SRC,3),dev_malloc=True)
         self._c_bundle.get_coordinates(x._c_gpu.dev_data)
         return x
 
 property chief_coordinates:
     def __get__(self):
-        x = cuDoubleArray(shape=(1,3),dev_malloc=True)
+        x = cuDoubleArray(shape=(self._c_bundle.src.N_SRC,3),dev_malloc=True)
         self._c_bundle.get_chief_coordinates(x._c_gpu.dev_data)
         return x
 
@@ -471,6 +472,10 @@ So lets defined a ray tracing type:
 <<ray tracing data type>>=
 typedef double rtd;
 @ 
+
+\subsection{Vector}
+\label{sec:vector}
+
 A new vector data type is defined 
 <<vector data type>>=
 typedef struct {
@@ -496,7 +501,7 @@ __host__ __device__ rtd vector::rho2(rtd x0, rtd y0) {
 }
 @
 
-\section{Ray}
+\subsection{Ray}
 \label{sec:ray}
 
 A type for the rays is also defined:
@@ -621,8 +626,8 @@ and
   \theta = 2\pi {k \over [[N_THETA]] } \forall k \in [0,[[N_THETA-1]]]
 \end{equation}
 <<bundle coordinates>>=
-dim3 blockDim(16,16);
-dim3 gridDim(N_RADIUS/16+1,N_THETA/16+1, src->N_SRC);
+blockDim = dim3(16,16);
+gridDim  = dim3(N_RADIUS/16+1,N_THETA/16+1, src->N_SRC);
 ray_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
                                             RADIUS, N_RADIUS, N_THETA, d__origin);
 @ 
@@ -643,7 +648,8 @@ __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
       j = 0;
       k = 0;
     } else
-      k = j + (i - 1)*N_THETA + 1 +iSource*N_RAY;
+      k = j + (i - 1)*N_THETA + 1;
+    k += iSource*N_RAY;
     theta = 2*PI*j/N_THETA; 
     d__ray[k].coordinates.x = rho*cos(theta) + origin->x; 
     d__ray[k].coordinates.y = rho*sin(theta) + origin->y; 
@@ -665,12 +671,34 @@ vector chief_origin;
 chief_origin.x = 0.0;
 chief_origin.y = 0.0;
 chief_origin.z = origin.z;
-HANDLE_ERROR( cudaMalloc((void**)&d__chief_ray, sizeof(vector) ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__chief_ray, sizeof(vector)*src->N_SRC ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__chief_origin, sizeof(vector) ) );
 HANDLE_ERROR( cudaMemcpy( d__chief_origin, &chief_origin, 
                          sizeof(vector), cudaMemcpyHostToDevice ) );
-ray_coordinates LLL 1 , 1, src->N_SRC RRR (d__chief_ray, 1, src->dev_ptr,
-                                           0.0, 2, 1, d__chief_origin);
+dim3 blockDim(1,1);
+dim3 gridDim(1,2);//, src->N_SRC);
+chief_ray_coordinates LLL gridDim , blockDim  RRR (d__chief_ray, 1, src->dev_ptr, d__chief_origin);
+@
+<<bundle coordinates kernel>>=
+__global__ void chief_ray_coordinates(ray *d__ray, int N_RAY, source *src, vector *origin)
+{
+  int k, iSource;
+  iSource = 1;
+  k = iSource;
+  
+    d__ray[k].coordinates.x = origin->x; 
+    d__ray[k].coordinates.y = origin->y; 
+    d__ray[k].coordinates.z = origin->z;
+    d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
+    d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
+    d__ray[k].directions.z  = cos(src[iSource].zenith);
+    d__ray[k].optical_path_length = 0.0;
+    d__ray[k].optical_path_difference = 0.0;
+    d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
+    d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
+    d__ray[k].v = 1;
+
+}
 @
 The cartesian coordinates are defined with the sampling of the square box length [[N_L]] from $-[[L]]$ to [[L]].
 <<ray bundle functions>>=
@@ -702,8 +730,8 @@ The cartesian coordinates $x$ and $y$ of the rays are given by
   y &=& L*(j-([[N_L]]-1)/2)/([[N_L]]-1)
 \end{eqnarray}
 <<bundle coordinates (box)>>=
-dim3 blockDim(16,16);
-dim3 gridDim(N_L/16+1,N_L/16+1, src->N_SRC);
+blockDim = dim3(16,16);
+gridDim  = dim3(N_L/16+1,N_L/16+1, src->N_SRC);
 ray_coordinates_box LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
                                                             L, N_L, d__origin);
 @ 
@@ -770,15 +798,16 @@ void bundle::to_z_plane(rtd z_plane)
 <<to z plane kernel>>=
   __global__ void to_z_plane_kernel(ray *d__ray, int N_RAY, rtd z_plane, ray *d__chief_ray)
 {
-  int i, j, k, iSource;
+  int i, j, k0, k, iSource;
   rtd s;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
   k = j * gridDim.x * blockDim.x + i;
-  if ( (k<N_RAY ) && (d__ray[k].v) )
+  k0 = k;
+  k += iSource*N_RAY;
+  if ( (k0<N_RAY ) && (d__ray[k].v) )
   {
-    k += iSource*N_RAY;
     if (d__ray[k].directions.z==0)
        return;
     s = (z_plane - d__ray[k].coordinates.z)/d__ray[k].directions.z;
@@ -876,15 +905,16 @@ __global__ void to_sphere_kernel(ray *d__ray, int N_RAY,
 				 vector *sphere_origin, rtd sphere_radius,
 				 ray *d__chief_ray)
 {
-  int i, j, k, iSource;
+  int i, j, k0, k, iSource;
   rtd s, x, y, z, g, rho2;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
   iSource = blockIdx.z;
-  if ( (k<N_RAY ) && (d__ray[k].v) )
+  k0 = k;
+  k += iSource*N_RAY;
+  if ( (k0<N_RAY ) && (d__ray[k].v) )
   {
-    k += iSource*N_RAY;
     <<to sphere kernel common>>
     d__ray[k].optical_path_difference += 
       d__ray[k].optical_path_length - d__chief_ray->optical_path_length;
@@ -957,28 +987,33 @@ The coordinates, directions, optical path length and vignetting map are copied i
 void bundle::get_coordinates(double *d__coord)
 {
   dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1);
+  dim3 gridDim(N_RAY/256+1,1, src->N_SRC);
   get_coordinates_kernel LLL gridDim , blockDim RRR (d__coord, d__ray, N_RAY);
 }
 @ 
 <<gathering ray coordinates>>=
 void bundle::get_chief_coordinates(double *d__coord)
 {
-  get_coordinates_kernel LLL 1,1 RRR (d__coord, d__chief_ray, 1);
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_RAY/256+1,1, src->N_SRC);
+  get_coordinates_kernel LLL 1,gridDim RRR (d__coord, d__chief_ray, 1);
 }
 @ 
 <<gathering ray coordinates kernel>>=
 __global__ void get_coordinates_kernel(double *d__coord, ray *d__ray, int N_RAY)
 {
-  int i, j, k;
+  int i, j, k, l, iSource;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
   if ( k<N_RAY )
   {
-    d__coord[3*k]   = d__ray[k].coordinates.x;
-    d__coord[3*k+1] = d__ray[k].coordinates.y;
-    d__coord[3*k+2] = d__ray[k].coordinates.z;
+    k += iSource*N_RAY;
+    l = k*3;
+    d__coord[l++] = d__ray[k].coordinates.x;
+    d__coord[l++] = d__ray[k].coordinates.y;
+    d__coord[l++] = d__ray[k].coordinates.z;
   }
 }
 @ 
@@ -1193,7 +1228,7 @@ void bundle::get_wavefront(source *src)
 {
 //  printf("Setting wavefront!\n");
   dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1);
+  dim3 gridDim(N_RAY/256+1,1, src->N_SRC);
   get_wavefront_kernel LLL gridDim , blockDim RRR (src->wavefront.amplitude, 
                                                    src->wavefront.phase,
 						   V.m,
@@ -1206,18 +1241,21 @@ void bundle::get_wavefront(source *src)
 __global__ void get_wavefront_kernel(float *amplitude, float *phase,
                                      char *m, ray *d__ray, int N_RAY)
 {
-  int i, j, k;
+  int i, j, k0, k, iSource;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
   k = j * gridDim.x * blockDim.x + i;
   if ( k<N_RAY )
+    k0 = k;
+    k += iSource*N_RAY;
     if (d__ray[k].v==1)
       {
-	m[k]         = 1;
+	m[k0]         = 1;
 	amplitude[k] = 1.0;
 	phase[k]     = d__ray[k].optical_path_difference;
       } else {
-	m[k]         = 0;
+	m[k0]         = 0;
 	amplitude[k] = 0.0;
 	phase[k]     = 0.0;
     }
@@ -1237,8 +1275,8 @@ void bundle::reset(void)
   ray_coordinates LLL 1 , 1, src->N_SRC RRR (d__chief_ray, 1, src->dev_ptr,
 					     0.0, 2, 1, d__chief_origin);
   dim3 blockDim(16,16);
-  dim3 gridDim(N_L/16+1,N_L/16+1);
-  ray_coordinates_box LLL gridDim , blockDim, src->N_SRC RRR (d__ray, N_RAY, src->dev_ptr,
+  dim3 gridDim(N_L/16+1,N_L/16+1, src->N_SRC);
+  ray_coordinates_box LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
 							      L, N_L, d__origin);
 }
 @ with 
