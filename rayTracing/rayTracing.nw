@@ -185,6 +185,7 @@ coordinate_system conic_CS
 coordinate_system rigid_body_CS
 coordinate_system motion_CS
 void setup(float , int )
+void setup(float , int , int)
 void cleanup()
 void update(vector , vector ,int )
 void reset()
@@ -285,7 +286,7 @@ property optical_path_difference:
 
 property vignetting:
         def __get__(self):
-            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,1),dev_malloc=True)
+            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,self._c_bundle.src.N_SRC),dev_malloc=True)
             self._c_bundle.get_vignetting(x._c_gpu.dev_data)
             return x
 
@@ -356,7 +357,7 @@ cdef class GMT_M1:
     cdef ceo.gmt_m1 *_c_gmt_m1
     cdef public np.ndarray aperture_R, conic_R, rigid_body_R, motion_R
     
-    def __cinit__(self, float D, int D_px):
+    def __cinit__(self, float D, int D_px, int N_SRC=1):
         self._c_gmt_m1 = new ceo.gmt_m1()
         
         # aperture
@@ -372,7 +373,7 @@ cdef class GMT_M1:
         self.motion_R = np.zeros((3*7,3),order='c',dtype=np.float32)
         self._c_gmt_m1.motion_CS.float_R = <float *> self.motion_R.data;
 
-        self._c_gmt_m1.setup(D, D_px)
+        self._c_gmt_m1.setup(D, D_px, N_SRC)
 
     def __dealloc__(self):
         self._c_gmt_m1.cleanup()
@@ -406,7 +407,7 @@ cdef class GMT_M2:
     cdef ceo.gmt_m2 *_c_gmt_m2
     cdef public np.ndarray aperture_R, conic_R, rigid_body_R, motion_R
     
-    def __cinit__(self, float D, int D_px):
+    def __cinit__(self, float D, int D_px, int N_SRC=1):
         self._c_gmt_m2 = new ceo.gmt_m2()
         
         # aperture
@@ -422,7 +423,7 @@ cdef class GMT_M2:
         self.motion_R = np.zeros((3*7,3),order='c',dtype=np.float32)
         self._c_gmt_m2.motion_CS.float_R = <float *> self.motion_R.data;
 
-        self._c_gmt_m2.setup(D, D_px)
+        self._c_gmt_m2.setup(D, D_px,N_SRC)
 
     def __dealloc__(self):
         self._c_gmt_m2.cleanup()
@@ -570,6 +571,10 @@ A bundle allocates an array of [[N_RAY]] rays on the device
 int N_RAY;
 ray *d__ray;
 @ 
+The structure may contain several bundle of rays, each associated to a different source but with the same number of rays
+<<ray bundle parameters>>=
+int N_BUNDLE;
+@
 The x and y coordinates of the [[origin]] vector specifies the location of the center of the ray bundle when it crosses the (x,y) plane of the first surface.
 The z coordinate specifies the height of the ray bundle with respect to the first surface.
 <<ray bundle parameters>>=
@@ -600,9 +605,10 @@ The polar coordinates are defined with the sampling of the radius [[N_RADIUS]] f
 void bundle::setup(source *src, rtd RADIUS, int N_RADIUS, 
 		   int N_THETA, vector origin)
 {
+  N_BUNDLE = src->N_SRC;
   N_RAY = (N_RADIUS-1)*N_THETA + 1;
   V.setup(N_RAY);
-  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY*src->N_SRC ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY*N_BUNDLE ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
@@ -627,7 +633,7 @@ and
 \end{equation}
 <<bundle coordinates>>=
 blockDim = dim3(16,16);
-gridDim  = dim3(N_RADIUS/16+1,N_THETA/16+1, src->N_SRC);
+gridDim  = dim3(N_RADIUS/16+1,N_THETA/16+1, N_BUNDLE);
 ray_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
                                             RADIUS, N_RADIUS, N_THETA, d__origin);
 @ 
@@ -671,34 +677,15 @@ vector chief_origin;
 chief_origin.x = 0.0;
 chief_origin.y = 0.0;
 chief_origin.z = origin.z;
-HANDLE_ERROR( cudaMalloc((void**)&d__chief_ray, sizeof(vector)*src->N_SRC ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__chief_ray, sizeof(ray)*N_BUNDLE ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__chief_origin, sizeof(vector) ) );
 HANDLE_ERROR( cudaMemcpy( d__chief_origin, &chief_origin, 
                          sizeof(vector), cudaMemcpyHostToDevice ) );
 dim3 blockDim(1,1);
-dim3 gridDim(1,2);//, src->N_SRC);
-chief_ray_coordinates LLL gridDim , blockDim  RRR (d__chief_ray, 1, src->dev_ptr, d__chief_origin);
-@
-<<bundle coordinates kernel>>=
-__global__ void chief_ray_coordinates(ray *d__ray, int N_RAY, source *src, vector *origin)
-{
-  int k, iSource;
-  iSource = 1;
-  k = iSource;
-  
-    d__ray[k].coordinates.x = origin->x; 
-    d__ray[k].coordinates.y = origin->y; 
-    d__ray[k].coordinates.z = origin->z;
-    d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
-    d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
-    d__ray[k].directions.z  = cos(src[iSource].zenith);
-    d__ray[k].optical_path_length = 0.0;
-    d__ray[k].optical_path_difference = 0.0;
-    d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
-    d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
-    d__ray[k].v = 1;
+dim3 gridDim(1,1, N_BUNDLE);
+ray_coordinates LLL gridDim , blockDim RRR (d__chief_ray, 1, src->dev_ptr,
+					    0.0, 2, 1, d__origin);
 
-}
 @
 The cartesian coordinates are defined with the sampling of the square box length [[N_L]] from $-[[L]]$ to [[L]].
 <<ray bundle functions>>=
@@ -707,9 +694,10 @@ void bundle::setup(source *_src_, rtd _L_, int _N_L_, vector origin)
   N_L = _N_L_;
   L = _L_;
   src = _src_;
+  N_BUNDLE = src->N_SRC;
   N_RAY = N_L*N_L;
   V.setup(N_RAY);
-  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY*src->N_SRC ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY*N_BUNDLE ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
@@ -731,7 +719,7 @@ The cartesian coordinates $x$ and $y$ of the rays are given by
 \end{eqnarray}
 <<bundle coordinates (box)>>=
 blockDim = dim3(16,16);
-gridDim  = dim3(N_L/16+1,N_L/16+1, src->N_SRC);
+gridDim  = dim3(N_L/16+1,N_L/16+1, N_BUNDLE);
 ray_coordinates_box LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
                                                             L, N_L, d__origin);
 @ 
@@ -789,9 +777,9 @@ The rays are propagated to the plane $z=[[z__plane]]$ with
 <<ray bundle functions>>= 
 void bundle::to_z_plane(rtd z_plane)
 {
-  to_z_plane_chief_kernel LLL 1, 1, src->N_SRC RRR (d__chief_ray, 1, z_plane);
+  to_z_plane_chief_kernel LLL 1, 1, N_BUNDLE RRR (d__chief_ray, 1, z_plane);
   dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1,src->N_SRC);
+  dim3 gridDim(N_RAY/256+1,1,N_BUNDLE);
   to_z_plane_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, z_plane, d__chief_ray);
 }
 @ where
@@ -890,10 +878,10 @@ void bundle::to_sphere(vector sphere_origin, rtd sphere_radius)
   HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__sphere_origin, &sphere_origin, 
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
-  to_sphere_chief_kernel LLL 1 , 1, src->N_SRC RRR (d__chief_ray, 1, 
+  to_sphere_chief_kernel LLL 1 , 1, N_BUNDLE RRR (d__chief_ray, 1, 
 					d__sphere_origin, sphere_radius);
   dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1, src->N_SRC);
+  dim3 gridDim(N_RAY/256+1,1, N_BUNDLE);
   to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
 					       d__sphere_origin, sphere_radius, 
 					       d__chief_ray);
@@ -949,11 +937,11 @@ void bundle::to_sphere(rtd s, rtd sphere_radius)
 {
   vector *d__sphere_origin;
   HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin, sizeof(vector) ) );
-  chief_parametric_equation LLL 1 , 1 , src->N_SRC RRR (d__sphere_origin, d__chief_ray, 1, s);
-  to_sphere_chief_kernel LLL 1 , 1 , src->N_SRC RRR (d__chief_ray, 1, 
+  chief_parametric_equation LLL 1 , 1 , N_BUNDLE RRR (d__sphere_origin, d__chief_ray, 1, s);
+  to_sphere_chief_kernel LLL 1 , 1 , N_BUNDLE RRR (d__chief_ray, 1, 
 					d__sphere_origin, sphere_radius);
   dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1, src->N_SRC);
+  dim3 gridDim(N_RAY/256+1,1, N_BUNDLE);
   to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
 					       d__sphere_origin, sphere_radius, 
 					       d__chief_ray);
@@ -987,16 +975,16 @@ The coordinates, directions, optical path length and vignetting map are copied i
 void bundle::get_coordinates(double *d__coord)
 {
   dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1, src->N_SRC);
+  dim3 gridDim(N_RAY/256+1,1, N_BUNDLE);
   get_coordinates_kernel LLL gridDim , blockDim RRR (d__coord, d__ray, N_RAY);
 }
 @ 
 <<gathering ray coordinates>>=
 void bundle::get_chief_coordinates(double *d__coord)
 {
-  dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1, src->N_SRC);
-  get_coordinates_kernel LLL 1,gridDim RRR (d__coord, d__chief_ray, 1);
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  get_coordinates_kernel LLL gridDim, blockDim RRR (d__coord, d__chief_ray, 1);
 }
 @ 
 <<gathering ray coordinates kernel>>=
@@ -1013,7 +1001,7 @@ __global__ void get_coordinates_kernel(double *d__coord, ray *d__ray, int N_RAY)
     l = k*3;
     d__coord[l++] = d__ray[k].coordinates.x;
     d__coord[l++] = d__ray[k].coordinates.y;
-    d__coord[l++] = d__ray[k].coordinates.z;
+    d__coord[l] = d__ray[k].coordinates.z;
   }
 }
 @ 
@@ -1208,18 +1196,20 @@ __global__ void get_optical_path_difference_interp_kernel(double *d__opd,
 void bundle::get_vignetting(double *d__v)
 {
   dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1);
+  dim3 gridDim(N_RAY/256+1,1,N_BUNDLE);
   get_vignetting_kernel LLL gridDim , blockDim RRR (d__v, d__ray, N_RAY);
 }
 @ 
 <<gathering ray vignetting map kernel>>=
   __global__ void get_vignetting_kernel(double *d__v, ray *d__ray, int N_RAY)
 {
-  int i, j, k;
+  int i, j, k, iSource;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
   if ( k<N_RAY )
+    k += iSource*N_RAY;
     d__v[k]   = (d__ray[k].v) ? 1.0 : 0.0;
 }
 @ 
@@ -1228,7 +1218,7 @@ void bundle::get_wavefront(source *src)
 {
 //  printf("Setting wavefront!\n");
   dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1, src->N_SRC);
+  dim3 gridDim(N_RAY/256+1,1, N_BUNDLE);
   get_wavefront_kernel LLL gridDim , blockDim RRR (src->wavefront.amplitude, 
                                                    src->wavefront.phase,
 						   V.m,
@@ -1272,10 +1262,10 @@ void bundle::reset(void)
   /* dim3 blockDim(16,16); */
   /* dim3 gridDim(N_RAY/256+1,1);   */
   /* reset_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY); */
-  ray_coordinates LLL 1 , 1, src->N_SRC RRR (d__chief_ray, 1, src->dev_ptr,
+  ray_coordinates LLL 1 , 1, N_BUNDLE RRR (d__chief_ray, 1, src->dev_ptr,
 					     0.0, 2, 1, d__chief_origin);
   dim3 blockDim(16,16);
-  dim3 gridDim(N_L/16+1,N_L/16+1, src->N_SRC);
+  dim3 gridDim(N_L/16+1,N_L/16+1, N_BUNDLE);
   ray_coordinates_box LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
 							      L, N_L, d__origin);
 }
@@ -1871,12 +1861,13 @@ void aperture::vignetting(bundle *rays)
   Rri2 = R2*ri*ri;
   fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
   dim3 blockDim(16,16);
-  dim3 gridDim(rays->N_RAY/256+1,N);
-  rays->reset();
+  dim3 gridDim(rays->N_RAY/256+1,1);
+  HANDLE_ERROR( cudaMemset(V.m, 0, sizeof(char)*rays->N_RAY ) );
   vignetting_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
 						Rri2, R2,
 						ref_frame.d__R,
 						ref_frame.d__origin);
+  GMT_intersection LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY);
 }
 @ calling the device kernel:
 <<vignetting kernel>>=
@@ -1919,15 +1910,13 @@ __global__ void vignetting_kernel(char *mask, ray *d__ray, int N_RAY,
     x1 = x + k*s0;
     y1 = y + l*s0;
     rho2 = x1*x1 + y1*y1;
-    if (rho2<=outer2)
-      {
-	d__ray[ij].v = 1;
-	mask[ij] = 1;
-      }
     if ( (iCoordSys==0) && (rho2<inner2) )
       {
-	d__ray[ij].v = 0;
-	mask[ij] = 0;
+	return;
+      }
+    if (rho2<=outer2)
+      {
+	mask[ij] = 1;
       }
   }
 }
@@ -2110,16 +2099,38 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 <<intersection with surface>>=
 void intersect(bundle *rays, conic *F)
 {
+  intersect_chief_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+						     F->k, F->c, F->d__origin);
   dim3 blockDim(16,16);
   dim3 gridDim(rays->N_RAY/256+1,1);
   intersect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, 
-					       F->k, F->c, F->d__origin);
+					       F->k, F->c, F->d__origin,
+					       rays->d__chief_ray);
 }
 
 <<intersection with surface kernel>>=
-__global__ void intersect_kernel(ray *d__ray, int N_RAY, 
+__global__ void intersect_chief_kernel(ray *d__ray, int N_RAY, 
 				 const rtd Fk, const rtd Fc,
 				 vector *d__origin)
+{
+  int j, ij;
+  rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
+  vector vv;
+  ij = 0;
+
+  <<intersection with z=0 plane>>
+  d__ray[ij].optical_path_length = s0;
+  s0 = s1 = 0;
+  for (j=0; j<N_ITERATION; j++)
+    {
+      <<Newton-Raphson>>
+      s0 = s1;
+    }
+}
+__global__ void intersect_kernel(ray *d__ray, int N_RAY, 
+				 const rtd Fk, const rtd Fc,
+				 vector *d__origin,
+                                 ray *d__chief_ray)
 {
   int i, j, ij;
   rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
@@ -2130,13 +2141,15 @@ __global__ void intersect_kernel(ray *d__ray, int N_RAY,
   if ( (ij<N_RAY) && (d__ray[ij].v) )
   {
     <<intersection with z=0 plane>>
-    d__ray[ij].optical_path_length += s0;
+    d__ray[ij].optical_path_length = s0;
     s0 = s1 = 0;
     for (j=0; j<N_ITERATION; j++)
     {
       <<Newton-Raphson>>
 	s0 = s1;
     }
+  d__ray[ij].optical_path_difference += 
+    d__ray[ij].optical_path_length - d__chief_ray->optical_path_length;
   }
 }
 @
@@ -2215,7 +2228,8 @@ if (abs(s1-s0)<TOL)
     partial_y_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc);
   d__ray[ij].surface_normal.z    = partial_z_conic_surface();
   d__ray[ij].optical_path_length += s1;
-  return;
+  d__ray[ij].n_iteration = j;
+  break;
 }
 @
 The iterative process is started with
@@ -2428,6 +2442,7 @@ struct gmt_m1 {
 @  with
 <<GMT M12 functions>>=
 void setup(float _D_, int _D_px_);
+void setup(float _D_, int _D_px_, int N_SRC);
 void cleanup(void);
 void update(vector _origin_, vector _euler_angles_,int idx);
 void reset(void);
@@ -2520,6 +2535,24 @@ The size must be 25.5m or more to contain M1 fully.
 <<GMT M1 functions>>=
 void gmt_m1::setup(float _D_, int _D_px_)
 {
+  int  N_SRC = 1;
+  M_ID    = 1;
+  D_px    = _D_px_;
+  D       = _D_;
+  D_full  = 8.417;
+  D_clear = 8.365;
+  ri      = 2.4412/8.365;
+  beta    = -13.522*PI/180.0;
+  L       = 8.710;
+  N       = 7;
+  conic_c = -1.0/36.0;
+  conic_k = 1-0.9982857;
+  height  = 0.0;
+
+  <<GMT setup common>>
+}
+void gmt_m1::setup(float _D_, int _D_px_, int N_SRC)
+{
   M_ID    = 1;
   D_px    = _D_px_;
   D       = _D_;
@@ -2555,7 +2588,7 @@ int k;
 
 <<M12 motion definition>>
 
-V.setup(D_px*D_px);
+V.setup(D_px*D_px*N_SRC);
 @ The origin and coordinates system of the rigid bodies are defined with
 <<M12 rigid body definition>>=
 origin[0].x = origin[0].y = 0.0;
@@ -2699,8 +2732,9 @@ void gmt_m1::blocking(bundle *rays)
  R2 = D_clear*D_clear*0.25;
  Rri2 = R2*ri*ri;
  // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
+ printf("N_BUNDLE=%d\n",rays->N_BUNDLE);
  dim3 blockDim(16,16);
- dim3 gridDim(rays->N_RAY/256+1,1);
+ dim3 gridDim(rays->N_RAY/256+1,1,rays->N_BUNDLE);
  m1_blocking_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
 					     Rri2, R2,
 					     aperture_CS.d__R,
@@ -2718,7 +2752,7 @@ __global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY,
 				rtd *d__rigid_body_R, vector *d__rigid_body_origin,
 				rtd *d__motion_R, vector *d__motion_origin)
 {
-  int i, j, ij, iCoordSys;
+  int i, j, ij, iCoordSys, iSource;
   rtd rho2;
   rtd x, y, z, x1, y1, s0, k, l, m;
   vector xyz, klm, xyz_GS, klm_GS;
@@ -2727,8 +2761,10 @@ __global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY,
   j = threadIdx.y;
   //  iCoordSys = blockIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
   if  ( ( ij<N_RAY ) && (d__ray[ij].v) )// & (iCoordSys<1) )
   {
+    ij += iSource*N_RAY;
 
     for (iCoordSys=0; iCoordSys<7; iCoordSys++)
       {
@@ -2986,12 +3022,14 @@ The vignetting by the aperture is computed as the intersection between the apert
 <<GMT aperture intersection>>=
 __global__ void GMT_intersection(char *mask, ray *d__ray, int N_RAY)
 {
-  int i, j, ij;
+  int i, j, ij, iSource;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = threadIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
   if  ( ij<N_RAY )
   {
+    ij += iSource*N_RAY;
     d__ray[ij].v &= mask[ij];
   }
 }
@@ -3058,6 +3096,23 @@ struct gmt_m2 {
 
 <<GMT M2 functions>>=
 void gmt_m2::setup(float _D_, int _D_px_)
+{
+  int N_SRC = 1;
+  M_ID    = 2;
+  D_px    = _D_px_;
+  D       = _D_;
+  D_full  = 1.0425;
+  D_clear = 1.0415;
+  ri      = 0.0;//2.4412/8.365;
+  beta    = 14.706*PI/180.0;
+  L       = 1.08774;
+  N       = 7;
+  conic_c = 1.0/4.163901;
+  conic_k = 1-0.7169273;
+  height  = -20.262476;
+  <<GMT setup common>>
+}
+void gmt_m2::setup(float _D_, int _D_px_, int N_SRC)
 {
   M_ID    = 2;
   D_px    = _D_px_;
