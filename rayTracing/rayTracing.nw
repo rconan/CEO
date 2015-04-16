@@ -134,7 +134,7 @@ cdef extern from "rayTracing.h":
     ctypedef struct coordinate_system:
         float *float_R        
     cdef cppclass bundle:
-        int N_RAY
+        int N_RAY, N_BUNDLE
         ray *d__ray, *d__chief_ray
         source *src
         void setup(source *, rtd , int , int , vector )
@@ -244,49 +244,49 @@ def get_optical_path_difference(self,
 
 property coordinates:
     def __get__(self):
-        x = cuDoubleArray(shape=(self._c_bundle.N_RAY*self._c_bundle.src.N_SRC,3),dev_malloc=True)
+        x = cuDoubleArray(shape=(self._c_bundle.N_RAY*self._c_bundle.N_BUNDLE,3),dev_malloc=True)
         self._c_bundle.get_coordinates(x._c_gpu.dev_data)
         return x
 
 property chief_coordinates:
     def __get__(self):
-        x = cuDoubleArray(shape=(self._c_bundle.src.N_SRC,3),dev_malloc=True)
+        x = cuDoubleArray(shape=(self._c_bundle.N_BUNDLE,3),dev_malloc=True)
         self._c_bundle.get_chief_coordinates(x._c_gpu.dev_data)
         return x
 
 property directions:
     def __get__(self):
-        x = cuDoubleArray(shape=(self._c_bundle.N_RAY,3),dev_malloc=True)
+        x = cuDoubleArray(shape=(self._c_bundle.N_RAY*self._c_bundle.N_BUNDLE,3),dev_malloc=True)
         self._c_bundle.get_directions(x._c_gpu.dev_data)
         return x
 
 property chief_directions:
     def __get__(self):
-        x = cuDoubleArray(shape=(1,3),dev_malloc=True)
+        x = cuDoubleArray(shape=(self._c_bundle.N_BUNDLE,3),dev_malloc=True)
         self._c_bundle.get_chief_directions(x._c_gpu.dev_data)
         return x
 
 property optical_path_length:
         def __get__(self):
-            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,1),dev_malloc=True)
+            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,self._c_bundle.N_BUNDLE),dev_malloc=True)
             self._c_bundle.get_optical_path_length(x._c_gpu.dev_data)
             return x
 
 property chief_optical_path_length:
         def __get__(self):
-            x = cuDoubleArray(shape=(1,1),dev_malloc=True)
+            x = cuDoubleArray(shape=(self._c_bundle.N_BUNDLE,1),dev_malloc=True)
             self._c_bundle.get_chief_optical_path_length(x._c_gpu.dev_data)
             return x
 
 property optical_path_difference:
         def __get__(self):
-            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,1),dev_malloc=True)
+            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,self._c_bundle.N_BUNDLE),dev_malloc=True)
             self._c_bundle.get_optical_path_difference(x._c_gpu.dev_data)
             return x
 
 property vignetting:
         def __get__(self):
-            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,self._c_bundle.src.N_SRC),dev_malloc=True)
+            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,self._c_bundle.N_BUNDLE),dev_malloc=True)
             self._c_bundle.get_vignetting(x._c_gpu.dev_data)
             return x
 
@@ -859,9 +859,9 @@ and
 @ 
 The code corresponding to the above equation is:
 <<to sphere kernel common>>=
-x = d__ray[k].coordinates.x - sphere_origin->x;
-y = d__ray[k].coordinates.y - sphere_origin->y;
-z = d__ray[k].coordinates.z - sphere_origin->z;
+x = d__ray[k].coordinates.x - sphere_origin[iSource].x;
+y = d__ray[k].coordinates.y - sphere_origin[iSource].y;
+z = d__ray[k].coordinates.z - sphere_origin[iSource].z;
 g = x*d__ray[k].directions.x + y*d__ray[k].directions.y + z*d__ray[k].directions.z;
 rho2 = x*x + y*y + z*z;
 s = sqrt( g*g - (rho2-sphere_radius*sphere_radius) ) - g;
@@ -905,7 +905,7 @@ __global__ void to_sphere_kernel(ray *d__ray, int N_RAY,
   {
     <<to sphere kernel common>>
     d__ray[k].optical_path_difference += 
-      d__ray[k].optical_path_length - d__chief_ray->optical_path_length;
+      d__ray[k].optical_path_length - d__chief_ray[iSource].optical_path_length;
   }
 }
 __global__ void to_sphere_chief_kernel(ray *d__ray, int N_RAY, 
@@ -926,9 +926,9 @@ __global__ void chief_parametric_equation(vector *d__v, ray *d__ray, int N_RAY, 
   int k, iSource;
   iSource = blockIdx.z;
   k = iSource;
-  d__v->x = d__ray[k].coordinates.x + d__ray[k].directions.x*s;
-  d__v->y = d__ray[k].coordinates.y + d__ray[k].directions.y*s;
-  d__v->z = d__ray[k].coordinates.z + d__ray[k].directions.z*s;
+  d__v[k].x = d__ray[k].coordinates.x + d__ray[k].directions.x*s;
+  d__v[k].y = d__ray[k].coordinates.y + d__ray[k].directions.y*s;
+  d__v[k].z = d__ray[k].coordinates.z + d__ray[k].directions.z*s;
 }
 @ 
 The rays intersection with the reference sphere is computed with
@@ -936,12 +936,14 @@ The rays intersection with the reference sphere is computed with
 void bundle::to_sphere(rtd s, rtd sphere_radius)
 {
   vector *d__sphere_origin;
-  HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin, sizeof(vector) ) );
-  chief_parametric_equation LLL 1 , 1 , N_BUNDLE RRR (d__sphere_origin, d__chief_ray, 1, s);
-  to_sphere_chief_kernel LLL 1 , 1 , N_BUNDLE RRR (d__chief_ray, 1, 
+  HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin, sizeof(vector)*N_BUNDLE ) );
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  chief_parametric_equation LLL gridDim , blockDim RRR (d__sphere_origin, d__chief_ray, 1, s);
+  to_sphere_chief_kernel LLL gridDim , blockDim RRR (d__chief_ray, 1, 
 					d__sphere_origin, sphere_radius);
-  dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1, N_BUNDLE);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(N_RAY/256+1,1, N_BUNDLE);
   to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
 					       d__sphere_origin, sphere_radius, 
 					       d__chief_ray);
@@ -1001,7 +1003,7 @@ __global__ void get_coordinates_kernel(double *d__coord, ray *d__ray, int N_RAY)
     l = k*3;
     d__coord[l++] = d__ray[k].coordinates.x;
     d__coord[l++] = d__ray[k].coordinates.y;
-    d__coord[l] = d__ray[k].coordinates.z;
+    d__coord[l]   = d__ray[k].coordinates.z;
   }
 }
 @ 
@@ -1009,28 +1011,33 @@ __global__ void get_coordinates_kernel(double *d__coord, ray *d__ray, int N_RAY)
 void bundle::get_directions(double *d__dir)
 {
   dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1);
+  dim3 gridDim(N_RAY/256+1,1,N_BUNDLE);
   get_directions_kernel LLL gridDim , blockDim RRR (d__dir, d__ray, N_RAY);
 }
 @ 
 <<gathering ray directions>>=
 void bundle::get_chief_directions(double *d__dir)
 {
-  get_directions_kernel LLL 1 , 1 RRR (d__dir, d__chief_ray, N_RAY);
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1,N_BUNDLE);
+  get_directions_kernel LLL gridDim , blockDim RRR (d__dir, d__chief_ray, 1);
 }
 @ 
 <<gathering ray directions kernel>>=
 __global__ void get_directions_kernel(double *d__dir, ray *d__ray, int N_RAY)
 {
-  int i, j, k;
+  int i, j, k, l, iSource;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
   if ( k<N_RAY )
   {
-    d__dir[3*k]   = d__ray[k].directions.x;
-    d__dir[3*k+1] = d__ray[k].directions.y;
-    d__dir[3*k+2] = d__ray[k].directions.z;
+    k += iSource*N_RAY;
+    l = k*3;
+    d__dir[l++] = d__ray[k].directions.x;
+    d__dir[l++] = d__ray[k].directions.y;
+    d__dir[l]   = d__ray[k].directions.z;
   }
 }
 @ 
@@ -1038,45 +1045,56 @@ __global__ void get_directions_kernel(double *d__dir, ray *d__ray, int N_RAY)
 void bundle::get_optical_path_length(double *d__opl)
 {
   dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1);
+  dim3 gridDim(N_RAY/256+1,1,N_BUNDLE);
   get_optical_path_length_kernel LLL gridDim , blockDim RRR (d__opl, d__ray, N_RAY);
 }
 @ 
 <<gathering ray optical path length>>=
 void bundle::get_chief_optical_path_length(double *d__opl)
 {
-  get_optical_path_length_kernel LLL 1 , 1 RRR (d__opl, d__chief_ray, 1);
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1,N_BUNDLE);
+  get_optical_path_length_kernel LLL gridDim , blockDim RRR (d__opl, d__chief_ray, 1);
 }
 @ 
 <<gathering ray optical path length kernel>>=
 __global__ void get_optical_path_length_kernel(double *d__opl, ray *d__ray, int N_RAY)
 {
-  int i, j, k;
+  int i, j, k, iSource;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
   if ( k<N_RAY )
-    d__opl[k]   = d__ray[k].optical_path_length;
+    {
+      k += iSource*N_RAY;
+      d__opl[k]   = d__ray[k].optical_path_length;
+    }
 }
 @ 
 <<gathering ray optical path difference>>=
 void bundle::get_optical_path_difference(double *d__opd)
 {
-  HANDLE_ERROR( cudaMemset(d__opd, 0, sizeof(double)*N_RAY ) );
+  HANDLE_ERROR( cudaMemset(d__opd, 0, sizeof(double)*N_RAY*N_BUNDLE ) );
   dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1);
+  dim3 gridDim(N_RAY/256+1,1,N_BUNDLE);
   get_optical_path_difference_kernel LLL gridDim , blockDim RRR (d__opd, d__ray, N_RAY);
 }
 @ 
 <<gathering ray optical path difference kernel>>=
 __global__ void get_optical_path_difference_kernel(double *d__opd, ray *d__ray, int N_RAY)
 {
-  int i, j, k;
+  int i, j, k, iSource;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
-  if ( (k<N_RAY) && (d__ray[k].v) )
-    d__opd[k]   = d__ray[k].optical_path_difference;
+  iSource = blockIdx.z;
+  j = k;
+  k += iSource*N_RAY;
+  if ( (j<N_RAY) && (d__ray[k].v) )
+    {
+      d__opd[k]   = d__ray[k].optical_path_difference;
+    }
 }
 @ 
 The OPD is interpolated on a $N_x\times N_y$ grid with respective sampling $\delta_x$ and $\delta_y$.
@@ -1241,11 +1259,11 @@ __global__ void get_wavefront_kernel(float *amplitude, float *phase,
     k += iSource*N_RAY;
     if (d__ray[k].v==1)
       {
-	m[k0]         = 1;
+	m[k]         = 1;
 	amplitude[k] = 1.0;
 	phase[k]     = d__ray[k].optical_path_difference;
       } else {
-	m[k0]         = 0;
+	m[k]         = 0;
 	amplitude[k] = 0.0;
 	phase[k]     = 0.0;
     }
@@ -2762,9 +2780,10 @@ __global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY,
   //  iCoordSys = blockIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
   iSource = blockIdx.z;
-  if  ( ( ij<N_RAY ) && (d__ray[ij].v) )// & (iCoordSys<1) )
+  j = ij;
+  ij += iSource*N_RAY;
+  if  ( ( j<N_RAY ) && (d__ray[ij].v) )// & (iCoordSys<1) )
   {
-    ij += iSource*N_RAY;
 
     for (iCoordSys=0; iCoordSys<7; iCoordSys++)
       {
@@ -2796,7 +2815,9 @@ void gmt_m1::trace(bundle *rays)
  R2 = D_clear*D_clear*0.25;
  Rri2 = R2*ri*ri;
  // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
- m1_trace_chief_kernel LLL 1 , 1 RRR (V.m, rays->d__chief_ray, 1, 
+ dim3 blockDim(1,1);
+ dim3 gridDim(1,1,rays->N_BUNDLE);
+ m1_trace_chief_kernel LLL gridDim , blockDim RRR (V.m, rays->d__chief_ray, 1, 
 					     conic_CS.d__R,
 					     conic_CS.d__origin,
 					     conic_k, conic_c,
@@ -2805,9 +2826,9 @@ void gmt_m1::trace(bundle *rays)
 					     rigid_body_CS.d__origin,
 					     motion_CS.d__R,
 					     motion_CS.d__origin);
- dim3 blockDim(16,16);
- dim3 gridDim(rays->N_RAY/256+1,1);
- HANDLE_ERROR( cudaMemset(V.m, 0, sizeof(char)*rays->N_RAY ) );
+ blockDim = dim3(16,16);
+ gridDim  = dim3(rays->N_RAY/256+1,1,rays->N_BUNDLE);
+ HANDLE_ERROR( cudaMemset(V.m, 0, sizeof(char)*rays->N_RAY*rays->N_BUNDLE ) );
  m1_trace_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
 					     Rri2, R2,
 					     aperture_CS.d__R,
@@ -2834,7 +2855,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 				rtd *d__motion_R, vector *d__motion_origin,
 				ray *d__chief_ray)
 {
-  int i, j, ij, iCoordSys;
+  int i, j, ij, iCoordSys, iSource;
   rtd rho2;
   rtd x, y, z, x1, y1, s0, k, l, m;
   rtd s1, S, K, L ,M, dSds;
@@ -2845,7 +2866,10 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
   j = threadIdx.y;
   //  iCoordSys = blockIdx.y;
   ij = j * gridDim.x * blockDim.x + i;
-  if  ( ( ij<N_RAY ) && (d__ray[ij].v) )// & (iCoordSys<1) )
+  iSource = blockIdx.z;
+  j = ij;
+  ij += iSource*N_RAY;
+  if  ( ( j<N_RAY ) && (d__ray[ij].v) )// & (iCoordSys<1) )
   {
 
     for (iCoordSys=0; iCoordSys<7; iCoordSys++)
@@ -2863,7 +2887,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 
             <<from motion CS to conic intersection and back to global CS>>
 	    d__ray[ij].optical_path_difference += 
-              d__ray[ij].optical_path_length - d__chief_ray->optical_path_length;
+              d__ray[ij].optical_path_length - d__chief_ray[iSource].optical_path_length;
 	  }
       }
   }
@@ -2877,14 +2901,15 @@ __global__ void m1_trace_chief_kernel(char *mask, ray *d__ray, int N_RAY,
 				rtd *d__rigid_body_R, vector *d__rigid_body_origin,
 				rtd *d__motion_R, vector *d__motion_origin)
 {
-  int j, ij, iCoordSys;
+  int j, ij, iCoordSys, iSource;
   rtd x1, y1, s0, k, l, m;
   rtd s1, S, K, L ,M, dSds;
   rtd G2, a;
   vector d__origin, xyz, klm, xyz_GS, klm_GS;
   char chief=1;
 
-  ij = 0;
+  iSource = blockIdx.z;
+  ij = iSource*N_RAY;
   iCoordSys = 0;
   d__origin = d__conic_self_origin[iCoordSys];
 
