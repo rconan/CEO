@@ -18,11 +18,11 @@ The ray tracing method involves 4 steps \cite{}:
 #ifndef __RAYTRACING_H__
 #define __RAYTRACING_H__
 
-#ifndef __SOURCE_H__
-#include "source.h"
+#ifndef __UTILITIES_H__
+#include "utilities.h"
 #endif
 
-#define N_ITERATION 100
+#define SNELL_N_ITERATION 100
 #define TOL 50E-8
 
 <<ray tracing data type>>
@@ -75,8 +75,6 @@ void thin_lens(bundle *rays);
 <<coordinates forward transform>>
 <<coordinates backward transform>>
 
-<<bundle coordinates kernel>>
-<<bundle coordinates kernel (box)>>
 <<to z plane kernel>>
 <<to sphere kernel>>
 <<reference sphere origin from chief ray>>
@@ -137,8 +135,8 @@ cdef extern from "rayTracing.h":
         int N_RAY, N_BUNDLE
         ray *d__ray, *d__chief_ray
         source *src
-        void setup(source *, rtd , int , int , vector )
-        void setup(source *, rtd , int , vector )
+        void setup(rtd, int, int , vector, int)
+        void setup(rtd, int , vector, int)
         void cleanup()
         void to_z_plane(rtd)
         void to_sphere(vector , rtd)
@@ -154,8 +152,6 @@ cdef extern from "rayTracing.h":
 					 float , int , 
 					 float , int )
         void get_vignetting(double *)
-        void get_wavefront(source *)
-	void reset()
     cdef cppclass conic:
         coordinate_system ref_frame
         void setup(rtd , rtd , vector , vector , vector)
@@ -199,26 +195,19 @@ cdef class Bundle:
     """
     cdef ceo.bundle *_c_bundle
 
-    def __cinit__(self, Source src, rtd RADIUS, int N_RADIUS, int N_THETA=0,
-                  _origin_=[0.0,0.0,0.0], type="polar"):
+    def __cinit__(self):
         self._c_bundle = new ceo.bundle()
-        cdef vector origin
-        origin.x = <float>_origin_[0]
-        origin.y = <float>_origin_[1]
-        origin.z = <float>_origin_[2]
-        if type=="box":
-            self._c_bundle.setup(src._c_source, RADIUS, N_RADIUS, origin)
-        else:
-            self._c_bundle.setup(src._c_source, RADIUS, N_RADIUS, N_THETA, origin)
+
+    def set_bundle(self, Source src):
+        self._c_bundle = &(src._c_source.rays)
 
     <<bundle common>>
 @ 
 <<bundle common>>=
+"""
 def __dealloc__(self):
     self._c_bundle.cleanup()
-
-def reset(self):
-    self._c_bundle.reset()
+"""
 
 def to_z_plane(self,rtd z_plane):
     self._c_bundle.to_z_plane(z_plane)
@@ -290,9 +279,6 @@ property vignetting:
             self._c_bundle.get_vignetting(x._c_gpu.dev_data)
             return x
 
-property wavefront:
-        def __set__(self, Source src):
-            self._c_bundle.get_wavefront(src._c_source)
             
 <<ceo.pyx>>=
 # conic
@@ -545,8 +531,8 @@ Collections of rays are gathered into bundles:
 <<ray bundle structure>>=
 struct bundle {
   <<ray bundle parameters>>
-  void setup(source *src, rtd RADIUS, int N_RADIUS, int N_THETA, vector origin);
-  void setup(source *src, rtd L, int N_L, vector origin);
+  void setup(rtd RADIUS, int N_RADIUS, int N_THETA, vector origin, int N_SRC);
+  void setup(rtd L, int N_L, vector origin, int N_SRC);
   void cleanup(void);
   void to_z_plane(rtd z_in);
   void to_sphere(vector sphere_origin, rtd sphere_radius);
@@ -562,8 +548,6 @@ struct bundle {
 				   float const delta_x, int N_x, 
 				   float const delta_y, int N_y);
   void get_vignetting(double *d__v);
-  void get_wavefront(source *src);
-  void reset(void);
 };
 @ 
 A bundle allocates an array of [[N_RAY]] rays on the device
@@ -589,10 +573,20 @@ The vignetting mask is defined with
 <<ray bundle parameters>>=
 mask V;
 @
+The ray geometry is defined either in polar coordinates (\textit{fan} mode)
+<<ray bundle parameters>>=
+char geom[8];
+@ where the radius and azimuth angle are sampled with [[N_RADIUS]] and [[N_THETA]] rays,
+<<ray bundle parameters>>=
+int N_RADIUS, N_THETA;
+@ 
+or in cartesian coordinates (\textit{box} mode) where the rays sample a [[N_L]]$\times$[[N_L]] square
 <<ray bundle parameters>>=
 int N_L;
+@
+In \textit{fan} mode, the radius is saved in [[L]] and in \textit{box} mode the side of the box is saved in [[L]]:
+<<ray bundle parameters>>=
 rtd L;
-source *src;
 @
 \subsection{Setup \& Cleanup}
 \label{sec:bundle-setup--cleanup}
@@ -602,10 +596,14 @@ The direction cosine are derived from the coordinates of a source object.
 
 The polar coordinates are defined with the sampling of the radius [[N_RADIUS]] from 0 to [[RADIUS]] and with the sampling of the azimuth [[N_THETA]].
 <<ray bundle functions>>=
-void bundle::setup(source *src, rtd RADIUS, int N_RADIUS, 
-		   int N_THETA, vector origin)
+void bundle::setup(rtd RADIUS, int _N_RADIUS_, 
+		   int _N_THETA_, vector origin, int N_SRC)
 {
-  N_BUNDLE = src->N_SRC;
+  strcpy(geom,"fan");
+  N_RADIUS = _N_RADIUS_;
+  N_THETA  = _N_THETA_;
+  L        = RADIUS;
+  N_BUNDLE = N_SRC;
   N_RAY = (N_RADIUS-1)*N_THETA + 1;
   V.setup(N_RAY);
   HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY*N_BUNDLE ) );
@@ -613,7 +611,6 @@ void bundle::setup(source *src, rtd RADIUS, int N_RADIUS,
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
   <<chief ray allocation>>
-  <<bundle coordinates>>
 }
 @ 
 The direction cosines $(k,l,m)$ of the rays are defined from the source zenith $\zeta$ and azimuth $\xi$ angles as
@@ -632,10 +629,11 @@ and
   \theta = 2\pi {k \over [[N_THETA]] } \forall k \in [0,[[N_THETA-1]]]
 \end{equation}
 <<bundle coordinates>>=
+<<chief ray init>>
 blockDim = dim3(16,16);
 gridDim  = dim3(N_RADIUS/16+1,N_THETA/16+1, N_BUNDLE);
 ray_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
-                                            RADIUS, N_RADIUS, N_THETA, d__origin);
+                                            L, N_RADIUS, N_THETA, d__origin);
 @ 
 <<bundle coordinates kernel>>=
 __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
@@ -681,20 +679,20 @@ HANDLE_ERROR( cudaMalloc((void**)&d__chief_ray, sizeof(ray)*N_BUNDLE ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__chief_origin, sizeof(vector) ) );
 HANDLE_ERROR( cudaMemcpy( d__chief_origin, &chief_origin, 
                          sizeof(vector), cudaMemcpyHostToDevice ) );
-dim3 blockDim(1,1);
-dim3 gridDim(1,1, N_BUNDLE);
+@ and is initialized with
+<<chief ray init>>= 
 ray_coordinates LLL gridDim , blockDim RRR (d__chief_ray, 1, src->dev_ptr,
 					    0.0, 2, 1, d__origin);
 
 @
 The cartesian coordinates are defined with the sampling of the square box length [[N_L]] from $-[[L]]$ to [[L]].
 <<ray bundle functions>>=
-void bundle::setup(source *_src_, rtd _L_, int _N_L_, vector origin)
+  void bundle::setup(rtd _L_, int _N_L_, vector origin, int N_SRC)
 {
+  strcpy(geom,"box");
   N_L = _N_L_;
   L = _L_;
-  src = _src_;
-  N_BUNDLE = src->N_SRC;
+  N_BUNDLE = N_SRC;
   N_RAY = N_L*N_L;
   V.setup(N_RAY);
   HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY*N_BUNDLE ) );
@@ -702,7 +700,6 @@ void bundle::setup(source *_src_, rtd _L_, int _N_L_, vector origin)
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
   <<chief ray allocation>>
-  <<bundle coordinates (box)>>
 }
 @ 
 The direction cosines $(k,l,m)$ of the rays are defined from the source zenith $\zeta$ and azimuth $\xi$ angles as
@@ -718,6 +715,7 @@ The cartesian coordinates $x$ and $y$ of the rays are given by
   y &=& L*(j-([[N_L]]-1)/2)/([[N_L]]-1)
 \end{eqnarray}
 <<bundle coordinates (box)>>=
+<<chief ray init>>
 blockDim = dim3(16,16);
 gridDim  = dim3(N_L/16+1,N_L/16+1, N_BUNDLE);
 ray_coordinates_box LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
@@ -962,7 +960,6 @@ The coordinates, directions, optical path length and vignetting map are copied i
 <<gathering ray optical path difference>>
 <<gathering ray vignetting map>>
 <<OPD nearest neighbor interpolation>>
-<<gathering wavefront>>
 @ 
 <<ray bundle kernels>>= 
 <<gathering ray coordinates kernel>>
@@ -971,7 +968,6 @@ The coordinates, directions, optical path length and vignetting map are copied i
 <<gathering ray optical path difference kernel>>
 <<gathering ray vignetting map kernel>>
 <<OPD nearest neighbor interpolation kernel>>
-<<gathering wavefront kernel>>
 @ 
 <<gathering ray coordinates>>=
 void bundle::get_coordinates(double *d__coord)
@@ -1249,13 +1245,12 @@ void bundle::get_wavefront(source *src)
 __global__ void get_wavefront_kernel(float *amplitude, float *phase,
                                      char *m, ray *d__ray, int N_RAY)
 {
-  int i, j, k0, k, iSource;
+  int i, j, k, iSource;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
   k = j * gridDim.x * blockDim.x + i;
   if ( k<N_RAY )
-    k0 = k;
     k += iSource*N_RAY;
     if (d__ray[k].v==1)
       {
@@ -1274,18 +1269,15 @@ __global__ void get_wavefront_kernel(float *amplitude, float *phase,
 \label{sec:resetting}
 
 The ray vignetting is reset with
-<<ray bundle functions>>= 
-void bundle::reset(void) 
+<<ray bundle functions (opt-out)>>= 
+void bundle::reset(source *src) 
 {
-  /* dim3 blockDim(16,16); */
-  /* dim3 gridDim(N_RAY/256+1,1);   */
-  /* reset_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY); */
-  ray_coordinates LLL 1 , 1, N_BUNDLE RRR (d__chief_ray, 1, src->dev_ptr,
-					     0.0, 2, 1, d__chief_origin);
-  dim3 blockDim(16,16);
-  dim3 gridDim(N_L/16+1,N_L/16+1, N_BUNDLE);
-  ray_coordinates_box LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
-							      L, N_L, d__origin);
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  if (strcmp(geom,"box")==0)
+     <<bundle coordinates (box)>>
+  if (strcmp(geom,"fan")==0)
+     <<bundle coordinates>>
 }
 @ with 
 <<bundle reset kernel>>=
@@ -2139,7 +2131,7 @@ __global__ void intersect_chief_kernel(ray *d__ray, int N_RAY,
   <<intersection with z=0 plane>>
   d__ray[ij].optical_path_length = s0;
   s0 = s1 = 0;
-  for (j=0; j<N_ITERATION; j++)
+  for (j=0; j<SNELL_N_ITERATION; j++)
     {
       <<Newton-Raphson>>
       s0 = s1;
@@ -2161,7 +2153,7 @@ __global__ void intersect_kernel(ray *d__ray, int N_RAY,
     <<intersection with z=0 plane>>
     d__ray[ij].optical_path_length = s0;
     s0 = s1 = 0;
-    for (j=0; j<N_ITERATION; j++)
+    for (j=0; j<SNELL_N_ITERATION; j++)
     {
       <<Newton-Raphson>>
 	s0 = s1;
@@ -2383,7 +2375,7 @@ __global__ void refract_kernel(ray *d__ray, int N_RAY, const rtd mu)
     <<a equation>>
     <<b equation>>
     gamma0 = -0.5*b/a;
-    for (j=0; j<N_ITERATION; j++)
+    for (j=0; j<SNELL_N_ITERATION; j++)
     {
       gamma1 = 0.5*(gamma0*gamma0-b)/(gamma0+a);
       gamma_relative_error = abs( gamma1/gamma0 - 1.0 );
@@ -3077,7 +3069,7 @@ x1 = xyz.x + k*s0;
 y1 = xyz.y + l*s0;
 d__ray[ij].optical_path_length = s0;
 s0 = s1 = 0;
-for (j=0; j<N_ITERATION; j++)
+for (j=0; j<SNELL_N_ITERATION; j++)
 {
   xyz.x = x1 + k*s0;
   xyz.y = y1 + l*s0;
