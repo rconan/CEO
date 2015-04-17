@@ -22,7 +22,7 @@ The ray tracing method involves 4 steps \cite{}:
 #include "utilities.h"
 #endif
 
-#define N_ITERATION 100
+#define SNELL_N_ITERATION 100
 #define TOL 50E-8
 
 <<ray tracing data type>>
@@ -152,8 +152,6 @@ cdef extern from "rayTracing.h":
 					 float , int , 
 					 float , int )
         void get_vignetting(double *)
-        void get_wavefront(source *)
-	void reset(source *)
     cdef cppclass conic:
         coordinate_system ref_frame
         void setup(rtd , rtd , vector , vector , vector)
@@ -197,26 +195,19 @@ cdef class Bundle:
     """
     cdef ceo.bundle *_c_bundle
 
-    def __cinit__(self, rtd RADIUS, int N_RADIUS, int N_THETA=0,
-                  origin=[0.0,0.0,0.0], type="polar", int N_SRC=1):
+    def __cinit__(self):
         self._c_bundle = new ceo.bundle()
-        cdef vector _origin_
-        _origin_.x = <float>origin[0]
-        _origin_.y = <float>origin[1]
-        _origin_.z = <float>origin[2]
-        if type=="box":
-            self._c_bundle.setup(RADIUS, N_RADIUS, _origin_, N_SRC)
-        else:
-            self._c_bundle.setup(RADIUS, N_RADIUS, N_THETA, _origin_, N_SRC)
+
+    def set_bundle(self, Source src):
+        self._c_bundle = &(src._c_source.rays)
 
     <<bundle common>>
 @ 
 <<bundle common>>=
+"""
 def __dealloc__(self):
     self._c_bundle.cleanup()
-
-def reset(self, Source src):
-    self._c_bundle.reset(src._c_source)
+"""
 
 def to_z_plane(self,rtd z_plane):
     self._c_bundle.to_z_plane(z_plane)
@@ -288,9 +279,6 @@ property vignetting:
             self._c_bundle.get_vignetting(x._c_gpu.dev_data)
             return x
 
-property wavefront:
-        def __set__(self, Source src):
-            self._c_bundle.get_wavefront(src._c_source)
             
 <<ceo.pyx>>=
 # conic
@@ -560,8 +548,6 @@ struct bundle {
 				   float const delta_x, int N_x, 
 				   float const delta_y, int N_y);
   void get_vignetting(double *d__v);
-  void get_wavefront(source *src);
-  void reset(source *src);
 };
 @ 
 A bundle allocates an array of [[N_RAY]] rays on the device
@@ -974,7 +960,6 @@ The coordinates, directions, optical path length and vignetting map are copied i
 <<gathering ray optical path difference>>
 <<gathering ray vignetting map>>
 <<OPD nearest neighbor interpolation>>
-<<gathering wavefront>>
 @ 
 <<ray bundle kernels>>= 
 <<gathering ray coordinates kernel>>
@@ -983,7 +968,6 @@ The coordinates, directions, optical path length and vignetting map are copied i
 <<gathering ray optical path difference kernel>>
 <<gathering ray vignetting map kernel>>
 <<OPD nearest neighbor interpolation kernel>>
-<<gathering wavefront kernel>>
 @ 
 <<gathering ray coordinates>>=
 void bundle::get_coordinates(double *d__coord)
@@ -2147,7 +2131,7 @@ __global__ void intersect_chief_kernel(ray *d__ray, int N_RAY,
   <<intersection with z=0 plane>>
   d__ray[ij].optical_path_length = s0;
   s0 = s1 = 0;
-  for (j=0; j<N_ITERATION; j++)
+  for (j=0; j<SNELL_N_ITERATION; j++)
     {
       <<Newton-Raphson>>
       s0 = s1;
@@ -2169,7 +2153,7 @@ __global__ void intersect_kernel(ray *d__ray, int N_RAY,
     <<intersection with z=0 plane>>
     d__ray[ij].optical_path_length = s0;
     s0 = s1 = 0;
-    for (j=0; j<N_ITERATION; j++)
+    for (j=0; j<SNELL_N_ITERATION; j++)
     {
       <<Newton-Raphson>>
 	s0 = s1;
@@ -2391,7 +2375,7 @@ __global__ void refract_kernel(ray *d__ray, int N_RAY, const rtd mu)
     <<a equation>>
     <<b equation>>
     gamma0 = -0.5*b/a;
-    for (j=0; j<N_ITERATION; j++)
+    for (j=0; j<SNELL_N_ITERATION; j++)
     {
       gamma1 = 0.5*(gamma0*gamma0-b)/(gamma0+a);
       gamma_relative_error = abs( gamma1/gamma0 - 1.0 );
@@ -3085,7 +3069,7 @@ x1 = xyz.x + k*s0;
 y1 = xyz.y + l*s0;
 d__ray[ij].optical_path_length = s0;
 s0 = s1 = 0;
-for (j=0; j<N_ITERATION; j++)
+for (j=0; j<SNELL_N_ITERATION; j++)
 {
   xyz.x = x1 + k*s0;
   xyz.y = y1 + l*s0;

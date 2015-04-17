@@ -18,25 +18,45 @@ The source structure contains all the data associated with a remote optical emit
 #ifndef __PLOTLY_H__
 #include "plotly.h"
 #endif
-/*
+
 #ifndef __RAYTRACING_H__
 #include "rayTracing.h"
 #endif
-*/
+
 <<complex amplitude structure>>
 
 struct source {
 
   <<source parameters>>
 
-  void setup(char *_photometric_band, float zenith, float azimuth, float height);
-  void setup(char *_photometric_band, float zenith, float azimuth, float height, int resolution);
-  void setup(char *_photometric_band, float zenith, float azimuth, float height, char *tag_in);
-  void setup(char *_photometric_band, float zenith, float azimuth, float height, int resolution, char *tag_in);
-  void setup(char *_photometric_band, float *_zenith, float *_azimuth, float _height, int _N_SRC);
-  void setup(char *_photometric_band, float *_zenith, float *_azimuth, float _height, int _N_SRC, int resolution);
+  void setup(char *_photometric_band, 
+	     float zenith, float azimuth, float height);
+  void setup(char *_photometric_band, 
+	     float zenith, float azimuth, float height, 
+	     int resolution);
+  void setup(char *_photometric_band, 
+	     float zenith, float azimuth, float height, 
+	     char *tag_in);
+  void setup(char *_photometric_band, 
+	     float zenith, float azimuth, float height, 
+	     int resolution, char *tag_in);
+  void setup(char *_photometric_band, 
+	     float *_zenith, float *_azimuth, float _height, 
+	     int _N_SRC);
+  void setup(char *_photometric_band, 
+	     float *_zenith, float *_azimuth, float _height, 
+	     int _N_SRC, int resolution);
+  void setup(char *_photometric_band, 
+	     float *_zenith, float *_azimuth, float _height, 
+	     int _N_SRC, int resolution,
+	     rtd _L_, int _N_L_, vector origin);
   void cleanup(void);
 
+  void trace(gmt_m1 *M1);
+  void trace(gmt_m2 *M2);
+  void block(gmt_m2 *M2);
+  void get_wavefront(void);
+   
   void info(void);
 
   void phase2file(const char *filename);
@@ -68,13 +88,20 @@ struct source {
 
 <<phase to file>>
 
+<<bundle coordinates kernel>>
+<<bundle coordinates kernel (box)>>
+<<gathering wavefront kernel>>
+
 <<setup>>
 <<setup with wavefront resolution>>
 <<setup with tag>>
 <<setup with wavefront resolution and tag>>
 <<setup for multiple sources>>
 <<setup for multiple sources with wavefront resolution>>
+<<setup for multiple sources with wavefront resolution and ray bundle>>
 <<cleanup>>
+
+<<ray tracing>>
 
 <<info>>
 
@@ -89,6 +116,8 @@ struct source {
 \label{sec:python}
 
 <<ceo.pxd>>=
+cdef extern from "rayTracing.h":
+    ctypedef double rtd
 cdef extern from "source.h":
     cdef cppclass complex_amplitude:
         float *phase
@@ -101,10 +130,16 @@ cdef extern from "source.h":
         char *photometric_band
         float fwhm, magnitude
         complex_amplitude wavefront
+        bundle rays
         void setup(char *,float , float , float )
 	void setup(char *,float , float , float , int )
         void setup(char *,float *, float *, float , int , int )
+        void setup(char *,float *, float *, float , int , int , rtd, int, vector)
         void cleanup()
+        void trace(gmt_m1 *)
+        void trace(gmt_m2 *)
+        void block(gmt_m2 *)
+        void get_wavefront()
         void info()
         float n_photon()
 @ 
@@ -151,13 +186,17 @@ cdef class Source:
     cdef public int size
     cdef public np.ndarray zenith, azimuth
     cdef public float height
- 
+    rays = ceo.Bundle()
+
     def __cinit__(self,char *_photometric_band,  
 		  zenith=0, azimuth=0, 
                   magnitude=None,
 		  height=float("inf"), 
 		  resolution = (0,0),
-		  fwhm = None):
+		  fwhm = None,
+                  rays_box_size=None, 
+		  rays_box_sampling=None, 
+		  rays_origin=None):
         """
         Instanciates a Source object
         """
@@ -168,17 +207,41 @@ cdef class Source:
         self.azimuth = np.array( azimuth, dtype=np.float32)
         self.height  = float(height);
         self.size = self.zenith.size
-        self._c_source.setup(_photometric_band, 
-			     <float *>self.zenith.data, 
-                             <float *>self.azimuth.data, height, 
-			     self.size, np.prod(resolution))
+        cdef vector _origin_
+        if rays_box_size is None:
+            self._c_source.setup(_photometric_band, 
+                                 <float *>self.zenith.data, 
+                                 <float *>self.azimuth.data, height, 
+                                 self.size, np.prod(resolution))
+        else:
+            _origin_.x = <float>rays_origin[0]
+            _origin_.y = <float>rays_origin[1]
+            _origin_.z = <float>rays_origin[2]
+            self._c_source.setup(_photometric_band, 
+                                 <float *>self.zenith.data, 
+                                 <float *>self.azimuth.data, height, 
+                                 self.size, np.prod(resolution),
+                                 rays_box_size, 
+				 rays_box_sampling, 
+				 _origin_)
         if magnitude is not None:
             self._c_source.magnitude = magnitude
         if fwhm is not None:
             self._c_source.fwhm = fwhm
+        self.rays.set_bundle(self)
 
     def __dealloc__(self):
         self._c_source.cleanup()
+
+    def trace(self, optics):
+        optics.trace(self.rays)
+
+    def block(self, GMT_M2 optics):
+        optics.blocking(self.rays)
+
+    def get_wavefront(self):
+        self._c_source.get_wavefront()
+            
 
     property phase:
         def __get__(self):
@@ -288,7 +351,10 @@ source *dev_ptr;
 @ and the source can be tagged with
 <<source parameters>>=
 char tag[8];
-@ 
+@ A source can also be propagated geometrically through optical components
+<<source parameters>>=
+bundle rays; 
+@
 \section{Functions}
 \label{sec:functions}
 
@@ -338,6 +404,28 @@ void source::setup(char *_photometric_band,
   strcpy(tag,tag_in);
   info();
 }
+@ with
+<<setup single source contents>>=
+N_SRC   = 1;
+zenith  = _zenith;
+azimuth = _azimuth;
+height  = _height;
+theta_x = tanf(zenith)*cosf(azimuth);
+theta_y = tanf(zenith)*sinf(azimuth);
+photometric_band = _photometric_band;
+magnitude = 0.0;
+fwhm = 0.0;
+source __src;
+__src.zenith  = zenith;
+__src.azimuth = azimuth;
+__src.height  = height;
+__src.theta_x = theta_x;
+__src.theta_y = theta_y;
+HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source) ) );
+HANDLE_ERROR( cudaMemcpy( dev_ptr, &__src,
+                          sizeof(source) ,
+                          cudaMemcpyHostToDevice ) );
+
 @ \item for multiple sources:
 <<setup for multiple sources>>=
 void source::setup(char *_photometric_band, 
@@ -370,7 +458,7 @@ void source::setup(char *_photometric_band,
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
   wavefront.setup(0);
 }
-@  \item for multiple sourcese with wavefront resolution:
+@  \item for multiple sources with wavefront resolution:
 <<setup for multiple sources with wavefront resolution>>=
 void source::setup(char *_photometric_band, 
 		   float *_zenith, float *_azimuth, float _height, 
@@ -403,29 +491,116 @@ void source::setup(char *_photometric_band,
   fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
 }
+@  \item for multiple sources with wavefront resolution and with ray bundle:
+<<setup for multiple sources with wavefront resolution and ray bundle>>=
+void source::setup(char *_photometric_band, 
+		   float *_zenith, float *_azimuth, float _height, 
+		   int _N_SRC, int resolution,
+                   rtd L, int N_L, vector origin) {
+  N_SRC = _N_SRC;
+  height = _height;
+  photometric_band = _photometric_band;
+  magnitude = 0.0;
+  fwhm = 0.0;
+  source __src;
+  HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
+  strcpy(tag,"sources");
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
+    __src.zenith  = _zenith[i_SRC];
+    __src.azimuth = _azimuth[i_SRC];
+    __src.height  = _height;
+    __src.theta_x = tanf(_zenith[i_SRC])*cosf(_azimuth[i_SRC]);
+    __src.theta_y = tanf(_zenith[i_SRC])*sinf(_azimuth[i_SRC]);
+    HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
+			      sizeof(source) ,
+			      cudaMemcpyHostToDevice ) );
+    fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
+	    _zenith[i_SRC]*RADIAN2ARCSEC,
+	    _azimuth[i_SRC]*180/PI,_height,
+	    wavelength(),magnitude);
+  }
+  wavefront.setup(resolution,N_SRC);
+  fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
+  rays.setup(L, N_L, origin, N_SRC);
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, rays.N_BUNDLE);
+  ray_coordinates LLL gridDim , blockDim RRR (rays.d__chief_ray, 1, 
+                                              dev_ptr,
+                                              0.0, 2, 1, rays.d__origin);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(rays.N_L/16+1,rays.N_L/16+1, rays.N_BUNDLE);
+  ray_coordinates_box LLL gridDim , blockDim RRR (rays.d__ray, rays.N_RAY, 
+                                                  dev_ptr,
+                                                  rays.L, rays.N_L, 
+                                                  rays.d__origin);
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+}
+@ with
+<<bundle coordinates kernel>>=
+__global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
+                                rtd RADIUS, int N_RADIUS, int N_THETA, 
+                                vector *origin)
+{
+  int i, j, k, iSource;
+  rtd rho, theta;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  //k = j * gridDim.x * blockDim.x + i;
+  if ( (i<N_RADIUS) && (j<N_THETA) )
+  {
+    rho   = RADIUS*i/(N_RADIUS-1);
+    if (i==0) {
+      j = 0;
+      k = 0;
+    } else
+      k = j + (i - 1)*N_THETA + 1;
+    k += iSource*N_RAY;
+    theta = 2*PI*j/N_THETA; 
+    d__ray[k].coordinates.x = rho*cos(theta) + origin->x; 
+    d__ray[k].coordinates.y = rho*sin(theta) + origin->y; 
+    d__ray[k].coordinates.z = origin->z;
+    d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
+    d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
+    d__ray[k].directions.z  = cos(src[iSource].zenith);
+    d__ray[k].optical_path_length = 0.0;
+    d__ray[k].optical_path_difference = 0.0;
+    d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
+    d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
+    d__ray[k].v = 1;
+  }
+}
+@ and
+<<bundle coordinates kernel (box)>>=
+__global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
+                                    rtd L, int N_L, vector *origin)
+{
+  int i, j, k, iSource;
+  rtd x, y;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  if ( (i<N_L) && (j<N_L) )
+  {
+    x   = L*(i - (N_L-1)*0.5)/(N_L-1);
+    y   = L*(j - (N_L-1)*0.5)/(N_L-1);
+    k = i + j*N_L + iSource*N_RAY;
+    d__ray[k].coordinates.x = x + origin->x; 
+    d__ray[k].coordinates.y = y + origin->y; 
+    d__ray[k].coordinates.z = origin->z;
+    d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
+    d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
+    d__ray[k].directions.z  = cos(src[iSource].zenith);
+    d__ray[k].optical_path_length = 0.0;
+    d__ray[k].optical_path_difference = 0.0;
+    d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
+    d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
+    d__ray[k].v = 1;
+  }
+}
 @ \end{itemize}
-
-<<setup single source contents>>=
-N_SRC   = 1;
-zenith  = _zenith;
-azimuth = _azimuth;
-height  = _height;
-theta_x = tanf(zenith)*cosf(azimuth);
-theta_y = tanf(zenith)*sinf(azimuth);
-photometric_band = _photometric_band;
-magnitude = 0.0;
-fwhm = 0.0;
-source __src;
-__src.zenith  = zenith;
-__src.azimuth = azimuth;
-__src.height  = height;
-__src.theta_x = theta_x;
-__src.theta_y = theta_y;
-HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source) ) );
-HANDLE_ERROR( cudaMemcpy( dev_ptr, &__src,
-                          sizeof(source) ,
-                          cudaMemcpyHostToDevice ) );
-
 @ 
 The complex amplitude structure is initialized with
 <<complex amplitude setup I>>=
@@ -611,6 +786,58 @@ __global__ void apply_mask(float* amplitude, float* phase, const char *pupil_mas
     amplitude[id + blockIdx.y*N] = 0.0;
     phase[id + blockIdx.y*N]     = 0.0;
   }
+}
+@
+\subsection{Ray tracing}
+\label{sec:ray-tracing}
+
+<<ray tracing>>=
+void source::trace(gmt_m1 *M1)
+{
+  M1->trace(&rays);
+}
+void source::trace(gmt_m2 *M2)
+{
+  M2->trace(&rays);
+}
+void source::block(gmt_m2 *M2)
+{
+  M2->blocking(&rays);
+}
+void source::get_wavefront(void)
+{
+//  printf("Setting wavefront!\n");
+  dim3 blockDim(16,16);
+  dim3 gridDim(rays.N_RAY/256+1,1, rays.N_BUNDLE);
+  get_wavefront_kernel LLL gridDim , blockDim RRR (wavefront.amplitude, 
+                                                   wavefront.phase,
+						   rays.V.m,
+                                                   rays.d__ray, rays.N_RAY);
+  rays.V.set_filter();
+  wavefront.masked(&(rays.V));
+}
+@ 
+<<gathering wavefront kernel>>=
+__global__ void get_wavefront_kernel(float *amplitude, float *phase,
+                                     char *m, ray *d__ray, int N_RAY)
+{
+  int i, j, k, iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( k<N_RAY )
+    k += iSource*N_RAY;
+    if (d__ray[k].v==1)
+      {
+	m[k]         = 1;
+	amplitude[k] = 1.0;
+	phase[k]     = d__ray[k].optical_path_difference;
+      } else {
+	m[k]         = 0;
+	amplitude[k] = 0.0;
+	phase[k]     = 0.0;
+    }
 }
 
 @ 
