@@ -7,7 +7,8 @@ PYTHON_DIR	= utilities source atmosphere centroiding imaging shackHartmann aaSta
 
 all: makefile jsmnlib
 	mkdir -p include lib
-	for i in $(SOURCE_DIR); do (make -C $$i all);echo -e "\n"; done
+	for i in $(SOURCE_DIR); do (make -C $$i src);echo -e "\n"; done
+	for i in $(SOURCE_DIR); do (make -C $$i lib);echo -e "\n"; done
 
 tex: makefile $(texsrc)
 	for i in $(SOURCE_DIR); do (make -C $$i tex); done
