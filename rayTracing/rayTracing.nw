@@ -2603,34 +2603,33 @@ int k;
 V.setup(D_px*D_px*N_SRC);
 @ The origin and coordinates system of the rigid bodies are defined with
 <<M12 rigid body definition>>=
-origin[0].x = origin[0].y = 0.0;
-origin[0].z = height;
-euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
+origin[N-1].x = origin[N-1].y = 0.0;
+origin[N-1].z = height;
+euler_angles[N-1].x = euler_angles[N-1].y = euler_angles[N-1].z = 0.0;
 D_c = L;
 zo = D_full*sbeta*0.5 + depth*(1-cbeta);
-for (k=1; k<N; k++)
+for (k=0; k<N-1; k++)
 {
-  o = PI*(2*k-1)/6.0;
+  o = PI*(3-2*k)/6.0;
   origin[k].x = D_c*cosf(o);
   origin[k].y = D_c*sinf(o);
   origin[k].z = height + zo;
-  euler_angles[k].x = 0.0;
-  euler_angles[k].y = beta;
-  euler_angles[k].z = o;
+  euler_angles[k].x = beta;
+  euler_angles[k].y = 0.0;
+  euler_angles[k].z = -PI*k/3.0;
 }
 sprintf(tag,"M%d RIGID BODY",M_ID);
 rigid_body_CS.setup(origin, euler_angles, N, tag);
 @ The origin and coordinates system of the apertures are defined with
 <<M12 aperture definition>>=
-origin[0].x = origin[0].y = 0.0;
-origin[0].z = depth;
-euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
+origin[N-1].x = origin[N-1].y = 0.0;
+origin[N-1].z = depth;
+euler_angles[N-1].x = euler_angles[N-1].y = euler_angles[N-1].z = 0.0;
 sbeta = sin(beta);
 D_c = L - depth*sbeta;
 zo = D_full*sbeta*0.5 + depth;
-for (k=1; k<N; k++)
+for (k=0; k<N-1; k++)
 {
-  o = PI*(2*k-1)/6.0;
   origin[k].x = 0.0;
   origin[k].y = 0.0;
   origin[k].z = depth;
@@ -2643,23 +2642,21 @@ sprintf(tag,"M%d APERTURE",M_ID);
 aperture_CS.setup(origin, euler_angles, N, tag);
 @ The origin and coordinates system of the conics are defined with
 <<M12 conic definition>>=
-origin[0].x = origin[0].y = 0.0; 
-origin[0].z = 0.0;
-euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
-conic_origin[0].x = conic_origin[0].y = 0.0;
-conic_origin[0].z = 0.0; 
+origin[N-1].x = origin[N-1].y = origin[N-1].z = 0.0;
+euler_angles[N-1].x = euler_angles[N-1].y = euler_angles[N-1].z = 0.0;
+conic_origin[N-1].x = conic_origin[N-1].y = conic_origin[N-1].z = 0.0; 
 cbeta = cos(beta);
 D_c = L;
 zo = D_full*sbeta*0.5 + depth*(1-cbeta);
-for (k=1; k<N; k++)
+for (k=0; k<N-1; k++)
 {
-  o = PI*(2*k-1)/6.0;
+  o = PI*(3-2*k)/6.0;
   origin[k].x = 0.0;
   origin[k].y = 0.0;
   origin[k].z = 0.0;
-  euler_angles[k].x = 0.0;
-  euler_angles[k].y = beta;
-  euler_angles[k].z = o;
+  euler_angles[k].x = beta;
+  euler_angles[k].y = 0.0;
+  euler_angles[k].z = -PI*k/3.0;
   conic_origin[k].x = -D_c*cosf(o);
   conic_origin[k].y = -D_c*sinf(o);
   conic_origin[k].z = -zo;
@@ -2709,7 +2706,7 @@ void gmt_m1::update(vector _origin_, vector _euler_angles_,int idx)
 @ where
 <<GMT M12 update>>=
 fprintf(stdout,"\n\x1B[31m");
-motion_CS.update( _origin_, _euler_angles_, idx);
+motion_CS.update( _origin_, _euler_angles_, --idx);
 motion_CS.info();
 @ 
 The rigid body motion are reset to 0 with:
@@ -2997,7 +2994,7 @@ forward_transform_centered(&klm, &klm_GS,
         <<GMT intersection with aperture plane>>
 
         rho2 = x1*x1 + y1*y1;
-	if ( (iCoordSys==0) && (rho2<inner2) )
+	if ( (iCoordSys==6) && (rho2<inner2) )
 	  {
 	    return;
 	  }
