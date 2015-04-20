@@ -52,6 +52,8 @@ struct source {
 	     rtd _L_, int _N_L_, vector origin);
   void cleanup(void);
 
+  void reset_rays(void);
+
   void trace(gmt_m1 *M1);
   void trace(gmt_m2 *M2);
   void block(gmt_m2 *M2);
@@ -101,6 +103,7 @@ struct source {
 <<setup for multiple sources with wavefront resolution and ray bundle>>
 <<cleanup>>
 
+<<reset rays>>
 <<ray tracing>>
 
 <<info>>
@@ -136,6 +139,7 @@ cdef extern from "source.h":
         void setup(char *,float *, float *, float , int , int )
         void setup(char *,float *, float *, float , int , int , rtd, int, vector)
         void cleanup()
+        void reset_rays()
         void trace(gmt_m1 *)
         void trace(gmt_m2 *)
         void block(gmt_m2 *)
@@ -186,7 +190,7 @@ cdef class Source:
     cdef public int size
     cdef public np.ndarray zenith, azimuth
     cdef public float height
-    rays = ceo.Bundle()
+    cdef public object rays
 
     def __cinit__(self,char *_photometric_band,  
 		  zenith=0, azimuth=0, 
@@ -228,7 +232,7 @@ cdef class Source:
             self._c_source.magnitude = magnitude
         if fwhm is not None:
             self._c_source.fwhm = fwhm
-        self.rays.set_bundle(self)
+        self.rays = ceo.Bundle(self)
 
     def __dealloc__(self):
         self._c_source.cleanup()
@@ -236,7 +240,7 @@ cdef class Source:
     def trace(self, optics):
         optics.trace(self.rays)
 
-    def block(self, GMT_M2 optics):
+    def stop(self, optics):
         optics.blocking(self.rays)
 
     def get_wavefront(self):
@@ -294,6 +298,7 @@ cdef class Source:
         Reset the wavefront amplitude to 1 and phase to 0
         """
         self._c_source.wavefront.reset()
+        self._c_source.reset_rays()
 @
 
 \section{Parameters}
@@ -524,6 +529,13 @@ void source::setup(char *_photometric_band,
   wavefront.setup(resolution,N_SRC);
   fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
   rays.setup(L, N_L, origin, N_SRC);
+  reset_rays();
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+}
+@ with
+<<reset rays>>=
+void source::reset_rays(void)
+{
   dim3 blockDim(1,1);
   dim3 gridDim(1,1, rays.N_BUNDLE);
   ray_coordinates LLL gridDim , blockDim RRR (rays.d__chief_ray, 1, 
@@ -534,10 +546,9 @@ void source::setup(char *_photometric_band,
   ray_coordinates_box LLL gridDim , blockDim RRR (rays.d__ray, rays.N_RAY, 
                                                   dev_ptr,
                                                   rays.L, rays.N_L, 
-                                                  rays.d__origin);
-  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+                                                  rays.d__origin);    
 }
-@ with
+@ and
 <<bundle coordinates kernel>>=
 __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
                                 rtd RADIUS, int N_RADIUS, int N_THETA, 
@@ -637,8 +648,11 @@ void complex_amplitude::cleanup(void) {
 <<cleanup>>=
 void source::cleanup(void) {
   fprintf(stdout,"@(CEO)>%s: freeing memory!\n",tag);
-  HANDLE_ERROR( cudaFree( dev_ptr) );
+//  fprintf(stdout," |-");
   wavefront.cleanup();
+  fprintf(stdout," |-");
+  rays.cleanup();
+  HANDLE_ERROR( cudaFree( dev_ptr) );
 }
 
 @ 

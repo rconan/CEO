@@ -195,10 +195,8 @@ cdef class Bundle:
     """
     cdef ceo.bundle *_c_bundle
 
-    def __cinit__(self):
+    def __cinit__(self, Source src):
         self._c_bundle = new ceo.bundle()
-
-    def set_bundle(self, Source src):
         self._c_bundle = &(src._c_source.rays)
 
     <<bundle common>>
@@ -230,6 +228,10 @@ def get_optical_path_difference(self,
                                                delta_x, N_x,
                                                delta_y, N_y)
     return opd
+
+property N_BUNDLE:
+    def __get__(self):
+        return self._c_bundle.N_BUNDLE
 
 property coordinates:
     def __get__(self):
@@ -605,7 +607,7 @@ void bundle::setup(rtd RADIUS, int _N_RADIUS_,
   L        = RADIUS;
   N_BUNDLE = N_SRC;
   N_RAY = (N_RADIUS-1)*N_THETA + 1;
-  V.setup(N_RAY);
+  V.setup(N_RAY*N_BUNDLE);
   HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY*N_BUNDLE ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
@@ -2743,8 +2745,12 @@ void gmt_m1::blocking(bundle *rays)
  Rri2 = R2*ri*ri;
  // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
  printf("N_BUNDLE=%d\n",rays->N_BUNDLE);
- dim3 blockDim(16,16);
- dim3 gridDim(rays->N_RAY/256+1,1,rays->N_BUNDLE);
+ int nel = rays->N_RAY*rays->N_BUNDLE;
+ dim3 blockDim(256);
+ dim3 gridDim(nel/256+1);
+ fill_ones_char LLL gridDim,blockDim RRR (V.m,nel);
+ blockDim = dim3(16,16);
+ gridDim  = dim3(rays->N_RAY/256+1,1,rays->N_BUNDLE);
  m1_blocking_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
 					     Rri2, R2,
 					     aperture_CS.d__R,
