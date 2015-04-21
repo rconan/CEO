@@ -53,5 +53,9 @@
 #include "system.h"
 #endif
 
+#ifndef __SYSTEM_H__
+#include "rayTracing.h"
+#endif
+
 #endif  // __CEO_H__
 
