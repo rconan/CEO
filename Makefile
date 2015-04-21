@@ -6,6 +6,12 @@ TUTORIAL	= ngsao lgsao ltao ltaoVsAst geaos
 PYTHON_DIR	= utilities source atmosphere centroiding imaging shackHartmann aaStats GBTBT LMMSE rayTracing
 
 all: makefile jsmnlib
+ifeq ($(wildcard include/plotly.credentials), )
+	echo "plotly.credentials doesn't exist!"
+	cp include/plotly.credentials.sample include/plotly.credentials
+else
+	echo "plotly.credentials does exist!"
+endif
 	mkdir -p include lib
 	for i in $(SOURCE_DIR); do (make -C $$i src);echo -e "\n"; done
 	for i in $(SOURCE_DIR); do (make -C $$i lib);echo -e "\n"; done
