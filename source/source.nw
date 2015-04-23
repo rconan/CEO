@@ -48,15 +48,14 @@ struct source {
 	     int _N_SRC, int resolution);
   void setup(char *_photometric_band, 
 	     float *_zenith, float *_azimuth, float _height, 
-	     int _N_SRC, int resolution,
-	     rtd _L_, int _N_L_, vector origin);
+	     int _N_SRC, rtd _L_, int _N_L_, vector origin);
   void cleanup(void);
 
   void reset_rays(void);
 
   void trace(gmt_m1 *M1);
   void trace(gmt_m2 *M2);
-  void block(gmt_m2 *M2);
+  void stop(gmt_m2 *M2);
   void opd2phase(void);
    
   void info(void);
@@ -137,7 +136,7 @@ cdef extern from "source.h":
         void setup(char *,float , float , float )
 	void setup(char *,float , float , float , int )
         void setup(char *,float *, float *, float , int , int )
-        void setup(char *,float *, float *, float , int , int , rtd, int, vector)
+        void setup(char *,float *, float *, float , int , rtd, int, vector)
         void cleanup()
         void reset_rays()
         void trace(gmt_m1 *)
@@ -205,6 +204,8 @@ cdef class Source:
         Instanciates a Source object
         """
 	self._c_source = new ceo.source()
+        if rays_box_sampling is not None:
+            resolution = [rays_box_sampling, rays_box_sampling]
         self.n = resolution[0]
         self.m = resolution[1]
         self.zenith  = np.array( zenith,  dtype=np.float32)
@@ -224,7 +225,7 @@ cdef class Source:
             self._c_source.setup(_photometric_band, 
                                  <float *>self.zenith.data, 
                                  <float *>self.azimuth.data, height, 
-                                 self.size, np.prod(resolution),
+                                 self.size, 
                                  rays_box_size, 
 				 rays_box_sampling, 
 				 _origin_)
@@ -500,8 +501,7 @@ void source::setup(char *_photometric_band,
 <<setup for multiple sources with wavefront resolution and ray bundle>>=
 void source::setup(char *_photometric_band, 
 		   float *_zenith, float *_azimuth, float _height, 
-		   int _N_SRC, int resolution,
-                   rtd L, int N_L, vector origin) {
+		   int _N_SRC, rtd L, int N_L, vector origin) {
   N_SRC = _N_SRC;
   height = _height;
   photometric_band = _photometric_band;
@@ -526,7 +526,7 @@ void source::setup(char *_photometric_band,
 	    _azimuth[i_SRC]*180/PI,_height,
 	    wavelength(),magnitude);
   }
-  wavefront.setup(resolution,N_SRC);
+  wavefront.setup(N_L*N_L,N_SRC);
   fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
   rays.setup(L, N_L, origin, N_SRC);
   reset_rays();

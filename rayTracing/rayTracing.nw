@@ -288,13 +288,11 @@ cdef class Conic:
     """
     """
     cdef ceo.conic *_c_conic
-    cdef public np.ndarray R
 
     def __cinit__(self,rtd c, rtd k, 
                   origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0],
                   conic_origin=[0.0,0.0,0.0]):
         self._c_conic = new ceo.conic()
-        self.R = np.zeros((3,3),order='c',dtype=np.float32)
         cdef vector __origin
         __origin.x = <float>origin[0]
         __origin.y = <float>origin[1]
@@ -307,7 +305,6 @@ cdef class Conic:
         __conic_origin.x = <float>conic_origin[0]
         __conic_origin.y = <float>conic_origin[1]
         __conic_origin.z = <float>conic_origin[2]
-        self._c_conic.ref_frame.float_R = <float *> self.R.data;
         self._c_conic.setup(c, k, __origin, __euler_angles, __conic_origin)
 
     def __dealloc__(self):
@@ -317,11 +314,9 @@ cdef class Aperture:
     """
     """
     cdef ceo.aperture *_c_aperture
-    cdef public np.ndarray R
     
     def __cinit__(self, float D, float ri, int D_px, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0]):
         self._c_aperture = new ceo.aperture()
-        self.R = np.zeros((3,3),order='c',dtype=np.float32)
         cdef vector __origin
         __origin.x = <float>origin[0]
         __origin.y = <float>origin[1]
@@ -330,7 +325,6 @@ cdef class Aperture:
         __euler_angles.x = <float>euler_angles[0]
         __euler_angles.y = <float>euler_angles[1]
         __euler_angles.z = <float>euler_angles[2]
-        self._c_aperture.ref_frame.float_R = <float *> self.R.data;
         self._c_aperture.setup(D, ri, D_px, __origin, __euler_angles)
 
     def __dealloc__(self):
@@ -343,23 +337,9 @@ cdef class GMT_M1:
     """
     """
     cdef ceo.gmt_m1 *_c_gmt_m1
-    cdef public np.ndarray aperture_R, conic_R, rigid_body_R, motion_R
     
     def __cinit__(self, float D, int D_px, int N_SRC=1):
         self._c_gmt_m1 = new ceo.gmt_m1()
-        
-        # aperture
-        self.aperture_R = np.zeros((3*7,3),order='c',dtype=np.float32)
-        self._c_gmt_m1.aperture_CS.float_R = <float *> self.aperture_R.data;
-        # conic
-        self.conic_R = np.zeros((3*7,3),order='c',dtype=np.float32)
-        self._c_gmt_m1.conic_CS.float_R = <float *> self.conic_R.data;
-        # rigid body
-        self.rigid_body_R = np.zeros((3*7,3),order='c',dtype=np.float32)
-        self._c_gmt_m1.rigid_body_CS.float_R = <float *> self.rigid_body_R.data;
-        # motion
-        self.motion_R = np.zeros((3*7,3),order='c',dtype=np.float32)
-        self._c_gmt_m1.motion_CS.float_R = <float *> self.motion_R.data;
 
         self._c_gmt_m1.setup(D, D_px, N_SRC)
 
@@ -393,23 +373,9 @@ cdef class GMT_M2:
     """
     """
     cdef ceo.gmt_m2 *_c_gmt_m2
-    cdef public np.ndarray aperture_R, conic_R, rigid_body_R, motion_R
     
     def __cinit__(self, float D, int D_px, int N_SRC=1):
         self._c_gmt_m2 = new ceo.gmt_m2()
-        
-        # aperture
-        self.aperture_R = np.zeros((3*7,3),order='c',dtype=np.float32)
-        self._c_gmt_m2.aperture_CS.float_R = <float *> self.aperture_R.data;
-        # conic
-        self.conic_R = np.zeros((3*7,3),order='c',dtype=np.float32)
-        self._c_gmt_m2.conic_CS.float_R = <float *> self.conic_R.data;
-        # rigid body
-        self.rigid_body_R = np.zeros((3*7,3),order='c',dtype=np.float32)
-        self._c_gmt_m2.rigid_body_CS.float_R = <float *> self.rigid_body_R.data;
-        # motion
-        self.motion_R = np.zeros((3*7,3),order='c',dtype=np.float32)
-        self._c_gmt_m2.motion_CS.float_R = <float *> self.motion_R.data;
 
         self._c_gmt_m2.setup(D, D_px,N_SRC)
 
@@ -1469,8 +1435,8 @@ HANDLE_ERROR( cudaMemcpy( d__R, R,
 			    sizeof(rtd)*9*N, cudaMemcpyHostToDevice ) );
 HANDLE_ERROR( cudaMemcpy( d__origin, origin, 
 			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
-for (k=0;k<9*N;k++)
-   *(float_R+k) = (float) R[k];
+/* for (k=0;k<9*N;k++) */
+/*    *(float_R+k) = (float) R[k]; */
 @ where the elements of $R$ are stored in the row major format.
 <<coordinate system functions>>=
 void coordinate_system::cleanup(void)
@@ -1511,8 +1477,8 @@ void coordinate_system::update(vector _origin_, vector _euler_angles_,int idx)
 			    sizeof(rtd)*9*N, cudaMemcpyHostToDevice ) );
   HANDLE_ERROR( cudaMemcpy( d__origin, origin, 
 			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
-  for (int k=0;k<9*N;k++)
-    *(float_R+k) = (float) R[k];
+  /* for (int k=0;k<9*N;k++) */
+  /*   *(float_R+k) = (float) R[k]; */
 }
 @ 
 \subsection{Input/Output}
