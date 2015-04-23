@@ -49,11 +49,7 @@
 #include "plotly.h"
 #endif
 
-#ifndef __SYSTEM_H__
-#include "system.h"
-#endif
-
-#ifndef __SYSTEM_H__
+#ifndef __RAYTRACING_H__
 #include "rayTracing.h"
 #endif
 
