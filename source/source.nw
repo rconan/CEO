@@ -301,6 +301,33 @@ cdef class Source:
         self._c_source.wavefront.reset()
         self._c_source.reset_rays()
 @
+\subsubsection{Ray tracing routines}
+\label{sec:ray-tracing-routines-1}
+
+<<ceo.pxd>>=
+    void transform_to_S(bundle *, conic *)
+    void transform_to_S(bundle *, aperture *)
+    void transform_to_R(bundle *, conic *)
+    void transform_to_R(bundle *, aperture *)
+    void intersect(bundle *, conic *)
+    void reflect(bundle *)
+    void thin_lens(bundle *)
+@ 
+<<ceo.pyx>>=
+# ray tracing
+def Transform_to_S(Source src, Conic F):
+    transform_to_S(&(src._c_source.rays), F._c_conic)
+def Transform_to_S_from_A(Source src, Aperture A):
+    transform_to_S(&(src._c_source.rays), A._c_aperture)
+def Transform_to_R(Source src, Conic F):
+    transform_to_R(&(src._c_source.rays), F._c_conic)
+def Transform_to_R_from_A(Source src, Aperture A):
+    transform_to_R(&(src._c_source.rays), A._c_aperture)
+def Intersect(Source src, Conic F):
+    intersect(&(src._c_source.rays), F._c_conic)
+def Reflect(Source src):
+    reflect(&(src._c_source.rays))
+@
 
 \section{Parameters}
 \label{sec:params}
@@ -805,6 +832,536 @@ __global__ void apply_mask(float* amplitude, float* phase, const char *pupil_mas
 \subsection{Ray tracing}
 \label{sec:ray-tracing}
 
+
+\subsubsection{Coordinates transformation}
+\label{sec:coord-transf}
+
+The coordinates and cosine directions of the rays need to be transformed into the surface coordinates system first.
+The matrix [[R]] in the conic structure transforms the coordinates in the LCS $(x,y,z)$ into the GCS $(\bar x,\bar y,\bar z)$ i.e.
+\begin{equation}
+  \left[
+  \begin{array}{c}
+    \bar x - \bar x_o \\
+    \bar y - \bar y_o \\
+    \bar z - \bar z_o
+  \end{array}
+  \right] = R \left[
+    \begin{array}{c}
+      x \\
+      y \\
+      z
+    \end{array}
+\right]
+\end{equation}
+The reverse transform is simply
+\begin{equation}
+  \left[
+    \begin{array}{c}
+      x \\
+      y \\
+      z
+    \end{array}
+\right] = R^T \left[
+  \begin{array}{c}
+    \bar x - \bar x_o \\
+    \bar y - \bar y_o \\
+    \bar z - \bar z_o
+  \end{array}
+  \right] = \left( \left[
+  \begin{array}{c}
+    \bar x - \bar x_o \\
+    \bar y - \bar y_o \\
+    \bar z - \bar z_o
+  \end{array}
+  \right]^T R \right)^T 
+\end{equation}
+<<transformation to surface system>>=
+void transform_to_S(source *src, conic *F)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1);
+  transform_to_S_kernel LLL gridDim , blockDim RRR (src->rays.d__chief_ray, 1,
+                                                    F->ref_frame.d__R, 
+                                                    F->ref_frame.d__origin);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(src->rays.N_RAY/256+1,1);
+  transform_to_S_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY,
+                                                    F->ref_frame.d__R, 
+                                                    F->ref_frame.d__origin);
+}
+void transform_to_S(source *src, aperture *A)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1);
+  transform_to_S_kernel LLL gridDim , blockDim RRR (src->rays.d__chief_ray, 1,
+                                                    A->ref_frame.d__R, 
+                                                    A->ref_frame.d__origin);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(src->rays.N_RAY/256+1,1);
+  transform_to_S_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY,
+                                                    A->ref_frame.d__R, 
+                                                    A->ref_frame.d__origin);
+}
+@ 
+<<transformation to surface system kernel>>=
+__global__ void transform_to_S_kernel(ray *d__ray, int N_RAY, 
+				      rtd *d__R, vector *d__origin)
+{
+  int i, j, ij;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    forward_transform(&(d__ray[ij].coordinates), &(d__ray[ij].coordinates),
+		      d__R, d__origin);
+    forward_transform_centered(&(d__ray[ij].directions), &(d__ray[ij].directions),
+			       d__R);
+  }
+}
+@ with the projection of the ray coordinates in the surface reference frame LCS:
+<<coordinates forward transform>>=
+__host__ __device__  void forward_transform(vector *v_out, vector *v_in,
+					 rtd *d__R, vector *d__origin)
+{
+  rtd u, v, w;
+  u = v_in->x - d__origin->x;
+  v = v_in->y - d__origin->y;
+  w = v_in->z - d__origin->z;
+
+  v_out->x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
+  v_out->y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
+  v_out->z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
+}  
+__host__ __device__  void forward_transform_centered(vector *v_out, vector *v_in,
+						  rtd *d__R)
+{
+  rtd u, v, w;
+  u = v_in->x;
+  v = v_in->y;
+  w = v_in->z;
+
+  v_out->x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
+  v_out->y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
+  v_out->z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
+}  
+@ 
+<<transformation to rays system>>=
+void transform_to_R(source *src, conic *F)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1);
+  transform_to_R_kernel LLL gridDim , blockDim RRR (src->rays.d__chief_ray, 1,
+        	 				     F->ref_frame.d__R, F->ref_frame.d__origin);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(src->rays.N_RAY/256+1,1);
+  transform_to_R_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY,
+        	 				     F->ref_frame.d__R, F->ref_frame.d__origin);
+}
+void transform_to_R(source *src, aperture *A)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1);
+  transform_to_R_kernel LLL gridDim , blockDim RRR (src->rays.d__chief_ray, 1,
+        	 				     A->ref_frame.d__R, A->ref_frame.d__origin);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(src->rays.N_RAY/256+1,1);
+  transform_to_R_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY,
+        	 				     A->ref_frame.d__R, A->ref_frame.d__origin);
+}
+@ 
+<<transformation to rays system kernel>>=
+__global__ void transform_to_R_kernel(ray *d__ray, int N_RAY,
+                                      rtd *d__R, vector *d__origin)
+{
+  int i, j, ij;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    backward_transform(&(d__ray[ij].coordinates), &(d__ray[ij].coordinates),
+		       d__R, d__origin);
+    backward_transform_centered(&(d__ray[ij].directions), &(d__ray[ij].directions),
+				d__R);
+  }
+}
+@ with the projection of the ray coordinates in the rays reference frame LCS:
+@ 
+<<coordinates backward transform>>=
+__host__ __device__  void backward_transform(vector *v_out, vector *v_in,
+                                    rtd *d__R, vector *d__origin)
+{
+  rtd u, v, w;
+
+  u = v_in->x;
+  v = v_in->y;
+  w = v_in->z;
+
+  v_out->x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
+  v_out->y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
+  v_out->z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
+
+  v_out->x += d__origin->x;
+  v_out->y += d__origin->y;
+  v_out->z += d__origin->z;    
+}  
+__host__ __device__  void backward_transform_centered(vector *v_out, vector *v_in,
+						  rtd *d__R)
+{
+  rtd u, v, w;
+
+  u = v_in->x;
+  v = v_in->y;
+  w = v_in->z;
+
+  v_out->x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
+  v_out->y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
+  v_out->z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
+}  
+@ 
+
+\subsubsection{Surface intersection}
+\label{sec:surface-intersection}
+
+<<intersection with surface>>=
+void intersect(source *src, conic *F)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1);
+  intersect_chief_kernel LLL gridDim , blockDim RRR (rays->d__chief_ray, 1,
+						     F->k, F->c, F->d__origin);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(src->rays.N_RAY/256+1,1);
+  intersect_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY, 
+					       F->k, F->c, F->d__origin,
+					       rays->d__chief_ray);
+}
+
+<<intersection with surface kernel>>=
+__global__ void intersect_chief_kernel(ray *d__ray, int N_RAY, 
+				 const rtd Fk, const rtd Fc,
+				 vector *d__origin)
+{
+  int j, ij;
+  rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
+  vector vv;
+  ij = 0;
+
+  <<intersection with z=0 plane>>
+  d__ray[ij].optical_path_length = s0;
+  s0 = s1 = 0;
+  for (j=0; j<SNELL_N_ITERATION; j++)
+    {
+      <<Newton-Raphson>>
+      s0 = s1;
+    }
+}
+__global__ void intersect_kernel(ray *d__ray, int N_RAY, 
+				 const rtd Fk, const rtd Fc,
+				 vector *d__origin,
+                                 ray *d__chief_ray)
+{
+  int i, j, ij;
+  rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
+  vector vv;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    <<intersection with z=0 plane>>
+    d__ray[ij].optical_path_length = s0;
+    s0 = s1 = 0;
+    for (j=0; j<SNELL_N_ITERATION; j++)
+    {
+      <<Newton-Raphson>>
+	s0 = s1;
+    }
+  d__ray[ij].optical_path_difference += 
+    d__ray[ij].optical_path_length - d__chief_ray->optical_path_length;
+  }
+}
+@
+The intersection of a ray with the surface is derived using the parametric equations of the ray
+\begin{eqnarray}
+  \label{eq:3}
+  x &=& x_0 + ks \\
+  y &=& y_0 + ls \\
+  z &=& z_0 + ms   
+\end{eqnarray}
+where $s$ is the distance along the ray from the point $(x_0,y_0,z_0)$.
+Eq.~(\ref{eq:3}) are inserted into the surface definition Eq.~(\ref{eq:4}) that is solved for $s$.
+
+The intersection with the plane $z=0$ in the LCS is derived first leading to 
+\begin{eqnarray}
+  \label{eq:5}
+  s_0 &=& -z_0/m \\
+  x_1 &=& x_0 + ks_0 \\
+  y_1 &=& y_0 + ls_0 
+\end{eqnarray}
+<<intersection with z=0 plane>>=
+k  = d__ray[ij].directions.x;
+l  = d__ray[ij].directions.y;
+m  = d__ray[ij].directions.z;
+if (m==0) { return; }
+s0 = -d__ray[ij].coordinates.z/m;
+x1 = d__ray[ij].coordinates.x + k*s0;
+y1 = d__ray[ij].coordinates.y + l*s0;
+@
+and giving a new set of parametric equations
+\begin{eqnarray}
+  \label{eq:6}
+  x &=& x_1 + ks \\
+  y &=& y_1 + ls \\
+  z &=& ms     
+\end{eqnarray}
+ 
+The distance $s$ to the surface is obtained with the Newton--Raphson iterative method
+\begin{equation}
+  \label{eq:7}
+  s_{j+1} = s_j - { F(x_j,y_j,z_j) \over F^\prime(x_j,y_j,z_j) }
+\end{equation}
+where
+\begin{eqnarray}
+  \label{eq:8}
+  x_j &=& x_1 + ks_j \\
+  y_j &=& y_1 + ls_j \\
+  z_j &=& ms_j       
+\end{eqnarray}
+<<Newton-Raphson>>=
+vv.x = x1 + k*s0;
+vv.y = y1 + l*s0;
+vv.z = m*s0;
+@ and where
+\begin{eqnarray}
+  \label{eq:9}
+  F^\prime(x_j,y_j,z_j) &=& \left. { {\mathrm d} F \over {\mathrm d} s  } \right|_{s=s_j} \\
+                      &=& k\left.{ \partial F(x,y,z) \over \partial x } \right|_j + l\left. { \partial F(x,y,z) \over \partial y }\right|_j + m\left.{ \partial F(x,y,z) \over \partial z }\right|_j
+\end{eqnarray}
+<<Newton-Raphson>>=
+S = conic_surface(&vv, d__origin, Fk, Fc);
+K = partial_x_conic_surface(&vv, d__origin, Fk, Fc);
+L = partial_y_conic_surface(&vv, d__origin, Fk, Fc);
+M = partial_z_conic_surface();
+dSds = K*k + L*l + M*m;
+if (dSds==0) { return; }
+s1 = s0 - S/dSds;
+if (abs(s1-s0)<TOL)
+{
+  d__ray[ij].coordinates.x = x1 + k*s1;
+  d__ray[ij].coordinates.y = y1 + l*s1;
+  d__ray[ij].coordinates.z = m*s1;
+  d__ray[ij].surface_normal.x    = 
+    partial_x_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc);
+  d__ray[ij].surface_normal.y    =
+    partial_y_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc);
+  d__ray[ij].surface_normal.z    = partial_z_conic_surface();
+  d__ray[ij].optical_path_length += s1;
+  d__ray[ij].n_iteration = j;
+  break;
+}
+@
+The iterative process is started with
+\begin{equation}
+  \label{eq:11}
+  s_1 = 0,
+\end{equation}
+and is terminated when
+\begin{equation}
+  \label{eq:12}
+  \left|s_{j+1} - s_j \right| < \epsilon,
+\end{equation}
+where $\epsilon$ is a tolerance set by the required accuracy.
+
+The final distance along a ray from the point $(x_0,y_0,z_0)$ is
+\begin{equation}
+  \label{eq:13}
+  s = s_0 + s_{j+1}.
+\end{equation}
+
+The surface normal at the intersection point will be needed to compute the refracted ray:
+\begin{eqnarray}
+  \label{eq:1}
+  K &=& \left.{ \partial F(x,y,z) \over \partial x } \right|_{j+1} \\
+  L &=& \left.{ \partial F(x,y,z) \over \partial y } \right|_{j+1} \\
+  M &=& \left.{ \partial F(x,y,z) \over \partial z } \right|_{j+1}.
+\end{eqnarray}
+@
+
+\subsubsection{Snell's law}
+\label{sec:snells-law}
+
+\paragraph{Refraction}
+\label{sec:refraction}
+
+\def\np{n^\prime}
+\def\kp{k^\prime}
+\def\lp{l^\prime}
+\def\mp{m^\prime}
+\def\Sp{S^\prime}
+
+The Snell's law can be written as
+\begin{equation}
+  \label{eq:10}
+  \np \vec \Sp \times \vec r = n \vec S \times \vec r.
+\end{equation}
+$\vec S:(k,l,m)$ and $\vec \Sp:(\kp,\lp,\mp)$ are both unit vectors along the incident and refracted rays, respectively.
+$\vec r:(K,L,M)$ is a unit vector normal to the refraction surface at the ray intersection point.
+$n$ and $\np$ are the refractive indices for the incident and refracted rays, respectively.
+
+Eq.~(\ref{eq:10}) implies that the three vectors $\vec S$, $\vec \Sp$ and $\vec r$ are co--planar, from which it follows that
+\begin{equation}
+  \label{eq:14}
+  \vec \Sp = \mu \vec S + \Gamma \vec r,
+\end{equation}
+where $\mu=n/\np$ and $\Gamma$ has to be determined.
+$\Gamma$ is derived by solving
+\begin{equation}
+  \label{eq:15}
+  \left| \vec \Sp \right|^2 - \left| \mu \vec S + \Gamma \vec r \right|^2 = 0
+\end{equation}
+Developing Eq.~(\ref{eq:15}) leads to $\Gamma$ being the solution of a quadratic equation
+\begin{equation}
+  \label{eq:16}
+  \Gamma^2 + 2a\Gamma + b = 0
+\end{equation}
+where
+\begin{equation}
+  \label{eq:17}
+  a = \mu { kK +lL + mM \over K^2 + L^2 + M^2 },
+\end{equation}
+<<a equation>>=
+K = d__ray[ij].surface_normal.x;
+L = d__ray[ij].surface_normal.y;
+M = d__ray[ij].surface_normal.z;
+G2 = K*K + L*L + M*M;
+k = d__ray[ij].directions.x;
+l = d__ray[ij].directions.y;
+m = d__ray[ij].directions.z;
+a = mu*(k*K + l*L + m*M)/G2;
+@  and
+\begin{equation}
+  \label{eq:18}
+  b = { \mu^2 -1 \over K^2 + L^2 + M^2 }.
+\end{equation}
+<<b equation>>=
+b = (mu*mu-1)/G2;
+@ 
+Eq.~(\ref{eq:16}) is solved with the Newton--Raphson iterative method by introducing the new function
+\begin{equation}
+  \label{eq:19}
+  V(\Gamma) = \Gamma^2 + 2a\Gamma + b,
+\end{equation}
+and writing $\Gamma$ as
+\begin{equation}
+  \label{eq:20}
+  \Gamma_{j+1} = \Gamma_j - { V(\Gamma_j) \over V^\prime(\Gamma_j) }.
+\end{equation}
+Noting that
+\begin{equation}
+  \label{eq:21}
+  V^\prime(\Gamma_j) = \left. { \mathrm d V \over \mathrm d \Gamma } \right|_j = 2\left( \Gamma_j + a \right),
+\end{equation}
+Eq.~(\ref{eq:20}) becomes
+\begin{equation}
+  \label{eq:22}
+  \Gamma_{j+1} = { \Gamma_j^2 - b \over 2(\Gamma_j + a) }.
+\end{equation}
+with
+\begin{equation}
+  \label{eq:23}
+  \Gamma_1 = {-b \over 2a }.
+\end{equation}
+
+<<refraction>>=
+void refract(source *src, const rtd mu)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(src->rays.N_RAY/256+1,1);
+  refract_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY, mu);
+}
+@ 
+<<refraction kernel>>=
+__global__ void refract_kernel(ray *d__ray, int N_RAY, const rtd mu)
+{
+  int i, j, ij;
+  rtd k, l, m, K, L ,M, G2, a, b, gamma0, gamma1, gamma_relative_error;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    <<a equation>>
+    <<b equation>>
+    gamma0 = -0.5*b/a;
+    for (j=0; j<SNELL_N_ITERATION; j++)
+    {
+      gamma1 = 0.5*(gamma0*gamma0-b)/(gamma0+a);
+      gamma_relative_error = abs( gamma1/gamma0 - 1.0 );
+      if (gamma_relative_error<0.01)
+      {
+        d__ray[ij].directions.x = mu*k + gamma1*K;
+        d__ray[ij].directions.y = mu*l + gamma1*L;
+        d__ray[ij].directions.z = mu*m + gamma1*M;
+        return;
+      }
+      gamma0 = gamma1;
+    }
+  }
+}
+@
+\paragraph{Reflection}
+\label{sec:reflection}
+
+In the case of reflection, one have $\mu=1$, $b=0$ and
+\begin{equation}
+  \label{eq:24}
+  \Gamma = -2a.
+\end{equation}
+Eq.~(\ref{eq:14}) thus becomes
+\begin{equation}
+  \label{eq:25}
+    \vec \Sp = \vec S -2a \vec r.
+\end{equation}
+<<reflection>>=
+void reflect(source *src)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1);
+  reflect_kernel LLL gridDim , blockDim RRR (src->rays.d__chief_ray, 1, 1.0);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(src->rays.N_RAY/256+1,1);
+  reflect_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY, 1.0);
+}
+@ 
+Setting $\mu=-1$ makes the mirror behaving like a thin lens:
+<<thin lens>>=
+void thin_lens(source *src)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(src->rays.N_RAY/256+1,1);
+  reflect_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY, -1.0);
+}
+@ 
+<<reflection kernel>>=
+    __global__ void reflect_kernel(ray *d__ray, int N_RAY, float mu)
+{
+  int i, j, ij;
+  rtd k, l, m, K, L ,M, G2, a;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    <<a equation>>
+    a *= -2.0;
+    d__ray[ij].directions.x = mu*k + a*K;
+    d__ray[ij].directions.y = mu*l + a*L;
+    d__ray[ij].directions.z = mu*m + a*M;
+  }
+}
+@
 <<ray tracing>>=
 void source::trace(gmt_m1 *M1)
 {
