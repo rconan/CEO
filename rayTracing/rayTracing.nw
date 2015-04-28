@@ -2504,7 +2504,10 @@ rtd height;
 <<GMT M12 parameters>>=
 mask V;
 @
-\end{itemize}
+\item the segment index offset (0 for M1 and 3 for M2):
+<<GMT M12 parameters>>=
+int idx_offset;
+@ \end{itemize}
 @
 
 \subsection{Setup \& Cleanup}
@@ -2522,118 +2525,167 @@ The size must be 25.5m or more to contain M1 fully.
 void gmt_m1::setup(float _D_, int _D_px_)
 {
   int  N_SRC = 1;
-  M_ID    = 1;
-  D_px    = _D_px_;
-  D       = _D_;
-  D_full  = 8.417;
-  D_clear = 8.365;
-  ri      = 2.4412/8.365;
-  beta    = -13.522*PI/180.0;
-  L       = 8.710;
-  N       = 7;
-  conic_c = -1.0/36.0;
-  conic_k = 1-0.9982857;
-  height  = 0.0;
-
+  <<M1 parameters>>
   <<GMT setup common>>
 }
+@ with
+<<M1 parameters>>=
+ M_ID    = 1;
+ D_px    = _D_px_;
+ D       = _D_;
+ D_full  = 8.417;
+ D_clear = 8.365;
+ ri      = 2.4412/8.365;
+ beta    = -13.522*PI/180.0;
+ L       = 8.710;
+ N       = 7;
+ conic_c = -1.0/36.0;
+ conic_k = 1-0.9982857;
+ height  = 0.0;
+ idx_offset = 0;
+@  
+If an array of sources is propagated through the telescope then
+<<GMT M1 functions>>=
 void gmt_m1::setup(float _D_, int _D_px_, int N_SRC)
 {
-  M_ID    = 1;
-  D_px    = _D_px_;
-  D       = _D_;
-  D_full  = 8.417;
-  D_clear = 8.365;
-  ri      = 2.4412/8.365;
-  beta    = -13.522*PI/180.0;
-  L       = 8.710;
-  N       = 7;
-  conic_c = -1.0/36.0;
-  conic_k = 1-0.9982857;
-  height  = 0.0;
-
+  <<M1 parameters>>
   <<GMT setup common>>
 }
 @  with
 <<GMT setup common>>=
-vector __v0 = {0.0,0.0,0.0};
-vector __v = {D_full*0.5,0.0,0.0};
-// printf(" depth = %6.5f\n",conic_equation(&v,&v0,conic_k,fabs(conic_c)));
-depth = conic_equation(&__v,&__v0,conic_k,(conic_c));
+vector __v0 = {0.0,0.0,0.0},
+       __v = {D_full*0.5,0.0,0.0},
+       origin[7],
+       euler_angles[7];
+rtd D_c, o, zo;
+ int k, idx;    
+char tag[16];
 
-vector origin[7];
-vector euler_angles[7];
-rtd D_c, o, zo, sbeta, cbeta;
-int k;    
+depth = conic_equation(&__v,&__v0,conic_k,conic_c);
+D_c = L;
+__v.x = L;
+zo = conic_equation(&__v,&__v0,conic_k,conic_c);
+
+<<M12 rigid body definition>>
 
 <<M12 aperture definition>>
 
 <<M12 conic definition>>
 
-<<M12 rigid body definition>>
-
 <<M12 motion definition>>
 
 V.setup(D_px*D_px*N_SRC);
-@ The origin and coordinates system of the rigid bodies are defined with
+@
+The rigid body coordinate systems are aligned with the segment coordinate systems.
+The origins $[x_O, y_O, z_O]$ of the segment coordinate systems are given with respect to the global coordinate system which origin is at the vertex of M1 conic surface: 
+\begin{eqnarray}
+  \label{eq:35}
+  x_{O,k} &=& L\cos(\theta_{O,k}), \\
+  y_{O,k} &=& L\sin(\theta_{O,k}), \\
+  z_O &=& F(L),\\
+\end{eqnarray}
+with, for M1, $L = 8.71$m, $\theta_{O,k}=\pi(3-2k)/6, \forall k \in [0,5]$, $x_{O,6}=y_{O,6}=0$ and
+\begin{equation}
+  \label{eq:36}
+  F(\rho) = {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} }.
+\end{equation}
+In addition to the change of origin with respect to the GCS, the segment coordinate system is rotated around the z--axis of $-k\pi/3$radian and then tilted around the x--axis of $\beta$.
+\begin{center}
+\begin{tikzpicture}
+  \draw[->] (-25mm,0) -- (35mm,0) node[below] {$\bar x$};
+  \draw[->] (0,-25mm) -- (0,35mm) node[right] {$\bar y$};
+  \draw[thin,dashed] (0,0) circle [radius=21mm];
+  \coordinate (O) at (0,0);
+  \draw (O) circle [radius=10mm] node[above left=3mm] {7};
+  \draw[->,thick,red] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\hat x$};
+  \draw[->,thick,red] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\hat y$};
+  \foreach \x in {1,...,6} {
+    \coordinate (O) at (150-\x*60:21mm);
+    \draw (O) circle [radius=10mm] node[above left=3mm] {\x};
+    \draw[->,thick,red,rotate=-60*(\x-1)] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\hat x$};
+    \draw[->,thick,red,rotate=-60*(\x-1)] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\hat y$};
+
+  }    
+\end{tikzpicture}  
+\end{center}
 <<M12 rigid body definition>>=
 origin[N-1].x = origin[N-1].y = 0.0;
 origin[N-1].z = height;
 euler_angles[N-1].x = euler_angles[N-1].y = euler_angles[N-1].z = 0.0;
-D_c = L;
-zo = D_full*sbeta*0.5 + depth*(1-cbeta);
 for (k=0; k<N-1; k++)
 {
   o = PI*(3-2*k)/6.0;
-  origin[k].x = D_c*cosf(o);
-  origin[k].y = D_c*sinf(o);
-  origin[k].z = height + zo;
-  euler_angles[k].x = beta;
-  euler_angles[k].y = 0.0;
-  euler_angles[k].z = -PI*k/3.0;
+  <<segment index offset>>
+  origin[idx].x = D_c*cosf(o);
+  origin[idx].y = D_c*sinf(o);
+  origin[idx].z = height + zo;
+  euler_angles[idx].x = beta;
+  euler_angles[idx].y = 0.0;
+  euler_angles[idx].z = -PI*k/3.0;
 }
 sprintf(tag,"M%d RIGID BODY",M_ID);
 rigid_body_CS.setup(origin, euler_angles, N, tag);
-@ The origin and coordinates system of the apertures are defined with
+@ with
+<<segment index offset>>=
+idx = (k + idx_offset)%6;
+@ 
+The coordinate systems of the segment apertures are defined with respect to the coordinate systems of the rigid body motions.
+The apertures are directly above the segments such as they rest on the rim of the segments. 
 <<M12 aperture definition>>=
 origin[N-1].x = origin[N-1].y = 0.0;
 origin[N-1].z = depth;
 euler_angles[N-1].x = euler_angles[N-1].y = euler_angles[N-1].z = 0.0;
-sbeta = sin(beta);
-D_c = L - depth*sbeta;
-zo = D_full*sbeta*0.5 + depth;
 for (k=0; k<N-1; k++)
 {
-  origin[k].x = 0.0;
-  origin[k].y = 0.0;
-  origin[k].z = depth;
-  euler_angles[k].x = 0.0;
-  euler_angles[k].y = 0.0;
-  euler_angles[k].z = 0.0;
+  <<segment index offset>>
+  origin[idx].x = 0.0;
+  origin[idx].y = 0.0;
+  origin[idx].z = depth;
+  euler_angles[idx].x = 0.0;
+  euler_angles[idx].y = 0.0;
+  euler_angles[idx].z = 0.0;
 }
-char tag[16];
 sprintf(tag,"M%d APERTURE",M_ID);
 aperture_CS.setup(origin, euler_angles, N, tag);
-@ The origin and coordinates system of the conics are defined with
+@ 
+The coordinate systems of the segment conics are defined with respect to the coordinate systems of the rigid body motions.
+Both coordinate systems share the same origin but x--axis and y--axis are parallel to the x--axis and y--axis of the GCS.
+The origins of the segment conics are also given in the coordinate systems of the segment conics.
+\begin{center}
+\begin{tikzpicture}
+  \draw[->] (-25mm,0) -- (35mm,0) node[below] {$\bar x$};
+  \draw[->] (0,-25mm) -- (0,35mm) node[right] {$\bar y$};
+  \draw[thin,dashed] (0,0) circle [radius=21mm];
+  \coordinate (O) at (0,0);
+  \draw (O) circle [radius=10mm] node[above left=3mm] {7};
+  \draw[->,thick,red] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\hat x$};
+  \draw[->,thick,red] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\hat y$};
+  \foreach \x in {1,...,6} {
+    \coordinate (O) at (150-\x*60:21mm);
+    \draw (O) circle [radius=10mm] node[above left=3mm] {\x};
+    \draw[->,thick,red] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\check x$};
+    \draw[->,thick,red] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\check y$};
+
+  }    
+\end{tikzpicture}  
+\end{center}
 <<M12 conic definition>>=
 origin[N-1].x = origin[N-1].y = origin[N-1].z = 0.0;
 euler_angles[N-1].x = euler_angles[N-1].y = euler_angles[N-1].z = 0.0;
 conic_origin[N-1].x = conic_origin[N-1].y = conic_origin[N-1].z = 0.0; 
-cbeta = cos(beta);
-D_c = L;
-zo = D_full*sbeta*0.5 + depth*(1-cbeta);
 for (k=0; k<N-1; k++)
 {
+  <<segment index offset>>
   o = PI*(3-2*k)/6.0;
-  origin[k].x = 0.0;
-  origin[k].y = 0.0;
-  origin[k].z = 0.0;
-  euler_angles[k].x = beta;
-  euler_angles[k].y = 0.0;
-  euler_angles[k].z = -PI*k/3.0;
-  conic_origin[k].x = -D_c*cosf(o);
-  conic_origin[k].y = -D_c*sinf(o);
-  conic_origin[k].z = -zo;
+  origin[idx].x = 0.0;
+  origin[idx].y = 0.0;
+  origin[idx].z = 0.0;
+  euler_angles[idx].x = beta;
+  euler_angles[idx].y = 0.0;
+  euler_angles[idx].z = -PI*k/3.0;
+  conic_origin[idx].x = -D_c*cosf(o);
+  conic_origin[idx].y = -D_c*sinf(o);
+  conic_origin[idx].z = -zo;
 }
 //euler_angles[0].x = 30.0*PI/180.0/3600.0;
 sprintf(tag,"M%d CONIC",M_ID);
@@ -2641,7 +2693,9 @@ conic_CS.setup(origin, euler_angles, N, tag);
 HANDLE_ERROR( cudaMalloc((void**)&d__conic_origin, sizeof(vector)*N ) );
 HANDLE_ERROR( cudaMemcpy( d__conic_origin, conic_origin, 
 			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
-@ The origin and coordinates system of the motions are defined with
+@ 
+The motion coordinate systems are defined with respect to the coordinate systems of the rigid body motions.
+For unperturbed segments, both coordinate systems coincide.
 <<M12 motion definition>>=
 for (k=0; k<N; k++)
 {
@@ -3092,34 +3146,31 @@ struct gmt_m2 {
 void gmt_m2::setup(float _D_, int _D_px_)
 {
   int N_SRC = 1;
-  M_ID    = 2;
-  D_px    = _D_px_;
-  D       = _D_;
-  D_full  = 1.0425;
-  D_clear = 1.0415;
-  ri      = 0.0;//2.4412/8.365;
-  beta    = 14.706*PI/180.0;
-  L       = 1.08774;
-  N       = 7;
-  conic_c = 1.0/4.163901;
-  conic_k = 1-0.7169273;
-  height  = -20.262476;
+  <<M2 parameters>>
   <<GMT setup common>>
 }
+@ with
+<<M2 parameters>>=
+ M_ID    = 2;
+ D_px    = _D_px_;
+ D       = _D_;
+ D_full  = 1.0425;
+ D_clear = 1.0415;
+ ri      = 0.0;
+ beta    = 14.706*PI/180.0;
+ L       = 1.08774;
+ N       = 7;
+ conic_c = 1.0/4.163901;
+ conic_k = 1-0.7169273;
+ height  = -20.262476;
+ idx_offset = 3;
+@  
+If an array of sources is propagated through the telescope then
+<<GMT M2 functions>>=
 void gmt_m2::setup(float _D_, int _D_px_, int N_SRC)
 {
   M_ID    = 2;
-  D_px    = _D_px_;
-  D       = _D_;
-  D_full  = 1.0425;
-  D_clear = 1.0415;
-  ri      = 0.0;//2.4412/8.365;
-  beta    = 14.706*PI/180.0;
-  L       = 1.08774;
-  N       = 7;
-  conic_c = 1.0/4.163901;
-  conic_k = 1-0.7169273;
-  height  = -20.262476;
+  <<M2 parameters>>
   <<GMT setup common>>
 }
 @ 
