@@ -6,7 +6,7 @@ NVCC          	= $(CUDAPATH)/bin/nvcc
 CUDALIBPATH   	= $(CUDAPATH)/lib64
 MATLABINCS	= -I/priv/monarcas1/rconan/MATLAB/R2013a/extern/include \
 	-I/export/monarcas1/rconan/MATLAB/R2013a/toolbox/distcomp/gpu/extern/include
-CUDALIBS	= cusparse cufft cublas cudart cuda 
+CUDALIBS	= cusparse cufft cublas cudart cuda
 NOWEBPATH	= /usr
 WEAVE   	= $(NOWEBPATH)/bin/noweave
 TANGLE    	= $(NOWEBPATH)/bin/notangle
