@@ -54,15 +54,6 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 					     rtd *d__R);
 
 
-void transform_to_S(bundle *rays, conic *F);
-void transform_to_S(bundle *rays, aperture *A);
-void transform_to_R(bundle *rays, conic *F);
-void transform_to_R(bundle *rays, aperture *A);
-void intersect(bundle *rays, conic *F);
-void refract(bundle *rays, const rtd mu);
-void reflect(bundle *rays);
-void thin_lens(bundle *rays);
-
 #endif // __RAYTRACING_H__
 @ 
 \subsection{Source}
@@ -96,22 +87,6 @@ void thin_lens(bundle *rays);
 
 <<GMT M1 functions>>
 <<GMT M2 functions>>
-
-<<transformation to surface system kernel>>
-<<transformation to rays system kernel>>
-
-<<transformation to surface system>>
-<<transformation to rays system>>
-
-<<intersection with surface kernel>>
-<<intersection with surface>>
-
-<<refraction kernel>>
-<<refraction>>
-
-<<reflection kernel>>
-<<reflection>>
-<<thin lens>>
 
 @ 
 \subsection{Python}
@@ -332,6 +307,7 @@ cdef class Aperture:
     cdef cppclass gmt_m1:
         void test_ray_tracing()
         <<python GMT M12 functions>>
+	void global_tiptilt(float , float )
 @  where
 <<python GMT M12 functions>>=
 coordinate_system aperture_CS
@@ -381,6 +357,9 @@ cdef class GMT_M1:
         __euler_angles.z = <float>euler_angles[2]
         self._c_gmt_m1.update(__origin, __euler_angles, idx)
 
+    def global_tiptilt(self, float tip, float tilt):
+        self._c_gmt_m1.global_tiptilt(tip, tilt);
+        
     def reset(self):
         self._c_gmt_m1.reset()
 @
@@ -1289,7 +1268,7 @@ vector *d__origin;
 @ 
 Coordinate systems can be tagged:
 <<coordinate system data>>=
-char tag[16];
+char tag[32];
 @ 
 They are gathered in a new coordinate system data type
 <<coordinate system data type>>=
@@ -1393,9 +1372,9 @@ R &=& \left[
   \end{array}
   \right] \left[
   \begin{array}{ccc}
-    c\beta & 0 & -s\beta \\
+    c\beta & 0 & s\beta \\
     0      & 1 &  0 \\
-    s\beta & 0 &  c\beta
+    -s\beta & 0 &  c\beta
   \end{array}
   \right] \left[
     \begin{array}{ccc}
@@ -1406,9 +1385,9 @@ R &=& \left[
 \right] \\
 &=& \left[
   \begin{array}{ccc}
-    c\beta c\gamma &  s\alpha s\beta s\gamma + s\alpha s\gamma & -c\alpha s\beta c\gamma + s\alpha s\gamma \\
-    c\beta s\gamma & -s\alpha s\beta s\gamma + c\alpha c\gamma & -c\alpha s\beta s\gamma - s\alpha c\gamma \\
-    s\beta         &  s\alpha c\beta                           &  c\alpha c\beta
+    c\beta c\gamma &  s\alpha s\beta c\gamma - c\alpha s\gamma & c\alpha s\beta c\gamma + s\alpha s\gamma \\
+    c\beta s\gamma &  s\alpha s\beta s\gamma + c\alpha c\gamma & c\alpha s\beta s\gamma - s\alpha c\gamma \\
+    -s\beta         &  s\alpha c\beta                           &  c\alpha c\beta
   \end{array}
 \right]
 \end{eqnarray}
@@ -1430,12 +1409,12 @@ for (k=0; k<N; k++)
     sg = sin(euler_angles[idx].z);
     idx *= 9;
     R[idx++] = cb*cg;
-    R[idx++] = -sa*sb*cg - ca*sg;
-    R[idx++] = -ca*sb*cg + sa*sg;
+    R[idx++] = sa*sb*cg - ca*sg;
+    R[idx++] = ca*sb*cg + sa*sg;
     R[idx++] = cb*sg;
-    R[idx++] = -sa*sb*sg + ca*cg;
-    R[idx++] = -ca*sb*sg - sa*cg;
-    R[idx++] = sb;
+    R[idx++] = sa*sb*sg + ca*cg;
+    R[idx++] = ca*sb*sg - sa*cg;
+    R[idx++] = -sb;
     R[idx++] = sa*cb;
     R[idx++] = ca*cb;
   }
@@ -1499,11 +1478,24 @@ void coordinate_system::info(void)
   fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   fprintf(stdout," ID (Tx          Ty        Tz)[m]  (Ox         Oy         Oz)[deg]\n");
   float c = 180.0/PI;
-  int k;
+  int i, j, k, idx;
   for (k=0; k<N; k++)
-     fprintf(stdout," %2d %+6.2e %+6.2e %+6.2e   %+6.2e %+6.2e %+6.2e\n", k,
-	  origin[k].x, origin[k].y, origin[k].z,
-	  euler_angles[k].x*c, euler_angles[k].y*c, euler_angles[k].z*c);
+    {
+      fprintf(stdout," %2d  %+6.3f   %+6.3f   %+6.3f      %+6.3f   %+6.3f   %+6.3f\n", k,
+	      origin[k].x, origin[k].y, origin[k].z,
+	      euler_angles[k].x*c, euler_angles[k].y*c, euler_angles[k].z*c);
+      fprintf(stdout,"Direction cosine matrix:\n");
+      for (i=0;i<3;i++)
+	{
+	  fprintf(stdout,"||  ");
+	  for (j=0;j<3;j++)
+	    {
+	      idx = j + i*3 + k*9;
+	      fprintf(stdout,"%+6.3f  ",R[idx]);
+	    }
+	  fprintf(stdout,"||\n");
+	}
+    }
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
 }
 @ 
@@ -2424,6 +2416,7 @@ A new structure to hold GMT M1 and M2 parameters and functions is defined.
 struct gmt_m1 {
   <<GMT M12 parameters>>
   <<GMT M12 functions>>
+  void global_tiptilt(float tip, float tilt);
 };
 @  with
 <<GMT M12 functions>>=
@@ -3129,6 +3122,137 @@ for (j=0; j<SNELL_N_ITERATION; j++)
   s0 = s1;
 }
 @
+\subsection{Global tip--tilt}
+\label{sec:global-tip-tilt}
+
+\def\ijk{\ensuremath{\left[\vec i,\vec j, \vec k\right]}}
+\def\uvw{\ensuremath{\left[\vec u,\vec v, \vec w\right]_k}}
+\def\uvwp{\ensuremath{\left[\vec u^\prime,\vec v^\prime, \vec w^\prime\right]}}
+\def\RS{\ensuremath{R_{{\cal S},k}}}
+\def\RT{\ensuremath{R_{\cal T}}}
+\def\RM{\ensuremath{R_{\cal M}}}
+
+The GCS is defined with the 3 ortho--normal unit vectors \ijk.
+The segment coordinate systems also called rigid body CSs are defined with the 3 ortho-normal vectors \uvw.
+\uvw are derived from \ijk with the matrix \RS
+\begin{equation}
+  \label{eq:37}
+  \uvw = \RS^T \ijk.
+\end{equation}
+Within the rigid body CSs, motion CSs (\uvwp) are defined with
+\begin{equation}
+  \label{eq:38}
+  \uvwp = \RM^T \uvw = \RM^T \RS^T \ijk,
+\end{equation}
+where \RM is the 3D rotation matrix of each segment.
+
+When a global tip--tilt is applied to M1, \ijk becomes $\RT^T\ijk$ with \RT the tip--tilt matrix, and the motion CSs are given by
+\begin{equation}
+  \label{eq:39}
+  \uvwp = \RS^T\RT^T\ijk.
+\end{equation}
+
+From Eq.~(\ref{eq:38}) and Eq.~(\ref{eq:39}), the 3D rotation matrix of each segment as a result of a global tip--tilt is given by
+\begin{equation}
+  \label{eq:40}
+  \RM = \RS^T \RT \RS.
+\end{equation}
+From \RM, the Euler angles corresponding to the 3 rotations of each segment are derived
+\begin{eqnarray}
+  \label{eq:41}
+  \alpha &=& \arctan\left( \RM(32) \over \RM(33) \right) \\\nonumber
+  \beta  &=& \arcsin\left( -\RM(31) \right) \\\nonumber
+  \gamma &=& \arctan\left( \RM(21) \over \RM(11) \right) 
+\end{eqnarray}
+<<GMT M1 functions>>=
+void gmt_m1::global_tiptilt(float tip, float tilt)
+{
+  double alpha, beta, *d__C;
+  vector origin, euler_angles;
+  cublasHandle_t handle;
+  coordinate_system TT_CS;
+
+  origin.x = origin.y = origin.z = 0.0;
+  euler_angles.x = tip;
+  euler_angles.y = tilt;
+  euler_angles.z = 0.0;
+
+  TT_CS.setup(origin, euler_angles);
+  cublasCreate(&handle);
+
+  alpha = 1;
+  beta  = 0;
+  HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
+  int k, k9;
+  for (k=0;k<N;k++)
+    {
+      k9 = k*9;
+      cublasDgemm(handle,
+		  CUBLAS_OP_N, CUBLAS_OP_N,
+		  3,3,3,
+		  &alpha,
+		  rigid_body_CS.d__R+k9, 3,
+		  TT_CS.d__R, 3,
+		  &beta,
+		  d__C, 3);
+      cublasDgemm(handle,
+		  CUBLAS_OP_N, CUBLAS_OP_T,
+		  3,3,3,
+		  &alpha,
+		  d__C, 3,
+		  rigid_body_CS.d__R+k9, 3,
+		  &beta,
+		  motion_CS.d__R+k9, 3);
+
+      int i, j, idx = 0;
+      double *C;
+      //  C = (double *)malloc( sizeof(double)*9 );
+      HANDLE_ERROR( cudaMemcpy( motion_CS.R+k9, motion_CS.d__R+k9, 
+				sizeof(double)*9, cudaMemcpyDeviceToHost ) );
+      for (i=0;i<3;i++)
+	{
+	  fprintf(stdout,"||  ");
+	  for (j=0;j<3;j++)
+	    {
+	      idx = j + i*3 + k9;
+	      fprintf(stdout,"%+6.4f  ",motion_CS.R[idx]);
+	    }
+	  fprintf(stdout,"||\n");
+	}
+
+      motion_CS.euler_angles[k].x = atan2(motion_CS.R[7+k9],motion_CS.R[8+k9]);
+      motion_CS.euler_angles[k].y = asin(-1.0*motion_CS.R[6+k9]);
+      motion_CS.euler_angles[k].z = atan2(motion_CS.R[3+k9],motion_CS.R[k9]);
+
+      vector tt_segment_O;
+      forward_transform(&tt_segment_O, rigid_body_CS.origin + k,
+		      TT_CS.R, TT_CS.origin);
+      motion_CS.origin[k].x = tt_segment_O.x - rigid_body_CS.origin[k].x;
+      motion_CS.origin[k].y = tt_segment_O.y - rigid_body_CS.origin[k].y;
+      motion_CS.origin[k].z = tt_segment_O.z - rigid_body_CS.origin[k].z;
+      HANDLE_ERROR( cudaMemcpy( motion_CS.d__origin+k, motion_CS.origin+k, 
+				sizeof(vector), cudaMemcpyHostToDevice ) );
+      fprintf(stdout,"MOTION CS origins     : %+6.3f, %+6.3f, %+6.3f\n",
+	      motion_CS.origin[k].x,
+	      motion_CS.origin[k].y,
+	      motion_CS.origin[k].z);
+      HANDLE_ERROR( cudaMemcpy( motion_CS.R+k9, motion_CS.d__R+k9, 
+				sizeof(double)*9, cudaMemcpyDeviceToHost ) );
+
+      float r2d;
+      r2d = 180.0/PI;
+      fprintf(stdout,"MOTION CS Euler angles: %+6.3f, %+6.3f, %+6.3f\n",
+	      r2d*motion_CS.euler_angles[k].x,
+	      r2d*motion_CS.euler_angles[k].y,
+	      r2d*motion_CS.euler_angles[k].z);
+    }
+
+  cublasDestroy(handle);
+  TT_CS.cleanup();
+  HANDLE_ERROR( cudaFree( d__C ) );
+  //  free( C );
+}    
+@ 
 \section{GMT M2}
 \label{sec:gmt-m2}
 
