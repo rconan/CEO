@@ -33,7 +33,6 @@ cython: all
 	$(NVCC) $(INCS) -I$(PYTHONPATH)/include/python2.7/ -I$(PYTHONPATH)/lib/python2.7/site-packages/numpy/core/include $(NVCCFLAGS) -o $(CEOPYPATH)/ceo.o -c $(CEOPYPATH)/ceo.cu
 	$(NVCC) -shared $(CEOPYPATH)/ceo.o -o $(CEOPYPATH)/ceo.so $(LIBS) 
 	rm -f $(CEOPYPATH)/ceo.cu $(CEOPYPATH)/ceo.o
-	set PYTHONPATH=$(CEOPYPATH)
 
 doc: tex
 	make -C doc all
