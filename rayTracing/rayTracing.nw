@@ -138,6 +138,35 @@ cdef extern from "rayTracing.h":
 # polar bundle
 cdef class Bundle:
     """
+    A class to represent a bundle of rays    
+
+    This class is usually instanciated by the Source class
+
+    Parameters
+    ----------
+    src: Source
+        The Source object that contains the pointer to CEO bundle structure
+
+    Attributes
+    ----------
+    N_BUNDLE: int, read only
+        The number of ray bundle
+    coordinates: cuDoubleArray, read only
+        The coordinate vectors of the rays as a (N_RAYxN_BUNDLE)x3 array
+    chief_coordinates: cuDoubleArray, read only
+        The coordinate vector of the chief ray
+    directions: cuDoubleArray, read only
+        The direction vectors of the rays as a (N_RAYxN_BUNDLE)x3 array
+    chief_directions: cuDoubleArray, read only
+        The direction vector of the chief ray
+    optical_path_length: cuDoubleArray, read only
+        The optical path lengths of the rays as a N_BUNDLExN_RAY array
+    chief_optical_path_length: cuDoubleArray, read only
+        The optical path length  of the chief ray
+    optical_path_difference: cuDoubleArray, read only
+        The optical path differences of the rays as a N_BUNDLExN_RAY array
+    vignetting:: cuDoubleArray, read only
+        The vignetting flag of the rays as a N_BUNDLExN_RAY array
     """
     cdef ceo.bundle *_c_bundle
 
@@ -154,9 +183,27 @@ def __dealloc__(self):
 """
 
 def to_z_plane(self,rtd z_plane):
+    """
+    Propagates the rays to a given plane
+
+    Parameters
+    ----------
+    z_plane: double
+        The z coordinates of the plane
+    """
     self._c_bundle.to_z_plane(z_plane)
 
 def to_sphere(self, sphere_origin, rtd radius):
+    """
+    Computes the optical path difference with respect to the reference sphere
+
+    Parameters
+    ----------
+    sphere_origin: list
+        A 3 elements list containing the x,y and z coordinates of the sphere center
+    radius: double
+       The radius of the reference sphere
+    """
     cdef vector origin
     origin.x = <double>sphere_origin[0]
     origin.y = <double>sphere_origin[1]
@@ -164,6 +211,16 @@ def to_sphere(self, sphere_origin, rtd radius):
     self._c_bundle.to_sphere(origin,radius)
 
 def go_sphere(self, rtd s, rtd radius):
+    """
+    Computes the optical path difference with respect to the reference sphere
+
+    Parameters
+    ----------
+    s: double
+        The distance from the last surface to the object for the chief ray
+    radius: double
+       The radius of the reference sphere
+    """
     self._c_bundle.to_sphere(s,radius)
 
 def get_optical_path_difference(self,
@@ -205,7 +262,7 @@ property chief_directions:
 
 property optical_path_length:
         def __get__(self):
-            x = cuDoubleArray(shape=(self._c_bundle.N_RAY,self._c_bundle.N_BUNDLE),dev_malloc=True)
+            x = cuDoubleArray(shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
             self._c_bundle.get_optical_path_length(x._c_gpu.dev_data)
             return x
 
@@ -3240,7 +3297,7 @@ void gmt_m1::global_tiptilt(float tip, float tilt)
 	  for (j=0;j<3;j++)
 	    {
 	      idx = j + i*3 + k9;
-	      fprintf(stdout,"%+6.4f  ",motion_CS.R[idx]);
+	      fprintf(stdout,"%+.4e  ",motion_CS.R[idx]);
 	    }
 	  fprintf(stdout,"||\n");
 	}
@@ -3257,7 +3314,7 @@ void gmt_m1::global_tiptilt(float tip, float tilt)
       motion_CS.origin[k].z = tt_segment_O.z - rigid_body_CS.origin[k].z;
       HANDLE_ERROR( cudaMemcpy( motion_CS.d__origin+k, motion_CS.origin+k, 
 				sizeof(vector), cudaMemcpyHostToDevice ) );
-      fprintf(stdout,"MOTION CS origins     : %+6.3f, %+6.3f, %+6.3f\n",
+      fprintf(stdout,"MOTION CS origins     : %+.3e, %+.3e, %+.3e\n",
 	      motion_CS.origin[k].x,
 	      motion_CS.origin[k].y,
 	      motion_CS.origin[k].z);
@@ -3266,7 +3323,7 @@ void gmt_m1::global_tiptilt(float tip, float tilt)
 
       float r2d;
       r2d = 180.0/PI;
-      fprintf(stdout,"MOTION CS Euler angles: %+6.3f, %+6.3f, %+6.3f\n",
+      fprintf(stdout,"MOTION CS Euler angles: %+.3e, %+.3e, %+.3e\n",
 	      r2d*motion_CS.euler_angles[k].x,
 	      r2d*motion_CS.euler_angles[k].y,
 	      r2d*motion_CS.euler_angles[k].z);

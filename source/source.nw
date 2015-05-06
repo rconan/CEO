@@ -172,19 +172,43 @@ cdef class Source:
     ----------
     photometric_band: char
         The sources photometric band
-    zenith: an object
-        The sources zenith angles [rd].
-    azimuth: an object
-        The sources azimuth angles [rd].
-    height: number
-        The sources altitude [m].
-    resolution: a list or tuple with 2 arguments
-        The sampling [n,m] in pixel of the source wavefront complex amplitude.
-    
-    Returns
-    -------
-    out: Source
-        A Source object.
+    zenith: list, tuple or numpy array, optionnal
+        The sources zenith angles [rd], defaults to 0.
+    azimuth:  list, tuple or numpy array, optionnal
+        The sources azimuth angles [rd], defaults to 0.
+    height: float, optionnal
+        The sources altitude [m], defaults to infinity.
+    resolution: tuple
+        A 2 element tuple with the sampling [n,m] in pixel of the source wavefront complex amplitude.
+    fwhm: float, optionnal
+        The fwhm of the source intensity distribution, defaults to None.
+    rays_box_size: float, optionnal
+        The size of the ray bundle [m], defaults to None.
+    rays_box_sampling: int, optionnal
+        The linear sampling of the ray bundle
+    rays_origin: list
+         A 3 element list, with the first 2 being the (x,y) origin of the ray bundle and the 3rd the ray bundle starting z coordinates
+
+    Attributes
+    ----------
+    n, m: int
+        wavefront resolution
+    size: int
+        number of sources
+    zenith: ndarray
+        zenith angle
+    azimuth: ndarray
+        azimuth angle
+    height: float
+        source height
+    ray: Bundle
+        geometric ray bundle
+    phase: cuFloatArray
+        wavefront phase
+    nPhoton: float, read only
+        number of photon
+    magnitude: float, write only
+        star magnitude
 
     Examples
     --------
@@ -215,9 +239,7 @@ cdef class Source:
                   rays_box_size=None, 
 		  rays_box_sampling=None, 
 		  rays_origin=None):
-        """
-        Instanciates a Source object
-        """
+
 	self._c_source = new ceo.source()
         if rays_box_sampling is not None:
             resolution = [rays_box_sampling, rays_box_sampling]
@@ -265,13 +287,6 @@ cdef class Source:
 
     property phase:
         def __get__(self):
-            """
-            Returns the wavefront phase as a cuFloatArray object
-            
-            See also
-            --------
-            cuFloatArray
-            """
             x = cuFloatArray(shape=(self.n*self.size,self.m))
             x._c_gpu.dev_data = self._c_source.wavefront.phase
             return x
@@ -280,16 +295,10 @@ cdef class Source:
 
     property nPhoton:
         def __get__(self):
-            """
-            Returns the number of photon per second
-            """
             return self._c_source.n_photon()
 
     property magnitude:
         def __set__(self,value):
-            """
-            Sets the source magnitude
-            """
             self._c_source.magnitude = value
            
     def masked(self, MaskAbstract tel):
