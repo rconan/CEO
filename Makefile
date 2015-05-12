@@ -38,6 +38,9 @@ cython: all
 doc: tex
 	make -C doc all
 
+ripython:
+	env PYTHONPATH="$(CEOPATH)/python/ceo" ipython notebook --no-browser
+
 touch: 
 	find . -name \*.nw -exec touch {} \;
 

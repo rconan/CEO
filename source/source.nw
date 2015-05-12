@@ -137,6 +137,7 @@ cdef extern from "rayTracing.h":
 cdef extern from "source.h":
     cdef cppclass complex_amplitude:
         float *phase
+        float *amplitude
         void reset()
         void masked(mask *)
         void masked()
@@ -291,6 +292,13 @@ cdef class Source:
             return x
         def __set__(self,cuFloatArray val):
             self._c_source.wavefront.add_phase(1,val._c_gpu.dev_data)
+
+    property amplitude:
+        def __get__(self):
+            x = cuFloatArray(shape=(self.n*self.size,self.m))
+            x._c_gpu.dev_data = self._c_source.wavefront.amplitude
+            return x
+            
 
     property nPhoton:
         def __get__(self):
@@ -1385,6 +1393,9 @@ void thin_lens(source *src)
   }
 }
 @
+\subsubsection{Trace}
+\label{sec:trace}
+
 <<ray tracing>>=
 void source::trace(gmt_m1 *M1)
 {
@@ -1408,7 +1419,8 @@ void source::opd2phase(void)
 						   rays.V.m,
                                                    rays.d__ray, rays.N_RAY);
   rays.V.set_filter();
-  wavefront.masked(&(rays.V));
+  wavefront.M = &(rays.V);
+  //wavefront.masked(&(rays.V));
 }
 @ 
 <<gathering wavefront kernel>>=

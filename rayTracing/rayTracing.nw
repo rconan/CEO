@@ -122,6 +122,7 @@ cdef extern from "rayTracing.h":
         void to_z_plane(rtd)
         void to_sphere(vector , rtd)
         void to_sphere(rtd , rtd)
+        void to_sphere(rtd *, rtd)
         void get_coordinates(double *)
         void get_chief_coordinates(double *)
         void get_directions(double *)
@@ -193,22 +194,30 @@ def to_z_plane(self,rtd z_plane):
     """
     self._c_bundle.to_z_plane(z_plane)
 
-def to_sphere(self, sphere_origin, rtd radius):
+def to_sphere(self, rtd radius, sphere_origin=None, sphere_distance=None):
     """
     Computes the optical path difference with respect to the reference sphere
 
     Parameters
     ----------
-    sphere_origin: list
-        A 3 elements list containing the x,y and z coordinates of the sphere center
     radius: double
        The radius of the reference sphere
+    sphere_origin: list, optional
+        A 3 elements list containing the x,y and z coordinates of the sphere center
+    sphere_distance: list, optional
+        A list containing the distance from the last surface to the sphere center for the chief ray
     """
+
+    if sphere_distance is not None:
+        distance = cuDoubleArray( host_data=np.array(sphere_distance) )
+        self._c_bundle.to_sphere(distance._c_gpu.dev_data,radius)
+
     cdef vector origin
-    origin.x = <double>sphere_origin[0]
-    origin.y = <double>sphere_origin[1]
-    origin.z = <double>sphere_origin[2]
-    self._c_bundle.to_sphere(origin,radius)
+    if sphere_origin is not None:
+        origin.x = <double>sphere_origin[0]
+        origin.y = <double>sphere_origin[1]
+        origin.z = <double>sphere_origin[2]
+        self._c_bundle.to_sphere(origin,radius)
 
 def go_sphere(self, rtd s, rtd radius):
     """
@@ -221,7 +230,8 @@ def go_sphere(self, rtd s, rtd radius):
     radius: double
        The radius of the reference sphere
     """
-    self._c_bundle.to_sphere(s,radius)
+    distance = cuDoubleArray( host_data=np.array(s) )
+    self._c_bundle.to_sphere(distance._c_gpu.dev_data,radius)
 
 def get_optical_path_difference(self,
                                 float delta_x, int N_x,
@@ -572,6 +582,7 @@ struct bundle {
   void to_z_plane(rtd z_in);
   void to_sphere(vector sphere_origin, rtd sphere_radius);
   void to_sphere(rtd s, rtd sphere_radius);
+  void to_sphere(rtd *s, rtd sphere_radius);
   void get_coordinates(double *d__coord);
   void get_chief_coordinates(double *d__coord);
   void get_directions(double *d__dir);
@@ -954,19 +965,36 @@ __global__ void to_sphere_chief_kernel(ray *d__ray, int N_RAY,
 The chief ray defines the location of the object and the reference sphere is centered on the object e.g. the origin of the reference sphere is on the chief ray.
 If the distance from the last surface to the object is known for the chief ray, then the origin of the reference sphere is given by:
 <<reference sphere origin from chief ray>>=
-__global__ void chief_parametric_equation(vector *d__v, ray *d__ray, int N_RAY, rtd s)
+__global__ void chief_parametric_equation(vector *d__v, ray *d__ray, int N_RAY, rtd *s)
 {
   int k, iSource;
   iSource = blockIdx.z;
   k = iSource;
-  d__v[k].x = d__ray[k].coordinates.x + d__ray[k].directions.x*s;
-  d__v[k].y = d__ray[k].coordinates.y + d__ray[k].directions.y*s;
-  d__v[k].z = d__ray[k].coordinates.z + d__ray[k].directions.z*s;
+  d__v[k].x = d__ray[k].coordinates.x + d__ray[k].directions.x*s[k];
+  d__v[k].y = d__ray[k].coordinates.y + d__ray[k].directions.y*s[k];
+  d__v[k].z = d__ray[k].coordinates.z + d__ray[k].directions.z*s[k];
 }
 @ 
 The rays intersection with the reference sphere is computed with
 <<ray bundle functions>>= 
 void bundle::to_sphere(rtd s, rtd sphere_radius)
+{
+  vector *d__sphere_origin;
+  HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin, sizeof(vector)*N_BUNDLE ) );
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  chief_parametric_equation LLL gridDim , blockDim RRR (d__sphere_origin, d__chief_ray, 1, &s);
+  to_sphere_chief_kernel LLL gridDim , blockDim RRR (d__chief_ray, 1, 
+					d__sphere_origin, sphere_radius);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(N_RAY/256+1,1, N_BUNDLE);
+  to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
+					       d__sphere_origin, sphere_radius, 
+					       d__chief_ray);
+  HANDLE_ERROR( cudaFree( d__sphere_origin ) );
+}
+
+void bundle::to_sphere(rtd *s, rtd sphere_radius)
 {
   vector *d__sphere_origin;
   HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin, sizeof(vector)*N_BUNDLE ) );
@@ -1259,7 +1287,7 @@ void bundle::get_vignetting(double *d__v)
   iSource = blockIdx.z;
   if ( k<N_RAY )
     k += iSource*N_RAY;
-    d__v[k]   = (d__ray[k].v) ? 1.0 : 0.0;
+    d__v[k]   = (d__ray[k].v==1) ? 1.0 : 0.0;
 }
 @ 
 <<gathering wavefront>>=
