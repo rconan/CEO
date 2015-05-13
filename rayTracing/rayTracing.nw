@@ -460,6 +460,8 @@ or
 <<ceo.pxd>>=
     cdef cppclass gmt_m2:
         <<python GMT M12 functions>>
+        void tiptilt_neutral(float, float)
+        void coma_neutral(float, float)
 @
 <<ceo.pyx>>=
 # GMT M2
@@ -491,6 +493,12 @@ cdef class GMT_M2:
         __euler_angles.y = <float>euler_angles[1]
         __euler_angles.z = <float>euler_angles[2]
         self._c_gmt_m2.update(__origin, __euler_angles, idx)
+
+    def tiptilt_neutral(self, float tip, float tilt):
+        self._c_gmt_m2.tiptilt_neutral(tip, tilt);
+
+    def coma_neutral(self, float tip, float tilt):
+        self._c_gmt_m2.coma_neutral(tip, tilt);
 
     def reset(self):
         self._c_gmt_m2.reset()
@@ -3306,29 +3314,31 @@ motion_CS.euler_angles[k].z = atan2(motion_CS.R[3+k9],motion_CS.R[k9]);
 The tip--tilt transformation is also applied to the origin of each segment $\vec O_k$ and the difference between the two origins is the translation of the motion CS, i.e.
 \begin{equation}
   \label{eq:42}
-  \vec O_k^\prime = \vec O_k - \RT^T\vec O_k
+  \vec O_k^\prime = \vec O_k - \vec O_R - \RT^T\left( \vec O_k -\vec O_R \right)
 \end{equation}
+where $\vec O_R$ is the rotation point.
 <<global tip-tilt transformation>>=
  forward_transform(motion_CS.origin + k, rigid_body_CS.origin + k,
 		   TT_CS.R, TT_CS.origin);
- motion_CS.origin[k].x = rigid_body_CS.origin[k].x - motion_CS.origin[k].x;
- motion_CS.origin[k].y = rigid_body_CS.origin[k].y - motion_CS.origin[k].y;
- motion_CS.origin[k].z = rigid_body_CS.origin[k].z - motion_CS.origin[k].z;
+ motion_CS.origin[k].x = rigid_body_CS.origin[k].x - TT_CS.origin->x - motion_CS.origin[k].x;
+ motion_CS.origin[k].y = rigid_body_CS.origin[k].y - TT_CS.origin->y - motion_CS.origin[k].y;
+ motion_CS.origin[k].z = rigid_body_CS.origin[k].z - TT_CS.origin->z - motion_CS.origin[k].z;
+ forward_transform_centered(motion_CS.origin + k, motion_CS.origin + k, rigid_body_CS.R + k9);
  HANDLE_ERROR( cudaMemcpy( motion_CS.d__origin+k, motion_CS.origin+k, 
 			   sizeof(vector), cudaMemcpyHostToDevice ) );
- /*
- fprintf(stdout,"MOTION CS origins     : %+.3e, %+.3e, %+.3e\n",
-	 motion_CS.origin[k].x,
-	 motion_CS.origin[k].y,
-	 motion_CS.origin[k].z);
+
+ fprintf(stdout,"#%d >> MOTION CS origins [micron]  : %+.3e, %+.3e, %+.3e\n",k,
+	 motion_CS.origin[k].x*1e6,
+	 motion_CS.origin[k].y*1e6,
+	 motion_CS.origin[k].z*1e6);
 
  float r2d;
- r2d = 180.0/PI;
- fprintf(stdout,"MOTION CS Euler angles: %+.3e, %+.3e, %+.3e\n",
+ r2d = 1000*3600*180.0/PI;
+ fprintf(stdout,"#%d >> MOTION CS Euler angles [mas]: %+.3e, %+.3e, %+.3e\n",k,
 	 r2d*motion_CS.euler_angles[k].x,
 	 r2d*motion_CS.euler_angles[k].y,
 	 r2d*motion_CS.euler_angles[k].z);
- */
+
 
 <<GMT M1 functions>>=
 void gmt_m1::global_tiptilt(float tip, float tilt)
@@ -3370,6 +3380,8 @@ A new structure to hold GMT M1 parameters and functions is defined.
 struct gmt_m2 {
   <<GMT M12 parameters>>
   <<GMT M12 functions>>
+  void tiptilt_neutral(float tip, float tilt);
+  void coma_neutral(float tip, float tilt);
 };
 @
 \subsection{Setup \& Cleanup}
@@ -3446,6 +3458,79 @@ The rigid body motion are reset to 0 with:
 void gmt_m2::reset(void)
 {
     <<GMT M12 reset>>
+}
+@
+\subsection{Global motions}
+\label{sec:global-motions}
+
+\subsubsection{Tip--tilt neutral}
+\label{sec:tip-tilt-neutral}
+
+<<GMT M2 functions>>=
+void gmt_m2::tiptilt_neutral(float tip, float tilt)
+{
+  double alpha, beta, *d__C;
+  vector origin, euler_angles;
+  cublasHandle_t handle;
+  coordinate_system TT_CS;
+
+  origin.x = origin.y = 0.0;
+  origin.z = height + 5344e-3;
+  euler_angles.x = tip;
+  euler_angles.y = tilt;
+  euler_angles.z = 0.0;
+
+  TT_CS.setup(origin, euler_angles);
+  cublasCreate(&handle);
+
+  alpha = 1;
+  beta  = 0;
+  HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
+  int k, k9;
+  for (k=0;k<N;k++)
+    {
+      k9 = k*9;
+      <<global tip-tilt transformation>>
+    }
+
+  cublasDestroy(handle);
+  TT_CS.cleanup();
+  HANDLE_ERROR( cudaFree( d__C ) );
+}
+@
+\subsubsection{Coma neutral}
+\label{sec:coma-neutral}
+
+<<GMT M2 functions>>=
+void gmt_m2::coma_neutral(float tip, float tilt)
+{
+  double alpha, beta, *d__C;
+  vector origin, euler_angles;
+  cublasHandle_t handle;
+  coordinate_system TT_CS;
+
+  origin.x = origin.y = 0.0;
+  origin.z = height + 2246e-3;
+  euler_angles.x = tip;
+  euler_angles.y = tilt;
+  euler_angles.z = 0.0;
+
+  TT_CS.setup(origin, euler_angles);
+  cublasCreate(&handle);
+
+  alpha = 1;
+  beta  = 0;
+  HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
+  int k, k9;
+  for (k=0;k<N;k++)
+    {
+      k9 = k*9;
+      <<global tip-tilt transformation>>
+    }
+
+  cublasDestroy(handle);
+  TT_CS.cleanup();
+  HANDLE_ERROR( cudaFree( d__C ) );
 }
 @
 \section{Input/Output}
