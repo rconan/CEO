@@ -39,6 +39,10 @@ The ray tracing method involves 4 steps \cite{}:
 
 <<conic equations>>
 
+<<zernikeS structure>>
+
+rtd zernike_surface(rtd r, rtd o, unsigned int max_n, rtd *a);
+
 <<aperture structure>>
 
 <<GMT M1 structure>>
@@ -71,6 +75,7 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 <<reference sphere origin from chief ray>>
 <<ray bundle kernels>>
 <<bundle reset kernel>>
+<<zernike surface kernel>>
 <<GMT chief ray tracing kernel>>
 <<GMT ray tracing kernel>>
 <<GMT blocking kernel>>
@@ -81,6 +86,10 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 <<coordinate system functions>>
 
 <<conic functions>>
+
+<<zernikeS functions>>
+
+<<zernike surface equation>>
 
 <<vignetting kernel>>
 <<aperture functions>>
@@ -295,7 +304,7 @@ property vignetting:
             return x
 @
 
-\subsubsection{Surface}
+\subsubsection{Conic surface}
 \label{sec:surface-1}
 
 <<ceo.pxd>>=
@@ -502,6 +511,51 @@ cdef class GMT_M2:
 
     def reset(self):
         self._c_gmt_m2.reset()
+@
+\subsubsection{Zernike}
+\label{sec:zernike}
+
+<<ceo.pxd>>=
+    cdef cppclass zernikeS:
+          void setup(unsigned int , rtd *, vector , vector )
+          void cleanup()
+          void surface(rtd *, rtd *, rtd *, int )
+
+    rtd zernike_surface(rtd , rtd , unsigned int , rtd *)
+@ 
+<<ceo.pyx>>=
+# Zernike surface
+cdef class ZernikeS:
+    cdef ceo.zernikeS *_c_zernikeS
+    cdef int max_n
+    cdef np.ndarray a
+
+    def __cinit__(self, unsigned int _max_n_, np.ndarray _a_,
+                  origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0]):
+        self._c_zernikeS = new ceo.zernikeS()
+        self.max_n = _max_n_
+        self.a = _a_
+        cdef vector __origin
+        __origin.x = <float>origin[0]
+        __origin.y = <float>origin[1]
+        __origin.z = <float>origin[2]
+        cdef vector __euler_angles
+        __euler_angles.x = <float>euler_angles[0]
+        __euler_angles.y = <float>euler_angles[1]
+        __euler_angles.z = <float>euler_angles[2]
+        self._c_zernikeS.setup( self.max_n, <rtd *>self.a.data, __origin, __euler_angles) 
+
+    def __dealloc__(self):
+        self._c_zernikeS.cleanup();
+
+    def surface(self, cuDoubleArray r, cuDoubleArray o):
+        S = cuDoubleArray(shape=r.shape, dev_malloc = True)
+        self._c_zernikeS.surface(S._c_gpu.dev_data, r._c_gpu.dev_data, o._c_gpu.dev_data, r._c_gpu.N)
+        return S
+
+def Zernike_Surface(rtd r, rtd o, unsigned int max_n, np.ndarray a):
+    return zernike_surface(r, o, max_n, <rtd *>a.data)
+
 @ 
 \section{Custom types}
 \label{sec:custom-types}
@@ -1507,7 +1561,7 @@ R &=& \left[
   \end{array}
 \right]
 \end{eqnarray}
-@ where $cx$ and $sx$ stands for $\sin(x)$ and $\cos(x)$, respectively.
+where $cx$ and $sx$ stands for $\sin(x)$ and $\cos(x)$, respectively.
 $\alpha$, $\beta$ and $\gamma$ are the Euler angles along the x, y and z axis respectively.
 The matrix is computed with
 <<rotation matrix eval>>=
@@ -1606,7 +1660,7 @@ void coordinate_system::info(void)
 }
 @ 
 
-\section{Surface}
+\section{Conic surface}
 \label{sec:surface}
 
 A conic surface is represented with the [[conic]] structure:
@@ -1806,6 +1860,231 @@ void conic::cleanup(void)
 }
 @
 
+\section{Zernike surface}
+\label{sec:zernike-surface}
+
+A Zernike surface is defined as the weighted sum of Zernike polynomials and it is represented with the [[zernikeS]] structure:
+<<zernikeS structure>>=
+struct zernikeS {
+  <<zernikeS parameters>>
+  void setup(unsigned int max_n, rtd *a, vector _origin_, vector _euler_angles_);
+  void cleanup(void);
+  void surface(rtd *S, rtd *r, rtd *o, const int N);
+};
+@ 
+A Zernike surface is given by
+\begin{equation}
+  \label{eq:43}
+  \varphi\left( \vec r \right) = \sum_{j=1}^J a_j Z_j\left(\vec r\right),
+\end{equation}
+where $a_j$ is the Zernike coefficients corresponding to the Zernike polynomials $Z_j\left(\vec r\right)$ and $\vec r$ is a vector defined such as $0\leq r \geq 1$.
+Zernike polynomials are defined as:
+\begin{equation}
+  \label{eq:44}
+  Z_j\left(\vec r\right) = \sqrt{n+1} R_{nm}(r) A_{jm}(\theta),
+\end{equation}
+where
+\begin{equation}
+  \label{eq:45}
+  R_{nm}(r) = \sum_{k=0}^{n-m\over 2}(-1)^k{(n-k)! \over k!\left( {n+|m|\over 2} -k \right)!\left( {n-|m|\over 2} -k \right)!}r^{n-2k},
+\end{equation}
+and
+\begin{equation}
+  \label{eq:46}
+  A_{jm}(\theta) = 2^{1-\delta_{m0}\over 2}\cos\left( m\theta + (1-\delta_{m0})((-1)^j-1){\pi\over 4} \right),
+\end{equation}
+with $\delta_{m0}$ the Kronecker symbol.
+
+The parameters of the [[zernikeS]] structure are
+\begin{itemize}
+\item the Zernike mode [[j]], radial order [[n]] and azimuthal order [[m]]
+<<zernikeS parameters>>=
+unsigned int j, n, m, n_mode, max_n;
+@
+\item the Zernike coeffcients [[a]]
+<<zernikeS parameters>>=
+rtd *a, *d__a;
+@
+\end{itemize}
+Eq.~(\ref{eq:43}) is re--written
+\begin{equation}
+  \label{eq:51}
+  \varphi\left( \vec r \right) = \sum_{n=0}^N \sqrt{n+1} \sum_{m=n}^{
+    \begin{array}{c}
+m=m-2\\
+ m\geq 0
+\end{array}
+} R_{nm}(r) \left\{
+    \begin{array}{l}
+      \sqrt{2} \left[ a_j \cos(m\theta) + a_j\sin(m\theta) \right] \\
+      a_j
+    \end{array}
+\right\}
+\end{equation}
+
+The Zernike surface is defined in a given coordinate system:
+<<zernikeS parameters>>=
+coordinate_system ref_frame; 
+@ 
+
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup-3}
+
+A [[zernikeS]] structure is initialized with the largest radial order in the surface and the series of Zernike coefficients for all the modes up to that radial order:
+<<zernikeS functions>>=
+void zernikeS::setup(unsigned int _max_n_, rtd *_a_, vector _origin_, vector _euler_angles_)
+{
+  max_n = _max_n_;
+  n_mode = (max_n+1.0)*(max_n+2.0)*0.5;
+  int n_byte = sizeof(rtd)*n_mode;
+  a = (rtd *)malloc( n_byte );
+  memcpy( a, _a_,  n_byte);
+  HANDLE_ERROR( cudaMalloc((void**)&d__a, n_byte ) );
+  HANDLE_ERROR( cudaMemcpy( d__a, a, 
+			    n_byte, cudaMemcpyHostToDevice ) );
+  ref_frame.setup(_origin_, _euler_angles_);
+}
+@ 
+Memory is freed with:
+<<zernikeS functions>>=
+void zernikeS::cleanup(void)
+{
+  free( a );
+  HANDLE_ERROR( cudaFree( d__a) );
+}
+@
+\subsection{Zernike surface equation}
+\label{sec:zern-surf-equat}
+
+<<zernikeS functions>>=
+void zernikeS::surface(rtd *d__S, rtd *d__r, rtd *d__o, const int N)
+{
+    dim3 blockDim(16,16);
+    dim3 gridDim(N/256+1,1);
+    surface_kern LLL gridDim, blockDim RRR (d__S, d__r, d__o, N, max_n, d__a);
+
+}
+@ 
+<<zernike surface kernel>>=
+__global__ void surface_kern(rtd *S, rtd *r, rtd *o, const int N, unsigned int max_n, rtd *a)
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if (k<N) {
+    S[k] = zernike_surface(r[k], o[k], max_n, a);
+  }
+}
+@ 
+
+<<zernike surface equation>>=
+__host__ __device__ rtd zernike_surface(rtd r, rtd o, unsigned int max_n, rtd *a)
+{
+  int n, m, mH, n_mode, a_idx;
+  rtd R, R2, R4, A, S_n, S, H1, H2, H3, s ,c, sqrt2;
+  if (r>1.0)
+    S = 0.0;
+  else {
+    n_mode = (max_n+1)*(max_n+2)/2;
+    sqrt2 = sqrt(2.0);
+    R = 1.0;
+    S = a[0]*R;
+    <<zernike surface: radial order sum>>
+    }
+  return S;
+}
+@ 
+The Zernike surface is computed by summing all the azimuthal order of a each radial order from the highest to the lowest azimuthal order.
+The Zernike coefficients [[a]] are ordered by increasing azimuthal order.
+<<zernike surface: radial order sum>>=
+for (n=1;n<=max_n;n++) {
+  a_idx = (n+1)*(n+2)/2 - 1;
+
+  m = n;
+  R = pow(r,n);
+  <<azimuth>>
+  S_n = R*A;
+
+  m -= 2;
+  if (m>=0) {
+    R2 = n*R - (n-1.0)*pow(r,m);
+    <<azimuth>>
+    S_n += R2*A;
+  }
+
+  m -= 2;
+  while (m>=0) {
+    mH = m + 4;
+    if (r>0) {
+      <<H3>>
+      <<H2>>
+      <<H1>>
+      <<R recurrence>>
+    } else {
+      R4 = (m==0) ? pow(-1.0,0.5*n) : 0.0;
+    }
+    <<azimuth>>
+    S_n += R4*A;
+    R  = R2;
+    R2 = R4;
+    m -= 2;
+  }
+  S += sqrt(n+1.0)*S_n;
+}
+@ 
+Azimuth 
+<<azimuth>>=
+  if (m>0) {
+      sincos(m*o, &s, &c);
+      A = a[a_idx--]*s;
+      A += a[a_idx--]*c;
+      A *= sqrt2;
+    } else
+      A = a[a_idx--];
+@ 
+The radial functions $R_{nm}(r)$ are derived from the recurrence relation:
+\begin{equation}
+  \label{eq:47}
+  R_{n(m-4)}(r) = H_1R_{nm}(r) + \left( H_2 + {H_3 \over r^2} \right) R_{n(m-2)}(r),
+\end{equation}
+<<R recurrence>>=
+R4 = H1*R + ( H2 + H3/(r*r) )*R2;
+@
+starting at $m=n$ and with
+\begin{equation}
+  \label{eq:52}
+  R_{nn}(r) = r^n,
+\end{equation}
+and
+\begin{equation}
+  \label{eq:53}
+  R_{n(n-2)}(r) = nR_{nn}(r) - (n-1)R_{(n-2)(n-2)}(r).
+\end{equation}
+@ 
+where
+\begin{equation}
+  \label{eq:48}
+  H_1 = {m(m-1) \over 2} - mH_2 + H_3{ (n+m+2)(n-m) \over 8 },
+\end{equation}
+<<H1>>=
+H1 = mH*(mH-1.0)*0.5 - mH*H2 + H3*(n+mH+2.0)*(n-mH)*0.125;
+@ 
+\begin{equation}
+  \label{eq:49}
+  H_2 = H_3{(n+m)(n-m+2) \over 4(m-1) } + (m-2),
+\end{equation}
+<<H2>>=
+H2 = H3*0.25*(n+mH)*(n-mH+2.0)/(mH-1.0) + mH - 2.0;
+@ 
+and
+\begin{equation}
+  \label{eq:50}
+  H_3 = {-4(m-2)(m-3) \over (n+m-2)(n-m+4) }.
+\end{equation}
+<<H3>>=
+H3 = -4.0*(mH-2.0)*(mH-3.0)/((n+mH-2.0)*(n-mH+4.0));
+@
 \section{Aperture}
 \label{sec:aperture}
 
