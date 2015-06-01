@@ -1981,13 +1981,13 @@ __global__ void surface_kern(rtd *S, rtd *r, rtd *o, const int N, unsigned int m
 <<zernike surface equation>>=
 __host__ __device__ rtd zernike_surface(rtd r, rtd o, unsigned int max_n, rtd *a)
 {
-  int n, m, mH, n_mode, a_idx;
-  rtd R, R2, R4, A, S_n, S, H1, H2, H3, s ,c, sqrt2;
+  int n, m, mH, a_idx;
+  rtd R, R2, R4, A, S_n, S, H1, H2, H3, sm, cm, s2, c2, s ,c, sqrt2;
   if (r>1.0)
     S = 0.0;
   else {
-    n_mode = (max_n+1)*(max_n+2)/2;
     sqrt2 = sqrt(2.0);
+    sincos(2*o,&s2,&c2);
     R = 1.0;
     S = a[0]*R;
     <<zernike surface: radial order sum>>
@@ -2003,7 +2003,10 @@ for (n=1;n<=max_n;n++) {
 
   m = n;
   R = pow(r,n);
-  <<azimuth>>
+  sincos(m*o, &sm, &cm);
+  A = a[a_idx--]*sm;
+  A += a[a_idx--]*cm;
+  A *= sqrt2;
   S_n = R*A;
 
   m -= 2;
@@ -2033,17 +2036,26 @@ for (n=1;n<=max_n;n++) {
   S += sqrt(n+1.0)*S_n;
 }
 @ 
-Azimuth 
+The azimuthal function are computed in a decreasing $m$ order starting from $m=n$, to $n-2$, $n-4$,...
+The azimuthal function are derived using the following recurrence relation
+\begin{eqnarray}
+  \label{eq:54}
+  \cos(m-2\theta) &=& \cos(m\theta)\cos(2\theta) + \sin(m\theta)\sin(2\theta) \\
+  \sin(m-2\theta) &=& \sin(m\theta)\cos(2\theta) - \cos(m\theta)\sin(2\theta) 
+\end{eqnarray}
 <<azimuth>>=
   if (m>0) {
-      sincos(m*o, &s, &c);
-      A = a[a_idx--]*s;
-      A += a[a_idx--]*c;
-      A *= sqrt2;
-    } else
-      A = a[a_idx--];
+    c = cm*c2 + sm*s2;
+    s = sm*c2 - cm*s2;
+    A = a[a_idx--]*s;
+    A += a[a_idx--]*c;
+    A *= sqrt2;
+    cm = c;
+    sm = s;
+  } else
+    A = a[a_idx--];
 @ 
-The radial functions $R_{nm}(r)$ are derived from the recurrence relation:
+The radial functions $R_{nm}(r)$ are derived from the recurrence relation\cite{CRM03}:
 \begin{equation}
   \label{eq:47}
   R_{n(m-4)}(r) = H_1R_{nm}(r) + \left( H_2 + {H_3 \over r^2} \right) R_{n(m-2)}(r),
