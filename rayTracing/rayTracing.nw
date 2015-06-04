@@ -41,7 +41,11 @@ The ray tracing method involves 4 steps \cite{}:
 
 <<zernikeS structure>>
 
-rtd zernike_surface(rtd r, rtd o, unsigned int max_n, rtd *a);
+__host__ __device__  rtd zernike_surface(rtd r, rtd o, unsigned int max_n, rtd *a);
+__host__ __device__  rtd zernike_surface_x_derivative(rtd r, rtd o, unsigned int max_n, rtd *a);
+__host__ __device__  rtd zernike_surface_y_derivative(rtd r, rtd o, unsigned int max_n, rtd *a);
+  rtd zern_dx_coef(int j, int n, int m, int jp, int np, int mp);
+  rtd zern_dy_coef(int j, int n, int m, int jp, int np, int mp);
 
 <<aperture structure>>
 
@@ -76,6 +80,7 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 <<ray bundle kernels>>
 <<bundle reset kernel>>
 <<zernike surface kernel>>
+<<zernike surface derivatives kernel>>
 <<GMT chief ray tracing kernel>>
 <<GMT ray tracing kernel>>
 <<GMT blocking kernel>>
@@ -90,6 +95,10 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 <<zernikeS functions>>
 
 <<zernike surface equation>>
+<<zernike surface X derivative equation>>
+<<zernike surface Y derivative equation>>
+<<zernike derivative x coefficient>>
+<<zernike derivative y coefficient>>
 
 <<vignetting kernel>>
 <<aperture functions>>
@@ -522,6 +531,9 @@ cdef class GMT_M2:
           void surface(rtd *, rtd *, rtd *, int )
 
     rtd zernike_surface(rtd , rtd , unsigned int , rtd *)
+    rtd zern_dx_coef(int , int , int , int , int , int ) 
+    rtd zern_dy_coef(int , int , int , int , int , int ) 
+
 @ 
 <<ceo.pyx>>=
 # Zernike surface
@@ -555,6 +567,12 @@ cdef class ZernikeS:
 
 def Zernike_Surface(rtd r, rtd o, unsigned int max_n, np.ndarray a):
     return zernike_surface(r, o, max_n, <rtd *>a.data)
+
+def Zern_dx_coef(int j, int n, int m, int jp, int np, int mp):
+    return zern_dx_coef(j, n, m, jp, np, mp) 
+
+def Zern_dy_coef(int j, int n, int m, int jp, int np, int mp):
+    return zern_dy_coef(j, n, m, jp, np, mp) 
 
 @ 
 \section{Custom types}
@@ -1870,6 +1888,7 @@ struct zernikeS {
   void setup(unsigned int max_n, rtd *a, vector _origin_, vector _euler_angles_);
   void cleanup(void);
   void surface(rtd *S, rtd *r, rtd *o, const int N);
+  void surface_derivatives(rtd *d__dSdx, rtd *d__dSdy, rtd *d__r, rtd *d__o, const int N);
 };
 @ 
 A Zernike surface is given by
@@ -1904,6 +1923,15 @@ unsigned int j, n, m, n_mode, max_n;
 \item the Zernike coeffcients [[a]]
 <<zernikeS parameters>>=
 rtd *a, *d__a;
+@
+\item the Zernike derivative coefficients [[bx]] and [[by]]
+<<zernikeS parameters>>=
+rtd *bx, *by, *d__bx, *d__by;
+@
+\item the arrays for the sparse column format storage of [[bx]] and [[by]]
+<<zernikeS parameters>>=
+unsigned int *bx_row_idx, *bx_col_ptr, 
+             *by_row_idx, *by_col_ptr;
 @
 \end{itemize}
 Eq.~(\ref{eq:43}) is re--written
@@ -1943,13 +1971,64 @@ void zernikeS::setup(unsigned int _max_n_, rtd *_a_, vector _origin_, vector _eu
   HANDLE_ERROR( cudaMemcpy( d__a, a, 
 			    n_byte, cudaMemcpyHostToDevice ) );
   ref_frame.setup(_origin_, _euler_angles_);
+  <<Zernike derivative coefficients>>
 }
+@ 
+The Zernike derivative coefficients are saved into a sparse matrix using the compressed column storage:
+<<Zernike derivative coefficients>>=
+  int j, n, m, jp, np, mp, k=0;
+ for (np=0;np<max_n;np++) {
+   jp = np*(np+1)/2 + 1;
+   mp = np%2;
+   while (mp<=np) {
+     if (mp==0) {
+       fprintf(stdout,"jp=%d,np=%d,mp=%d\n",jp,np,mp);
+       ++jp;
+       <<Zernike derivative coefficient: part 2>>
+	 } else {
+       fprintf(stdout,"jp=%d,np=%d,mp=%d\n",jp,np,mp);
+       ++jp;
+       <<Zernike derivative coefficient: part 2>>
+       fprintf(stdout,"jp=%d,np=%d,mp=%d\n",jp,np,mp);
+       ++jp;
+       <<Zernike derivative coefficient: part 2>>
+     }
+     mp += 2;
+   }
+ }
+@
+<<Zernike derivative coefficient: part 2>>=
+  for (n=np+1;n<=max_n;n++) {
+    j = n*(n+1)/2 + 1;
+    m = n%2;
+    while (m<=n) {
+      if (m==0) {
+       bx[k++] = zern_dx_coef(j,n,m,jp,np,mp); 
+       fprintf(stdout," . j=%d,n=%d,m=%d\n",j,n,m);
+	++j;
+      } else {
+	bx[k++] = zern_dx_coef(j,n,m,jp,np,mp); 
+	fprintf(stdout," . j=%d,n=%d,m=%d\n",j,n,m);
+	++j;
+	bx[k++] = zern_dx_coef(j,n,m,jp,np,mp); 
+	fprintf(stdout," . j=%d,n=%d,m=%d\n",j,n,m);
+	++j;
+      }
+      m += 2;
+    }
+  }
 @ 
 Memory is freed with:
 <<zernikeS functions>>=
 void zernikeS::cleanup(void)
 {
   free( a );
+  free( bx );
+  free( bx_row_idx );
+  free( bx_col_ptr );
+  free( by );
+  free( by_row_idx );
+  free( by_col_ptr );
   HANDLE_ERROR( cudaFree( d__a) );
 }
 @
@@ -1964,9 +2043,10 @@ void zernikeS::surface(rtd *d__S, rtd *d__r, rtd *d__o, const int N)
     surface_kern LLL gridDim, blockDim RRR (d__S, d__r, d__o, N, max_n, d__a);
 
 }
-@ 
+@ with 
 <<zernike surface kernel>>=
-__global__ void surface_kern(rtd *S, rtd *r, rtd *o, const int N, unsigned int max_n, rtd *a)
+__global__ void surface_kern(rtd *S, rtd *r, rtd *o, const int N, 
+			     unsigned int max_n, rtd *a)
 {
   int i, j, k;
   i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1976,8 +2056,7 @@ __global__ void surface_kern(rtd *S, rtd *r, rtd *o, const int N, unsigned int m
     S[k] = zernike_surface(r[k], o[k], max_n, a);
   }
 }
-@ 
-
+@ where
 <<zernike surface equation>>=
 __host__ __device__ rtd zernike_surface(rtd r, rtd o, unsigned int max_n, rtd *a)
 {
@@ -2096,6 +2175,139 @@ and
 \end{equation}
 <<H3>>=
 H3 = -4.0*(mH-2.0)*(mH-3.0)/((n+mH-2.0)*(n-mH+4.0));
+@
+
+\subsection{Zernike surface derivative}
+\label{sec:zern-surf-deriv}
+
+The partial derivative of the Zernike surface given in Eq.~(\ref{eq:43}) is written
+\begin{equation}
+  \label{eq:55}
+  {\partial \varphi \left( \vec r \right) \over \partial x } = \sum_{j=2}^N a_j   {\partial Z_j \left( \vec r \right) \over \partial x },
+\end{equation}
+where
+\begin{equation}
+  \label{eq:56}
+  {\partial Z_j \left( \vec r \right) \over \partial x } = \sum_{k=1}^{j-1} b_{jk}^x Z_k \left( \vec r \right)
+\end{equation}
+Inserting Eq.~(\ref{eq:55}) into Eq.~(\ref{eq:56}) leads to
+\begin{equation}
+  \label{eq:57}
+  {\partial \varphi \left( \vec r \right) \over \partial x } = \sum_{j=2}^N a_j \sum_{k=1}^{j-1} b_{jk}^x Z_k \left( \vec r \right) = \sum_{k=1}^{N-1} Z_k \left( \vec r \right) \sum_{j={k+1}}^N a_jb_{jk}^x  = \sum_{k=1}^{N-1} Z_k \left( \vec r \right) c_{k}^x,
+\end{equation}
+with
+\begin{equation}
+  \label{eq:58}
+  c_k^x = \sum_{j={k+1}}^N a_jb_{jk}^x.
+\end{equation}
+
+The x and y derivatives of the Zernike surface are computed with
+<<zernikeS functions>>=
+void zernikeS::surface_derivatives(rtd *d__dSdx, rtd *d__dSdy, 
+				   rtd *d__r, rtd *d__o, const int N)
+{
+  int n_byte = sizeof(rtd)*n_mode;
+  rtd *_d__a_;
+  HANDLE_ERROR( cudaMalloc((void**)&_d__a_, n_byte ) );
+  HANDLE_ERROR( cudaMemcpy( _d__a_, d__a, 
+			    n_byte, cudaMemcpyDeviceToDevice ) );
+  dim3 blockDim(16,16);
+  dim3 gridDim(N/256+1,1);
+  surface_derivatives_kern LLL gridDim, blockDim RRR (d__dSdx, d__dSdy, 
+						      d__r, d__o, N, max_n, _d__a_);
+}
+@ with
+<<zernike surface derivatives kernel>>=
+__global__ void surface_derivatives_kern(rtd *dSdx, rtd *dSdy, 
+					 rtd *r, rtd *o, const int N, 
+					 unsigned int max_n, rtd *a)
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if (k<N) {
+    dSdx[k] = zernike_surface_x_derivative(r[k], o[k], max_n, a);
+    dSdy[k] = zernike_surface_y_derivative(r[k], o[k], max_n, a);
+  }
+}
+@ where
+<<zernike surface X derivative equation>>=
+__host__ __device__ rtd zernike_surface_x_derivative(rtd r, rtd o, 
+						     unsigned int max_n, rtd *a)
+{
+  a[0] = 0.0;
+  return 0.0;
+}
+@ and
+<<zernike surface Y derivative equation>>=
+__host__ __device__ rtd zernike_surface_y_derivative(rtd r, rtd o, 
+                                                     unsigned int max_n, rtd *a)
+{
+  return 0.0;
+}
+@
+<<zernike surface derivatives: radial order sum>>=
+for (n=1;n<max_n;n++) {
+  a_idx = (n+1)*(n+2)/2 - 1;
+  m = n;
+  while (m>=0) {
+    
+    buf = 0.0;
+
+    for (np=n;np<max_n;np++) {
+      a_idx_p = (np+1)*(np+2)/2 - 1;
+      mp = np;
+
+      while (mp>=0) {
+	buf += a[a_idx--]
+	mp -= 2;
+      }    
+
+    m -= 2;
+  }
+ } 
+@ 
+<<zernike derivative x coefficient>>=
+ rtd zern_dx_coef(int j, int n, int m, int jp, int np, int mp) 
+{
+  int delta_m, rule_0, rule_1, rule_2, rule_3;
+  rtd b;
+  delta_m = mp - m;
+  rule_0 = (delta_m==1) || (delta_m==-1);
+  rule_1 = (j-jp)%2 == 0 && !( (m==0) || (mp==0) );
+  rule_2 = ( (m==0) && (mp!=0) ) && (jp%2 == 0);
+  rule_3 = ( (m!=0) && (mp==0) ) && (j%2  == 0);
+  b = 0.0;
+  if ( rule_0 && (rule_1||rule_2||rule_3) )
+    b = sqrt( (n+1.0)*(np+1.0) );
+  if ( (m==0) || (mp==0) )
+    b *= sqrt(2.0);
+  return b;
+}
+@ 
+<<zernike derivative y coefficient>>=
+ rtd zern_dy_coef(int j, int n, int m, int jp, int np, int mp) 
+{
+  int delta_m, rule_0, rule_1, rule_2, rule_3, sign_rule_1, sign_rule_2;
+  rtd b;
+  delta_m = mp - m;
+  rule_0 = (delta_m==1) || (delta_m==-1);
+  rule_1 = (j-jp)%2 == 1 && !( (m==0) || (mp==0) );
+  rule_2 = ( (m==0) && (mp!=0) ) && (jp%2 == 1);
+  rule_3 = ( (m!=0) && (mp==0) ) && (j%2  == 1);
+  b = 0.0;
+  if ( rule_0 && (rule_1||rule_2||rule_3) )
+    b = sqrt( (n+1.0)*(np+1.0) );
+  sign_rule_1 = (delta_m==+1) && (j%2 == 1);
+  sign_rule_2 = (delta_m==-1) && (j%2 == 0);
+  if ( ( (m!=0) && (mp!=0) ) && ( sign_rule_1 || sign_rule_2 ) )
+    b *= -1;
+  if ( (m==0) || (mp==0) )
+    b *= sqrt(2.0);
+  return b;
+}
+
 @
 \section{Aperture}
 \label{sec:aperture}
