@@ -399,6 +399,7 @@ coordinate_system rigid_body_CS
 coordinate_system motion_CS
 void setup(float , int )
 void setup(float , int , int)
+void setup(float , int, zernikeS *, int)
 void cleanup()
 void update(vector , vector ,int )
 void reset()
@@ -410,11 +411,12 @@ void blocking(bundle *)
 cdef class GMT_M1:
     <<GMT M12 docstring>>
     cdef ceo.gmt_m1 *_c_gmt_m1
+    cdef zernikeS _ZS_
     
-    def __cinit__(self, float D, int D_px, int N_SRC=1):
+    def __cinit__(self, float D, int D_px, ZernikeS ZS=None, int N_SRC=1):
         self._c_gmt_m1 = new ceo.gmt_m1()
-
-        self._c_gmt_m1.setup(D, D_px, N_SRC)
+        
+        self._c_gmt_m1.setup(D, D_px, ZS._c_zernikeS, N_SRC)
 
     def __dealloc__(self):
         self._c_gmt_m1.cleanup()
@@ -484,10 +486,10 @@ cdef class GMT_M2:
     <<GMT M12 docstring>>
     cdef ceo.gmt_m2 *_c_gmt_m2
     
-    def __cinit__(self, float D, int D_px, int N_SRC=1):
+    def __cinit__(self, float D, int D_px, ZernikeS ZS=None, int N_SRC=1):
         self._c_gmt_m2 = new ceo.gmt_m2()
-
-        self._c_gmt_m2.setup(D, D_px,N_SRC)
+        
+        self._c_gmt_m2.setup(D, D_px, ZS._c_zernikeS, N_SRC)
 
     def __dealloc__(self):
         self._c_gmt_m2.cleanup()
@@ -526,6 +528,7 @@ cdef class GMT_M2:
           void setup(int , rtd *, vector , vector , int)
           void cleanup()
           void surface(rtd *, rtd *, rtd *, int , int)
+          void update(rtd *)
           void surface_derivatives(rtd *, rtd *, 
                                    rtd *, rtd *, int )
 
@@ -537,14 +540,19 @@ cdef class GMT_M2:
 cdef class ZernikeS:
     cdef ceo.zernikeS *_c_zernikeS
     cdef int max_n
-    cdef np.ndarray a
+    cdef int n_mode
+    cdef public np.ndarray a
 
-    def __cinit__(self, int _max_n_, np.ndarray _a_,
+    def __cinit__(self, int _max_n_, np.ndarray _a_=None,
                   origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0],
                   int N_SURF=1):
         self._c_zernikeS = new ceo.zernikeS()
         self.max_n = _max_n_
-        self.a = _a_
+        self.n_mode = (_max_n_+1)*(_max_n_+2)/2
+        if _a_ is None:
+            self.a = np.zeros((N_SURF,self.n_mode))
+        else: 
+            self.a = _a_
         cdef vector __origin
         __origin.x = <float>origin[0]
         __origin.y = <float>origin[1]
@@ -560,6 +568,13 @@ cdef class ZernikeS:
     def __dealloc__(self):
         self._c_zernikeS.cleanup();
 
+    def update(self):
+        self._c_zernikeS.update(<rtd *>self.a.data)
+
+    def reset(self):
+        self.a = np.zeros((N_SURF,self.n_mode))
+        update()
+        
     def surface(self, cuDoubleArray r, cuDoubleArray o, int surf_id=0):
         S = cuDoubleArray(shape=r.shape, dev_malloc = True)
         self._c_zernikeS.surface(S._c_gpu.dev_data, 
@@ -600,6 +615,7 @@ typedef struct {
   __host__ __device__ rtd rho2(void);
   __host__ __device__ rtd rho2(rtd x0, rtd y0);
   __host__ __device__ rtd mag(void);
+  __host__ __device__ rtd mag(rtd R);
   __host__ __device__ rtd angle(void);
 } vector;
 @ that represents the 3 coordinates in space of the tip of vector.
@@ -626,7 +642,12 @@ __host__ __device__ rtd vector::mag(void) {
 __host__ __device__ rtd vector::angle(void) {
   return atan2(x,y);
 }
-
+@ 
+The magnitude can also be normalized by radius [[R]]:
+<<vector functions>>=
+__host__ __device__ rtd vector::mag(rtd R) {
+  return hypot(x,y)/R;
+}
 @
 
 \subsection{Ray}
@@ -1743,10 +1764,10 @@ __host__ __device__ inline rtd conic_equation(vector *v, vector *v0, const rtd k
 @ 
 <<conic equations>>=
 __device__ inline rtd conic_surface(vector *v, vector *v0, const rtd k, const rtd c,
-				    const int max_n, rtd *a)
+				    const int max_n, rtd *a, const rtd R)
 {
   rtd zern_surf;
-  zern_surf = zernike_surface(v->mag(), v->angle(), max_n, a);
+    zern_surf = zernike_surface(v->mag(R), v->angle(), max_n, a);
   if (c==0)
     return v->z - v0->z - zern_surf;
   else {    
@@ -1768,10 +1789,11 @@ The partial derivative of the conic equation are written
 <<conic equations>>=
  __device__ inline rtd partial_x_conic_surface(vector *v, vector *v0, 
 					       const rtd k, const rtd c,
-					       const int max_n, rtd *cx)
+					       const int max_n, rtd *cx,
+					       const rtd R)
 {
   rtd px_zern_surf;
-  px_zern_surf = zernike_surface(v->mag(), v->angle(), max_n-1, cx);
+  px_zern_surf = zernike_surface(v->mag(R), v->angle(), max_n-1, cx);
   if (c==0)
     return -px_zern_surf;
   else    
@@ -1791,10 +1813,11 @@ The partial derivative of the conic equation are written
 <<conic equations>>=
 __device__ inline rtd partial_y_conic_surface(vector *v, vector *v0, 
 					      const rtd k, const rtd c,
-					      const int max_n, rtd *cy)
+					      const int max_n, rtd *cy,
+					      const rtd R)
 {
   rtd py_zern_surf;
-  py_zern_surf = zernike_surface(v->mag(), v->angle(), max_n-1, cy);
+  py_zern_surf = zernike_surface(v->mag(R), v->angle(), max_n-1, cy);
   if (c==0)
     return -py_zern_surf;
   else    
@@ -1919,6 +1942,7 @@ struct zernikeS {
   void cleanup(void);
   void surface(rtd *S, rtd *r, rtd *o, const int N);
   void surface(rtd *S, rtd *r, rtd *o, const int N, int surf_id);
+  void update(rtd *a);
   void surface_derivative_coefs(void);
   void surface_derivatives(rtd *d__dSdx, rtd *d__dSdy, rtd *d__r, rtd *d__o, const int N);
 };
@@ -2200,6 +2224,24 @@ void zernikeS::surface_derivative_coefs(void)
       idx_c++;
     }
   }
+}
+@ 
+The Zernike coefficients are updated with
+<<zernikeS functions>>= 
+void zernikeS::update(rtd *_a_)
+{
+  int n_byte = sizeof(rtd)*n_mode*N;
+  memcpy( a, _a_,  n_byte);
+  HANDLE_ERROR( cudaMemcpy( d__a, a, 
+			    n_byte, cudaMemcpyHostToDevice ) );
+  surface_derivative_coefs();
+
+  int n_col_ptr = (max_n+1.0)*max_n*0.5 + 1;
+  n_byte = N*sizeof(rtd)*(n_col_ptr-1);
+  HANDLE_ERROR( cudaMemcpy( d__cx, cx, 
+			    n_byte, cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMemcpy( d__cy, cy, 
+			    n_byte, cudaMemcpyHostToDevice ) );
 }
 @
 Memory is freed with:
@@ -3189,7 +3231,9 @@ struct gmt_m1 {
 @  with
 <<GMT M12 functions>>=
 void setup(float _D_, int _D_px_);
+void setup(float _D_, int _D_px_, zernikeS *ZS);
 void setup(float _D_, int _D_px_, int N_SRC);
+void setup(float _D_, int _D_px_, zernikeS *ZS, int N_SRC);
 void cleanup(void);
 void update(vector _origin_, vector _euler_angles_,int idx);
 void reset(void);
@@ -3271,7 +3315,7 @@ int idx_offset;
 @
 \item an array of Zernike surface, one per segment, [[ZS]]:
 <<GMT M12 parameters>>=
-zernikeS ZS;
+zernikeS *ZS;
 @ \end{itemize}
 @
 
@@ -3290,14 +3334,16 @@ The size must be 25.5m or more to contain M1 fully.
 void gmt_m1::setup(float _D_, int _D_px_)
 {
   int  N_SRC = 1;
+  ZS = NULL;
   <<M1 parameters>>
   <<GMT setup common>>
 }
-@ with
+@ or
 <<GMT M1 functions>>=
 void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_)
 {
   int  N_SRC = 1;
+  ZS = _ZS_;
   <<M1 parameters>>
   <<GMT setup common>>
 }
@@ -3321,10 +3367,19 @@ If an array of sources is propagated through the telescope then
 <<GMT M1 functions>>=
 void gmt_m1::setup(float _D_, int _D_px_, int N_SRC)
 {
+  ZS = NULL;
   <<M1 parameters>>
   <<GMT setup common>>
 }
-@  with
+@ or
+<<GMT M1 functions>>=
+void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
+{
+  ZS = _ZS_;
+  <<M1 parameters>>
+  <<GMT setup common>>
+}
+@  where
 <<GMT setup common>>=
 vector __v0 = {0.0,0.0,0.0},
        __v = {D_full*0.5,0.0,0.0},
@@ -3346,8 +3401,6 @@ zo = conic_equation(&__v,&__v0,conic_k,conic_c);
 <<M12 conic definition>>
 
 <<M12 motion definition>>
-
-<<Zernike surface definition>>
 
 V.setup(D_px*D_px*N_SRC);
 @
@@ -3483,10 +3536,6 @@ for (k=0; k<N; k++)
 }
 sprintf(tag,"M%d MOTION",M_ID);
 motion_CS.setup(origin, euler_angles, N, tag);
-@ 
-<<Zernike surface definition>>=
-rtd a[7] = {1e-6,0,0,0,0,0,0};
-ZS.setup(0,a,7);
 @ 
 Memory is freed with
 <<GMT M1 functions>>=
@@ -3628,9 +3677,9 @@ void gmt_m1::trace(bundle *rays)
 						   rigid_body_CS.d__origin,
 						   motion_CS.d__R,
 						   motion_CS.d__origin,
-						   ZS.max_n, ZS.n_mode,
-						   ZS.d__a, ZS.d__cx, ZS.d__cy);
-
+						   ZS->max_n, ZS->n_mode,
+						   ZS->d__a, ZS->d__cx, ZS->d__cy,
+						   0.5*D_full);
  blockDim = dim3(16,16);
  gridDim  = dim3(rays->N_RAY/256+1,1,rays->N_BUNDLE);
  HANDLE_ERROR( cudaMemset(V.m, 0, sizeof(char)*rays->N_RAY*rays->N_BUNDLE ) );
@@ -3646,8 +3695,9 @@ void gmt_m1::trace(bundle *rays)
 					     rigid_body_CS.d__origin,
 					     motion_CS.d__R,
 					     motion_CS.d__origin,
-					     ZS.max_n, ZS.n_mode,
-					     ZS.d__a, ZS.d__cx, ZS.d__cy,
+					     ZS->max_n, ZS->n_mode,
+					     ZS->d__a, ZS->d__cx, ZS->d__cy,
+					     0.5*D_full,
 					     rays->d__chief_ray);
  GMT_intersection LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY);
 
@@ -3662,7 +3712,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 				rtd *d__rigid_body_R, vector *d__rigid_body_origin,
 				rtd *d__motion_R, vector *d__motion_origin,
 				int max_n, int n_mode,
-				rtd *d__a, rtd *d__cx, rtd *d__cy,
+				rtd *d__a, rtd *d__cx, rtd *d__cy, rtd R,
 				ray *d__chief_ray)
 {
   int i, j, ij, iCoordSys, iSource, b_n_mode;
@@ -3712,7 +3762,7 @@ __global__ void m1_trace_chief_kernel(char *mask, ray *d__ray, int N_RAY,
 				      rtd *d__rigid_body_R, vector *d__rigid_body_origin,
 				      rtd *d__motion_R, vector *d__motion_origin,
 				      int max_n, int n_mode,
-				      rtd *d__a, rtd *d__cx, rtd *d__cy)
+				      rtd *d__a, rtd *d__cx, rtd *d__cy, rtd R)
 {
   int j, ij, iCoordSys, iSource, b_n_mode;
   rtd x1, y1, s0, k, l, m;
@@ -3897,9 +3947,12 @@ for (j=0; j<SNELL_N_ITERATION; j++)
   xyz.x = x1 + k*s0;
   xyz.y = y1 + l*s0;
   xyz.z = m*s0;
-  S = conic_surface(&xyz, &d__origin, Fk, Fc, max_n, d__a + iCoordSys*n_mode);
-  K = partial_x_conic_surface(&xyz, &d__origin, Fk, Fc, max_n, d__cx + iCoordSys*b_n_mode);
-  L = partial_y_conic_surface(&xyz, &d__origin, Fk, Fc, max_n, d__cy + iCoordSys*b_n_mode);
+  S = conic_surface(&xyz, &d__origin, Fk, Fc, max_n, 
+		    d__a + iCoordSys*n_mode, R);
+  K = partial_x_conic_surface(&xyz, &d__origin, Fk, Fc, max_n, 
+			      d__cx + iCoordSys*b_n_mode, R);
+  L = partial_y_conic_surface(&xyz, &d__origin, Fk, Fc, max_n, 
+			      d__cy + iCoordSys*b_n_mode, R);
   M = partial_z_conic_surface();
   dSds = K*k + L*l + M*m;
   if (dSds==0) { break; }
@@ -3910,9 +3963,11 @@ for (j=0; j<SNELL_N_ITERATION; j++)
       xyz.y = y1 + l*s1;
       xyz.z = m*s1;
       K    = 
-	partial_x_conic_surface(&xyz, &d__origin, Fk, Fc, max_n, d__cx + iCoordSys*b_n_mode);
+	partial_x_conic_surface(&xyz, &d__origin, Fk, Fc, max_n, 
+				d__cx + iCoordSys*b_n_mode, R);
       L    =
-	partial_y_conic_surface(&xyz, &d__origin, Fk, Fc, max_n, d__cy + iCoordSys*b_n_mode);
+	partial_y_conic_surface(&xyz, &d__origin, Fk, Fc, max_n, 
+				d__cy + iCoordSys*b_n_mode, R);
       M    = partial_z_conic_surface();
       d__ray[ij].optical_path_length += s1;
       d__ray[ij].n_iteration = j;
@@ -4105,6 +4160,16 @@ If an array of sources is propagated through the telescope then
 <<GMT M2 functions>>=
 void gmt_m2::setup(float _D_, int _D_px_, int N_SRC)
 {
+  ZS = NULL;
+  M_ID    = 2;
+  <<M2 parameters>>
+  <<GMT setup common>>
+}
+@ 
+<<GMT M2 functions>>=
+void gmt_m2::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
+{
+  ZS = _ZS_;
   M_ID    = 2;
   <<M2 parameters>>
   <<GMT setup common>>
