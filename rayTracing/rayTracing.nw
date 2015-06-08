@@ -539,8 +539,7 @@ cdef class GMT_M2:
 # Zernike surface
 cdef class ZernikeS:
     cdef ceo.zernikeS *_c_zernikeS
-    cdef int max_n
-    cdef int n_mode
+    cdef int max_n, n_mode, N_SURF
     cdef public np.ndarray a
 
     def __cinit__(self, int _max_n_, np.ndarray _a_=None,
@@ -549,8 +548,9 @@ cdef class ZernikeS:
         self._c_zernikeS = new ceo.zernikeS()
         self.max_n = _max_n_
         self.n_mode = (_max_n_+1)*(_max_n_+2)/2
+        self.N_SURF = N_SURF
         if _a_ is None:
-            self.a = np.zeros((N_SURF,self.n_mode))
+            self.a = np.zeros((self.N_SURF,self.n_mode))
         else: 
             self.a = _a_
         cdef vector __origin
@@ -563,7 +563,7 @@ cdef class ZernikeS:
         __euler_angles.z = <float>euler_angles[2]
         self._c_zernikeS.setup( self.max_n, <rtd *>self.a.data,
                                 __origin, __euler_angles,
-                                N_SURF) 
+                                self.N_SURF) 
 
     def __dealloc__(self):
         self._c_zernikeS.cleanup();
@@ -572,8 +572,8 @@ cdef class ZernikeS:
         self._c_zernikeS.update(<rtd *>self.a.data)
 
     def reset(self):
-        self.a = np.zeros((N_SURF,self.n_mode))
-        update()
+        self.a = np.zeros((self.N_SURF,self.n_mode))
+        self.update()
         
     def surface(self, cuDoubleArray r, cuDoubleArray o, int surf_id=0):
         S = cuDoubleArray(shape=r.shape, dev_malloc = True)
