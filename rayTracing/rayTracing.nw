@@ -411,12 +411,12 @@ void blocking(bundle *)
 cdef class GMT_M1:
     <<GMT M12 docstring>>
     cdef ceo.gmt_m1 *_c_gmt_m1
-    cdef zernikeS _ZS_
+    cdef public ceo.ZernikeS zernike
     
-    def __cinit__(self, float D, int D_px, ZernikeS ZS=None, int N_SRC=1):
+    def __cinit__(self, float D, int D_px, radial_order=0, int N_SRC=1):
         self._c_gmt_m1 = new ceo.gmt_m1()
-        
-        self._c_gmt_m1.setup(D, D_px, ZS._c_zernikeS, N_SRC)
+        self.zernike = ceo.ZernikeS(radial_order,N_SURF=7)
+        self._c_gmt_m1.setup(D, D_px, <zernikeS *> self.zernike._c_zernikeS, N_SRC)
 
     def __dealloc__(self):
         self._c_gmt_m1.cleanup()
@@ -485,11 +485,12 @@ or
 cdef class GMT_M2:
     <<GMT M12 docstring>>
     cdef ceo.gmt_m2 *_c_gmt_m2
+    cdef public ceo.ZernikeS zernike
     
-    def __cinit__(self, float D, int D_px, ZernikeS ZS=None, int N_SRC=1):
+    def __cinit__(self, float D, int D_px, radial_order=0, int N_SRC=1):
         self._c_gmt_m2 = new ceo.gmt_m2()
-        
-        self._c_gmt_m2.setup(D, D_px, ZS._c_zernikeS, N_SRC)
+        self.zernike = ceo.ZernikeS(radial_order,N_SURF=7)
+        self._c_gmt_m2.setup(D, D_px, <zernikeS *> self.zernike._c_zernikeS, N_SRC)
 
     def __dealloc__(self):
         self._c_gmt_m2.cleanup()
@@ -539,7 +540,7 @@ cdef class GMT_M2:
 # Zernike surface
 cdef class ZernikeS:
     cdef ceo.zernikeS *_c_zernikeS
-    cdef int max_n, n_mode, N_SURF
+    cdef public int max_n, n_mode, N_SURF
     cdef public np.ndarray a
 
     def __cinit__(self, int _max_n_, np.ndarray _a_=None,
@@ -2305,8 +2306,6 @@ __host__ __device__ rtd zernike_surface(rtd r, rtd o, int max_n, rtd *a)
   if ( (r>1.0) || (max_n<0) )
     S = 0.0;
   else {
-    sqrt2 = sqrt(2.0);
-    sincos(2*o,&s2,&c2);
     R = 1.0;
     S = a[0]*R;
     <<zernike surface: radial order sum>>
@@ -2317,6 +2316,8 @@ __host__ __device__ rtd zernike_surface(rtd r, rtd o, int max_n, rtd *a)
 The Zernike surface is computed by summing all the azimuthal order of a each radial order from the highest to the lowest azimuthal order.
 The Zernike coefficients [[a]] are ordered by increasing azimuthal order.
 <<zernike surface: radial order sum>>=
+sqrt2 = sqrt(2.0);
+sincos(2*o,&s2,&c2);
 for (n=1;n<=max_n;n++) {
   j = (n+1)*(n+2)/2;
   a_idx = j - 1;
