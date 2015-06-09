@@ -155,6 +155,7 @@ int round_up_to_nhp2(int n) {
 <<fill ones>>
 <<fill ones (char)>>
 <<fill ones filtered>>
+<<non zeros index>>
 <<statistics functions>>
 <<mask functions>>
 <<circular pupil>>
@@ -950,6 +951,9 @@ char *m;
 @ \item the filter [[f]] has a type of float and contains 0 and 1,
 <<mask parameters>>=
 float *f;  
+@ \item the index of the non zeros elements [[idx]],
+<<mask parameters>>=
+unsigned int *idx;
 @ \item the mask x and y size in pixel [[size_px]],
 <<mask parameters>>=
 int size_px[2];
@@ -1077,8 +1081,10 @@ void mask::set_filter(void) {
   cublasHandle_t handle;
   cublasCreate(&handle);
   CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
-  printf("@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
+  //  printf("@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
   cublasDestroy(handle);
+  HANDLE_ERROR( cudaMalloc((void**)&idx, sizeof(char)*nnz ) );
+  nnz_idx LLL gridDim,blockDim RRR (idx, m, nel);
 }
 @ \item [[cleanup]]
 <<mask functions>>=
@@ -1086,15 +1092,25 @@ void mask::cleanup(void) {
   fprintf(stdout,"@(CEO)>mask: freeing memory!\n");
   HANDLE_ERROR( cudaFree( m ) );
   HANDLE_ERROR( cudaFree( f ) );
+  HANDLE_ERROR( cudaFree( idx ) );
 }
-@  with the kernel
+@  with the kernels
 <<fill ones filtered>>=
 __global__ void fill_ones_filtered(float *ones, const char* mask, int n_data) 
 {
-int i;
-i = blockIdx.x * blockDim.x + threadIdx.x;
- if (i<n_data)
-   ones[i] = (mask[i]) ? 1.0 : 0.0;
+  int i;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i<n_data)
+    ones[i] = (mask[i]) ? 1.0 : 0.0;
+}
+@ and
+<<non zeros index>>=
+__global__ void nnz_idx(unsigned int *idx, const char* mask, int n_data)
+{
+  int i;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if ( (i<n_data) && (mask[i]) )
+     idx[i] = i;
 }
 @
 \end{itemize}

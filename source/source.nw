@@ -91,6 +91,7 @@ struct source {
 <<adding wavefront phase>>
 <<masking wavefront amplitude I>>
 <<masking wavefront amplitude II>>
+<<wavefront stats>>
 
 <<phase to file>>
 
@@ -136,12 +137,15 @@ cdef extern from "rayTracing.h":
     ctypedef double rtd
 cdef extern from "source.h":
     cdef cppclass complex_amplitude:
+        int N
+        int N_PX
         float *phase
         float *amplitude
         void reset()
         void masked(mask *)
         void masked()
         void add_phase(float , float *)
+        void rms(float *)
     cdef cppclass source:
         int N_SRC
         char *photometric_band
@@ -164,6 +168,35 @@ cdef extern from "source.h":
 <<ceo.pyx>>=
 @cython.boundscheck(False)
 @cython.wraparound(False)
+cdef class Complex_amplitude:
+    cdef ceo.complex_amplitude *_c_complex_amplitude
+
+    def __cinit__(self, Source src):
+        self._c_complex_amplitude = new ceo.complex_amplitude()
+        self._c_complex_amplitude = &(src._c_source.wavefront)
+
+    property phase:
+        def __get__(self):
+            x = cuFloatArray(shape=(self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N,
+                                    self._c_complex_amplitude.N))
+            x._c_gpu.dev_data = self._c_complex_amplitude.phase
+            return x
+        def __set__(self,cuFloatArray val):
+            self._c_complex_amplitude.add_phase(1,val._c_gpu.dev_data)
+
+    property amplitude:
+        def __get__(self):
+            x = cuFloatArray(shape=(self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N,
+                                    self._c_complex_amplitude.N))
+            x._c_gpu.dev_data = self._c_complex_amplitude.amplitude
+            return x
+
+    def rms(self):
+        cdef np.ndarray[float,ndim=1] rms = np.zeros(self._c_complex_amplitude.N, dtype=np.single)
+        self._c_complex_amplitude.rms(<float *>rms.data)
+        return rms
+        
+
 cdef class Source:
     """ 
     A class to represent an astronomical source
@@ -227,7 +260,8 @@ cdef class Source:
     cdef public int size
     cdef public np.ndarray zenith, azimuth
     cdef public float height
-    cdef public object rays
+    cdef public Bundle rays
+    cdef public Complex_amplitude wavefront
 
     def __cinit__(self,char *_photometric_band,  
 		  zenith=0, azimuth=0, 
@@ -269,6 +303,7 @@ cdef class Source:
             self._c_source.magnitude = magnitude
         if fwhm is not None:
             self._c_source.fwhm = fwhm
+        self.wavefront = ceo.Complex_amplitude(self)
         self.rays = ceo.Bundle(self)
 
     def __dealloc__(self):
@@ -386,6 +421,7 @@ struct complex_amplitude {
   void add_phase(float alpha, float *phase_prime);
   void masked(void);
   void masked(mask *M_in);
+  void rms(float *rms);
   void show_phase(char *filename);
   void show_phase(char *filename, int N_SRC);
   void show_amplitude(char *filename);
@@ -669,7 +705,11 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
   }
 }
 @ \end{itemize}
-@ 
+@
+\subsubsection{Complex amplitude}
+\label{sec:complex-amplitude}
+
+
 The complex amplitude structure is initialized with
 <<complex amplitude setup I>>=
 void complex_amplitude::setup(int n_pixel) {
@@ -859,6 +899,29 @@ __global__ void apply_mask(float* amplitude, float* phase, const char *pupil_mas
   }
 }
 @
+\subsubsection{Wavefront rms}
+\label{sec:wavefront-rms}
+
+<<wavefront stats>>=
+void complex_amplitude::rms(float *rms)
+{
+  float mean_data, nnz;
+  int n_data = N_PX/N, idx, k;
+  cublasHandle_t handle;
+  cublasCreate(&handle);
+   for (k=0;k<N;k++) {
+    idx = k*n_data;
+    CUBLAS_ERROR( cublasSdot(handle, n_data, phase + idx, 1, M->f + idx, 1, &mean_data) );
+    CUBLAS_ERROR( cublasSasum(handle, n_data, M->f + idx, 1, &nnz) );
+    mean_data /= nnz;
+    CUBLAS_ERROR( cublasSdot(handle, n_data, phase + idx, 1, phase + idx, 1, rms+k) );
+    rms[k] /= nnz;
+    rms[k] -= (mean_data*mean_data);
+    rms[k] = sqrt(rms[k]);
+  }
+  cublasDestroy(handle);
+}
+@ 
 \subsection{Ray tracing}
 \label{sec:ray-tracing}
 
@@ -1395,6 +1458,7 @@ void thin_lens(source *src)
 \subsubsection{Trace}
 \label{sec:trace}
 
+Ray tracing through the GMT M1 and M2 mirrors are achieved with:
 <<ray tracing>>=
 void source::trace(gmt_m1 *M1)
 {
@@ -1408,15 +1472,20 @@ void source::stop(gmt_m2 *M2)
 {
   M2->blocking(&rays);
 }
+@ 
+The ray tracing data are transferred to the wavefront structure with
+<<ray tracing>>=
 void source::opd2phase(void)
 {
 //  printf("Setting wavefront!\n");
   dim3 blockDim(16,16);
-  dim3 gridDim(rays.N_RAY/256+1,1, rays.N_BUNDLE);
+  dim3 gridDim(rays.N_L/16+1, rays.N_L/16+1, rays.N_BUNDLE);
   opd2phase_kernel LLL gridDim , blockDim RRR (wavefront.amplitude, 
                                                    wavefront.phase,
 						   rays.V.m,
-                                                   rays.d__ray, rays.N_RAY);
+                                                   rays.d__ray, rays.N_RAY,
+                                                   rays.L, rays.N_L,
+                                                   dev_ptr);
   rays.V.set_filter();
   wavefront.M = &(rays.V);
   //wavefront.masked(&(rays.V));
@@ -1424,25 +1493,32 @@ void source::opd2phase(void)
 @ 
 <<gathering wavefront kernel>>=
 __global__ void opd2phase_kernel(float *amplitude, float *phase,
-                                     char *m, ray *d__ray, int N_RAY)
+				 char *m, ray *d__ray,  int N_RAY,
+				 rtd L,  int N_L,
+				 source *src)
 {
   int i, j, k, iSource;
+  rtd x, y;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
-  k = j * gridDim.x * blockDim.x + i;
-  if ( k<N_RAY )
-    k += iSource*N_RAY;
+  if ( (i<N_L) && (j<N_L) ) {
+    x   = L*(i - (N_L-1)*0.5)/(N_L-1);
+    y   = L*(j - (N_L-1)*0.5)/(N_L-1);
+    k = i + j*N_L + iSource*N_RAY;
     if (d__ray[k].v==1)
       {
 	m[k]         = 1;
 	amplitude[k] = 1.0;
-	phase[k]     += d__ray[k].optical_path_difference;
+	phase[k]     += d__ray[k].optical_path_difference +
+	  x*src[iSource].theta_x +
+	  y*src[iSource].theta_y;
       } else {
 	m[k]         = 0;
 	amplitude[k] = 0.0;
 	phase[k]     = 0.0;
     }
+  }
 }
 
 @ 
