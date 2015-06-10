@@ -69,6 +69,7 @@ struct shackHartmann {
 <<ceo.pxd>>=
 cdef extern from "shackHartmann.h":
     cdef cppclass shackHartmann:
+        int N_LENSLET, N_ACTUATOR
         float lenslet_pitch, slopes_gain, pixel_scale
         mask valid_lenslet
         mask valid_actuator
@@ -171,13 +172,13 @@ cdef class ShackHartmann:
 
     property valid_actuator:
         def __get__(self):
-            x = MaskAbstract(self.N_SIDE_LENSLET+1)
+            x = MaskAbstract(self._c_shackHartmann.N_ACTUATOR*self.N_GS)
             x._c_mask = &(self._c_shackHartmann.valid_actuator)
             return x
 
     property valid_lenslet:
         def __get__(self):
-            x = MaskAbstract(self.N_SIDE_LENSLET)
+            x = MaskAbstract(self._c_shackHartmann.N_LENSLET*self.N_GS)
             x._c_mask.m = self._c_shackHartmann.valid_lenslet.m
             x._c_mask.f = self._c_shackHartmann.valid_lenslet.f
             return x
@@ -274,8 +275,8 @@ void shackHartmann::setup(int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
   HANDLE_ERROR( cudaMemset( d__c0, 0, sizeof(float)*N_SLOPE ) ); 
   d__cx0 = d__c0;
   d__cy0 = d__c0 + N_LENSLET;
-  valid_lenslet.setup(N_SIDE_LENSLET,(N_SIDE_LENSLET-1)*d);
-  valid_actuator.setup(N_SIDE_LENSLET+1,N_SIDE_LENSLET*d);
+  valid_lenslet.setup(N_LENSLET*N_WFS);//,(N_SIDE_LENSLET-1)*d);
+  valid_actuator.setup(N_ACTUATOR*N_WFS);//,N_SIDE_LENSLET*d);
   optics_relay.setup(N_PX_LENSLET, N_SIDE_LENSLET, DFT_osf,
 		     N_PX_IMAGE,  BIN_IMAGE, N_GS);
   data_proc.setup(N_SIDE_LENSLET, N_GS);
@@ -333,15 +334,15 @@ HANDLE_ERROR( cudaMemset( data_proc.d__c, 0, sizeof(float)*N_SLOPE ) );
 The total intensity per lenslet is used to compute the valid lenslet.
 The valid lenslet and actuator masks are first set to 0. 
 <<WFS calibration valid lenslet>>=
-HANDLE_ERROR( cudaMemset(valid_lenslet.m,  0, sizeof(char)*N_LENSLET  ) );
-HANDLE_ERROR( cudaMemset(valid_actuator.m, 0, sizeof(char)*N_ACTUATOR ) );
+HANDLE_ERROR( cudaMemset(valid_lenslet.m,  0, sizeof(char)*N_LENSLET*N_WFS  ) );
+HANDLE_ERROR( cudaMemset(valid_actuator.m, 0, sizeof(char)*N_ACTUATOR*N_WFS ) );
 @
 The maximum lenslet intensity is sought:
 <<WFS calibration valid lenslet>>=
 cublasHandle_t handle;
 cublasCreate(&handle);
 int idx;
-CUBLAS_ERROR( cublasIsamax(handle, N_LENSLET, data_proc.d__mass, 1, &idx) );
+CUBLAS_ERROR( cublasIsamax(handle, N_LENSLET*N_WFS, data_proc.d__mass, 1, &idx) );
 cublasDestroy(handle);
 idx--;
 @
@@ -349,7 +350,7 @@ The masks are computed with the [[set_valid_lenslet]] kernel:
 <<WFS calibration valid lenslet>>=
 int NL = optics_relay.N_SIDE_LENSLET;
 dim3 blockDim(16,16);
-dim3 gridDim(NL/16+1,NL/16+1,1); // The 3rd argument sets the WFS which intensity is used for calibration
+dim3 gridDim(NL/16+1,NL/16+1,N_WFS); // The 3rd argument sets the WFS which intensity is used for calibration
 set_valid_lenslet LLL gridDim,blockDim RRR (valid_lenslet.m, valid_actuator.m, 
                                             NL, data_proc.d__mass,
                                             idx, threshold);
@@ -362,16 +363,16 @@ __global__ void set_valid_lenslet(char *lenslet_mask, char *actuator_mask,
 				    int max_idx, float threshold)
 {
   int iL, jL, kL, kA, iSource;
+  float max_intensity_threshold;
   // lenslet index
   iL = blockIdx.x * blockDim.x + threadIdx.x;
   jL = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
-  kL = iL*NL + jL + iSource*NL*NL;
-  float max_intensity_threshold;
-  max_intensity_threshold = lenslet_intensity_map[max_idx];
-  max_intensity_threshold *= threshold;
   if ( (iL<NL) && (jL<NL) )
     {
+      kL = iL*NL + jL + iSource*NL*NL;
+      max_intensity_threshold = lenslet_intensity_map[max_idx];
+      max_intensity_threshold *= threshold;
       if (lenslet_intensity_map[kL]>=max_intensity_threshold)
 	{
 	
