@@ -37,6 +37,7 @@ struct shackHartmann {
   void process(void);
   void analyze(source *gs);
   float* get_frame_dev_ptr(void);
+  void get_valid_slopes(float *d__valid_slopes);
 
 };
 
@@ -50,6 +51,7 @@ struct shackHartmann {
 #include "shackHartmann.h"
 
 <<valid lenslet>>
+<<valid lenslet slopes kernel>>
 
 <<setup>>
 <<cleanup>>
@@ -58,6 +60,7 @@ struct shackHartmann {
 <<wavefront centroiding>>
 <<wavefront processing>>
 <<get detector frame>>
+<<valid lenslet slopes>>
 @
 
 \subsection{Python}
@@ -427,9 +430,34 @@ void shackHartmann::analyze(source *gs) {
 		     valid_lenslet.m);
 }
 @
+A pointer to the detector frame is obtained with
 <<get detector frame>>=
 float* shackHartmann::get_frame_dev_ptr(void) {
   return optics_relay.d__frame;     
+}
+@ 
+The slopes in the valid lenslet are extracted with
+<<valid lenslet slopes>>=
+void shackHartmann::get_valid_slopes(float *d__valid_slopes) 
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(valid_lenslet.nnz/256+1,1);
+  get_valid_slopes_kern LLL gridDim, blockDim RRR (d__valid_slopes, valid_lenslet.idx, 
+						   valid_lenslet.nnz, data_proc.d__c);
+}
+@ with
+<<valid lenslet slopes kernel>>=
+__global__ void get_valid_slopes_kern(float *d__valid_slopes, const unsigned int *idx, 
+				   const int NNZ, float *d__c)
+{
+  int i, j, k, iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  k = j * gridDim.x * blockDim.x + i;
+  if (k<NNZ) {
+    d__valid_slopes[k+iSource*NNZ] = d__c[ idx[k] ];
+  }
 }
 @ 
 \subsection{Input/Output}
