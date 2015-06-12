@@ -1005,7 +1005,6 @@ void mask::setup(int n) {
 }
 @ with 
 <<setup common>>=
-fprintf(stdout,"mask common: nel=%d\n",nel);
 HANDLE_ERROR( cudaMalloc((void**)&m, sizeof(char)*nel ) );
 HANDLE_ERROR( cudaMalloc((void**)&f, sizeof(float)*nel ) );
 HANDLE_ERROR( cudaMemset( m, 0, sizeof(char)*nel) );
@@ -1048,7 +1047,7 @@ void mask::setup_circular(int n, float D) {
   dim3 blockDim(16,16);
   dim3 gridDim(n/16+1,n/16+1);
   circular_pupil LLL gridDim,blockDim RRR ( m , n );
-  //set_filter();
+  set_filter();
 }
 @ \item with the Giant Magellan Telescope mask inside an [[n]]$\times$[[n]] array of length [[S]] in meter
 <<mask functions>>=
@@ -1166,8 +1165,8 @@ cdef class MaskAbstract:
     cdef int n
 
     def __cinit__(self,int n, float S=0.0):
-	self._c_mask = new ceo.mask()
         self.n = n
+	self._c_mask = new ceo.mask()
 
     property f:
         def __get__ (self):
@@ -1192,7 +1191,7 @@ cdef class Mask(MaskAbstract):
     """
 
     def __cinit__(self,int n, float L):
-        MaskAbstract.__init__(self,n*n)
+        self.n = n*n
         self._c_mask.setup(n,L)
 
     def __dealloc__(self):
@@ -1210,8 +1209,8 @@ cdef class Telescope(MaskAbstract):
         the diamter in meter of the pupil
     """ 
     def __cinit__(self, int n, float D):
-        MaskAbstract.__init__(self,n*n)
-        self._c_mask.setup_circular(self.n,D)    
+        self.n = n*n
+        self._c_mask.setup_circular(n,D)    
 
     def __dealloc__(self):
         self._c_mask.cleanup()
@@ -1228,8 +1227,8 @@ cdef class GMT(MaskAbstract):
        The size of the pupil in meter.
     """
     def __cinit__(self, int n, float S=25.5):
-        MaskAbstract.__init__(self,n*n)
-	self._c_mask.setup_GMT(self.n,S)    
+        self.n = n*n
+ 	self._c_mask.setup_GMT(n,S)    
 
     def __dealloc__(self):
         self._c_mask.cleanup()
