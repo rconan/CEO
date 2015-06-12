@@ -106,6 +106,17 @@ cdef class ShackHartmann:
     N_GS : an int number
        The number of guide stars, defaults to 1
 
+    Attributes
+    ----------
+    valid_lenslet : MaskAbstract
+        The mask object representing the valid lenslet location
+    valid_actuator : MaskAbstract
+        The mask object representing the valid actuator location in a Fried geometry
+    pixel_scale: float
+        The size of the detector pixel in radian
+    pixel_scale_arcsec: float
+        The size of the detector pixel in arcsec
+
     Examples
     --------
     <<shackHartmann.py>>
@@ -113,6 +124,8 @@ cdef class ShackHartmann:
     """
     cdef ceo.shackHartmann *_c_shackHartmann
     cdef int N_SIDE_LENSLET, N_PX_LENSLET, DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_GS, N_PX_FRAME
+    cdef public MaskAbstract valid_lenslet
+    cdef public MaskAbstract valid_actuator
 
     def __cinit__(self, int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
 	          DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, N_GS=1):
@@ -128,6 +141,10 @@ cdef class ShackHartmann:
         self.N_PX_FRAME     = self.N_PX_IMAGE*self.N_SIDE_LENSLET/self.BIN_IMAGE
         self._c_shackHartmann.setup(N_SIDE_LENSLET, N_PX_LENSLET, d, 
                                     DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_GS)    
+        self.valid_lenslet = ceo.MaskAbstract(self._c_shackHartmann.N_LENSLET*self.N_GS)
+        self.valid_lenslet._c_mask = &(self._c_shackHartmann.valid_lenslet)
+        self.valid_actuator = ceo.MaskAbstract(self._c_shackHartmann.N_ACTUATOR*self.N_GS)
+        self.valid_actuator._c_mask = &(self._c_shackHartmann.valid_actuator)
 
     def __dealloc__(self):
         self._c_shackHartmann.cleanup()
@@ -169,19 +186,6 @@ cdef class ShackHartmann:
         def __get__(self):
             x = cuFloatArray(shape=(self.N_GS*self.N_SIDE_LENSLET,self.N_SIDE_LENSLET))
             x._c_gpu.dev_data = self._c_shackHartmann.data_proc.d__mass
-            return x
-
-    property valid_actuator:
-        def __get__(self):
-            x = MaskAbstract(self._c_shackHartmann.N_ACTUATOR*self.N_GS)
-            x._c_mask = &(self._c_shackHartmann.valid_actuator)
-            return x
-
-    property valid_lenslet:
-        def __get__(self):
-            x = MaskAbstract(self._c_shackHartmann.N_LENSLET*self.N_GS)
-            x._c_mask.m = self._c_shackHartmann.valid_lenslet.m
-            x._c_mask.f = self._c_shackHartmann.valid_lenslet.f
             return x
 
     property valid_slopes:
