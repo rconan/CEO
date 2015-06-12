@@ -170,7 +170,21 @@ cdef extern from "source.h":
 @cython.wraparound(False)
 cdef class Complex_amplitude:
     cdef ceo.complex_amplitude *_c_complex_amplitude
+    """
+    A class to prepresent a wavefront complex amplitude
 
+    Parameters
+    ----------
+    Source : Source
+        a CEO Source object
+
+    Attributes:
+    -----------
+    phase : float
+        The complex amplitude angle
+    amplitude : float, read only
+        the complex amplitude magnitude
+    """
     def __cinit__(self, Source src):
         self._c_complex_amplitude = new ceo.complex_amplitude()
         self._c_complex_amplitude = &(src._c_source.wavefront)
@@ -192,6 +206,14 @@ cdef class Complex_amplitude:
             return x
 
     def rms(self):
+        """
+        Computes the rms of the wavefront phase
+
+        Returns
+        -------
+        float
+            the wavefront phase rms
+        """
         cdef np.ndarray[float,ndim=1] rms = np.zeros(self._c_complex_amplitude.N, dtype=np.single)
         self._c_complex_amplitude.rms(<float *>rms.data)
         return rms
@@ -203,45 +225,49 @@ cdef class Source:
 
     Parameters
     ----------
-    photometric_band: char
+    photometric_band : char
         The sources photometric band
-    zenith: list, tuple or numpy array, optionnal
+    zenith : list, tuple or numpy array, optionnal
         The sources zenith angles [rd], defaults to 0.
-    azimuth:  list, tuple or numpy array, optionnal
+    azimuth :  list, tuple or numpy array, optionnal
         The sources azimuth angles [rd], defaults to 0.
-    height: float, optionnal
+    height : float, optionnal
         The sources altitude [m], defaults to infinity.
-    resolution: tuple
+    resolution : tuple
         A 2 element tuple with the sampling [n,m] in pixel of the source wavefront complex amplitude.
-    fwhm: float, optionnal
+    fwhm : float, optionnal
         The fwhm of the source intensity distribution, defaults to None.
-    rays_box_size: float, optionnal
+    rays_box_size : float, optionnal
         The size of the ray bundle [m], defaults to None.
-    rays_box_sampling: int, optionnal
+    rays_box_sampling : int, optionnal
         The linear sampling of the ray bundle
-    rays_origin: list
+    rays_origin : list
          A 3 element list, with the first 2 being the (x,y) origin of the ray bundle and the 3rd the ray bundle starting z coordinates
 
     Attributes
     ----------
-    n, m: int
+    n : int
         wavefront resolution
-    size: int
+    m : int
+        wavefront resolution
+    size : int
         number of sources
-    zenith: ndarray
+    zenith : ndarray
         zenith angle
-    azimuth: ndarray
+    azimuth : ndarray
         azimuth angle
-    height: float
+    height : float
         source height
-    ray: Bundle
+    ray : Bundle
         geometric ray bundle
-    phase: cuFloatArray
+    phase : cuFloatArray
         wavefront phase
-    nPhoton: float, read only
+    nPhoton : float, read only
         number of photon
-    magnitude: float, write only
+    magnitude : float, write only
         star magnitude
+    wavefront : Complex_amplitude
+        the wavefront complex amplitude
 
     Examples
     --------
@@ -348,7 +374,7 @@ cdef class Source:
 
         Parameters
         ----------
-        mask: Mask structure
+        mask : Mask
             The binary mask structure
         """
         self._c_source.wavefront.masked(tel._c_mask)
@@ -736,10 +762,10 @@ if (N_PX>0) {
 @ and memory is de--allocated with:
 <<complex amplitude cleanup>>=
 void complex_amplitude::cleanup(void) {
-  if (N_PX>0) {
+  if (amplitude!=NULL)          
     HANDLE_ERROR( cudaFree( amplitude ) );
+  if (phase!=NULL)
     HANDLE_ERROR( cudaFree( phase ) );
-  }
 }
 @ Allocated variable are freed with the [[cleanup]] routine
 <<cleanup>>=
@@ -1486,7 +1512,7 @@ void source::opd2phase(void)
                                                    rays.d__ray, rays.N_RAY,
                                                    rays.L, rays.N_L,
                                                    dev_ptr);
-  rays.V.set_filter();
+  rays.V.set_filter_quiet();
   wavefront.M = &(rays.V);
   //wavefront.masked(&(rays.V));
 }

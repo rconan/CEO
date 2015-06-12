@@ -953,7 +953,7 @@ char *m;
 float *f;  
 @ \item the index of the non zeros elements [[idx]],
 <<mask parameters>>=
-unsigned int *idx;
+int *idx;
 @ \item the mask x and y size in pixel [[size_px]],
 <<mask parameters>>=
 int size_px[2];
@@ -984,6 +984,7 @@ struct mask {
   void setup_circular(int n, float D);
   void setup_GMT(int n, float S);
   void set_filter(void);
+  void set_filter_quiet(void);
   void cleanup(void);
 };
 @ 
@@ -996,19 +997,20 @@ The mask functions are:
 void mask::setup(int n) {
   nel = n;
   area = 1.0;
-  <<setup commom>>
+  <<setup common>>
   dim3 blockDim(256);
   dim3 gridDim(nel/256+1);
   fill_ones_char LLL gridDim,blockDim RRR (m,nel);
   set_filter();
 }
 @ with 
-<<setup commom>>=
+<<setup common>>=
+fprintf(stdout,"mask common: nel=%d\n",nel);
 HANDLE_ERROR( cudaMalloc((void**)&m, sizeof(char)*nel ) );
 HANDLE_ERROR( cudaMalloc((void**)&f, sizeof(float)*nel ) );
 HANDLE_ERROR( cudaMemset( m, 0, sizeof(char)*nel) );
 HANDLE_ERROR( cudaMemset( f, 0, sizeof(float)*nel) );
-HANDLE_ERROR( cudaMalloc((void**)&idx, sizeof(unsigned int)*nel ) );
+HANDLE_ERROR( cudaMalloc((void**)&idx, sizeof(int)*nel ) );
 @ \item with a square mask of [[n]] pixel across and [[L]] meter width:
 <<mask functions>>=
 void mask::setup(int n, float L) {
@@ -1017,7 +1019,7 @@ void mask::setup(int n, float L) {
   delta[0]   = delta[1]   = L/(n-1);
   nel = n*n;
   area = L*L;
-  <<setup commom>>
+  <<setup common>>
   dim3 blockDim(256);
   dim3 gridDim(nel/256+1);
   fill_ones_char LLL gridDim,blockDim RRR (m,nel);
@@ -1028,7 +1030,7 @@ void mask::setup(int n, float L) {
 void mask::setup_circular(int n) {
   nel = n*n;
   area = 1.0;
-  <<setup commom>>
+  <<setup common>>
   dim3 blockDim(16,16);
   dim3 gridDim(n/16+1,n/16+1);
   circular_pupil LLL gridDim,blockDim RRR ( m , n );
@@ -1042,11 +1044,11 @@ void mask::setup_circular(int n, float D) {
   delta[0]   = delta[1]   = D/(n-1);
   nel = n*n;
   area = 0.25*PI*D*D;
-  <<setup commom>>
+  <<setup common>>
   dim3 blockDim(16,16);
   dim3 gridDim(n/16+1,n/16+1);
   circular_pupil LLL gridDim,blockDim RRR ( m , n );
-  set_filter();
+  //set_filter();
 }
 @ \item with the Giant Magellan Telescope mask inside an [[n]]$\times$[[n]] array of length [[S]] in meter
 <<mask functions>>=
@@ -1056,7 +1058,7 @@ void mask::setup_GMT(int n, float S) {
   delta[0]   = delta[1]   = S/(n-1);
   nel = n*n;
   area = 368.0;
-  <<setup commom>>
+  <<setup common>>
   dim3 blockDim(16,16);
   dim3 gridDim(n/16+1,n/16+1,7);
   // PRIMARY + ASM
@@ -1079,12 +1081,24 @@ void mask::set_filter(void) {
   dim3 blockDim(256);
   dim3 gridDim(nel/256+1);
   fill_ones_filtered LLL gridDim,blockDim RRR (f, m, nel);
+
   cublasHandle_t handle;
   cublasCreate(&handle);
   CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
-  //  printf("@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
+  fprintf(stdout,"@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
   cublasDestroy(handle);
-  nnz_idx LLL gridDim,blockDim RRR (idx, m, nel);
+
+  nnz_idx LLL 1,1 RRR (idx, m, nel);
+}
+void mask::set_filter_quiet(void) {
+  dim3 blockDim(256);
+  dim3 gridDim(nel/256+1);
+  fill_ones_filtered LLL gridDim,blockDim RRR (f, m, nel);
+  cublasHandle_t handle;
+  cublasCreate(&handle);
+  CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
+  cublasDestroy(handle);
+  nnz_idx LLL 1,1 RRR (idx, m, nel);
 }
 @ \item [[cleanup]]
 <<mask functions>>=
@@ -1105,12 +1119,13 @@ __global__ void fill_ones_filtered(float *ones, const char* mask, int n_data)
 }
 @ and
 <<non zeros index>>=
-__global__ void nnz_idx(unsigned int *idx, const char* mask, int n_data)
+__global__ void nnz_idx(int *idx, const char* mask, int n_data)
 {
-  int i;
-  i = blockIdx.x * blockDim.x + threadIdx.x;
-  if ( (i<n_data) && (mask[i]) )
-     idx[i] = i;
+  int i, k;
+  k = 0;
+  for (i=0;i<n_data;i++)
+    if (mask[i])
+      idx[k++] = i;
 }
 @
 \end{itemize}
@@ -1119,6 +1134,7 @@ The python wrapper is
 <<ceo.pxd>>=
 ## mask structure
     cdef cppclass mask:
+        int nnz
         char *m
         float *f
         void setup(int, float)
@@ -1134,15 +1150,17 @@ cdef class MaskAbstract:
 
     Parameters
     ----------
-    
-    Returns
-    -------
-    out: Mask
-        A Mask object.
+    n : int
+        the total number of pixels
+    S : float, optionnal
+        the linear size of the mask, default: 0
 
-    Examples
-    --------
-
+    Attributes
+    ----------
+    f : cuFloatArray
+        the mask as a float array
+    nnz : int
+        the number of non zeros values in the mask
     """
     cdef ceo.mask *_c_mask
     cdef int n
@@ -1157,24 +1175,20 @@ cdef class MaskAbstract:
             x._c_gpu.dev_data = self._c_mask.f
             return x
 
+    property nnz:
+        def __get__(self):
+            return self._c_mask.nnz
+
 cdef class Mask(MaskAbstract):
     """ 
-    Creates a mask object.
+    Creates a square mask object.
 
     Parameters
     ----------
-     n: an int number
-       The sampling in pixel of the pupil.
-    
-   
-    Returns
-    -------
-    out: Mask
-        A Mask object.
-
-    Examples
-    --------
-
+    n : an int
+        the linear sampling in pixel of the pupil
+    L : float
+        the linear size of the mask in meter    
     """
 
     def __cinit__(self,int n, float L):
@@ -1186,21 +1200,14 @@ cdef class Mask(MaskAbstract):
 
 cdef class Telescope(MaskAbstract):
     """ 
-    Creates a mask object.
+    Creates a circular mask object.
 
     Parameters
     ----------
-    n: an int number
-       The sampling in pixel of the pupil.
-    
-    Returns
-    -------
-    out: Mask
-        A Mask object.
-
-    Examples
-    --------
-
+    n : int
+        the sampling in pixel of the pupil.
+    D : float
+        the diamter in meter of the pupil
     """ 
     def __cinit__(self, int n, float D):
         MaskAbstract.__init__(self,n*n)
@@ -1215,19 +1222,10 @@ cdef class GMT(MaskAbstract):
 
     Parameters
     ----------
-    n: an int number
+    n : int
        The sampling in pixel of the pupil.
-    S: a float number
+    S : float
        The size of the pupil in meter.
-    
-    Returns
-    -------
-    out: Mask
-        A Mask object.
-
-    Examples
-    --------
-
     """
     def __cinit__(self, int n, float S=25.5):
         MaskAbstract.__init__(self,n*n)
@@ -1484,44 +1482,31 @@ cdef extern from "utilities.h":
         float *dev_data
         float *host_data
         int N
-        void setup()
-        void dev_malloc()
-        void free_dev()
-        void dev2host()
-        void host2dev()
+        <<cu gpu common>>
     cdef cppclass gpu_int:
         int *dev_data
         int *host_data
         int N
-        void setup()
-        void dev_malloc()
-        void free_dev()
-        void dev2host()
-        void host2dev()
+        <<cu gpu common>>
     cdef cppclass gpu_double:
         double *dev_data
         double *host_data
         int N
-        void setup()
-        void dev_malloc()
-        void free_dev()
-        void dev2host()
-        void host2dev()
+        <<cu gpu common>>
+@
+<<cu gpu common>>=
+void setup()
+void dev_malloc()
+void free_dev()
+void dev2host()
+void host2dev()
 @ 
 <<ceo.pyx>>=
 cdef class cuFloatArray:
     """
     A class to interact with a cuda float array
 
-    Parameters
-    ---------
-    shape: (int,int), optional
-        Number of rows and colums
-    host_data: data object, optional
-        Host data to copy to the device
-    dev_malloc: boolean, optional
-        Allocated memory on device (default: False)
-    
+    <<cu array class doc>>
     """
      
     cdef ceo.gpu *_c_gpu
@@ -1559,9 +1544,7 @@ cdef class cuFloatArray:
             self._c_gpu.free_dev()
 
     def host(self,units=None,zm=False,mask=None,shape=None):
-        """
-        Copies the data from the device to the host and returns the associated ndarray
-        """
+        <<cu array method doc>>
         if self.shape==(0,0) or self.shape is None:
             raise ValueError("Data must have a size greater than zero!!")
         if shape is not None:
@@ -1579,25 +1562,53 @@ cdef class cuFloatArray:
         if units is not None:
             self.host_data = self.host_data*self.units[units]
         return self.host_data
-@ 
+@
+<<cu array class doc>>= 
+Parameters
+----------
+shape : tuple of int, optionnal
+    Number of rows and colums; default: None
+host_data : list or tuple or numpy array, optionnal
+    Host data to copy to the device; default: None
+dev_malloc : bool, optionnal
+    Flag to allocate memory on device; default: False
+
+Attributes
+----------
+size : int
+    The total number of element
+shape : tuple
+    The shape of the data array
+host_data : ndarray
+    The data on the host
+@
+<<cu array method doc>>=
+"""
+Parameters
+----------
+shape : tuple of int, optionnal
+    Number of rows and colums; default: None
+host_data : list or tuple or numpy array, optionnal
+    Host data to copy to the device; default: None
+dev_malloc : bool, optionnal
+    Flag to allocate memory on device; default: False
+
+Attributes
+----------
+size : int
+    The total number of element
+shape : tuple
+    The shape of the data array
+host_data : ndarray
+    The data on the host
+"""
+@
 <<ceo.pyx>>=
 cdef class cuIntArray:
     """
     A class to interact with a cuda integer array
 
-    Parameters
-    ---------
-    shape: (int,int), optional
-        Number of rows and colums
-    host_data: data object, optional
-        Host data to copy to the device
-    dev_malloc: boolean, optional
-        Allocated memory on device (default: False)
-    
-    Returns
-    -------
-    out: cuFloatArray 
-        A cuFloatArray object
+    <<cu array class doc>>
     """
      
     cdef ceo.gpu_int *_c_gpu
@@ -1635,9 +1646,7 @@ cdef class cuIntArray:
             self._c_gpu.free_dev()
 
     def host(self,units=None,zm=False,mask=None,shape=None):
-        """
-        Copies the data from the device to the host and returns the associated ndarray
-        """
+        <<cu array method doc>>
         if self.shape==(0,0) or self.shape is None:
             raise ValueError("Data must have a size greater than zero!!")
         if shape is not None:
@@ -1661,19 +1670,7 @@ cdef class cuDoubleArray:
     """
     A class to interact with a cuda double array
 
-    Parameters
-    ---------
-    shape: (int,int), optional
-        Number of rows and colums
-    host_data: data object, optional
-        Host data to copy to the device
-    dev_malloc: boolean, optional
-        Allocated memory on device (default: False)
-    
-    Returns
-    -------
-    out: cuDoubleArray 
-        A cuDoubleArray object
+    <<cu array class doc>>
     """
      
     cdef ceo.gpu_double *_c_gpu
@@ -1711,9 +1708,7 @@ cdef class cuDoubleArray:
             self._c_gpu.free_dev()
 
     def host(self,units=None,zm=False,mask=None,shape=None):
-        """
-        Copies the data from the device to the host and returns the associated ndarray
-        """
+        <<cu array method doc>>
         if self.shape==(0,0) or self.shape is None:
             raise ValueError("Data must have a size greater than zero!!")
         if shape is not None:
