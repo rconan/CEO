@@ -84,41 +84,42 @@ cdef class Centroiding:
 
     Parameters
     ----------
-    N_SIDE_LENSLET: an int number
-       The linear size of the lenslet array (>=1).
-    N_SOURCE: an int number, optional [default=1]
-       The number of guide stars (>=1).
-    
-    Returns
-    -------
-    out: Centroiding
-        A Centroiding object.
+    N_SIDE_LENSLET : int
+        The linear size of the lenslet array (>=1)
+    N_SOURCE : int, optionnal
+        The number of guide stars (>=1); default: 1
 
-    Examples
+    Attributes
+    ----------
+    N_SIDE_LENSLET : int
+        The linear size of the lenslet array (>=1)
+    N_SOURCE : int
+        The number of guide stars (>=1)
+    c: cuFloatArray
+        The centroid vector of length `N_SOURCE`x`N_SIDE_LENSLET`**2
+
+    See also
     --------
-
+    cuFloatArray: class acting as the interface between GPU host and device
     """
     cdef ceo.centroiding *_c_centroiding
     cdef public int N_SIDE_LENSLET
     cdef public int N_SOURCE
+    cdef public cuFloatArray c
 
     def __cinit__(self, int N_SIDE_LENSLET, N_SOURCE=1):
 	self._c_centroiding = new ceo.centroiding()
         self.N_SIDE_LENSLET = N_SIDE_LENSLET
         self.N_SOURCE = N_SOURCE
         self._c_centroiding.setup(self.N_SIDE_LENSLET,self.N_SOURCE)    
+        self.c = cuFloatArray(shape=2*self.N_SOURCE*self.N_SIDE_LENSLET**2)
+        self.c._c_gpu.dev_data = self._c_centroiding.d__c
 
     def __dealloc__(self):
         self._c_centroiding.cleanup()
 
     def fried_geometry(self,MaskAbstract dm, MaskAbstract pupil, int n, float threshold):
         self._c_centroiding.fried_geometry(dm._c_mask, pupil._c_mask, n, threshold)
-
-    property c:
-        def __get__(self):
-            c = cuFloatArray(shape=2*self.N_SOURCE*self.N_SIDE_LENSLET**2)
-            c._c_gpu.dev_data = self._c_centroiding.d__c
-            return c
 @
 \section{Parameters}
 \label{sec:prms}
