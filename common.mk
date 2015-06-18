@@ -1,4 +1,4 @@
-CEOPATH	        = $(HOME)/Dropbox/AWS/CEO
+CEOPATH	        = $(HOME)/Dropbox/CEO
 CUDAPATH	= /usr/local/cuda
 PYTHONPATH      = $(HOME)/anaconda
 CEOPYPATH	= $(CEOPATH)/python/ceo
@@ -21,6 +21,7 @@ SHELL		= /bin/bash
 texsrc = $(nwsrc:%.nw=%.tex)
 header = $(nwsrc:%.nw=%.h)
 obj    = $(nwsrc:%.nw=%.o)
+sobj    = $(nwsrc:%.nw=%.so)
 cusrc  = $(nwsrc:%.nw=%.cu)
 pxdsrc  = $(nwsrc:%.nw=%.pxd)
 pyxsrc  = $(nwsrc:%.nw=%.pyx)

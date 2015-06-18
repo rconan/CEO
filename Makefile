@@ -38,7 +38,6 @@ cython: all
 
 cylib: makefile
 	for i in $(CYTHON_DIR); do (make -C $$i cylib); done
-	$(NVCC) -shared $(CEOPYPATH)/*.o -o $(CEOPYPATH)/ceo.so $(LIBS) 
 
 doc: tex
 	make -C doc all
