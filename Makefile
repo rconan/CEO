@@ -4,6 +4,7 @@ include common.mk
 SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE plotly rayTracing# system
 TUTORIAL	= ngsao lgsao ltao ltaoVsAst geaos
 PYTHON_DIR	= utilities source atmosphere centroiding imaging shackHartmann aaStats GBTBT LMMSE rayTracing
+CYTHON_DIR	= utilities rayTracing source imaging centroiding shackHartmann
 
 all: makefile jsmnlib
 ifeq ($(wildcard include/plotly.credentials), )
@@ -34,6 +35,10 @@ cython: all
 	$(NVCC) -shared $(CEOPYPATH)/ceo.o -o $(CEOPYPATH)/ceo.so $(LIBS) 
 	rm -f $(CEOPYPATH)/ceo.cu $(CEOPYPATH)/ceo.o
 	export PYTHONPATH="$(CEOPATH)/python/ceo:$(PYTHONPATH)"
+
+cylib: makefile
+	for i in $(CYTHON_DIR); do (make -C $$i cylib); done
+	$(NVCC) -shared $(CEOPYPATH)/*.o -o $(CEOPYPATH)/ceo.so $(LIBS) 
 
 doc: tex
 	make -C doc all

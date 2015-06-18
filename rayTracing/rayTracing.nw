@@ -121,16 +121,18 @@ cdef extern from "rayTracing.h":
         rtd optical_path_length
     ctypedef struct coordinate_system:
         float *float_R        
+@ 
+<<ceo.pyx>>=
+cimport numpy as np
+from utilities cimport cuDoubleArray
 @
 \subsubsection{Ray bundle}
 \label{sec:ray-bundle-1}
-
 <<ceo.pxd>>=
     cdef cppclass bundle:
         int N_RAY, N_BUNDLE
         ray *d__ray
 	ray *d__chief_ray
-        source *src
         void setup(rtd, int, int , vector, int)
         void setup(rtd, int , vector, int)
         void cleanup()
@@ -150,6 +152,10 @@ cdef extern from "rayTracing.h":
 					 float , int )
         void get_vignetting(double *)
 @
+<<class definitions>>=
+# Bundle
+cdef class Bundle:
+    cdef bundle *_c_bundle
 <<ceo.pyx>>=
 # polar bundle
 cdef class Bundle:
@@ -184,7 +190,6 @@ cdef class Bundle:
     vignetting : cuDoubleArray, read only
         The vignetting flag of the rays as a N_BUNDLExN_RAY array
     """
-    cdef ceo.bundle *_c_bundle
 
     def __cinit__(self):
         self._c_bundle = new ceo.bundle()
@@ -4295,3 +4300,7 @@ void gmt_m2::coma_neutral(float tip, float tilt)
 \section{Tests}
 \label{sec:tests}
 
+@ 
+Adding the class definitions to the definition file
+<<ceo.pxd>>=
+<<class definitions>>

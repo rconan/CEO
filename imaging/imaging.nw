@@ -99,6 +99,7 @@ struct imaging {
 \label{sec:python}
 
 <<ceo.pxd>>=
+from source cimport source
 cdef extern from "imaging.h":
     cdef cppclass imaging:
         int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_PX_CAMERA, N_SOURCE
@@ -111,8 +112,16 @@ cdef extern from "imaging.h":
         void propagateThroughPyramid(source *)
         void readout(float, float)
         void reset()
+<<class definitions>>
+@ 
+<<class definitions>>=
+from utilities cimport cuFloatArray
+cdef class Imaging:
+    cdef ceo.imaging *_c_imaging
+    cdef public cuFloatArray frame
 @ 
 <<ceo.pyx>>=
+from source cimport Source
 cdef class Imaging:
     """ 
     Creates an imaging object.
@@ -147,8 +156,6 @@ cdef class Imaging:
     <<imaging.py>>
 
     """
-    cdef ceo.imaging *_c_imaging
-    cdef public cuFloatArray frame
 
     def __cinit__(self, int N_SIDE_LENSLET, int N_PX_PUPIL, 
 		  DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, N_SOURCE=1):

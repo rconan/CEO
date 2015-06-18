@@ -69,6 +69,7 @@ struct centroiding {
 \label{sec:python}
 
 <<ceo.pxd>>=
+from utilities cimport mask
 cdef extern from "centroiding.h":
     cdef cppclass centroiding:
         float *d__c
@@ -76,8 +77,18 @@ cdef extern from "centroiding.h":
         void setup(int, int)
         void fried_geometry(mask *dm, mask *pupil, int n, float threshold)
         void cleanup()
+<<class definitions>>
+@ 
+<<class definitions>>=
+from utilities cimport cuFloatArray
+cdef class Centroiding:
+    cdef ceo.centroiding *_c_centroiding
+    cdef public int N_SIDE_LENSLET
+    cdef public int N_SOURCE
+    cdef public cuFloatArray c
 @ 
 <<ceo.pyx>>=
+from utilities cimport cuFloatArray, MaskAbstract
 cdef class Centroiding:
     """ 
     Create a centroiding container
@@ -102,10 +113,6 @@ cdef class Centroiding:
     --------
     cuFloatArray: class acting as the interface between GPU host and device
     """
-    cdef ceo.centroiding *_c_centroiding
-    cdef public int N_SIDE_LENSLET
-    cdef public int N_SOURCE
-    cdef public cuFloatArray c
 
     def __cinit__(self, int N_SIDE_LENSLET, N_SOURCE=1):
 	self._c_centroiding = new ceo.centroiding()

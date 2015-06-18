@@ -67,6 +67,10 @@ struct shackHartmann {
 \label{sec:python}
 
 <<ceo.pxd>>=
+from utilities cimport mask
+from imaging cimport imaging
+from centroiding cimport centroiding
+from source cimport source
 cdef extern from "shackHartmann.h":
     cdef cppclass shackHartmann:
         int N_LENSLET, N_ACTUATOR
@@ -84,8 +88,20 @@ cdef extern from "shackHartmann.h":
         void analyze(source *)
 	float* get_frame_dev_ptr()
         void get_valid_slopes(float *)
+<<class definitions>>
+@ 
+<<class definitions>>=
+from utilities cimport MaskAbstract
+cdef class ShackHartmann:
+    cdef ceo.shackHartmann *_c_shackHartmann
+    cdef int N_SIDE_LENSLET, N_PX_LENSLET, DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_GS, N_PX_FRAME
+    cdef public MaskAbstract valid_lenslet
+    cdef public MaskAbstract valid_actuator
 @ 
 <<ceo.pyx>>=
+from libc cimport math
+from utilities cimport cuFloatArray, MaskAbstract
+from source cimport Source
 cdef class ShackHartmann:
     """ 
     Creates a shackHartmann object.
@@ -123,10 +139,6 @@ cdef class ShackHartmann:
     <<shackHartmann.py>>
 
     """
-    cdef ceo.shackHartmann *_c_shackHartmann
-    cdef int N_SIDE_LENSLET, N_PX_LENSLET, DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_GS, N_PX_FRAME
-    cdef public MaskAbstract valid_lenslet
-    cdef public MaskAbstract valid_actuator
 
     def __cinit__(self, int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
 	          DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, N_GS=1):

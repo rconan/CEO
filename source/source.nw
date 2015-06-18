@@ -133,8 +133,8 @@ struct source {
 \label{sec:python}
 
 <<ceo.pxd>>=
-cdef extern from "rayTracing.h":
-    ctypedef double rtd
+from utilities cimport mask
+from rayTracing cimport bundle, gmt_m1, gmt_m2, vector, rtd
 cdef extern from "source.h":
     cdef cppclass complex_amplitude:
         int N
@@ -164,12 +164,34 @@ cdef extern from "source.h":
         void opd2phase()
         void info()
         float n_photon()
-@ 
+<<class definitions>>
+@
+<<class definitions>>= 
+from numpy cimport ndarray
+from utilities cimport cuFloatArray, MaskAbstract
+from rayTracing cimport Bundle
+cdef class Complex_amplitude:
+    cdef ceo.complex_amplitude *_c_complex_amplitude
+cdef class Source:
+    cdef ceo.source *_c_source
+    cdef public int N_SRC
+    cdef int n, m
+    cdef public int size
+    cdef public ndarray zenith, azimuth
+    cdef public float height
+    cdef public Bundle rays
+    cdef public Complex_amplitude wavefront
+    cdef public sphere_distance
+@
 <<ceo.pyx>>=
+cimport cython
+cimport numpy as np
+from utilities cimport cuFloatArray, MaskAbstract
+from rayTracing cimport Bundle
+
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class Complex_amplitude:
-    cdef ceo.complex_amplitude *_c_complex_amplitude
     """
     A class to prepresent a wavefront complex amplitude
 
@@ -282,15 +304,6 @@ cdef class Source:
     >>> azi = np.arange(3,dtype=np.float32)*3.14
     >>> lgs = ceo.Source("R",zenith=zen,azimuth=azi,height=90e3,resolution=(n,n)) 
     """
-    cdef ceo.source *_c_source
-    cdef public int N_SRC
-    cdef int n, m
-    cdef public int size
-    cdef public np.ndarray zenith, azimuth
-    cdef public float height
-    cdef public Bundle rays
-    cdef public Complex_amplitude wavefront
-    cdef public sphere_distance
 
     def __cinit__(self,char *_photometric_band,  
 		  zenith=0, azimuth=0, 

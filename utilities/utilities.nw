@@ -190,6 +190,11 @@ int round_up_to_nhp2(int n) {
 
 <<ceo.pxd>>=
 cdef extern from "utilities.h":
+@ 
+<<ceo.pyx>>=
+from libc cimport math
+cimport numpy as np
+cimport utilities
 @
 
 \section{Functions}
@@ -1141,6 +1146,11 @@ The python wrapper is
         void setup_GMT(int, float)
         void cleanup()
 @ 
+<<class definitions>>=
+# MaskAbstract
+cdef class MaskAbstract:
+    cdef ceo.mask *_c_mask
+    cdef int n    
 <<ceo.pyx>>=
 ## mask structure
 cdef class MaskAbstract:
@@ -1161,8 +1171,6 @@ cdef class MaskAbstract:
     nnz : int
         the number of non zeros values in the mask
     """
-    cdef ceo.mask *_c_mask
-    cdef int n
 
     def __cinit__(self,int n, float S=0.0):
         self.n = n
@@ -1500,6 +1508,16 @@ void free_dev()
 void dev2host()
 void host2dev()
 @ 
+<<class definitions>>=
+# cuFloatArray
+from numpy cimport ndarray
+cdef class cuFloatArray:
+    cdef ceo.gpu *_c_gpu
+    cdef public int size
+    cdef public shape
+    cdef dev_malloc
+    cdef public ndarray host_data
+    cdef units
 <<ceo.pyx>>=
 cdef class cuFloatArray:
     """
@@ -1507,13 +1525,6 @@ cdef class cuFloatArray:
 
     <<cu array class doc>>
     """
-     
-    cdef ceo.gpu *_c_gpu
-    cdef public int size
-    cdef public shape
-    cdef dev_malloc
-    cdef public np.ndarray host_data
-    cdef units
 
     def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
         self._c_gpu = new ceo.gpu()
@@ -1602,6 +1613,15 @@ host_data : ndarray
     The data on the host
 """
 @
+<<class definitions>>=
+# cuIntArray
+cdef class cuIntArray:
+    cdef ceo.gpu_int *_c_gpu
+    cdef public int size
+    cdef public shape
+    cdef dev_malloc
+    cdef public ndarray host_data
+    cdef units
 <<ceo.pyx>>=
 cdef class cuIntArray:
     """
@@ -1609,13 +1629,6 @@ cdef class cuIntArray:
 
     <<cu array class doc>>
     """
-     
-    cdef ceo.gpu_int *_c_gpu
-    cdef public int size
-    cdef public shape
-    cdef dev_malloc
-    cdef public np.ndarray host_data
-    cdef units
 
     def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
         self._c_gpu = new ceo.gpu_int()
@@ -1664,6 +1677,15 @@ cdef class cuIntArray:
             self.host_data = self.host_data*self.units[units]
         return self.host_data
 @
+<<class definitions>>=
+# cuDoubleArray
+cdef class cuDoubleArray:
+    cdef ceo.gpu_double *_c_gpu
+    cdef public int size
+    cdef public shape
+    cdef dev_malloc
+    cdef public ndarray host_data
+    cdef units
 <<ceo.pyx>>=
 cdef class cuDoubleArray:
     """
@@ -1671,13 +1693,6 @@ cdef class cuDoubleArray:
 
     <<cu array class doc>>
     """
-     
-    cdef ceo.gpu_double *_c_gpu
-    cdef public int size
-    cdef public shape
-    cdef dev_malloc
-    cdef public np.ndarray host_data
-    cdef units
 
     def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
         self._c_gpu = new ceo.gpu_double()
@@ -1950,4 +1965,7 @@ cpdef wavefrontFiniteDifference(cuFloatArray sx, cuFloatArray sy, int NL,
     else:
         wavefront_finite_difference(sx._c_gpu.dev_data, sy._c_gpu.dev_data, NL, 
                                     phi._c_gpu.dev_data, n, d, M._c_mask)
-
+@ 
+Adding the class definitions to the definition file
+<<ceo.pxd>>=
+<<class definitions>>
