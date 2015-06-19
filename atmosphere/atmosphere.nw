@@ -183,7 +183,9 @@ struct atmosphere {
 \subsection{Python}
 \label{sec:python}
 
-<<ceo.pxd>>=
+<<atmosphere.pxd>>=
+from source cimport source
+from centroiding cimport centroiding
 cdef extern from "atmosphere.h":
     cdef cppclass atmosphere:
         void setup(float , float, int, float *, float *, float *, float *)
@@ -209,23 +211,34 @@ cdef extern from "atmosphere.h":
 			float, int,
                         float, int,
 			float)
+<<class definitions>>
 @ 
-<<ceo.pyx>>=
+<<class definitions>>=
+from numpy cimport ndarray
+from utilities cimport cuFloatArray
+from source cimport Source
+from centroiding cimport Centroiding
+from shackHartmann cimport ShackHartmann
+cdef class AtmosphereAbstract:
+    cdef atmosphere *_c_atmosphere
+    cdef public float r0, L0
+    cdef public int N_LAYER
+    cdef public ndarray altitude, xi0, wind_speed, wind_direction
+@ 
+<<atmosphere.pyx>>=
+import numpy as np
+cimport cython
+cimport numpy as np
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cdef class AtmosphereAbstract:
-
-    cdef ceo.atmosphere *_c_atmosphere
-    cdef public float r0, L0
-    cdef public int N_LAYER
-    cdef public np.ndarray altitude, xi0, wind_speed, wind_direction
 
     def __cinit__(self, float r0, float L0, 
                   N_LAYER=1,
                   altitude=0.0, xi0=1.0, 
                   wind_speed=0.0, wind_direction=0.0,
 		  L=0.0, NXY_PUPIL=0, fov=0.0):
-	self._c_atmosphere = new ceo.atmosphere()
+	self._c_atmosphere = new atmosphere()
         self.r0 = r0
         self.L0 = L0
         self.N_LAYER        = N_LAYER
@@ -270,7 +283,7 @@ cdef class Atmosphere(AtmosphereAbstract):
     >>> xi0 = np.array([0.3,0.15,0.25,0.1,0.1,0.05,0.05], dtype=np.float32)
     >>> vs  = np.array([10,10,10,10,10,10,10],dtype=np.float32)   
     >>> vo  = np.array([0,0,0,0,0,0,0], dtype=np.float32) 
-    >>> atm = ceo.Atmosphere(15e-2,30,h,xi0,vs,vo)
+    >>> atm = Atmosphere(15e-2,30,h,xi0,vs,vo)
     """
 
     def __cinit__(self, float r0, float L0, 
@@ -1989,7 +2002,7 @@ void atmosphere::rayTracing(source *src,
 This test compares the centroids derived from an image through a circular aperture for both the geometric model and the diffractive model.
 <<atmosphere.bin>>=
 #ifndef __CEO_H__
-#include "ceo.h"
+#include "h"
 #endif
 int main(int argc,char *argv[]) {
 <<test setup>>
@@ -2134,7 +2147,7 @@ import sys
 sys.path.append("/home/rconan/CEO/python")
 import time
 from pylab import *
-from ceo import *
+from import *
 
 <<python test II (uplink stats)>>
 @ 
@@ -2420,7 +2433,7 @@ It calls the mex function:
 #include "gpu/mxGPUArray.h"
 
 #ifndef __CEO_H__
-#include "ceo.h"
+#include "h"
 #endif
 #ifndef __SOURCE_H__
 #include "source.h"
@@ -2535,7 +2548,7 @@ void mexFunction(int nlhs, mxArray *plhs[],
 #include "definitions.h"
 
 #ifndef __CEO_H__
-#include "ceo.h"
+#include "h"
 #endif
 #ifndef __SOURCE_H__
 #include "source.h"
@@ -2652,21 +2665,21 @@ The Matlab test suite:
 % L0 = atm.L0;
 
 nxy = 512;
-ceodir = '~/CEO';
-cd(ceodir)
+ir = '~/CEO';
+cd(ir)
 unix(['sed -i ',...
     '-e ''s/#define _N_LAYER_ [0-9]*/#define _N_LAYER_ ',num2str(atm.nLayer),'/g'' ',...
     '-e ''s/#define _N_PIXEL_ [0-9]*/#define _N_PIXEL_ ',...
     num2str(nxy^2),'/g'' include/definitions.h']);
 unix('cat include/definitions.h');
 unix('make clean lib atmosphere.mex')
-cd([ceodir,'/test'])
-clear ceo_atmosphere
-mex -largeArrayDims -I../include -L../lib -lceo -o ceo_atmosphere atmosphere.mex.cu
+cd([ir,'/test'])
+clear atmosphere
+mex -largeArrayDims -I../include -L../lib -l-o atmosphere atmosphere.mex.cu
 
 u = single( L0*gpuArray.linspace(-1,1,nxy) );
 [x,y] = meshgrid( u );
-phs = ceo_atmosphere(x,y,0,L0,0);
+phs = atmosphere(x,y,0,L0,0);
 figure(1)
 imagesc(u,u,phs)
 axis square
@@ -2674,16 +2687,16 @@ colorbar
 
 %% Variance test
 fprintf('__ Variance Test __\n')
-clear x y ceo_atmosphere
-cd(ceodir)
+clear x y atmosphere
+cd(ir)
 unix(['sed -i ',...
     '-e ''s/#define _N_LAYER_ [0-9]*/#define _N_LAYER_ ',num2str(atm.nLayer),'/g'' ',...
     '-e ''s/#define _N_PIXEL_ [0-9]*/#define _N_PIXEL_ 1/g'' include/definitions.h']);
 unix('cat include/definitions.h');
 unix('make clean lib atmosphere.mex')
-cd([ceodir,'/test'])
-clear ceo_atmosphere
-mex -largeArrayDims -I../include -L../lib -lceo -o ceo_atmosphere atmosphere.mex.cu
+cd([ir,'/test'])
+clear atmosphere
+mex -largeArrayDims -I../include -L../lib -l-o atmosphere atmosphere.mex.cu
 tic
 nxy = 1000;
 x   = gpuArray.rand(1,nxy,'single');
@@ -2694,7 +2707,7 @@ y = (2*y-1)*L/2;
 phs_var =  gpuArray.zeros(1,nxy,'single');
 h = waitbar(0,'Variance Test');
 for kxy = 1:nxy
-    phs_var(kxy) =  ceo_atmosphere(x(kxy),y(kxy),1,L0,0);
+    phs_var(kxy) =  atmosphere(x(kxy),y(kxy),1,L0,0);
     waitbar(kxy/nxy,h)
 end
 close(h)
@@ -2705,14 +2718,14 @@ toc
 %% Structure function test I
 fprintf('__ Structure Function Test I __\n')
 n_sample = 1000;
-clear ceo_atmosphere
-cd(ceodir)
+clear atmosphere
+cd(ir)
 unix(['sed -i -e ''s/#define _N_PIXEL_ [0-9]*/#define _N_PIXEL_ ',...
     num2str(n_sample),'/g'' include/definitions.h']);
 unix('cat include/definitions.h');
 unix('make clean lib atmosphere.mex')
-cd([ceodir,'/test'])
-mex -largeArrayDims -I../include -L../lib -lceo -o ceo_atmosphere atmosphere.mex.cu
+cd([ir,'/test'])
+mex -largeArrayDims -I../include -L../lib -l-o atmosphere atmosphere.mex.cu
 rho = 0:0.25:5;
 rho(1) = 0.1;
 nRho = length(rho);
@@ -2731,8 +2744,8 @@ for kRho=1:nRho
     tic
     for k_plps = 1:n_plps
         
-        phs_xy = ceo_atmosphere(real(zxy),imag(zxy),1,L0,0);
-        phs_xy_rho =  ceo_atmosphere(real(zxy_rho),imag(zxy_rho),0,L0,0);
+        phs_xy = atmosphere(real(zxy),imag(zxy),1,L0,0);
+        phs_xy_rho =  atmosphere(real(zxy_rho),imag(zxy_rho),0,L0,0);
         d_phs(k_plps,:) = phs_xy - phs_xy_rho;
         
     end
@@ -2782,7 +2795,7 @@ for kL0 = 1:nL0
     
     L0 = L0_(kL0);
     atm.L0 = L0;
-    clear ceo_atmosphere
+    clear atmosphere
 
     hwb = waitbar(0,sprintf('Computing SF for L0=%3.0fm ...',L0));
     for kRho=1:nRho
@@ -2796,8 +2809,8 @@ for kL0 = 1:nL0
         tic
         for k_plps = 1:n_plps
             
-            phs_xy = ceo_atmosphere(real(zxy),imag(zxy),1,L0,0);
-            phs_xy_rho =  ceo_atmosphere(real(zxy_rho),imag(zxy_rho),0,L0,0);
+            phs_xy = atmosphere(real(zxy),imag(zxy),1,L0,0);
+            phs_xy_rho =  atmosphere(real(zxy_rho),imag(zxy_rho),0,L0,0);
             d_phs(k_plps,:) = phs_xy - phs_xy_rho;
             
         end
@@ -2839,16 +2852,16 @@ fprintf('__ Zernike Test __\n')
 L0 = 30;
 atm.L0 = L0;
 nxy = 128;
-clear ceo_atmosphere
-cd(ceodir)
+clear atmosphere
+cd(ir)
 unix(['sed -i ',...
     '-e ''s/#define _N_LAYER_ [0-9]*/#define _N_LAYER_ ',num2str(atm.nLayer),'/g'' ',...
     '-e ''s/#define _N_PIXEL_ [0-9]*/#define _N_PIXEL_ ',...
     num2str(nxy^2),'/g'' include/definitions.h']);
 unix('cat include/definitions.h');
 unix('make clean lib atmosphere.mex')
-cd([ceodir,'/test'])
-mex -largeArrayDims -I../include -L../lib -lceo -o ceo_atmosphere atmosphere.mex.cu
+cd([ir,'/test'])
+mex -largeArrayDims -I../include -L../lib -l-o atmosphere atmosphere.mex.cu
 
 u = 12.5*single(gpuArray.linspace(-1,1,nxy));
 [x,y] = meshgrid(u);
@@ -2860,7 +2873,7 @@ nIt = 4000;
 zernCoefs = gpuArray.zeros(zern.nMode,nIt,'single');
 h = waitbar(0,'Zernike Test !');
 for kTau=1:nIt
-    phs = ceo_atmosphere(x,y,1,L0,0);
+    phs = atmosphere(x,y,1,L0,0);
     zern = zern.\phs;
     zernCoefs(:,kTau) = zern.c;
     waitbar(kTau/nIt,h)
@@ -2875,13 +2888,13 @@ grid
 xlabel('Zernike mode')
 ylabel('Zernike coef. variance [rd^2]')
 
-%for kTau=1:nTau;phs = ceo_atmosphere(x,y,0,L0,(kTau-1)*tau);imagesc(phs);axis square;colorbar;drawnow;end
+%for kTau=1:nTau;phs = atmosphere(x,y,0,L0,(kTau-1)*tau);imagesc(phs);axis square;colorbar;drawnow;end
 
 %% Taylor (frozen flow) hypothesis test
 fprintf('__ Taylor (frozen flow) Hypothesis Test __\n')
 
 tic
-phs = ceo_atmosphere(x,y,0,L0,0);
+phs = atmosphere(x,y,0,L0,0);
 toc
 
 figure(27)
@@ -2902,10 +2915,10 @@ zernCoefs = gpuArray.zeros(zern.nMode,nTau,nIt,'single');
 h = waitbar(0,'Taylor (frozen flow) hypothesis test!');
 for kIt=1:nIt
     
-    phs = ceo_atmosphere(x,y,1,L0,0);
+    phs = atmosphere(x,y,1,L0,0);
     
     for kTau=1:nTau
-        phs = ceo_atmosphere(x,y,0,L0,(kTau-1)*tau);
+        phs = atmosphere(x,y,0,L0,(kTau-1)*tau);
         zern = zern.\phs;
         zernCoefs(:,kTau,kIt) = zern.c;
         %     set(h,'Cdata',h_phs)
@@ -2946,7 +2959,7 @@ hold off
 @ 
 <<atmosphere.bin.old>>=
 #ifndef __CEO_H__
-#include "ceo.h"
+#include "h"
 #endif
 #ifndef __SOURCE_H__
 #include "source.h"

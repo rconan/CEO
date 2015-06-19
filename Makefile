@@ -4,7 +4,7 @@ include common.mk
 SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE plotly rayTracing# system
 TUTORIAL	= ngsao lgsao ltao ltaoVsAst geaos
 PYTHON_DIR	= utilities source atmosphere centroiding imaging shackHartmann aaStats GBTBT LMMSE rayTracing
-CYTHON_DIR	= utilities rayTracing source imaging centroiding shackHartmann
+CYTHON_DIR	= utilities rayTracing source imaging centroiding shackHartmann atmosphere LMMSE aaStats
 
 all: makefile jsmnlib
 ifeq ($(wildcard include/plotly.credentials), )
@@ -24,26 +24,15 @@ tex: makefile $(texsrc)
 	for i in $(SOURCE_DIR); do (echo -e "\input{ceo.manual.$$i}\n">>doc/ceo.manual.main.tex); done
 	for i in $(SOURCE_DIR); do (echo -n "\chapter" >doc/ceo.manual.$$i.tex; echo -e "{$$i}\n\label{sec:$$i}\n\n\input{../$$i/$$i}">>doc/ceo.manual.$$i.tex); done
 
-cython: all 
-	mkdir -p $(CEOPYPATH)
-	rm -f $(CEOPYPATH)/ceo.pxd $(CEOPYPATH)/ceo.pyx
-	cp $(CEOPATH)/etc/ceo.pxd $(CEOPYPATH)/ceo.pxd
-	cp $(CEOPATH)/etc/ceo.pyx $(CEOPYPATH)/ceo.pyx
-	for i in $(PYTHON_DIR); do (echo -e "\n# $$i.nw">>$(CEOPYPATH)/ceo.pxd;echo -e "\n# $$i.nw">>$(CEOPYPATH)/ceo.pyx;make -C $$i python);echo -e "\n"; done
-	cython --cplus $(CEOPYPATH)/ceo.pyx -o $(CEOPYPATH)/ceo.cu
-	$(NVCC) $(INCS) -I$(PYTHONPATH)/include/python2.7/ -I$(PYTHONPATH)/lib/python2.7/site-packages/numpy/core/include $(NVCCFLAGS) -o $(CEOPYPATH)/ceo.o -c $(CEOPYPATH)/ceo.cu
-	$(NVCC) -shared $(CEOPYPATH)/ceo.o -o $(CEOPYPATH)/ceo.so $(LIBS) 
-	rm -f $(CEOPYPATH)/ceo.cu $(CEOPYPATH)/ceo.o
-	export PYTHONPATH="$(CEOPATH)/python/ceo:$(PYTHONPATH)"
 
-cylib: makefile
-	for i in $(CYTHON_DIR); do (make -C $$i cylib); done
+cython: makefile
+	for i in $(CYTHON_DIR); do (make -C $$i cython); done
 
 doc: tex
 	make -C doc all
 
 ripython:
-	env PYTHONPATH="$(CEOPATH)/python/ceo" ipython notebook --no-browser
+	env PYTHONPATH="$(CEOPATH)/python" ipython notebook --no-browser
 
 touch: 
 	find . -name \*.nw -exec touch {} \;

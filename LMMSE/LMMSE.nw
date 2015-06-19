@@ -94,7 +94,12 @@ struct LMMSE {
 \subsection{Python}
 \label{sec:python}
 
-<<ceo.pxd>>=
+<<LMMSE.pxd>>=
+from utilities cimport mask
+from atmosphere cimport atmosphere
+from source cimport source
+from centroiding cimport centroiding
+from shackHartmann cimport shackHartmann
 cdef extern from "LMMSE.h":
     cdef cppclass LMMSE:
         int NP
@@ -109,8 +114,23 @@ cdef extern from "LMMSE.h":
         void cleanup()
         void estimation(centroiding *)
         void estimation(shackHartmann *)
+<<class definitions>>
 @ 
-<<ceo.pyx>>=
+<<class definitions>>=
+cdef class Lmmse:
+    cdef LMMSE *_c_LMMSE
+    cdef int N_phase
+cdef class LmmseSH:
+    cdef LMMSE *_c_LMMSE
+    cdef int N_phase
+    cdef int N_slope
+@ 
+<<LMMSE.pyx>>=
+from utilities cimport MaskAbstract, cuFloatArray
+from atmosphere cimport AtmosphereAbstract
+from source cimport Source
+from centroiding cimport Centroiding
+from shackHartmann cimport ShackHartmann
 cdef class Lmmse:
     """
     A class for LMMSE reconstructor
@@ -140,15 +160,12 @@ cdef class Lmmse:
     out : Lmmse
         A Lmmse object
     """
-    
-    cdef ceo.LMMSE *_c_LMMSE
-    cdef int N_phase
 
     def __cinit__(self,AtmosphereAbstract atm, 
                   Source guide_star, Source mmse_star,
                   float sampling, int N, MaskAbstract pupil, 
                   char *solver_id, int osf=1):
-        self._c_LMMSE = new ceo.LMMSE()
+        self._c_LMMSE = new LMMSE()
         self._c_LMMSE.setup(atm._c_atmosphere,
                             guide_star._c_source, mmse_star._c_source,
                             sampling, N, pupil._c_mask, solver_id,osf)
@@ -202,15 +219,11 @@ cdef class LmmseSH:
         A Lmmse object
     """
     
-    cdef ceo.LMMSE *_c_LMMSE
-    cdef int N_phase
-    cdef int N_slope
-
     def __cinit__(self,AtmosphereAbstract atm, 
                   Source guide_star, Source mmse_star,
                   ShackHartmann wfs, char *solver_id,
                   int osf=1, MaskAbstract M=None):
-        self._c_LMMSE = new ceo.LMMSE()
+        self._c_LMMSE = new LMMSE()
         self.N_slope = wfs.N_SIDE_LENSLET*wfs.N_SIDE_LENSLET*2*guide_star._c_source.N_SRC
         if osf>1:
             self._c_LMMSE.setup(atm._c_atmosphere,
@@ -1031,7 +1044,7 @@ void LMMSE::toFile(const char *filename){
 The test routine is:
 <<LMMSE.bin>>=
 #ifndef __CEO_H__
-#include "ceo.h"
+#include "h"
 #endif
 #ifndef __SOURCE_H__
 #include "source.h"

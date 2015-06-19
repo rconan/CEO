@@ -107,7 +107,7 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 \subsection{Python}
 \label{sec:python}
 
-<<ceo.pxd>>=
+<<rayTracing.pxd>>=
 cdef extern from "rayTracing.h":
     ctypedef double rtd
     ctypedef struct vector:
@@ -122,13 +122,14 @@ cdef extern from "rayTracing.h":
     ctypedef struct coordinate_system:
         float *float_R        
 @ 
-<<ceo.pyx>>=
+<<rayTracing.pyx>>=
+import numpy as np
 cimport numpy as np
 from utilities cimport cuDoubleArray
 @
 \subsubsection{Ray bundle}
 \label{sec:ray-bundle-1}
-<<ceo.pxd>>=
+<<rayTracing.pxd>>=
     cdef cppclass bundle:
         int N_RAY, N_BUNDLE
         ray *d__ray
@@ -156,7 +157,7 @@ from utilities cimport cuDoubleArray
 # Bundle
 cdef class Bundle:
     cdef bundle *_c_bundle
-<<ceo.pyx>>=
+<<rayTracing.pyx>>=
 # polar bundle
 cdef class Bundle:
     """
@@ -192,7 +193,7 @@ cdef class Bundle:
     """
 
     def __cinit__(self):
-        self._c_bundle = new ceo.bundle()
+        self._c_bundle = new bundle()
 
     <<bundle common>>
 @ 
@@ -317,23 +318,23 @@ property vignetting:
 \subsubsection{Conic surface}
 \label{sec:surface-1}
 
-<<ceo.pxd>>=
+<<rayTracing.pxd>>=
     cdef cppclass conic:
         coordinate_system ref_frame
         void setup(rtd , rtd , vector , vector , vector)
         void cleanup()
 @
-<<ceo.pyx>>=
+<<rayTracing.pyx>>=
 # conic
 cdef class Conic:
     """
     """
-    cdef ceo.conic *_c_conic
+    cdef conic *_c_conic
 
     def __cinit__(self,rtd c, rtd k, 
                   origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0],
                   conic_origin=[0.0,0.0,0.0]):
-        self._c_conic = new ceo.conic()
+        self._c_conic = new conic()
         cdef vector __origin
         __origin.x = <float>origin[0]
         __origin.y = <float>origin[1]
@@ -354,7 +355,7 @@ cdef class Conic:
 \subsubsection{Aperture}
 \label{sec:aperture-1}
 
-<<ceo.pxd>>=
+<<rayTracing.pxd>>=
     cdef cppclass aperture:
         coordinate_system ref_frame
         void setup(float, float, int, vector , vector) 
@@ -362,15 +363,15 @@ cdef class Conic:
         void cleanup()
         void vignetting(bundle *)
 @
-<<ceo.pyx>>=
+<<rayTracing.pyx>>=
 # aperture
 cdef class Aperture:
     """
     """
-    cdef ceo.aperture *_c_aperture
+    cdef aperture *_c_aperture
     
     def __cinit__(self, float D, float ri, int D_px, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0]):
-        self._c_aperture = new ceo.aperture()
+        self._c_aperture = new aperture()
         cdef vector __origin
         __origin.x = <float>origin[0]
         __origin.y = <float>origin[1]
@@ -390,7 +391,7 @@ cdef class Aperture:
 \subsubsection{GMT M1}
 \label{sec:gmt-m1-1}
 
-<<ceo.pxd>>=
+<<rayTracing.pxd>>=
     cdef cppclass gmt_m1:
         void test_ray_tracing()
         <<python GMT M12 functions>>
@@ -410,16 +411,16 @@ void reset()
 void trace(bundle *)
 void blocking(bundle *)
 @
-<<ceo.pyx>>=
+<<rayTracing.pyx>>=
 # GMT M1
 cdef class GMT_M1:
     <<GMT M12 docstring>>
-    cdef ceo.gmt_m1 *_c_gmt_m1
-    cdef public ceo.ZernikeS zernike
+    cdef gmt_m1 *_c_gmt_m1
+    cdef public ZernikeS zernike
     
     def __cinit__(self, float D, int D_px, int radial_order=0, int N_SRC=1):
-        self._c_gmt_m1 = new ceo.gmt_m1()
-        self.zernike = ceo.ZernikeS(radial_order,N_SURF=7)
+        self._c_gmt_m1 = new gmt_m1()
+        self.zernike = ZernikeS(radial_order,N_SURF=7)
         self._c_gmt_m1.setup(D, D_px, <zernikeS *> self.zernike._c_zernikeS, N_SRC)
 
     def __dealloc__(self):
@@ -467,10 +468,10 @@ N_SRC: int, optionnal
 Examples
 -------
 >>> import ceo
->>> M1 = ceo.GMT_M1(25.5,101)
+>>> M1 = GMT_M1(25.5,101)
 or
 >>> import ceo
->>> M2 = ceo.GMT_M2(25.5,101,N_SRC=4)
+>>> M2 = GMT_M2(25.5,101,N_SRC=4)
 
 """
 @ 
@@ -478,22 +479,22 @@ or
 \subsubsection{GMT M2}
 \label{sec:gmt-m2-1}
 
-<<ceo.pxd>>=
+<<rayTracing.pxd>>=
     cdef cppclass gmt_m2:
         <<python GMT M12 functions>>
         void tiptilt_neutral(float, float)
         void coma_neutral(float, float)
 @
-<<ceo.pyx>>=
+<<rayTracing.pyx>>=
 # GMT M2
 cdef class GMT_M2:
     <<GMT M12 docstring>>
-    cdef ceo.gmt_m2 *_c_gmt_m2
-    cdef public ceo.ZernikeS zernike
+    cdef gmt_m2 *_c_gmt_m2
+    cdef public ZernikeS zernike
     
     def __cinit__(self, float D, int D_px, radial_order=0, int N_SRC=1):
-        self._c_gmt_m2 = new ceo.gmt_m2()
-        self.zernike = ceo.ZernikeS(radial_order,N_SURF=7)
+        self._c_gmt_m2 = new gmt_m2()
+        self.zernike = ZernikeS(radial_order,N_SURF=7)
         self._c_gmt_m2.setup(D, D_px, <zernikeS *> self.zernike._c_zernikeS, N_SRC)
 
     def __dealloc__(self):
@@ -528,7 +529,7 @@ cdef class GMT_M2:
 \subsubsection{Zernike}
 \label{sec:zernike}
 
-<<ceo.pxd>>=
+<<rayTracing.pxd>>=
     cdef cppclass zernikeS:
           void setup(int , rtd *, vector , vector , int)
           void cleanup()
@@ -540,17 +541,17 @@ cdef class GMT_M2:
     rtd zernike_surface(rtd , rtd , unsigned int , rtd *)
 
 @ 
-<<ceo.pyx>>=
+<<rayTracing.pyx>>=
 # Zernike surface
 cdef class ZernikeS:
-    cdef ceo.zernikeS *_c_zernikeS
+    cdef zernikeS *_c_zernikeS
     cdef public int max_n, n_mode, N_SURF
     cdef public np.ndarray a
 
     def __cinit__(self, int _max_n_, np.ndarray _a_=None,
                   origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0],
                   int N_SURF=1):
-        self._c_zernikeS = new ceo.zernikeS()
+        self._c_zernikeS = new zernikeS()
         self.max_n = _max_n_
         self.n_mode = (_max_n_+1)*(_max_n_+2)/2
         self.N_SURF = N_SURF
@@ -4302,5 +4303,5 @@ void gmt_m2::coma_neutral(float tip, float tilt)
 
 @ 
 Adding the class definitions to the definition file
-<<ceo.pxd>>=
+<<rayTracing.pxd>>=
 <<class definitions>>

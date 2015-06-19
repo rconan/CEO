@@ -132,7 +132,7 @@ struct source {
 \subsection{Python}
 \label{sec:python}
 
-<<ceo.pxd>>=
+<<source.pxd>>=
 from utilities cimport mask
 from rayTracing cimport bundle, gmt_m1, gmt_m2, vector, rtd
 cdef extern from "source.h":
@@ -171,9 +171,9 @@ from numpy cimport ndarray
 from utilities cimport cuFloatArray, MaskAbstract
 from rayTracing cimport Bundle
 cdef class Complex_amplitude:
-    cdef ceo.complex_amplitude *_c_complex_amplitude
+    cdef complex_amplitude *_c_complex_amplitude
 cdef class Source:
-    cdef ceo.source *_c_source
+    cdef source *_c_source
     cdef public int N_SRC
     cdef int n, m
     cdef public int size
@@ -183,7 +183,8 @@ cdef class Source:
     cdef public Complex_amplitude wavefront
     cdef public sphere_distance
 @
-<<ceo.pyx>>=
+<<source.pyx>>=
+import numpy as np
 cimport cython
 cimport numpy as np
 from utilities cimport cuFloatArray, MaskAbstract
@@ -208,7 +209,7 @@ cdef class Complex_amplitude:
         the complex amplitude magnitude
     """
     def __cinit__(self):
-        self._c_complex_amplitude = new ceo.complex_amplitude()
+        self._c_complex_amplitude = new complex_amplitude()
 
     property phase:
         def __get__(self):
@@ -298,11 +299,11 @@ cdef class Source:
     >>> import ceo
 
     >>> n   = 1024
-    >>> src = ceo.Source("K",resolution=(n,n))
+    >>> src = Source("K",resolution=(n,n))
 
     >>> zen = np.arange(3,dtype=np.float32)*1e-6*25
     >>> azi = np.arange(3,dtype=np.float32)*3.14
-    >>> lgs = ceo.Source("R",zenith=zen,azimuth=azi,height=90e3,resolution=(n,n)) 
+    >>> lgs = Source("R",zenith=zen,azimuth=azi,height=90e3,resolution=(n,n)) 
     """
 
     def __cinit__(self,char *_photometric_band,  
@@ -315,7 +316,7 @@ cdef class Source:
 		  rays_box_sampling=None, 
 		  rays_origin=None):
 
-	self._c_source = new ceo.source()
+	self._c_source = new source()
         if rays_box_sampling is not None:
             resolution = [rays_box_sampling, rays_box_sampling]
         self.n = resolution[0]
@@ -345,9 +346,9 @@ cdef class Source:
             self._c_source.magnitude = magnitude
         if fwhm is not None:
             self._c_source.fwhm = fwhm
-        self.wavefront = ceo.Complex_amplitude()
+        self.wavefront = Complex_amplitude()
         self.wavefront._c_complex_amplitude = &(self._c_source.wavefront)
-        self.rays = ceo.Bundle()
+        self.rays = Bundle()
         self.rays._c_bundle = &(self._c_source.rays)
         self.N_SRC = self._c_source.N_SRC
         self.sphere_distance = None
@@ -415,7 +416,7 @@ cdef class Source:
 \subsubsection{Ray tracing routines}
 \label{sec:ray-tracing-routines-1}
 
-<<ceo.pxd (opt-out)>>=
+<<source.pxd (opt-out)>>=
     void transform_to_S(source *, conic *)
     void transform_to_S(source *, aperture *)
     void transform_to_R(source *, conic *)
@@ -424,7 +425,7 @@ cdef class Source:
     void reflect(source *)
     void thin_lens(source *)
 @ 
-<<ceo.pyx (opt-out)>>=
+<<source.pyx (opt-out)>>=
 # ray tracing
 def Transform_to_S(Source src, Conic F):
     transform_to_S(src._c_source, F._c_conic)

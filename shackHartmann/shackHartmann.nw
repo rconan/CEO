@@ -66,7 +66,7 @@ struct shackHartmann {
 \subsection{Python}
 \label{sec:python}
 
-<<ceo.pxd>>=
+<<shackHartmann.pxd>>=
 from utilities cimport mask
 from imaging cimport imaging
 from centroiding cimport centroiding
@@ -93,12 +93,13 @@ cdef extern from "shackHartmann.h":
 <<class definitions>>=
 from utilities cimport MaskAbstract
 cdef class ShackHartmann:
-    cdef ceo.shackHartmann *_c_shackHartmann
+    cdef shackHartmann *_c_shackHartmann
     cdef int N_SIDE_LENSLET, N_PX_LENSLET, DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_GS, N_PX_FRAME
     cdef public MaskAbstract valid_lenslet
     cdef public MaskAbstract valid_actuator
 @ 
-<<ceo.pyx>>=
+<<shackHartmann.pyx>>=
+import math
 from libc cimport math
 from utilities cimport cuFloatArray, MaskAbstract
 from source cimport Source
@@ -142,7 +143,7 @@ cdef class ShackHartmann:
 
     def __cinit__(self, int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
 	          DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, N_GS=1):
-        self._c_shackHartmann = new ceo.shackHartmann()
+        self._c_shackHartmann = new shackHartmann()
         if N_PX_IMAGE is None:
             N_PX_IMAGE = N_PX_LENSLET;
         self.N_SIDE_LENSLET = N_SIDE_LENSLET
@@ -154,9 +155,9 @@ cdef class ShackHartmann:
         self.N_PX_FRAME     = self.N_PX_IMAGE*self.N_SIDE_LENSLET/self.BIN_IMAGE
         self._c_shackHartmann.setup(N_SIDE_LENSLET, N_PX_LENSLET, d, 
                                     DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_GS)    
-        self.valid_lenslet = ceo.MaskAbstract(self._c_shackHartmann.N_LENSLET*self.N_GS)
+        self.valid_lenslet = MaskAbstract(self._c_shackHartmann.N_LENSLET*self.N_GS)
         self.valid_lenslet._c_mask = &(self._c_shackHartmann.valid_lenslet)
-        self.valid_actuator = ceo.MaskAbstract(self._c_shackHartmann.N_ACTUATOR*self.N_GS)
+        self.valid_actuator = MaskAbstract(self._c_shackHartmann.N_ACTUATOR*self.N_GS)
         self.valid_actuator._c_mask = &(self._c_shackHartmann.valid_actuator)
 
     def __dealloc__(self):
@@ -505,7 +506,7 @@ __global__ void get_valid_slopes_kern(float *d__valid_slopes,  int *idx,
 All CEO programs must include the following headers which also contains the headers for all the CEO library modules.
 <<main header>>=
 #ifndef __CEO_H__
-#include "ceo.h"
+#include "h"
 #endif
 
 <<shackHartmann.bin>>=
@@ -858,7 +859,7 @@ phase_screen.add_phase(1,src.wavefront.phase);
 All CEO programs must include the following headers which also contains the headers for all the CEO library modules.
 <<main header>>=
 #ifndef __CEO_H__
-#include "ceo.h"
+#include "h"
 #endif
 @ The number of atmosphere sample
 <<main header>>=
@@ -964,7 +965,7 @@ printf("------------------------------\n");
 import sys
 sys.path.append("/home/rconan/CEO/python")
 from pylab import *
-from ceo import *
+from import *
 
 nLenslet = 20
 D = 10.0

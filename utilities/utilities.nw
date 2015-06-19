@@ -188,10 +188,12 @@ int round_up_to_nhp2(int n) {
 \subsection{Python}
 \label{sec:python}
 
-<<ceo.pxd>>=
+<<utilities.pxd>>=
 cdef extern from "utilities.h":
 @ 
-<<ceo.pyx>>=
+<<utilities.pyx>>=
+import numpy as np
+import math
 from libc cimport math
 cimport numpy as np
 cimport utilities
@@ -408,14 +410,14 @@ struct stopwatch{
 };
 @
 The python wrapper is 
-<<ceo.pxd>>=
+<<utilities.pxd>>=
 ## stopwatch structure
     cdef cppclass stopwatch:
         void tic()
         void toc()
         void toc(float *)
 @ 
-<<ceo.pyx>>=
+<<utilities.pyx>>=
 ## stopwatch structure
 cdef class StopWatch:
     """ 
@@ -433,11 +435,11 @@ cdef class StopWatch:
     --------
 
     """
-    cdef ceo.stopwatch *_c_stopwatch
+    cdef stopwatch *_c_stopwatch
     cdef float *elapsedTime
 
     def __cinit__(self):
-	self._c_stopwatch = new ceo.stopwatch()
+	self._c_stopwatch = new stopwatch()
 
     def tic(self):
         self._c_stopwatch.tic()
@@ -1135,7 +1137,7 @@ __global__ void nnz_idx(int *idx, const char* mask, int n_data)
 \end{itemize}
 
 The python wrapper is 
-<<ceo.pxd>>=
+<<utilities.pxd>>=
 ## mask structure
     cdef cppclass mask:
         int nnz
@@ -1149,9 +1151,9 @@ The python wrapper is
 <<class definitions>>=
 # MaskAbstract
 cdef class MaskAbstract:
-    cdef ceo.mask *_c_mask
+    cdef mask *_c_mask
     cdef int n    
-<<ceo.pyx>>=
+<<utilities.pyx>>=
 ## mask structure
 cdef class MaskAbstract:
     """ 
@@ -1174,7 +1176,7 @@ cdef class MaskAbstract:
 
     def __cinit__(self,int n, float S=0.0):
         self.n = n
-	self._c_mask = new ceo.mask()
+	self._c_mask = new mask()
 
     property f:
         def __get__ (self):
@@ -1476,14 +1478,14 @@ void gpu_double::host2dev(void) {
     HANDLE_ERROR( cudaDeviceSynchronize() );
 }
 @
-<<ceo.pxd>>=
+<<utilities.pxd>>=
 ## device to host
     void dev2host( float *host_data, float *dev_data, int N)
     void host2dev( float **dev_data, float *host_data, int N)
     void freedev( float **dev_data )
 @ 
 The cu$<$Type$>$Array class is a cython class that is a container for CUDA variables:
-<<ceo.pxd>>=
+<<utilities.pxd>>=
 cdef extern from "utilities.h":
     cdef cppclass gpu:
         float *dev_data
@@ -1512,13 +1514,13 @@ void host2dev()
 # cuFloatArray
 from numpy cimport ndarray
 cdef class cuFloatArray:
-    cdef ceo.gpu *_c_gpu
+    cdef gpu *_c_gpu
     cdef public int size
     cdef public shape
     cdef dev_malloc
     cdef public ndarray host_data
     cdef units
-<<ceo.pyx>>=
+<<utilities.pyx>>=
 cdef class cuFloatArray:
     """
     A class to interact with a cuda float array
@@ -1527,7 +1529,7 @@ cdef class cuFloatArray:
     """
 
     def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
-        self._c_gpu = new ceo.gpu()
+        self._c_gpu = new gpu()
         self._c_gpu.setup();
         self.dev_malloc = dev_malloc
         if shape is not None:
@@ -1616,13 +1618,13 @@ host_data : ndarray
 <<class definitions>>=
 # cuIntArray
 cdef class cuIntArray:
-    cdef ceo.gpu_int *_c_gpu
+    cdef gpu_int *_c_gpu
     cdef public int size
     cdef public shape
     cdef dev_malloc
     cdef public ndarray host_data
     cdef units
-<<ceo.pyx>>=
+<<utilities.pyx>>=
 cdef class cuIntArray:
     """
     A class to interact with a cuda integer array
@@ -1631,7 +1633,7 @@ cdef class cuIntArray:
     """
 
     def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
-        self._c_gpu = new ceo.gpu_int()
+        self._c_gpu = new gpu_int()
         self._c_gpu.setup();
         self.dev_malloc = dev_malloc
         if shape is not None:
@@ -1680,13 +1682,13 @@ cdef class cuIntArray:
 <<class definitions>>=
 # cuDoubleArray
 cdef class cuDoubleArray:
-    cdef ceo.gpu_double *_c_gpu
+    cdef gpu_double *_c_gpu
     cdef public int size
     cdef public shape
     cdef dev_malloc
     cdef public ndarray host_data
     cdef units
-<<ceo.pyx>>=
+<<utilities.pyx>>=
 cdef class cuDoubleArray:
     """
     A class to interact with a cuda double array
@@ -1695,7 +1697,7 @@ cdef class cuDoubleArray:
     """
 
     def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
-        self._c_gpu = new ceo.gpu_double()
+        self._c_gpu = new gpu_double()
         self._c_gpu.setup();
         self.dev_malloc = dev_malloc
         if shape is not None:
@@ -1840,7 +1842,7 @@ return xi;
 @
 
 The python wrapper is 
-<<ceo.pxd>>=
+<<utilities.pxd>>=
 ## atmosphere dispersion  
     double atmosphere_refractive_index(float wavelength, float altitude, 
                                         float temperature, float humidity)
@@ -1848,7 +1850,7 @@ The python wrapper is
                                    float zenith, float altitude, 
 				   float temperature, float humidity)
 @ 
-<<ceo.pyx>>=
+<<utilities.pyx>>=
 ## atmosphere dispersion  
 cpdef double atmosphereRefractiveIndex(float wavelength, float altitude, 
                                  float temperature, float humidity ):
@@ -1948,14 +1950,14 @@ __global__ void wavefront_finite_difference_kernel_masked(
   }
 @ 
 The python wrapper is
-<<ceo.pxd>>=
+<<utilities.pxd>>=
 ## wavefront differentiation
     void wavefront_finite_difference(float *sx, float *sy, int NL, 
                                      float *phi, int n, float d)
     void wavefront_finite_difference(float *sx, float *sy, int NL, 
                                      float *phi, int n, float d, mask *pupil)
 @ 
-<<ceo.pyx>>=
+<<utilities.pyx>>=
 ## wavefront differentiation
 cpdef wavefrontFiniteDifference(cuFloatArray sx, cuFloatArray sy, int NL, 
                                 cuFloatArray phi, int n, float d, MaskAbstract M=None):
@@ -1967,5 +1969,5 @@ cpdef wavefrontFiniteDifference(cuFloatArray sx, cuFloatArray sy, int NL,
                                     phi._c_gpu.dev_data, n, d, M._c_mask)
 @ 
 Adding the class definitions to the definition file
-<<ceo.pxd>>=
+<<utilities.pxd>>=
 <<class definitions>>

@@ -112,7 +112,9 @@ struct paStats {
 \subsection{Python}
 \label{sec:python}
 
-<<ceo.pxd>>=
+<<aaStats.pxd>>=
+from atmosphere cimport atmosphere
+from source cimport source
 # aaStats
 cdef extern from "aaStats.h":
     cdef cppclass aaStats:
@@ -129,8 +131,18 @@ cdef extern from "aaStats.h":
         void setup(int, int, int , atmosphere *, float,
                    source *, int, source *, int) 
         void cleanup()
+<<class definitions>>
+@ 
+<<class definitions>>=
+cdef class AaStats:
+    cdef aaStats *_c_aaStats
+cdef class PaStats:
+    cdef paStats *_c_paStats
 @
-<<ceo.pyx>>=
+<<aaStats.pyx>>=
+from utilities cimport cuFloatArray
+from atmosphere cimport AtmosphereAbstract
+from source cimport Source
 # aaStats
 cdef class AaStats:
     """
@@ -147,10 +159,9 @@ cdef class AaStats:
     src: a Source object
         The guide stars
     """
-    cdef ceo.aaStats *_c_aaStats
 
     def __cinit__(self, int N_SIDE_LENSLET, AtmosphereAbstract atm, float lenslet_pitch, Source src):
-        self._c_aaStats = new ceo.aaStats()
+        self._c_aaStats = new aaStats()
         self._c_aaStats.setup(N_SIDE_LENSLET, atm._c_atmosphere, lenslet_pitch, 
                               src._c_source, src._c_source.N_SRC)
     def __dealloc__(self):
@@ -166,12 +177,11 @@ cdef class PaStats:
     """
     Phase/Slope covariance matrix class
     """
-    cdef ceo.paStats *_c_paStats
 
     def __cinit__(self, int M, int N, int osf, 
                   AtmosphereAbstract atm, float lenslet_pitch,
                   Source phase_src, Source slopes_src):
-        self._c_paStats = new ceo.paStats()
+        self._c_paStats = new paStats()
         self._c_paStats.setup(M, N, osf, atm._c_atmosphere, lenslet_pitch,
                               phase_src._c_source, phase_src._c_source.N_SRC,
                               slopes_src._c_source, slopes_src._c_source.N_SRC )
@@ -1174,7 +1184,7 @@ The test routine is written:
 using namespace std;
 
 #include "cublas_v2.h"
-#include "ceo.h"
+#include "h"
 #include "aaStats.h"
 #include "BTBT.h"
 using namespace std;
