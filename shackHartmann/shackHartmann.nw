@@ -91,12 +91,18 @@ cdef extern from "shackHartmann.h":
 <<class definitions>>
 @ 
 <<class definitions>>=
+from utilities cimport cuFloatArray
 from utilities cimport MaskAbstract
 cdef class ShackHartmann:
     cdef shackHartmann *_c_shackHartmann
     cdef int N_SIDE_LENSLET, N_PX_LENSLET, DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_GS, N_PX_FRAME
     cdef public MaskAbstract valid_lenslet
     cdef public MaskAbstract valid_actuator
+    cdef public cuFloatArray frame
+    cdef public cuFloatArray c
+    cdef public cuFloatArray c0
+    cdef public cuFloatArray flux
+    cdef cuFloatArray _valid_slopes_ 
 @ 
 <<shackHartmann.pyx>>=
 import math
@@ -159,6 +165,16 @@ cdef class ShackHartmann:
         self.valid_lenslet._c_mask = &(self._c_shackHartmann.valid_lenslet)
         self.valid_actuator = MaskAbstract(self._c_shackHartmann.N_ACTUATOR*self.N_GS)
         self.valid_actuator._c_mask = &(self._c_shackHartmann.valid_actuator)
+        self.frame = cuFloatArray(shape=(self.N_GS*self.N_PX_FRAME,self.N_PX_FRAME))
+        self.frame._c_gpu.dev_data = self._c_shackHartmann.optics_relay.d__frame
+	self.c = cuFloatArray(shape=(self.N_GS,(self.N_SIDE_LENSLET**2)*2))
+	self.c._c_gpu.dev_data = self._c_shackHartmann.data_proc.d__c
+	self.c0 = cuFloatArray(shape=(self.N_GS,(self.N_SIDE_LENSLET**2)*2))
+	self.c0._c_gpu.dev_data = self._c_shackHartmann.d__c0
+        self.flux = cuFloatArray(shape=(self.N_GS*self.N_SIDE_LENSLET,self.N_SIDE_LENSLET))
+        self.flux._c_gpu.dev_data = self._c_shackHartmann.data_proc.d__mass
+        self._valid_slopes_ = cuFloatArray(shape=(1,self._c_shackHartmann.valid_lenslet.nnz*2),
+                                           dev_malloc=True)
 
     def __dealloc__(self):
         self._c_shackHartmann.cleanup()
@@ -184,36 +200,10 @@ cdef class ShackHartmann:
     def pointing(self,float zen, float azim):
         self._c_shackHartmann.optics_relay.set_pointing_direction(zen, azim)
 
-    property frame:
-        def __get__(self):
-            x = cuFloatArray(shape=(self.N_GS*self.N_PX_FRAME,self.N_PX_FRAME))
-            x._c_gpu.dev_data = self._c_shackHartmann.optics_relay.d__frame
-            return x
-
-    property c:
-        def __get__(self):
-            x = cuFloatArray(shape=(self.N_GS,(self.N_SIDE_LENSLET**2)*2))
-            x._c_gpu.dev_data = self._c_shackHartmann.data_proc.d__c
-            return x
-
-    property c0:
-        def __get__(self):
-            x = cuFloatArray(shape=(self.N_GS,(self.N_SIDE_LENSLET**2)*2))
-            x._c_gpu.dev_data = self._c_shackHartmann.d__c0
-            return x
-
-    property flux:
-        def __get__(self):
-            x = cuFloatArray(shape=(self.N_GS*self.N_SIDE_LENSLET,self.N_SIDE_LENSLET))
-            x._c_gpu.dev_data = self._c_shackHartmann.data_proc.d__mass
-            return x
-
     property valid_slopes:
         def __get__(self):
-            x = cuFloatArray(shape=(1,self._c_shackHartmann.valid_lenslet.nnz*2),
-                             dev_malloc=True)
-            self._c_shackHartmann.get_valid_slopes(x._c_gpu.dev_data)
-            return x
+            self._c_shackHartmann.get_valid_slopes(self._valid_slopes_._c_gpu.dev_data)
+            return self._valid_slopes_
 
     property slopes_gain:
         def __set__(self, float val):

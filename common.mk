@@ -27,7 +27,7 @@ pxdsrc  = $(nwsrc:%.nw=%.pxd)
 pyxsrc  = $(nwsrc:%.nw=%.pyx)
 libsrc = $(CEOPATH)/lib/libceo.a 
 
-.SUFFIXES: .nw .tex .cu .mex .bin .py
+.SUFFIXES: .nw .tex .cu .mex .bin .py .pxd .pyx .so
 
 .cu.o: 
 	$(NVCC) $(INCS) $(NVCCFLAGS) -o $@ -c $<
@@ -61,3 +61,15 @@ libsrc = $(CEOPATH)/lib/libceo.a
 
 .nw.py:
 	$(TANGLE) -R$@ $< > $@
+
+.nw.pxd:
+	$(TANGLE) -R$@ $< > $(CEOPYPATH)/$@
+
+.pyx.so:
+	cython --cplus $(CEOPYPATH)/$< -o $(CEOPYPATH)/$<.cu
+	$(NVCC) $(INCS) -I$(PYTHONPATH)/include/python2.7/ -I$(PYTHONPATH)/lib/python2.7/site-packages/numpy/core/include $(NVCCFLAGS) -o $(CEOPYPATH)/$<.o -c $(CEOPYPATH)/$<.cu
+	$(NVCC) -shared $(CEOPYPATH)/$<.o -o $(CEOPYPATH)/$@ $(LIBS) 
+
+.nw.pyx:
+	$(TANGLE) -R$@ $< > $(CEOPYPATH)/$@
+

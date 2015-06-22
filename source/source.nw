@@ -172,6 +172,8 @@ from utilities cimport cuFloatArray, MaskAbstract
 from rayTracing cimport Bundle
 cdef class Complex_amplitude:
     cdef complex_amplitude *_c_complex_amplitude
+    cdef public cuFloatArray phase
+    cdef public cuFloatArray amplitude
 cdef class Source:
     cdef source *_c_source
     cdef public int N_SRC
@@ -210,22 +212,13 @@ cdef class Complex_amplitude:
     """
     def __cinit__(self):
         self._c_complex_amplitude = new complex_amplitude()
+        self.phase = cuFloatArray(shape=(self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N,
+                                         self._c_complex_amplitude.N))
+        self.phase._c_gpu.dev_data = self._c_complex_amplitude.phase
+        self.amplitude = cuFloatArray(shape=(self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N,
+                                             self._c_complex_amplitude.N))
+        self.amplitude._c_gpu.dev_data = self._c_complex_amplitude.amplitude
 
-    property phase:
-        def __get__(self):
-            x = cuFloatArray(shape=(self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N,
-                                    self._c_complex_amplitude.N))
-            x._c_gpu.dev_data = self._c_complex_amplitude.phase
-            return x
-        def __set__(self,cuFloatArray val):
-            self._c_complex_amplitude.add_phase(1,val._c_gpu.dev_data)
-
-    property amplitude:
-        def __get__(self):
-            x = cuFloatArray(shape=(self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N,
-                                    self._c_complex_amplitude.N))
-            x._c_gpu.dev_data = self._c_complex_amplitude.amplitude
-            return x
 
     def rms(self):
         """
