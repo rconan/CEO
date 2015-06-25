@@ -210,8 +210,9 @@ cdef class Complex_amplitude:
     amplitude : float, read only
         the complex amplitude magnitude
     """
-    def __cinit__(self):
+    def __cinit__(self,Source src):
         self._c_complex_amplitude = new complex_amplitude()
+        self._c_complex_amplitude = &(src._c_source.wavefront)
         self.phase = cuFloatArray(shape=(self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N,
                                          self._c_complex_amplitude.N))
         self.phase._c_gpu.dev_data = self._c_complex_amplitude.phase
@@ -339,10 +340,8 @@ cdef class Source:
             self._c_source.magnitude = magnitude
         if fwhm is not None:
             self._c_source.fwhm = fwhm
-        self.wavefront = Complex_amplitude()
-        self.wavefront._c_complex_amplitude = &(self._c_source.wavefront)
-        self.rays = Bundle()
-        self.rays._c_bundle = &(self._c_source.rays)
+        self.wavefront = Complex_amplitude(self)
+        self.rays = Bundle(self)
         self.N_SRC = self._c_source.N_SRC
         self.sphere_distance = None
 

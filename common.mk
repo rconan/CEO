@@ -63,13 +63,10 @@ libsrc = $(CEOPATH)/lib/libceo.a
 	$(TANGLE) -R$@ $< > $@
 
 .nw.pxd:
-	$(TANGLE) -R$@ $< > $(CEOPYPATH)/$@
-
-.pyx.so:
-	cython --cplus $(CEOPYPATH)/$< -o $(CEOPYPATH)/$<.cu
-	$(NVCC) $(INCS) -I$(PYTHONPATH)/include/python2.7/ -I$(PYTHONPATH)/lib/python2.7/site-packages/numpy/core/include $(NVCCFLAGS) -o $(CEOPYPATH)/$<.o -c $(CEOPYPATH)/$<.cu
-	$(NVCC) -shared $(CEOPYPATH)/$<.o -o $(CEOPYPATH)/$@ $(LIBS) 
+	$(TANGLE) -R$@ $< > $@
+	cp $@ $(CEOPYPATH)/
 
 .nw.pyx:
-	$(TANGLE) -R$@ $< > $(CEOPYPATH)/$@
+	$(TANGLE) -R$@ $< > $@
+	cp $@ $(CEOPYPATH)/
 

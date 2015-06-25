@@ -26,7 +26,6 @@ tex: makefile $(texsrc)
 
 
 cython: makefile
-#	for i in $(CYTHON_DIR); do (make -C $$i cython); done
 	for i in $(CYTHON_DIR); do (make -C $$i cysrc);echo -e "\n"; done
 	for i in $(CYTHON_DIR); do (make -C $$i cylib);echo -e "\n"; done
 

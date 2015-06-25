@@ -154,9 +154,19 @@ from utilities cimport cuDoubleArray
         void get_vignetting(double *)
 @
 <<class definitions>>=
+from utilities cimport cuDoubleArray
+from source cimport Source
 # Bundle
 cdef class Bundle:
     cdef bundle *_c_bundle
+    cdef cuDoubleArray _coordinates_
+    cdef cuDoubleArray _chief_coordinates_
+    cdef cuDoubleArray _directions_
+    cdef cuDoubleArray _chief_directions_
+    cdef cuDoubleArray _optical_path_length_
+    cdef cuDoubleArray _chief_optical_path_length_
+    cdef cuDoubleArray _optical_path_difference_
+    cdef cuDoubleArray _vignetting_
 <<rayTracing.pyx>>=
 # polar bundle
 cdef class Bundle:
@@ -192,8 +202,27 @@ cdef class Bundle:
         The vignetting flag of the rays as a N_BUNDLExN_RAY array
     """
 
-    def __cinit__(self):
+    def __cinit__(self, Source src):
         self._c_bundle = new bundle()
+        self._c_bundle = &(src._c_source.rays)
+
+        self._coordinates_               = cuDoubleArray(
+            shape=(self._c_bundle.N_RAY*self._c_bundle.N_BUNDLE,3),dev_malloc=True)
+        self._chief_coordinates_         = cuDoubleArray(
+            shape=(self._c_bundle.N_BUNDLE,3),dev_malloc=True)
+        self._directions_                = cuDoubleArray(
+            shape=(self._c_bundle.N_RAY*self._c_bundle.N_BUNDLE,3),dev_malloc=True)
+        self._chief_directions_          = cuDoubleArray(
+            shape=(self._c_bundle.N_BUNDLE,3),dev_malloc=True)
+        self._optical_path_length_       = cuDoubleArray(
+            shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
+        self._chief_optical_path_length_ = cuDoubleArray(
+            shape=(self._c_bundle.N_BUNDLE,1),dev_malloc=True)
+        self._optical_path_difference_   = cuDoubleArray(
+            shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
+        self._vignetting_                = cuDoubleArray(
+            shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
+
 
     <<bundle common>>
 @ 
@@ -268,51 +297,43 @@ property N_BUNDLE:
 
 property coordinates:
     def __get__(self):
-        x = cuDoubleArray(shape=(self._c_bundle.N_RAY*self._c_bundle.N_BUNDLE,3),dev_malloc=True)
-        self._c_bundle.get_coordinates(x._c_gpu.dev_data)
-        return x
+        self._c_bundle.get_coordinates(self._coordinates_._c_gpu.dev_data)
+        return self._coordinates_
 
 property chief_coordinates:
     def __get__(self):
-        x = cuDoubleArray(shape=(self._c_bundle.N_BUNDLE,3),dev_malloc=True)
-        self._c_bundle.get_chief_coordinates(x._c_gpu.dev_data)
-        return x
+        self._c_bundle.get_chief_coordinates(self._chief_coordinates_._c_gpu.dev_data)
+        return self._chief_coordinates_
 
 property directions:
     def __get__(self):
-        x = cuDoubleArray(shape=(self._c_bundle.N_RAY*self._c_bundle.N_BUNDLE,3),dev_malloc=True)
-        self._c_bundle.get_directions(x._c_gpu.dev_data)
-        return x
+        self._c_bundle.get_directions(self._directions_._c_gpu.dev_data)
+        return self._directions_
 
 property chief_directions:
     def __get__(self):
-        x = cuDoubleArray(shape=(self._c_bundle.N_BUNDLE,3),dev_malloc=True)
-        self._c_bundle.get_chief_directions(x._c_gpu.dev_data)
-        return x
+        self._c_bundle.get_chief_directions(self._chief_directions_._c_gpu.dev_data)
+        return self._chief_directions_
 
 property optical_path_length:
-        def __get__(self):
-            x = cuDoubleArray(shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
-            self._c_bundle.get_optical_path_length(x._c_gpu.dev_data)
-            return x
+    def __get__(self):
+        self._c_bundle.get_optical_path_length(self._optical_path_length_._c_gpu.dev_data)
+        return self._optical_path_length_
 
 property chief_optical_path_length:
-        def __get__(self):
-            x = cuDoubleArray(shape=(self._c_bundle.N_BUNDLE,1),dev_malloc=True)
-            self._c_bundle.get_chief_optical_path_length(x._c_gpu.dev_data)
-            return x
+    def __get__(self):
+        self._c_bundle.get_chief_optical_path_length(self._chief_optical_path_length_._c_gpu.dev_data)
+        return self._chief_optical_path_length_
 
 property optical_path_difference:
-        def __get__(self):
-            x = cuDoubleArray(shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
-            self._c_bundle.get_optical_path_difference(x._c_gpu.dev_data)
-            return x
+    def __get__(self):
+        self._c_bundle.get_optical_path_difference(self._optical_path_difference_._c_gpu.dev_data)
+        return self._optical_path_difference_
 
 property vignetting:
-        def __get__(self):
-            x = cuDoubleArray(shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
-            self._c_bundle.get_vignetting(x._c_gpu.dev_data)
-            return x
+    def __get__(self):
+        self._c_bundle.get_vignetting(self._vignetting_._c_gpu.dev_data)
+        return self._vignetting_
 @
 
 \subsubsection{Conic surface}
