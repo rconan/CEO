@@ -32,6 +32,9 @@ cython: makefile
 doc: tex
 	make -C doc all
 
+test:
+	make -C test all
+
 ripython:
 	env PYTHONPATH="$(CEOPATH)/python" ipython notebook --no-browser
 
