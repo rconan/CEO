@@ -234,6 +234,28 @@ cdef class Complex_amplitude:
         self._c_complex_amplitude.rms(<float *>rms.data)
         return rms
         
+    def piston(self, np.ndarray mask=None):
+        """
+        Get the mask corresponding to each segment
+
+        Parameters
+        ----------
+        mask: ndarray, optionnal
+            The mask where to compute the piston on as a 2D array n_maskXsampling
+            where n_mask is the number of mask (default: 1) and sampling is the mask
+            sampling that must match the wavefront sampling
+
+        Returns
+        -------
+        ndarray of float
+            The vector of piston values
+        """
+        amplitude = self.amplitude.host()
+        if mask is None:
+            return np.sum(self.phase.host()[amplitude>0])/np.sum(amplitude)
+        else:
+            Q = mask*amplitude.T
+            return np.dot(Q,self.phase.host()).flatten()/np.sum(Q,axis=1)                
 
 cdef class Source:
     """ 
@@ -355,8 +377,7 @@ cdef class Source:
         optics.blocking(self.rays)
 
     def opd2phase(self):
-        self._c_source.opd2phase()
-            
+        self._c_source.opd2phase()                        
 
     property phase:
         def __get__(self):

@@ -419,6 +419,7 @@ cdef class Aperture:
 	void global_tiptilt(float , float )
 @  where
 <<python GMT M12 functions>>=
+int *d__piston_mask
 coordinate_system aperture_CS
 coordinate_system conic_CS
 coordinate_system rigid_body_CS
@@ -434,15 +435,19 @@ void blocking(bundle *)
 @
 <<rayTracing.pyx>>=
 # GMT M1
+from utilities cimport cuIntArray
 cdef class GMT_M1:
     <<GMT M12 docstring>>
     cdef gmt_m1 *_c_gmt_m1
     cdef public ZernikeS zernike
+    cdef cuIntArray _piston_mask_
     
     def __cinit__(self, float D, int D_px, int radial_order=0, int N_SRC=1):
         self._c_gmt_m1 = new gmt_m1()
         self.zernike = ZernikeS(radial_order,N_SURF=7)
         self._c_gmt_m1.setup(D, D_px, <zernikeS *> self.zernike._c_zernikeS, N_SRC)
+        self._piston_mask_ = cuIntArray(shape=(D_px*D_px*N_SRC))
+        self._piston_mask_._c_gpu.dev_data = self._c_gmt_m1.d__piston_mask;
 
     def __dealloc__(self):
         self._c_gmt_m1.cleanup()
@@ -472,6 +477,11 @@ cdef class GMT_M1:
         
     def reset(self):
         self._c_gmt_m1.reset()
+
+    property piston_mask:
+        def __get__(self):
+            P = self._piston_mask_.host()
+            return np.array( [P.flatten()==k for k in range(1,8)] )
 @ with
 <<GMT M12 docstring>>=
 """
@@ -3343,6 +3353,10 @@ int idx_offset;
 \item an array of Zernike surface, one per segment, [[ZS]]:
 <<GMT M12 parameters>>=
 zernikeS *ZS;
+@
+\item the segment piston mask
+<<GMT M12 parameters>>=
+int *d__piston_mask;
 @ \end{itemize}
 @
 
@@ -3408,6 +3422,9 @@ void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
 }
 @  where
 <<GMT setup common>>=
+
+HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*D_px*D_px*N_SRC ) );
+
 vector __v0 = {0.0,0.0,0.0},
        __v = {D_full*0.5,0.0,0.0},
        origin[7],
@@ -3579,6 +3596,7 @@ conic_CS.cleanup();
 rigid_body_CS.cleanup();
 motion_CS.cleanup();
 HANDLE_ERROR( cudaFree( d__conic_origin ) );
+HANDLE_ERROR( cudaFree( d__piston_mask ) );
 @
 The rigid body motion parameters are updated with:
 <<GMT M1 functions>>=
@@ -3710,6 +3728,7 @@ void gmt_m1::trace(bundle *rays)
  blockDim = dim3(16,16);
  gridDim  = dim3(rays->N_RAY/256+1,1,rays->N_BUNDLE);
  HANDLE_ERROR( cudaMemset(V.m, 0, sizeof(char)*rays->N_RAY*rays->N_BUNDLE ) );
+ HANDLE_ERROR( cudaMemset(d__piston_mask, 0, sizeof(int)*rays->N_RAY*rays->N_BUNDLE ) );
  m1_trace_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
 					     Rri2, R2,
 					     aperture_CS.d__R,
@@ -3725,7 +3744,8 @@ void gmt_m1::trace(bundle *rays)
 					     ZS->max_n, ZS->n_mode,
 					     ZS->d__a, ZS->d__cx, ZS->d__cy,
 					     0.5*D_full,
-					     rays->d__chief_ray);
+					     rays->d__chief_ray,
+					     d__piston_mask);
  GMT_intersection LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY);
 
 @ and with the kernel
@@ -3740,7 +3760,8 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 				rtd *d__motion_R, vector *d__motion_origin,
 				int max_n, int n_mode,
 				rtd *d__a, rtd *d__cx, rtd *d__cy, rtd R,
-				ray *d__chief_ray)
+				ray *d__chief_ray,
+				int *d__piston_mask)
 {
   int i, j, ij, iCoordSys, iSource, b_n_mode;
   rtd rho2;
@@ -3772,6 +3793,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 	if (rho2<=outer2)
 	  {
 	    mask[ij] = 1;
+	    d__piston_mask[ij] = iCoordSys + 1;
 
             <<from motion CS to conic intersection and back to global CS>>
 	    d__ray[ij].optical_path_difference += 
