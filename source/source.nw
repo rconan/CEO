@@ -512,6 +512,7 @@ source *dev_ptr;
 char tag[8];
 @ A source can also be propagated geometrically through optical components
 <<source parameters>>=
+char rays_exist;
 bundle rays; 
 @
 \section{Functions}
@@ -565,6 +566,7 @@ void source::setup(char *_photometric_band,
 }
 @ with
 <<setup single source contents>>=
+rays_exist = 0;
 N_SRC   = 1;
 zenith  = _zenith;
 azimuth = _azimuth;
@@ -590,6 +592,7 @@ HANDLE_ERROR( cudaMemcpy( dev_ptr, &__src,
 void source::setup(char *_photometric_band, 
 		   float *_zenith, float *_azimuth, 
 		   float _height, int _N_SRC) {
+  rays_exist = 0;
   N_SRC = _N_SRC;
   height = _height;
   photometric_band = _photometric_band;
@@ -622,6 +625,7 @@ void source::setup(char *_photometric_band,
 void source::setup(char *_photometric_band, 
 		   float *_zenith, float *_azimuth, float _height, 
 		   int _N_SRC, int resolution) {
+  rays_exist = 0;
   N_SRC = _N_SRC;
   height = _height;
   photometric_band = _photometric_band;
@@ -681,6 +685,7 @@ void source::setup(char *_photometric_band,
   }
   wavefront.setup(N_L*N_L,N_SRC);
   fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
+  rays_exist = 1;
   rays.setup(L, N_L, origin, N_SRC);
   reset_rays();
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
@@ -807,8 +812,10 @@ void source::cleanup(void) {
   fprintf(stdout,"@(CEO)>%s: freeing memory!\n",tag);
 //  fprintf(stdout," |-");
   wavefront.cleanup();
-  fprintf(stdout," |-");
-  rays.cleanup();
+  if (rays_exist==1) {
+    fprintf(stdout," |-");
+    rays.cleanup();
+  }
   HANDLE_ERROR( cudaFree( dev_ptr) );
 }
 
