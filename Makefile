@@ -38,6 +38,9 @@ test:
 ripython:
 	env PYTHONPATH="$(CEOPATH)/python" ipython notebook --no-browser
 
+ipython:
+	env PYTHONPATH="$(CEOPATH)/python" ipython notebook
+
 touch: 
 	find . -name \*.nw -exec touch {} \;
 

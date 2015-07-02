@@ -119,8 +119,6 @@ cdef extern from "rayTracing.h":
         vector directions
         vector surface_normal
         rtd optical_path_length
-    ctypedef struct coordinate_system:
-        float *float_R        
 @ 
 <<rayTracing.pyx>>=
 import numpy as np
@@ -336,6 +334,50 @@ property vignetting:
         return self._vignetting_
 @
 
+\subsubsection{Coordinate system}
+\label{sec:coordinate-system-1}
+
+<<rayTracing.pxd>>=
+    cdef cppclass coordinate_system:
+        vector *origin
+        vector *euler_angles
+        rtd *R
+@ 
+<<rayTracing.pyx>>=
+# coordinate_system
+cdef class Coordinate_system:
+    """
+    """
+    cdef coordinate_system *_c_coordinate_system
+    cdef double[:,::1] _origin_
+    cdef double[:,::1] _euler_angles_
+    cdef public double[::1] R
+    cdef int N
+
+    def __cinit__(self, int N=1):
+        self.N = N
+        self._c_coordinate_system = new coordinate_system()
+        self._origin_       = np.empty((3,N), dtype=np.float64)
+        self._euler_angles_ = np.empty((3,N), dtype=np.float64)
+
+    property origin:
+        def __get__(self):
+            cdef int k
+            for k in range(self.N):
+                self._origin_[0,k] = self._c_coordinate_system.origin[k].x
+                self._origin_[1,k] = self._c_coordinate_system.origin[k].y
+                self._origin_[2,k] = self._c_coordinate_system.origin[k].z
+            return self._origin_
+
+    property euler_angles:
+        def __get__(self):
+            cdef int k
+            for k in range(self.N):
+                self._euler_angles_[0,k] = self._c_coordinate_system.euler_angles[k].x
+                self._euler_angles_[1,k] = self._c_coordinate_system.euler_angles[k].y
+                self._euler_angles_[2,k] = self._c_coordinate_system.euler_angles[k].z
+            return self._euler_angles_
+@
 \subsubsection{Conic surface}
 \label{sec:surface-1}
 
@@ -441,6 +483,10 @@ cdef class GMT_M1:
     cdef gmt_m1 *_c_gmt_m1
     cdef public ZernikeS zernike
     cdef cuIntArray _piston_mask_
+    cdef public Coordinate_system aperture_CS
+    cdef public Coordinate_system conic_CS
+    cdef public Coordinate_system rigid_body_CS
+    cdef public Coordinate_system motion_CS
     
     def __cinit__(self, float D, int D_px, int radial_order=0, int N_SRC=1):
         self._c_gmt_m1 = new gmt_m1()
@@ -448,6 +494,14 @@ cdef class GMT_M1:
         self._c_gmt_m1.setup(D, D_px, <zernikeS *> self.zernike._c_zernikeS, N_SRC)
         self._piston_mask_ = cuIntArray(shape=(D_px*D_px*N_SRC))
         self._piston_mask_._c_gpu.dev_data = self._c_gmt_m1.d__piston_mask;
+        self.aperture_CS = Coordinate_system(7)
+        self.aperture_CS._c_coordinate_system = &(self._c_gmt_m1.aperture_CS)
+        self.conic_CS = Coordinate_system(7)
+        self.conic_CS._c_coordinate_system = &(self._c_gmt_m1.conic_CS)
+        self.motion_CS = Coordinate_system(7)
+        self.motion_CS._c_coordinate_system = &(self._c_gmt_m1.motion_CS)
+        self.rigid_body_CS = Coordinate_system(7)
+        self.rigid_body_CS._c_coordinate_system = &(self._c_gmt_m1.rigid_body_CS)
 
     def __dealloc__(self):
         self._c_gmt_m1.cleanup()
