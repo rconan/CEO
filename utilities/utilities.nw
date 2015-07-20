@@ -421,35 +421,30 @@ The python wrapper is
 ## stopwatch structure
 cdef class StopWatch:
     """ 
-    Creates a stopwatch object.
+    Creates a stopwatch object to time cuda based routines
 
-    Parameters
+    Attributes
     ----------
-    
-    Returns
-    -------
-    out: Stopwatch
-        A Stopwatch object.
-
-    Examples
-    --------
-
+    elapsedTime : float
+        The time elapsed between a tic() and a toc() calls
     """
     cdef stopwatch *_c_stopwatch
-    cdef float *elapsedTime
+    cdef public float elapsedTime
 
     def __cinit__(self):
 	self._c_stopwatch = new stopwatch()
 
     def tic(self):
+        """
+        Starts the stopwatch
+        """
         self._c_stopwatch.tic()
 
-    def toc(self,elapsedTime=None):
-        if elapsedTime is None:  
-            self._c_stopwatch.toc()
-        else:
-            self._c_stopwatch.toc(self.elapsedTime)
-
+    def toc(self):
+        """
+        Stops the stopwatch
+        """
+        self._c_stopwatch.toc(&(self.elapsedTime))
 @
 
 \subsection{Statistics definitions}
@@ -1601,21 +1596,18 @@ host_data : ndarray
 """
 Parameters
 ----------
-shape : tuple of int, optionnal
-    Number of rows and colums; default: None
-host_data : list or tuple or numpy array, optionnal
-    Host data to copy to the device; default: None
-dev_malloc : bool, optionnal
-    Flag to allocate memory on device; default: False
+shape : tuple, optionnal
+    The shape of the data array, default to None
+units : string, optionnal
+    The data converstion units: ""micron"", ""nm"" or ""arcsec", default to None
+zm : boolean, optionnal
+    If True, the data mean is removed; default to False
+mask : boolean
+    If zm is True, the mean is computed for data values where the mask is True
 
-Attributes
-----------
-size : int
-    The total number of element
-shape : tuple
-    The shape of the data array
-host_data : ndarray
-    The data on the host
+Returns
+-------
+numpy array : a copy of the device data on the host
 """
 @
 <<class definitions>>=
