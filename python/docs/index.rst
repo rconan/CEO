@@ -42,41 +42,58 @@ ShackHartmann
 .. autoclass:: ShackHartmann
     :members:
 
+rayTracing
+----------
+GMT M1
+~~~~~~
+.. autoclass:: GMT_M1
+    :members:
+GMT M2
+~~~~~~
+.. autoclass:: GMT_M1
+    :members:
+
 utilities
 ---------
 
+mask
+~~~~~
+
 Mask
-~~~~
+````
 .. autoclass:: Mask
     :members:
 
 Telescope
-~~~~
+`````````
 .. autoclass:: Telescope
     :members:
 
 GMT
-~~~~
+```
 .. autoclass:: GMT
     :members:
 
 StopWatch
-~~~~
+~~~~~~~~~
 .. autoclass:: StopWatch
     :members:
 
+CUDA array
+~~~~~~~~~~
+
 cuFloatArray
-~~~~
+````````````
 .. autoclass:: cuFloatArray
     :members:
 
 cuDoubleArray
-~~~~
+`````````````
 .. autoclass:: cuDoubleArray
     :members:
 
 cuIntArray
-~~~~
+``````````
 .. autoclass:: cuIntArray
     :members:
 
