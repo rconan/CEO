@@ -861,6 +861,11 @@ int N_L;
 In \textit{fan} mode, the radius is saved in [[L]] and in \textit{box} mode the side of the box is saved in [[L]]:
 <<ray bundle parameters>>=
 rtd L;
+@ 
+The optical path difference is computed with respect to a reference sphere which is centered on the object in the image plane and which is tangent to the exit pupil.
+<<ray bundle parameters>>=
+rtd *d__sphere_distance, *d__sphere_radius;
+vector *d__sphere_origin;
 @
 \subsection{Setup \& Cleanup}
 \label{sec:bundle-setup--cleanup}
@@ -953,6 +958,9 @@ HANDLE_ERROR( cudaMalloc((void**)&d__chief_ray, sizeof(ray)*N_BUNDLE ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__chief_origin, sizeof(vector) ) );
 HANDLE_ERROR( cudaMemcpy( d__chief_origin, &chief_origin, 
                          sizeof(vector), cudaMemcpyHostToDevice ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__sphere_distance, sizeof(rtd)*N_BUNDLE ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__sphere_radius, sizeof(rtd)*N_BUNDLE ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin, sizeof(vector)*N_BUNDLE ) );
 @ and is initialized with
 <<chief ray init>>= 
 ray_coordinates LLL gridDim , blockDim RRR (d__chief_ray, 1, src->dev_ptr,
@@ -1032,6 +1040,9 @@ void bundle::cleanup(void)
   HANDLE_ERROR( cudaFree( d__chief_ray ) );
   HANDLE_ERROR( cudaFree( d__origin ) );
   HANDLE_ERROR( cudaFree( d__chief_origin ) );
+  HANDLE_ERROR( cudaFree( d__sphere_distance ) );
+  HANDLE_ERROR( cudaFree( d__sphere_radius ) );
+  HANDLE_ERROR( cudaFree( d__sphere_origin ) );
 }
 @
 
@@ -1231,13 +1242,60 @@ the distance to the object from the last surface is given by
 <<ray bundle functions: focal plane curvature>>= 
 dim3 blockDim(1,1);
 dim3 gridDim(1,1, N_BUNDLE);
-to_focal_surface_chief_kernel LLL gridDim , blockDim RRR (d__s, d__chief_ray, 1, 
+to_focal_surface_chief_kernel LLL gridDim , blockDim RRR (d__sphere_distance, d__chief_ray, 1, 
                                                           z_chief_on_axis, rho_focal_plane);
 @
 The origin of the reference sphere is computed next 
 <<ray bundle functions: focal plane curvature>>= 
-chief_parametric_equation LLL gridDim , blockDim RRR (d__sphere_origin, d__chief_ray, 1, d__s);
-@ followed by the computation of the optical path length of the chief ray from the last surface to the object
+chief_parametric_equation LLL gridDim , blockDim RRR (d__sphere_origin, d__chief_ray, 1, d__sphere_distance);
+@ followed by the computation of the radius of the reference sphere, which must be tangent to the exit pupil,
+<<ray bundle functions: focal plane curvature>>= 
+sphere_radius_kernel LLL gridDim , blockDim RRR (d__sphere_radius, d__chief_ray, 1, d__sphere_origin);
+@ 
+<<to sphere kernel>>=
+__global__ void sphere_radius_kernel(rtd *radius, ray *d__ray, int N_RAY, vector *sphere_origin)
+{
+  int k, iSource;
+  rtd rho2_xy, rho2_kl, buf, s, z;
+  iSource = blockIdx.z;
+  k = iSource;
+
+  buf =  d__ray[k].coordinates.x;
+  buf *= buf;
+  rho2_xy = buf;
+  buf =  d__ray[k].coordinates.y;
+  buf *= buf;
+  rho2_xy += buf;
+
+  buf =  d__ray[k].directions.x;
+  buf *= buf;
+  rho2_kl = buf;
+  buf =  d__ray[k].directions.y;
+  buf *= buf;
+  rho2_kl += buf;
+  
+  if (rho2_kl<1E-24)
+    radius[k] = 10.0;
+  else {
+    s = sqrt(rho2_xy/rho2_kl);
+    z = d__ray[k].coordinates.z + d__ray[k].directions.z*s;
+
+    buf = sphere_origin[k].x;
+    buf *= buf;
+    radius[k] = buf;
+
+    buf = sphere_origin[k].y;
+    buf *= buf;
+    radius[k] += buf;
+
+    buf = sphere_origin[k].z - z;
+    buf *= buf;
+    radius[k] += buf;
+    radius[k] = sqrt( radius[k] );
+  }
+}
+
+@ and of the optical path length of the chief ray from the last surface to the reference sphere
 <<ray bundle functions: focal plane curvature>>= 
 to_sphere_chief_kernel LLL gridDim , blockDim RRR (d__chief_ray, 1, 
                                                    d__sphere_origin, sphere_radius);
@@ -1253,13 +1311,7 @@ to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY,
 <<ray bundle functions>>= 
 void bundle::to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane, rtd sphere_radius)
 {
-  rtd *d__s;
-  HANDLE_ERROR( cudaMalloc((void**)&d__s, sizeof(rtd)*N_BUNDLE ) );
-  vector *d__sphere_origin;
-  HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin, sizeof(vector)*N_BUNDLE ) );
   <<ray bundle functions: focal plane curvature>>
-  HANDLE_ERROR( cudaFree( d__s ) );
-  HANDLE_ERROR( cudaFree( d__sphere_origin ) );
 }
 @
 \subsubsection{Distance to focal plane}
