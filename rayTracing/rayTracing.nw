@@ -80,6 +80,7 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 <<ray bundle kernels>>
 <<bundle reset kernel>>
 <<zernike surface kernel>>
+<<zernike projection kernel>>
 <<GMT chief ray tracing kernel>>
 <<GMT ray tracing kernel>>
 <<GMT blocking kernel>>
@@ -152,7 +153,7 @@ from utilities cimport cuDoubleArray
         void get_vignetting(double *)
 @
 <<class definitions>>=
-from utilities cimport cuDoubleArray
+from utilities cimport cuFloatArray, cuDoubleArray
 from source cimport Source
 # Bundle
 cdef class Bundle:
@@ -637,6 +638,7 @@ cdef class GMT_M2:
           void update(rtd *)
           void surface_derivatives(rtd *, rtd *, 
                                    rtd *, rtd *, int )
+          void projection(float *, rtd *, rtd *, int)
 
     rtd zernike_surface(rtd , rtd , unsigned int , rtd *)
 
@@ -694,6 +696,9 @@ cdef class ZernikeS:
         self._c_zernikeS.surface_derivatives(dSdx._c_gpu.dev_data, dSdy._c_gpu.dev_data, 
                                              r._c_gpu.dev_data, o._c_gpu.dev_data, r._c_gpu.N)
         return dSdx,dSdy
+
+    def projection(self, cuFloatArray phase, cuDoubleArray r, cuDoubleArray o):
+        self._c_zernikeS.projection(phase._c_gpu.dev_data, r._c_gpu.dev_data, o._c_gpu.dev_data, r.size)
 
 def Zernike_Surface(rtd r, rtd o, int max_n, np.ndarray a):
     return zernike_surface(r, o, max_n, <rtd *>a.data)
@@ -2104,6 +2109,7 @@ struct zernikeS {
   void update(rtd *a);
   void surface_derivative_coefs(void);
   void surface_derivatives(rtd *d__dSdx, rtd *d__dSdy, rtd *d__r, rtd *d__o, const int N);
+  void projection(float *d__phase, rtd *d__r, rtd *d__o, const int N);
 };
 @ 
 A Zernike surface is given by
@@ -2667,7 +2673,47 @@ int zern_dy_coef(rtd *b, int j, int n, int m, int jp, int np, int mp)
     *b *= sqrt(2.0);
   return 1;
 }
+@
+\subsection{Projection}
+\label{sec:projection}
 
+The projection $a_i$ of a wavefront phase $\varphi$ onto a Zernike polynomial is given by
+\begin{equation}
+  \label{eq:59}
+  a_i = { \sum_k \varphi\left( \vec r_k \right) Z_i\left( \vec r_k \right) \over \sum_k \left| Z_i\left( \vec r_k \right) \right|^2 }
+\end{equation}
+@ 
+<<zernikeS functions>>=
+void zernikeS::projection(float *d__phase, rtd *d__r, rtd *d__o, const int N)
+{
+  int k;
+  int n_byte = sizeof(rtd)*n_mode;
+  rtd *d__ap;
+  HANDLE_ERROR( cudaMalloc((void**)&d__ap, n_byte ) );
+  HANDLE_ERROR( cudaMemset(d__ap, 0, n_byte ) ); 
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1);
+  for (k=0;k<n_mode;k++)
+    projection_kern LLL gridDim, blockDim RRR (d__a, d__phase, d__r, d__o, N, max_n, d__ap, k);
+  HANDLE_ERROR( cudaFree( d__ap) );
+}
+@ where
+<<zernike projection kernel>>=
+__global__ void projection_kern(rtd *a, float *phase, rtd *r, rtd *o, const int N, 
+				int max_n, rtd *ap, int mode)
+{
+  int i;
+  rtd num, denom, z;
+  num = denom = 0.0;
+  ap[mode] = 1.0;
+  for (i=0; i<N; i++) {
+    z = zernike_surface(r[i], o[i], max_n, ap);
+    num   += phase[i]*z;
+    denom += z*z;
+  }
+  a[mode]  = num/denom;
+  ap[mode] = 0.0;
+}
 @
 \section{Aperture}
 \label{sec:aperture}
