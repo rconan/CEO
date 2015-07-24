@@ -5,5 +5,5 @@ from centroiding import Centroiding
 from imaging import Imaging
 from shackHartmann import ShackHartmann
 from LMMSE import Lmmse, LmmseSH
-from rayTracing import GMT_M1, GMT_M2
+from rayTracing import ZernikeS, GMT_M1, GMT_M2
 from aaStats import AaStats, PaStats
