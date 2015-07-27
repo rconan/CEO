@@ -131,6 +131,9 @@ from utilities cimport cuDoubleArray
 <<rayTracing.pxd>>=
     cdef cppclass bundle:
         int N_RAY, N_BUNDLE
+        rtd *d__sphere_radius
+        rtd *d__sphere_distance
+        vector *d__sphere_origin
         ray *d__ray
 	ray *d__chief_ray
         void setup(rtd, int, int , vector, int)
@@ -166,6 +169,9 @@ cdef class Bundle:
     cdef cuDoubleArray _chief_optical_path_length_
     cdef cuDoubleArray _optical_path_difference_
     cdef cuDoubleArray _vignetting_
+    cdef public cuDoubleArray sphere_radius
+    cdef public cuDoubleArray sphere_distance
+    cdef double[:,::1] _d__sphere_origin_
 <<rayTracing.pyx>>=
 # polar bundle
 cdef class Bundle:
@@ -222,6 +228,10 @@ cdef class Bundle:
         self._vignetting_                = cuDoubleArray(
             shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
 
+        self.sphere_radius = cuDoubleArray( shape=(self._c_bundle.N_BUNDLE,1),dev_malloc=False)
+        self.sphere_radius._c_gpu.dev_data = self._c_bundle.d__sphere_radius
+        self.sphere_distance = cuDoubleArray( shape=(self._c_bundle.N_BUNDLE,1),dev_malloc=False)
+        self.sphere_distance._c_gpu.dev_data = self._c_bundle.d__sphere_distance
 
     <<bundle common>>
 @ 
@@ -958,7 +968,11 @@ HANDLE_ERROR( cudaMalloc((void**)&d__chief_ray, sizeof(ray)*N_BUNDLE ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__chief_origin, sizeof(vector) ) );
 HANDLE_ERROR( cudaMemcpy( d__chief_origin, &chief_origin, 
                          sizeof(vector), cudaMemcpyHostToDevice ) );
-@ and is initialized with
+HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin,   sizeof(vector)*N_BUNDLE ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__sphere_radius,   sizeof(rtd)*N_BUNDLE ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__sphere_distance, sizeof(rtd)*N_BUNDLE ) );
+@
+ and is initialized with
 <<chief ray init>>= 
 ray_coordinates LLL gridDim , blockDim RRR (d__chief_ray, 1, src->dev_ptr,
 					    0.0, 2, 1, d__origin);
@@ -1037,6 +1051,9 @@ void bundle::cleanup(void)
   HANDLE_ERROR( cudaFree( d__chief_ray ) );
   HANDLE_ERROR( cudaFree( d__origin ) );
   HANDLE_ERROR( cudaFree( d__chief_origin ) );
+  HANDLE_ERROR( cudaFree( d__sphere_origin ) );
+  HANDLE_ERROR( cudaFree( d__sphere_radius ) );
+  HANDLE_ERROR( cudaFree( d__sphere_distance ) );
 }
 @
 
@@ -1214,8 +1231,6 @@ Given the origin and the radius of the reference sphere, the optical path differ
 <<ray bundle functions>>= 
 void bundle::to_sphere(vector sphere_origin, rtd sphere_radius)
 {
-  vector *d__sphere_origin;
-  HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__sphere_origin, &sphere_origin, 
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
   to_sphere_chief_kernel LLL 1 , 1, N_BUNDLE RRR (d__chief_ray, 1, 
@@ -1225,7 +1240,6 @@ void bundle::to_sphere(vector sphere_origin, rtd sphere_radius)
   to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
 					       d__sphere_origin, sphere_radius, 
 					       d__chief_ray);
-  HANDLE_ERROR( cudaFree( d__sphere_origin ) );
 }
 @
 \subsubsection{Spherical focal plane}
@@ -1236,17 +1250,17 @@ the distance to the object from the last surface is given by
 <<ray bundle functions: focal plane curvature>>= 
 dim3 blockDim(1,1);
 dim3 gridDim(1,1, N_BUNDLE);
-to_focal_surface_chief_kernel LLL gridDim , blockDim RRR (d__s, d__chief_ray, 1, 
+to_focal_surface_chief_kernel LLL gridDim , blockDim RRR (d__sphere_distance, d__chief_ray, 1, 
                                                           z_chief_on_axis, rho_focal_plane);
 @
 The origin of the reference sphere is computed next 
 <<ray bundle functions: focal plane curvature>>= 
-chief_parametric_equation LLL gridDim , blockDim RRR (d__sphere_origin, d__chief_ray, 1, d__s);
+chief_parametric_equation LLL gridDim , blockDim RRR (d__sphere_origin, d__chief_ray, 1, d__sphere_distance);
 @ followed by the computation of the radius of the reference sphere, which must be tangent to the exit pupil,
 <<ray bundle functions: focal plane curvature>>= 
 sphere_radius_kernel LLL gridDim , blockDim RRR (d__sphere_radius, d__chief_ray, 1, d__sphere_origin);
 HANDLE_ERROR( cudaMemcpy( &sphere_radius, d__sphere_radius, 
-                          sizeof(rtd), cudaMemcpyDeviceToHost ) );
+                          sizeof(rtd)*N_BUNDLE, cudaMemcpyDeviceToHost ) );
 @ 
 <<to sphere kernel>>=
 __global__ void sphere_radius_kernel(rtd *radius, ray *d__ray, int N_RAY, vector *sphere_origin)
@@ -1271,7 +1285,7 @@ __global__ void sphere_radius_kernel(rtd *radius, ray *d__ray, int N_RAY, vector
   rho2_kl += buf;
   
   if (rho2_kl<1E-24)
-    radius[k] = 10.0;
+    radius[k] = 12.345;
   else {
     s = sqrt(rho2_xy/rho2_kl);
     z = d__ray[k].coordinates.z + d__ray[k].directions.z*s;
@@ -1307,15 +1321,7 @@ to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY,
 <<ray bundle functions>>= 
 void bundle::to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane, rtd sphere_radius)
 {
-  rtd *d__s, *d__sphere_radius;
-  HANDLE_ERROR( cudaMalloc((void**)&d__s, sizeof(rtd)*N_BUNDLE ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__sphere_radius, sizeof(rtd)*N_BUNDLE ) );
-  vector *d__sphere_origin;
-  HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin, sizeof(vector)*N_BUNDLE ) );
   <<ray bundle functions: focal plane curvature>>
-  HANDLE_ERROR( cudaFree( d__s ) );
-  HANDLE_ERROR( cudaFree( d__sphere_radius ) );
-  HANDLE_ERROR( cudaFree( d__sphere_origin ) );
 }
 @
 \subsubsection{Distance to focal plane}
@@ -1342,10 +1348,7 @@ to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY,
 <<ray bundle functions>>= 
 void bundle::to_sphere(rtd *s, rtd sphere_radius)
 {
-//  vector *d__sphere_origin;
-  HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin, sizeof(vector)*N_BUNDLE ) );
   <<ray bundle functions: from distance>>
-  HANDLE_ERROR( cudaFree( d__sphere_origin ) );
 }
 @  
 
