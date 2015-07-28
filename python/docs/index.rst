@@ -44,6 +44,14 @@ ShackHartmann
 
 rayTracing
 ----------
+Bundle
+~~~~~~
+.. autoclass:: Bundle
+    :members:
+ZernikeS
+~~~~~~
+.. autoclass:: ZernikeS
+    :members:
 GMT M1
 ~~~~~~
 .. autoclass:: GMT_M1
