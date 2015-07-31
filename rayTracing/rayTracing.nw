@@ -140,8 +140,7 @@ from utilities cimport cuDoubleArray
         void setup(rtd, int , vector, int)
         void cleanup()
         void to_z_plane(rtd)
-        void to_sphere(vector , rtd)
-        void to_sphere(rtd *, rtd)
+        void to_sphere(vector)
         void to_sphere(rtd , rtd)
         void get_coordinates(double *)
         void get_chief_coordinates(double *)
@@ -256,52 +255,30 @@ def to_z_plane(self,rtd z_plane):
     """
     self._c_bundle.to_z_plane(z_plane)
 
-def to_sphere(self, rtd sphere_radius=0.0, sphere_origin=None, sphere_distance=None, 
-              rtd focal_plane_distance=0.0, rtd focal_plane_radius=0.0):
+def to_sphere(self, sphere_origin=None,
+              rtd focal_plane_distance=0.0, 
+              rtd focal_plane_radius=0.0):
     """
     Computes the optical path difference with respect to the reference sphere
 
     Parameters
     ----------
-    radius : double, optional
-       The radius of the reference sphere; default: 0.0
     sphere_origin : list of double, optional
         A 3 elements list containing the x,y and z coordinates of the sphere center; default: None
-    sphere_distance : list of double, optional
-        A list containing the distance from the last surface to the sphere center for the chief ray; default: None
     focal_plane_distance : double, optional
         The location of the focal plane on the optical axis; default: 0.0
     focal_plane_radius : double, optional
         The radius of curvature of the focal plane; default: 0.0
     """
-
-    if sphere_distance is not None:
-        distance = cuDoubleArray( host_data=np.array(sphere_distance) )
-        self._c_bundle.to_sphere(distance._c_gpu.dev_data,sphere_radius)
-
     cdef vector origin
     if sphere_origin is not None:
         origin.x = <double>sphere_origin[0]
         origin.y = <double>sphere_origin[1]
         origin.z = <double>sphere_origin[2]
-        self._c_bundle.to_sphere(origin,sphere_radius)
+        self._c_bundle.to_sphere(origin)
 
     if focal_plane_distance!=0.0:
         self._c_bundle.to_sphere(focal_plane_distance, focal_plane_radius);
-
-def go_sphere(self, rtd s, rtd radius):
-    """
-    Computes the optical path difference with respect to the reference sphere
-
-    Parameters
-    ----------
-    s: double
-        The distance from the last surface to the object for the chief ray
-    radius: double
-       The radius of the reference sphere
-    """
-    distance = cuDoubleArray( host_data=np.array(s) )
-    self._c_bundle.to_sphere(distance._c_gpu.dev_data,radius)
 
 def get_optical_path_difference(self,
                                 float delta_x, int N_x,
@@ -826,9 +803,8 @@ struct bundle {
   void setup(rtd L, int N_L, vector origin, int N_SRC);
   void cleanup(void);
   void to_z_plane(rtd z_in);
-  void to_sphere(vector sphere_origin, rtd sphere_radius);
+  void to_sphere(vector sphere_origin);
   void to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane);
-  void to_sphere(rtd *s, rtd sphere_radius);
   void get_coordinates(double *d__coord);
   void get_chief_coordinates(double *d__coord);
   void get_directions(double *d__dir);
@@ -1128,7 +1104,7 @@ __global__ void to_z_plane_chief_kernel(ray *d__ray, int N_RAY, rtd z_plane)
 \subsection{Reference sphere}
 \label{sec:reference-sphere}
 
-\subsubsection{Method and kernels}
+\subsubsection{Kernels}
 \label{sec:method}
 
 The optical path difference (OPD) is usually computed with respect to a reference sphere centered on the object.
@@ -1149,7 +1125,7 @@ Inserting $x$, $y$ and $z$ in the sphere equation,
 where $(x_O,y_O,z_O)$ is the object coordinate and $R$ the sphere radius, and solving for $S$ lead to
 \begin{equation}
   \label{eq:29}
-  s = - \gamma + \sqrt{\gamma^2  - (\rho^2 - R^2)}
+  s = - \gamma - \sqrt{\gamma^2  - (\rho^2 - R^2)}
 \end{equation}
 with
 \begin{equation}
@@ -1169,7 +1145,7 @@ y = d__ray[k].coordinates.y - sphere_origin[iSource].y;
 z = d__ray[k].coordinates.z - sphere_origin[iSource].z;
 g = x*d__ray[k].directions.x + y*d__ray[k].directions.y + z*d__ray[k].directions.z;
 rho2 = x*x + y*y + z*z;
-s = sqrt( g*g - (rho2-sphere_radius*sphere_radius) ) - g;
+s = -sqrt( g*g - (rho2-sphere_radius[iSource]*sphere_radius[iSource]) ) - g;
 d__ray[k].optical_path_length = s;
 d__ray[k].coordinates.x += s*d__ray[k].directions.x; 
 d__ray[k].coordinates.y += s*d__ray[k].directions.y;
@@ -1177,7 +1153,7 @@ d__ray[k].coordinates.z += s*d__ray[k].directions.z;
 @
 <<to sphere kernel>>=
 __global__ void to_sphere_kernel(ray *d__ray, int N_RAY, 
-				 vector *sphere_origin, rtd sphere_radius,
+				 vector *sphere_origin, rtd *sphere_radius,
 				 ray *d__chief_ray)
 {
   int i, j, k0, k, iSource;
@@ -1196,7 +1172,7 @@ __global__ void to_sphere_kernel(ray *d__ray, int N_RAY,
   }
 }
 __global__ void to_sphere_chief_kernel(ray *d__ray, int N_RAY, 
-                                       vector *sphere_origin, rtd sphere_radius)
+                                       vector *sphere_origin, rtd *sphere_radius)
 {
   int k, iSource;
   rtd s, x, y, z, g, rho2;
@@ -1231,47 +1207,36 @@ __global__ void chief_parametric_equation(vector *d__v, ray *d__ray, int N_RAY, 
   d__v[k].y = d__ray[k].coordinates.y + d__ray[k].directions.y*s[k];
   d__v[k].z = d__ray[k].coordinates.z + d__ray[k].directions.z*s[k];
 }
-@
-\subsubsection{Reference sphere origin}
-\label{sec:refer-sphere-orig}
-
-Given the origin and the radius of the reference sphere, the optical path difference is computed with
-<<ray bundle functions>>= 
-void bundle::to_sphere(vector sphere_origin, rtd sphere_radius)
-{
-  HANDLE_ERROR( cudaMemcpy( d__sphere_origin, &sphere_origin, 
-			    sizeof(vector), cudaMemcpyHostToDevice ) );
-  to_sphere_chief_kernel LLL 1 , 1, N_BUNDLE RRR (d__chief_ray, 1, 
-					d__sphere_origin, sphere_radius);
-  dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1, N_BUNDLE);
-  to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
-					       d__sphere_origin, sphere_radius, 
-					       d__chief_ray);
-}
-@
-\subsubsection{Spherical focal plane}
-\label{sec:spher-focal-plane}
-
-Given the distance of the chief ray [[s_chief_on_axis]] from the last surface to the object for an on--axis source, the radius of curvature of the focal plane [[rho_focal_plane]] and the radius of the reference sphere [[sphere_radius]],
-the distance to the object from the last surface is given by
-<<ray bundle functions: focal plane curvature>>= 
-dim3 blockDim(1,1);
-dim3 gridDim(1,1, N_BUNDLE);
-to_focal_surface_chief_kernel LLL gridDim , blockDim RRR (d__sphere_distance, d__chief_ray, 1, 
-                                                          z_chief_on_axis, rho_focal_plane);
-@
-The origin of the reference sphere is computed next 
-<<ray bundle functions: focal plane curvature>>= 
-chief_parametric_equation LLL gridDim , blockDim RRR (d__sphere_origin, d__chief_ray, 1, d__sphere_distance);
-@ followed by the computation of the radius of the reference sphere, which must be tangent to the exit pupil,
-<<ray bundle functions: focal plane curvature>>= 
-sphere_radius_kernel LLL gridDim , blockDim RRR (d__sphere_radius, d__chief_ray, 1, d__sphere_origin);
-HANDLE_ERROR( cudaMemcpy( &sphere_radius, d__sphere_radius, 
-                          sizeof(rtd)*N_BUNDLE, cudaMemcpyDeviceToHost ) );
 @ 
+To compute the reference sphere radius, one must know the location of the exit pupil.
+The location of the exit pupil is given by the intersection of the chief ray with the optical axis after the last surface of the system.
+Remembering the rays parametric equation:
+\begin{eqnarray}
+  \label{eq:60}
+  x &=& x_{-1} + k_{-1}s \\
+  y &=& y_{-1} + l_{-1}s \\
+  z &=& z_{-1} + m_{-1}s \\
+\end{eqnarray}
+and noting that, at the intersection $x=y=0$, the distance $s$ from the last surface to the exit pupil is given by
+\begin{equation}
+  \label{eq:61}
+  s = \sqrt{  x_{-1}^2 + y_{-1}^2 \over k_{-1}^2 + l_{-1}^2 }
+\end{equation}
+Given the origin of the reference sphere $\left( x_{s,0},y_{s,0},z_{s,0} \right)$, the radius $\varrho_s$ is written
+\begin{equation}
+  \label{eq:62}
+  \varrho_s = \sqrt{ x_{s,0}^2 + y_{s,0}^2 + \left( z_{s,0} - z_E \right) },
+\end{equation}
+where $z_E$ is the exit pupil coordinate on the z--axis,
+\begin{equation}
+  \label{eq:63}
+  z_E = z_{-1} + m_{-1}s.
+\end{equation}
+In the case of an on--axis source, $k_{-1}=l_{-1}=0$ and $s=\infty$ so the radius is set to $\varrho_s=10$m.
+
 <<to sphere kernel>>=
-__global__ void sphere_radius_kernel(rtd *radius, ray *d__ray, int N_RAY, vector *sphere_origin)
+__global__ void sphere_radius_kernel(rtd *radius, ray *d__ray, int N_RAY, 
+				     vector *sphere_origin)
 {
   int k, iSource;
   rtd rho2_xy, rho2_kl, buf, s, z;
@@ -1312,49 +1277,68 @@ __global__ void sphere_radius_kernel(rtd *radius, ray *d__ray, int N_RAY, vector
     radius[k] = sqrt( radius[k] );
   }
 }
+@
+\subsubsection{Spherical focal plane}
+\label{sec:spher-focal-plane}
 
-@ and of the optical path length of the chief ray from the last surface to the reference sphere
-<<ray bundle functions: focal plane curvature>>= 
-to_sphere_chief_kernel LLL gridDim , blockDim RRR (d__chief_ray, 1, 
-                                                   d__sphere_origin, sphere_radius);
-@
-The optical path difference of the source rays is computed last
-<<ray bundle functions: focal plane curvature>>= 
-blockDim = dim3(16,16);
-gridDim  = dim3(N_RAY/256+1,1, N_BUNDLE);
-to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
-                                             d__sphere_origin, sphere_radius, 
-                                             d__chief_ray);
-@
 <<ray bundle functions>>= 
 void bundle::to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane)
 {
-  rtd sphere_radius;
-  <<ray bundle functions: focal plane curvature>>
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  <<reference sphere distance>>
+  <<reference sphere origin>>
+  <<reference sphere radius>>
+  <<chief ray optical path length>>
+  <<rays optical path difference>>
 }
 @
-\subsubsection{Distance to focal plane}
-\label{sec:distance-focal-plane}
-
-Given the distance to the object [[s]] from the last surface and the radius of the reference sphere [[sphere_radius]],
-the origin of the reference sphere is derived from the chief ray parametric equation:
-<<ray bundle functions: from distance>>= 
-dim3 blockDim(1,1);
-dim3 gridDim(1,1, N_BUNDLE);
-chief_parametric_equation LLL gridDim , blockDim RRR (d__sphere_origin, d__chief_ray, 1, s);
-@ allowing to compute the optical path length of the chief ray from the last surface to the object
-<<ray bundle functions: from distance>>= 
+Given the distance of the chief ray [[s_chief_on_axis]] from the last surface to the object for an on--axis source, the radius of curvature of the focal plane [[rho_focal_plane]] and the radius of the reference sphere [[sphere_radius]],
+the distance to the object from the last surface is given by
+<<reference sphere distance>>= 
+to_focal_surface_chief_kernel LLL gridDim , blockDim RRR (d__sphere_distance, d__chief_ray, 1, 
+                                                          z_chief_on_axis, 
+							  rho_focal_plane);
+@
+The origin of the reference sphere is computed next 
+<<reference sphere origin>>= 
+chief_parametric_equation LLL gridDim , blockDim RRR (d__sphere_origin, 
+						      d__chief_ray, 1, 
+						      d__sphere_distance);
+@ followed by the computation of the radius of the reference sphere, which must be tangent to the exit pupil,
+<<reference sphere radius>>= 
+sphere_radius_kernel LLL gridDim , blockDim RRR (d__sphere_radius, d__chief_ray, 1, 
+						 d__sphere_origin);
+@ and of the optical path length of the chief ray from the last surface to the reference sphere
+<<chief ray optical path length>>= 
 to_sphere_chief_kernel LLL gridDim , blockDim RRR (d__chief_ray, 1, 
-                                                   d__sphere_origin, sphere_radius);
-@ and finally to compute the optical path difference of the source rays
-<<ray bundle functions: from distance>>= 
+                                                   d__sphere_origin, d__sphere_radius);
+@
+The optical path difference of the source rays is computed last
+<<rays optical path difference>>= 
 blockDim = dim3(16,16);
 gridDim  = dim3(N_RAY/256+1,1, N_BUNDLE);
 to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
-                                             d__sphere_origin, sphere_radius, 
+                                             d__sphere_origin, d__sphere_radius, 
                                              d__chief_ray);
-@ 
+@
+\subsubsection{Reference sphere origin}
+\label{sec:refer-sphere-orig}
+
+Given the origin and the radius of the reference sphere, the optical path difference is computed with
 <<ray bundle functions>>= 
+void bundle::to_sphere(vector sphere_origin)
+{
+  HANDLE_ERROR( cudaMemcpy( d__sphere_origin, &sphere_origin, 
+			    sizeof(vector), cudaMemcpyHostToDevice ) );
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  <<reference sphere radius>>
+  <<chief ray optical path length>>
+  <<rays optical path difference>>
+}
+@ 
+<<ray bundle functions (opt-out)>>= 
 void bundle::to_sphere(rtd *s, rtd sphere_radius)
 {
   <<ray bundle functions: from distance>>
