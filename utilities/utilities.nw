@@ -85,6 +85,7 @@ void CUBLAS_ERROR(cublasStatus_t status);
 <<lenslet 2 actuator>>
 __global__ void fill_ones_char(char *ones, int n_data) ;
 __global__ void circular_pupil(char *pupil, int N);
+__global__ void square_pupil(char *pupil, int N, int N_S, int I_S, int J_S);
 __global__ void GMT_pupil(char *pupil, const int N, const float S, float Dsh, const float c, const char v);
 //__global__ void valid_lenslet(char *mask, int N_pupil, float threshold);
 __global__ void fried_geometry(char *lenslet_mask, char *actuator_mask, 
@@ -159,6 +160,7 @@ int round_up_to_nhp2(int n) {
 <<statistics functions>>
 <<mask functions>>
 <<circular pupil>>
+<<square pupil>>
 <<GMT pupil>>
 
 <<Fried geometry masks>>
@@ -647,7 +649,11 @@ void CUBLAS_ERROR(cublasStatus_t status) {
 \subsection{Pupil definition}
 \label{sec:pup-def}
 
-In the following, a circular pupil is computed:
+\subsubsection{Circular pupil}
+\label{sec:circular-pupil}
+
+
+In the following, a circular pupil in a [[N]]$\times$[[N]] array is computed:
 <<circular pupil>>=
 __global__ void circular_pupil(char *pupil, int N)
 {
@@ -664,8 +670,36 @@ __global__ void circular_pupil(char *pupil, int N)
     pupil[k] = (r>N*N/4) ? 0 : 1;
   }
 }
+@
+\subsubsection{Square pupil}
+\label{sec:square-pupil}
+
+A square pupil $P(i,j)$ of size [[N_S]] pixel and center of the pixels [[I_S]] and [[J_S]] inside a [[N]]$\times$[[N]] array is defined with
+\begin{eqnarray}
+  \label{eq:9}
+  P(i,j) &=& 1,\quad \left| i-[[I_S]]\over [[N_S]] \right| \leq {1\over 2} \& \left| j-[[J_S]]\over [[N_S]] \right| \leq {1\over 2} \\
+         &=& 0,\quad \text{elsewhere}
+\end{eqnarray}
+and computed with the kernel:
+<<square pupil>>=
+__global__ void square_pupil(char *pupil, int N, int N_S, int I_S, int J_S)
+{
+  int i, j, k, h,x,y;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = i*N + j;
+  if ( (i<N) && (j<N) ) {
+    h = N_S/2;
+    x = i - I_S + h;
+    y = j - J_S + h;
+    pupil[k] = ( ( (x>=0) && (x<N_S) ) && ( (y>=0) && (y<N_S) ) ) ? 1 : 0;
+  }
+}
 @ 
-Next we compute the mask of lenslets mapping the pupil:
+\subsubsection{Valid lenslets}
+\label{sec:valid-lenslets}
+
+We compute the mask of lenslets mapping the pupil:
 <<valid lenslet>>=
 __global__ void valid_lenslet(char *mask, int N_pupil, float threshold)
 {
@@ -982,6 +1016,7 @@ struct mask {
   <<mask parameters>>
   void setup(int n);
   void setup(int n, float L);
+  void setup(int n, float L, int i_s, int j_s, int n_out);
   void setup_circular(int n);
   void setup_circular(int n, float D);
   void setup_GMT(int n, float S);
@@ -1024,6 +1059,21 @@ void mask::setup(int n, float L) {
   dim3 blockDim(256);
   dim3 gridDim(nel/256+1);
   fill_ones_char LLL gridDim,blockDim RRR (m,nel);
+  set_filter();
+}
+@ \item with a square mask of [[n]] pixel across and [[L]] meter width inside a [[n_out]]$\times$[[n_out]] array and centered on pixel coordinates [[i_s]] and [[j_s]]:
+<<mask functions>>=
+void mask::setup(int n, float L, int i_s, int j_s, int n_out) {
+  size_px[0] = size_px[1] = n_out;
+  size_m[0]  = size_m[1]  = L;
+  delta[0]   = delta[1]   = L/(n-1);
+  nel = n_out*n_out;
+  nnz = n*n;
+  area = L*L;
+  <<setup common>>
+  dim3 blockDim(16,16);
+  dim3 gridDim(n_out/16+1,n_out/16+1);
+  square_pupil LLL gridDim,blockDim RRR (m,n_out,n,i_s,j_s);
   set_filter();
 }
 @ \item with a circular mask inside an [[n]]$\times$[[n]] array
@@ -1139,6 +1189,7 @@ The python wrapper is
         char *m
         float *f
         void setup(int, float)
+        void setup(int, float, int, int, int)
         void setup_circular(int, float)
         void setup_GMT(int, float)
         void cleanup()
@@ -1170,7 +1221,7 @@ cdef class MaskAbstract:
         the number of non zeros values in the mask
     """
 
-    def __cinit__(self,int n, float S=0.0):
+    def __cinit__(self,int n, float S=0.0, int i_s=0, int j_s=0, int n_s=0):
         self.n = n
 	self._c_mask = new mask()
 	self.f = cuFloatArray(shape=(self.n,1))
@@ -1192,9 +1243,12 @@ cdef class Mask(MaskAbstract):
         the linear size of the mask in meter    
     """
 
-    def __cinit__(self,int n, float L):
+    def __cinit__(self,int n, float L, int i_s=0, int j_s=0, int n_s=0):
         self.n = n*n
-        self._c_mask.setup(n,L)
+        if n_s==0:
+            self._c_mask.setup(n,L)
+        else:
+            self._c_mask.setup(n_s,L,i_s,j_s,n)
 	self.f = cuFloatArray(shape=(self.n,1))
         self.f._c_gpu.dev_data = self._c_mask.f
 
