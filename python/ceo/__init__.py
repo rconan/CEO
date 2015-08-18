@@ -7,4 +7,4 @@ from shackHartmann import ShackHartmann
 from LMMSE import Lmmse, LmmseSH
 from rayTracing import Bundle, ZernikeS, GMT_M1, GMT_M2
 from aaStats import AaStats, PaStats
-from GMT import GMT_MX
+from GMT import GMT_MX, SegmentPistonSensor
