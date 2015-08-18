@@ -2,6 +2,7 @@ import sys
 import math
 import numpy as np
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann
+
 class GMT_MX:
     """
     A class container from GMT_M1 and GMT_M2 classes
