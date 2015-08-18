@@ -1,0 +1,335 @@
+import sys
+import math
+import numpy as np
+from ceo import Source, GMT_M1, GMT_M2, ShackHartmann
+
+class GMT_MX:
+    """
+    A class container from GMT_M1 and GMT_M2 classes
+
+    Parameters
+    ----------
+    D : float
+        The size of the pupil plane in meter
+    D_px : int
+        The size of the pupil plane in pixel
+    M1_radial_order : int, optionnal
+        The largest radial order of the Zernike polynomials on M1 segments, default to 0
+    M2_radial_order : int, optionnal
+        The largest radial order of the Zernike polynomials on M2 segments, default to 0
+    N_SRC : int 
+        The total number of sources to be propagated through the system
+
+    Attributes
+    ----------
+    M1 : GMT_M1
+        The GMT M1 CEO class
+    M2 : GMT_M2
+        The GMT M2 CEO class
+    sphere_radius : float
+        The curvature radius of the ray tracing reference sphere
+    """
+    def __init__(self, D, D_px, M1_radial_order=0, M2_radial_order=0, N_SRC=1):
+        self.D = D
+        self.D_px = D_px
+        self.M1 = GMT_M1(D, D_px, radial_order=M1_radial_order, N_SRC=N_SRC)
+        self.M2 = GMT_M2(D, D_px, radial_order=M2_radial_order, N_SRC=N_SRC)
+        self.focal_plane_distance = -5.830
+        self.focal_plane_radius   =  2.197173
+
+    def propagate(self,src):
+        """
+        Propagate the Source object to the pupil plane conjugated to M1
+
+        Parameters
+        ----------
+        src : Source
+            The Source object
+        """
+        #src.reset()
+        src.stop(self.M2)
+        src.trace(self.M1)
+        src.trace(self.M2)
+        src.sphere_distance
+#        src.rays.to_sphere(self.sphere_radius,sphere_distance = src.sphere_distance)
+        src.rays.to_sphere(focal_plane_distance=self.focal_plane_distance,
+                           focal_plane_radius=self.focal_plane_radius)
+        src.opd2phase()
+
+    def reset(self):
+        """
+        Reset M1 and M2 mirror segments to their original locations and shapes
+        """
+        self.M1.reset()
+        self.M1.zernike.reset()
+        self.M2.reset()
+        self.M2.zernike.reset()
+
+    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None):
+        """
+        Calibrate the different degrees of freedom of the  mirrors 
+
+        Parameters
+        ----------
+        wfs : ShackHartmann
+            The wavefront sensor
+        gs : Source
+            The guide star
+        mirror : string
+            The mirror label: eiher "M1" or "M2"
+        mode : string
+            The degrees of freedom label
+            for M1: "global tip-tilt", "zernike", "Txyz", "segment tip-tilt"
+            for M2: "pointing neutral", "coma neutral", "zernike", "Txyz", "segment tip-tilt", "TT7 segment tip-tilt"
+        stroke : float
+            The amplitude of the motion
+        """
+        def pushpull(action):
+            def get_slopes(stroke_sign):
+                self.reset()
+                action(stroke_sign*stroke)
+                self.propagate(gs)
+                wfs.reset()
+                wfs.analyze(gs)
+                return wfs.valid_slopes.host()
+            s_push = get_slopes(+1)
+            s_pull = get_slopes(-1)
+            return 0.5*(s_push-s_pull)/stroke
+
+        def TT7_pushpull(action):
+            def get_slopes(stroke_sign):
+                self.reset()
+                action(stroke_sign*stroke)
+                self.propagate(gs)
+                wfs.reset()
+                wfs.analyze(gs)
+                return wfs.c7
+            s_push = get_slopes(+1)
+            s_pull = get_slopes(-1)
+            return 0.5*(s_push-s_pull)/stroke
+
+        def M1_zernike_update(_stroke_):
+            self.M1.zernike.a[kSeg,kMode] = _stroke_
+            self.M1.zernike.update()
+
+        def M2_zernike_update(_stroke_):
+            self.M2.zernike.a[kSeg,kMode] = _stroke_
+            self.M2.zernike.update()
+
+        if mirror=="M1":
+            sys.stdout.write("___ M1 ___\n")
+            if mode=="global tip-tilt":
+                D = np.zeros((wfs.valid_lenslet.nnz*2,2))
+                D[:,0] = pushpull( lambda x : self.M1.global_tiptilt(x,0) )
+                D[:,1] = pushpull( lambda x : self.M1.global_tiptilt(0,x) )
+            if mode=="Txyz":
+                D = np.zeros((wfs.valid_lenslet.nnz*2,3*7))
+                idx = 0
+                Tx = lambda x : self.M1.update(origin=[x,0,0],euler_angles=[0,0,0],idx=kSeg)
+                Ty = lambda x : self.M1.update(origin=[0,x,0],euler_angles=[0,0,0],idx=kSeg)
+                Tz = lambda x : self.M1.update(origin=[0,0,x],euler_angles=[0,0,0],idx=kSeg)
+                sys.stdout.write("Segment #:")
+                for kSeg in range(1,8):
+                    sys.stdout.write("%d "%kSeg)
+                    D[:,idx] = pushpull( Tx )
+                    idx += 1
+                    D[:,idx] = pushpull( Ty )
+                    idx += 1
+                    D[:,idx] = pushpull( Tz )
+                    idx += 1
+                sys.stdout.write("\n")
+            if mode=="segment tip-tilt":
+                D = np.zeros((wfs.valid_lenslet.nnz*2,2*7))
+                idx = 0
+                Rx = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
+                Ry = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
+                sys.stdout.write("Segment #:")
+                for kSeg in range(1,8):
+                    sys.stdout.write("%d "%kSeg)
+                    D[:,idx] = pushpull( Rx )
+                    idx += 1
+                    D[:,idx] = pushpull( Ry )
+                    idx += 1
+                sys.stdout.write("\n")
+            if mode=="zernike":
+                n_mode = self.M1.zernike.n_mode
+                D = np.zeros((wfs.valid_lenslet.nnz*2,(n_mode-3)*7))
+                idx = 0;
+                for kSeg in range(7):
+                    sys.stdout.write("Segment #%d: "%kSeg)
+                    for kMode in range(3,n_mode):
+                        sys.stdout.write("%d "%(kMode+1))
+                        D[:,idx] = pushpull( M1_zernike_update )
+                        idx += 1
+                    sys.stdout.write("\n")
+
+        if mirror=="M2":
+            sys.stdout.write("___ M2 ___\n")
+            if mode=="pointing neutral":
+                D = np.zeros((wfs.valid_lenslet.nnz*2,2))
+                D[:,0] = pushpull( lambda x : self.M2.pointing_neutral(x,0) )
+                D[:,1] = pushpull( lambda x : self.M2.pointing_neutral(0,x) )
+            if mode=="coma neutral":
+                D = np.zeros((wfs.valid_lenslet.nnz*2,2))
+                D[:,0] = pushpull( lambda x : self.M2.coma_neutral(x,0) )
+                D[:,1] = pushpull( lambda x : self.M2.coma_neutral(0,x) )                
+            if mode=="Txyz":
+                D = np.zeros((wfs.valid_lenslet.nnz*2,3*7))
+                idx = 0
+                Tx = lambda x : self.M2.update(origin=[x,0,0],euler_angles=[0,0,0],idx=kSeg)
+                Ty = lambda x : self.M2.update(origin=[0,x,0],euler_angles=[0,0,0],idx=kSeg)
+                Tz = lambda x : self.M2.update(origin=[0,0,x],euler_angles=[0,0,0],idx=kSeg)
+                sys.stdout.write("Segment #:")
+                for kSeg in range(1,8):
+                    sys.stdout.write("%d "%kSeg)
+                    D[:,idx] = pushpull( Tx )
+                    idx += 1
+                    D[:,idx] = pushpull( Ty )
+                    idx += 1
+                    D[:,idx] = pushpull( Tz )
+                    idx += 1
+                sys.stdout.write("\n")
+            if mode=="segment tip-tilt":
+                D = np.zeros((wfs.valid_lenslet.nnz*2,2*7))
+                idx = 0
+                Rx = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
+                Ry = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
+                sys.stdout.write("Segment #:")
+                for kSeg in range(1,8):
+                    sys.stdout.write("%d "%kSeg)
+                    D[:,idx] = pushpull( Rx )
+                    idx += 1
+                    D[:,idx] = pushpull( Ry )
+                    idx += 1
+                sys.stdout.write("\n")
+            if mode=="zernike":
+                n_mode = self.M1.zernike.n_mode
+                D = np.zeros((wfs.valid_lenslet.nnz*2,(n_mode-3)*7))
+                idx = 0;
+                for kSeg in range(7):
+                    sys.stdout.write("Segment #%d: "%kSeg)
+                    for kMode in range(3,n_mode):
+                        sys.stdout.write("%d "%(kMode+1))
+                        D[:,idx] = pushpull( M2_zernike_update )
+                        idx += 1
+                    sys.stdout.write("\n")
+            if mode=="TT7 segment tip-tilt":
+                D = np.zeros((14,14))
+                idx = 0
+                Rx = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
+                Ry = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
+                sys.stdout.write("Segment #:")
+                for kSeg in range(1,8):
+                    sys.stdout.write("%d "%kSeg)
+                    D[:,idx] = TT7_pushpull( Rx )
+                    idx += 1
+                    D[:,idx] = TT7_pushpull( Ry )
+                    idx += 1
+                sys.stdout.write("\n")
+
+        sys.stdout.write("------------\n")
+
+        return D
+
+class TT7(ShackHartmann):
+
+    def __init__(self, N_SIDE_LENSLET, N_PX_LENSLET, d,
+	          DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, N_GS=1):
+        ShackHartmann.__init__(self,N_SIDE_LENSLET, N_PX_LENSLET, d,
+                                DFT_osf=DFT_osf, 
+                                N_PX_IMAGE=N_PX_IMAGE, 
+                                BIN_IMAGE=BIN_IMAGE, 
+                                N_GS=N_GS)
+
+    def calibrate(self, gs, gmt, 
+                  stroke_pixel=2, 
+                  slopes_threshold=0.95):
+
+        gs.reset()
+        gmt.reset()
+        ShackHartmann.reset(self)
+
+        gmt.propagate(gs)
+        flux_threshold = 0.95
+        ShackHartmann.calibrate(self, gs, flux_threshold)
+
+        nvl = self.n_valid_lenslet
+        self.M = np.zeros((nvl,7))
+        mas2rad = 1e-3*math.pi/180/3600
+        px_scale = self.pixel_scale
+        print "TT7 pixel scale: %.2fmas"%(px_scale/mas2rad)
+        stroke = stroke_pixel*px_scale
+        slopes_cut = stroke_pixel**2*2*slopes_threshold
+
+        for k in range(1,8):
+            gs.reset()
+            gmt.reset()
+            ShackHartmann.reset(self)
+            gmt.M1.update(euler_angles=[stroke,stroke,0.0],idx=k)
+            gmt.propagate(gs)
+            ShackHartmann.analyze(self,gs)
+            c = self.valid_slopes.host().flatten()/px_scale
+            rho2_c = c[:nvl]**2 + c[nvl:]**2
+            slopes_cut = rho2_c.max()*slopes_threshold
+            self.M[:,k-1] = np.array(rho2_c>slopes_cut,dtype=np.float)
+
+        gs.reset()
+        gmt.reset()
+        ShackHartmann.reset(self)
+
+    def analyze(self, gs):
+        ShackHartmann.analyze(self,gs)
+        nvl = self.n_valid_lenslet
+        c = self.valid_slopes.host()
+        w = np.sum(self.M,axis=0)
+        self.c7 = np.concatenate((np.dot(c[0,:nvl],self.M)/w,
+                                  np.dot(c[0,nvl:],self.M)/w))
+
+class SegmentPistonSensor:
+
+    def __init__(self, gmt, src, W=1.5, L=1.5):
+        def ROT(o):
+            return np.array([ [ math.cos(o), math.sin(o)], [-math.sin(o),math.cos(o)] ])
+        n = gmt.D_px
+        R = gmt.D/2
+        self.P = gmt.M1.piston_mask
+        u = np.linspace(-1,1,n)*R
+        x,y = np.meshgrid(u,u)
+        xy = np.array( [ x.flatten(), y.flatten()] )        
+        self.rc = 4.387
+        xy_rc = np.array([[0],[self.rc]])
+        #print xy_rc
+        self.rp = 7.543
+        xy_rp = np.array([[self.rp],[0]])
+        #print xy_rp
+        self.W = 1.5
+        self.L = 1.5
+        xySrc = 82.5*np.array( [[src.zenith*math.cos(src.azimuth)],[src.zenith*math.sin(src.azimuth)]] )
+        #print xySrc        
+        M = []
+        for k in range(6):
+            theta = -k*math.pi/3
+            #print ROT(theta)
+            xyp = np.dot(ROT(theta),xy) - xy_rc - xySrc
+            M.append( np.logical_and( np.abs(xyp[0,:])<self.L/2,  np.abs(xyp[1,:])<self.W/2 ) )
+        for k in range(6):
+            theta = (1-k)*math.pi/3
+            #print ROT(theta)
+            xyp = np.dot(ROT(theta),xy) - xy_rp - xySrc
+            M.append( np.logical_and( np.abs(xyp[0,:])<self.L/2,  np.abs(xyp[1,:])<self.W/2 ) )
+        self.M = np.array( M )
+        #print self.M.shape
+
+    def piston(self,src, segment="full"):
+        if segment=="full":
+            p = src.wavefront.piston(mask=self.P)
+        if segment=="edge":
+            W = np.reshape( src.wavefront.phase.host() , (-1,) )
+            p = np.zeros(12)
+            for k in range(6):
+                #print k,(k+1)%6
+                p[2*k] = np.sum( W*self.P[k,:]*self.M[k,:] )/np.sum( self.P[k,:]*self.M[k,:] ) - \
+                         np.sum( W*self.P[6,:]*self.M[k,:] )/np.sum( self.P[6,:]*self.M[k,:] )
+                p[2*k+1] = np.sum( W*self.P[k,:]*self.M[k+6,:] )/np.sum( self.P[k,:]*self.M[k+6,:] ) - \
+                           np.sum( W*self.P[(k+1)%6,:]*self.M[k+6,:] )/np.sum( self.P[(k+1)%6,:]*self.M[k+6,:] )
+        return p
