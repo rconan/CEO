@@ -289,7 +289,7 @@ cdef class Source:
         The size of the ray bundle [m], defaults to None.
     rays_box_sampling : int, optionnal
         The linear sampling of the ray bundle
-    rays_origin : list
+    rays_origin : list, optionnal
          A 3 element list, with the first 2 being the (x,y) origin of the ray bundle and the 3rd the ray bundle starting z coordinates
 
     Attributes
@@ -323,15 +323,34 @@ cdef class Source:
 
     Examples
     --------
+    >>> import math
     >>> import numpy as np
     >>> import ceo
 
-    >>> n   = 1024
+    An on-axis source in K band is simply defined with:
+
+    >>> src = Source("K")
+
+    The resolution of the source wavefront is specifed with
+
+    >>> n = 256
     >>> src = Source("K",resolution=(n,n))
 
-    >>> zen = np.arange(3,dtype=np.float32)*1e-6*25
-    >>> azi = np.arange(3,dtype=np.float32)*3.14
+    For a 20" off-axis and 10th magnitude source, zenith and azimuth are set with
+
+    >>> src = Source("K",zenith=20*math.pi/180/3600,azimuth=math.pi/4,resolution=(n,n),magnitude=10)
+
+    A Laser guide star constellation of 6 sources is defined with
+
+    >>> zen = np.ones(6)*30*math.pi/180/3600,
+    >>> azi = np.linspace(0,5,6)*2*math.pi/6
     >>> lgs = ceo.Source("R",zenith=zen,azimuth=azi,height=90e3,resolution=(n,n)) 
+
+    If the source is to be used for ray tracing through an optical model like the GMT, then
+
+    >>> lgs = ceo.Source("R",zenith=zen,azimuth=azi,height=90e3,resolution=(n,n),
+                        rays_box_size=25.5, rays_box_sampling=n, rays_origin=[0,0,25]) 
+
     """
 
     def __cinit__(self,char *_photometric_band,  

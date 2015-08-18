@@ -28,6 +28,22 @@ class GMT_MX:
         The GMT M2 CEO class
     sphere_radius : float
         The curvature radius of the ray tracing reference sphere
+
+    Examples
+    --------
+    >>> import ceo
+
+    The mandatory parameters are the size of the pupil plane in meter or in pixel
+
+    >>> gmt = ceo.GMT_MX(25.5,256)
+
+    If more that one source (lets say 3) is going to be propagated through the telescope:
+
+    >>> gmt = ceo.GMT_MX(25.5,256, N_SRC=3)
+
+    A combination of Zernike polynomials can be applied to M1 and M2 segments by specifying the largest radial order on each mirror
+
+    >>> gmt = ceo.GMT_MX(25.5,256, M1_radial_order=8, M2_radial_order=14)
     """
     def __init__(self, D, D_px, M1_radial_order=0, M2_radial_order=0, N_SRC=1):
         self.D = D
@@ -286,13 +302,66 @@ class TT7(ShackHartmann):
                                   np.dot(c[0,nvl:],self.M)/w))
 
 class SegmentPistonSensor:
+    """
+    A class for the GMT segment piston sensor
+
+    Parameters
+    ----------
+    gmt : GMT_MX
+        The GMT object
+    src : Source
+        The Source object used for piston sensing
+    W : float, optionnal
+        The width of the lenslet; default: 1.5m
+    L : float, optionnal
+        The length of the lenslet; default: 1.5m 
+
+    Attributes
+    ----------
+    P : numpy ndarray
+        M1 segment mask as a 7 columns array
+    rc : float
+        The radius of the circle where are centered the first 6 lenslets
+    rp : float
+        The radius of the circle where are centered the last 6 lenslets
+    W : float
+        The width of the lenslet
+    L : float
+        The length of the lenslet
+    M : numpy ndarray
+        The mask corresponding to the 12 lenslet array as a 12 columns array
+
+    See also
+    --------
+    GMT_MX: a class for GMT M1 and M2 mirrors
+    Source: a class for astronomical sources
+
+    Examples
+    --------
+    >>> import ceo
+    >>> nPx = 256
+    >>> D = 25.5
+    >>> src = ceo.Source("R",rays_box_size=D,rays_box_sampling=nPx,rays_origin=[0.0,0.0,25])
+    >>> gmt = ceo.GMT_MX(D,nPx)
+    >>> SPS = ceo.SegmentPistonSensor(gmt,src)
+    >>> src.reset()
+    >>> gmt.propagate(src)
+    >>> SPS.P = gmt.M1.piston_mask
+
+    The piston per M1 segment is obtained with
+
+    >>> SPS.piston(src,segment='full')
+
+    The 12 differential piston are given by
+
+    >>> SPS.piston(src,segment='edge')
+    """
 
     def __init__(self, gmt, src, W=1.5, L=1.5):
         def ROT(o):
             return np.array([ [ math.cos(o), math.sin(o)], [-math.sin(o),math.cos(o)] ])
         n = gmt.D_px
         R = gmt.D/2
-        self.P = gmt.M1.piston_mask
         u = np.linspace(-1,1,n)*R
         x,y = np.meshgrid(u,u)
         xy = np.array( [ x.flatten(), y.flatten()] )        
@@ -321,6 +390,22 @@ class SegmentPistonSensor:
         #print self.M.shape
 
     def piston(self,src, segment="full"):
+        """
+        Return either M1 segment piston or M1 differential piston
+
+        Parameters
+        ----------
+        src : Source
+            The piston sensing guide star object
+        segment : string, optionnal
+            "full" for piston on the entire segments or "edge" for the differential piston between segment; default: "full"
+
+        Return
+        ------
+        p : numpy ndarray
+            A 6 element piston vector for segment="full" or a 12 element differential piston vector for segment="edge"
+        """
+        
         if segment=="full":
             p = src.wavefront.piston(mask=self.P)
         if segment=="edge":
