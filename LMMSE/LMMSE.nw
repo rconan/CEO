@@ -1,0 +1,1234 @@
+% -*- mode: Noweb; noweb-code-mode: python-mode -*-
+@
+\section{The files}
+
+\subsection{Header}
+
+<<LMMSE.h>>=
+#ifndef __LMMSE_H__
+#define __LMMSE_H__
+
+#ifndef __UTILITIES_H__
+#include "utilities.h"
+#endif
+
+#ifndef __AASTATS_H__
+#include "aaStats.h"
+#endif
+
+#ifndef __BTBT_H__
+#include "BTBT.h"
+#endif
+
+#ifndef __GBTBT_H__
+#include "GBTBT.h"
+#endif
+
+#ifndef __SHACKHARTMANN__
+#include "shackHartmann.h"
+#endif
+
+#ifndef __ITERATIVESOLVERS_H__
+#include "iterativeSolvers.h"
+#endif
+
+//#define MINRES_DEBUG
+
+struct LMMSE {
+
+  <<parameters>>
+
+  void setup(atmosphere *atm, source *guide_star, source *mmse_star,
+	     float sampling, int N, char *solver_id);
+  void setup(atmosphere *atm, source *guide_star, source *mmse_star,
+	     float sampling, int N, 
+	     mask *pupil, char *solver_id);
+  void setup(atmosphere *atm, source *guide_star, source *mmse_star,
+	     float sampling, int N, 
+	     mask *pupil, char *solver_id,
+             int wavefront_osf);
+  void setup(atmosphere *atm, source *guide_star, source *mmse_star,
+	     shackHartmann *wfs, char *solver_id);
+  void setup(atmosphere *atm, source *guide_star, source *mmse_star,
+	     shackHartmann *wfs, char *solver_id,
+	     int osf_, mask *pupil_);
+
+  void cleanup(void);
+
+  void estimation_old(float* d__c, int nMaxIteration, float *d__x0);
+  void estimation_old(float* d__c, int nMaxIteration);
+  void estimation(const centroiding *cog);
+  void estimation(shackHartmann *wfs);
+
+  void set_phase_est_ptr(float *data_ptr);
+  void toFile(const char *filename);
+};
+#endif // __LMMSE_H__
+@
+\subsection{Source}
+
+<<LMMSE.cu>>=
+#ifndef __LMMSE_H__
+#include "LMMSE.h"
+#endif
+
+<<zero padding solver solution>>
+<<sparse matrix kernel>>
+<<sparse matrix kernel with pupil mask>>
+
+<<setup>>
+<<setup with pupil>>
+<<setup with pupil and osf>>
+<<setup with shackHartmann>>
+<<setup with shackHartmann and osf>>
+
+<<cleanup>>
+
+<<wavefront estimation>>
+<<wavefront estimation (shackHartmann)>>
+
+<<phase estimate pointer>>
+<<phase estimate to file>>
+@
+
+\subsection{Python}
+\label{sec:python}
+
+<<LMMSE.pxd>>=
+from utilities cimport mask
+from atmosphere cimport atmosphere
+from source cimport source
+from centroiding cimport centroiding
+from shackHartmann cimport shackHartmann
+cdef extern from "LMMSE.h":
+    cdef cppclass LMMSE:
+        int NP
+        float *d__phase_est, *d__x
+        void setup(atmosphere *, source *, source *, 
+                   float , int , mask *, char *, int)
+        void setup(atmosphere *, source *, source *, 
+                   shackHartmann *, char *)
+        void setup(atmosphere *, source *, source *, 
+                   shackHartmann *, char *,
+                   int, mask *)
+        void cleanup()
+        void estimation(centroiding *)
+        void estimation(shackHartmann *)
+<<class definitions>>
+@ 
+<<class definitions>>=
+cdef class Lmmse:
+    cdef LMMSE *_c_LMMSE
+    cdef int N_phase
+cdef class LmmseSH:
+    cdef LMMSE *_c_LMMSE
+    cdef int N_phase
+    cdef int N_slope
+@ 
+<<LMMSE.pyx>>=
+from utilities cimport MaskAbstract, cuFloatArray
+from atmosphere cimport AtmosphereAbstract
+from source cimport Source
+from centroiding cimport Centroiding
+from shackHartmann cimport ShackHartmann
+cdef class Lmmse:
+    """
+    A class for LMMSE reconstructor
+
+    Parameters
+    ----------
+    atm : Atmosphere
+        The atmosphere model used to computed the covariance matrices.
+    guide_star : Source
+        The guide stars from which the wavefront gradient is used for the wavefront reconstruction.
+    N_guide_star : int
+        The number of guide stars.
+    mmse_star : Source
+        The star in the direction of which the wavefront is reconstructed.
+    N_mmse_star : int
+        The number of mmse_star.
+    sampling : float
+        The sampling step of the wavefront in meters.
+    N : int
+        The number of lenslet across the lenslet array.
+    pupil : a Mask object
+        The binary mask corresponding to the telescope pupil.
+    solver_id: char
+        The name of the iterative solver: MINRES or CG.
+
+    Returns:
+    out : Lmmse
+        A Lmmse object
+    """
+
+    def __cinit__(self,AtmosphereAbstract atm, 
+                  Source guide_star, Source mmse_star,
+                  float sampling, int N, MaskAbstract pupil, 
+                  char *solver_id, int osf=1):
+        self._c_LMMSE = new LMMSE()
+        self._c_LMMSE.setup(atm._c_atmosphere,
+                            guide_star._c_source, mmse_star._c_source,
+                            sampling, N, pupil._c_mask, solver_id,osf)
+        self.N_phase = self._c_LMMSE.NP
+
+    def __dealloc__(self):
+        self._c_LMMSE.cleanup()
+
+    def estimation(self, Centroiding cog):
+        """
+        Computes an estimate of the wavefront corresponding to the centroids in the Centroiding object
+        """
+        self._c_LMMSE.estimation(cog._c_centroiding)
+
+    property phase:
+        def __get__(self):
+            """
+            Return the phase estimate in a cuFloatArray object
+            """
+            x = cuFloatArray(shape=(self.N_phase,self.N_phase))
+            x._c_gpu.dev_data = self._c_LMMSE.d__phase_est
+            return x
+
+cdef class LmmseSH:
+    """
+    A class for LMMSE reconstructor
+
+    Parameters
+    ----------
+    atm: an Atmosphere object
+        The atmosphere model used to computed the covariance matrices.
+    guide_star: a Source object
+        The guide stars from which the wavefront gradient is used for the wavefront reconstruction.
+    N_guide_star: an int
+        The number of guide stars.
+    mmse_star: a Source object
+        The star in the direction of which the wavefront is reconstructed.
+    N_mmse_star: an int
+        The number of mmse_star.
+    sampling: float
+        The sampling step of the wavefront in meters.
+    N: int
+        The number of lenslet across the lenslet array.
+    pupil: a Mask object
+        The binary mask corresponding to the telescope pupil.
+    solver_id: char
+        The name of the iterative solver: MINRES or CG.
+
+    Returns:
+    out : Lmmse
+        A Lmmse object
+    """
+    
+    def __cinit__(self,AtmosphereAbstract atm, 
+                  Source guide_star, Source mmse_star,
+                  ShackHartmann wfs, char *solver_id,
+                  int osf=1, MaskAbstract M=None):
+        self._c_LMMSE = new LMMSE()
+        self.N_slope = wfs.N_SIDE_LENSLET*wfs.N_SIDE_LENSLET*2*guide_star._c_source.N_SRC
+        if osf>1:
+            self._c_LMMSE.setup(atm._c_atmosphere,
+                                guide_star._c_source, mmse_star._c_source,
+                                wfs._c_shackHartmann, solver_id,
+                                osf, M._c_mask)
+        else:
+            self._c_LMMSE.setup(atm._c_atmosphere,
+                                guide_star._c_source, mmse_star._c_source,
+                                wfs._c_shackHartmann, solver_id)
+        self.N_phase = self._c_LMMSE.NP
+
+    def __dealloc__(self):
+        self._c_LMMSE.cleanup()
+
+    def estimation(self, ShackHartmann wfs):
+        """
+        Computes an estimate of the wavefront corresponding to the centroids in the Centroiding object
+        """
+        self._c_LMMSE.estimation(wfs._c_shackHartmann)
+
+    property phase:
+        def __get__(self):
+            """
+            Return the phase estimate in a cuFloatArray object
+            """
+            x = cuFloatArray(shape=(self.N_phase,self.N_phase))
+            x._c_gpu.dev_data = self._c_LMMSE.d__phase_est
+            return x
+
+    property solve:
+        def __get__(self):
+            """
+            Return the solver solution
+            """
+            x = cuFloatArray(shape=(self.N_slope,1))
+            x._c_gpu.dev_data = self._c_LMMSE.d__x
+            return x
+
+@ 
+
+\section{Parameters}
+\label{sec:parameters}
+
+The parameters are defined in
+<<parameters>>=
+int *d__idx, PS_E_N_PX, N_guide_star, N_mmse_star, offset, N_SIDE_LENSLET_, NP, NS, osf;
+float *d__ce, *d__phase_est, *d__phase_est_c, *d__phase_est_i, *d__x, *d__zp_x;
+aaStats aa;
+BTBT aaCov;
+paStats pa;
+GBTBT paCov;
+iterativeSolvers iSolve;
+stopwatch tid;
+
+@
+\section{Functions}
+\label{sec:functions}
+
+\def\vo{\ensuremath{\bm \theta}\xspace}
+\def\voe{\ensuremath{\hat{\bm \theta}}\xspace}
+\def\vx{\ensuremath{\bm x}\xspace}
+\def\vn{\ensuremath{\bm n}\xspace}
+\def\vs{\ensuremath{\bm s}\xspace}
+\def\wf{\ensuremath{\bm \varphi}\xspace}
+\def\wfe{\ensuremath{\hat{\bm \varphi}}\xspace}
+\def\vz{\ensuremath{\bm \zeta}\space}
+
+\def\Ca{\ensuremath{\Theta}\xspace}
+\def\Cax{\ensuremath{\Theta_{xx}}\xspace}
+\def\Cay{\ensuremath{\Theta_{yy}}\xspace}
+\def\Caxy{\ensuremath{\Theta_{xy}}\xspace}
+\def\Cayx{\ensuremath{\Theta_{yx}}\xspace}
+\def\Cpa{\ensuremath{\Xi}\xspace}
+\def\Cpax{\ensuremath{\Xi_x}\xspace}
+\def\Cpay{\ensuremath{\Xi_y}\xspace}
+\newcommand{\mean}[1]{\left\langle #1 \right\rangle}
+
+The LMMSE structure is used to compute the wavefront estimate $\hat \varphi$ used a vector of wavefront gradient $s$ assuming a linear relationship between both i.e.
+\begin{equation}
+  \label{eq:1}
+  \hat \varphi = M s.
+\end{equation}
+$M$ is chosen such as it minimizes the Bayesian mean--square error~\cite{Kay10} (MSE):
+\begin{equation}
+  \label{eq:2}
+  b_{MSE} = \left\langle (\varphi-\hat \varphi)^2 \right\rangle
+\end{equation}
+$\hat \varphi$ is the Linear--Minimum--Mean--Square--Error (LMMSE) estimator of $\varphi$ and $M$ is given by
+\begin{equation}
+  \label{eq:3}
+  M = C_{\varphi s}C_{ss}^{-1}.
+\end{equation}
+$C_{ss}\equiv\Ca$ is the slope covariance and $C_{\varphi s}=\equiv\Cpa$ is the cross--correlation between the wavefront and the slopes.
+Eq.~(\ref{eq:1}) is then rewritten 
+\begin{equation}
+  \label{eq:4}
+  \varphi = \Cpa \zeta
+\end{equation}
+with $\zeta$ solution of
+\begin{equation}
+  \label{eq:5}
+  \Ca \zeta = s.
+\end{equation}
+
+The covariances are expanded into
+\begin{equation}
+  \label{eq:6}
+  \Ca = \mean{ ss^T } = \left[
+  \begin{array}{cc}
+    \mean{s_xs_x^T} & \mean{s_xs_y^T} \\
+    \mean{s_ys_x^T} & \mean{s_ys_y^T} 
+  \end{array}
+  \right] = \left[
+  \begin{array}{cc}
+    \Cax & \Caxy \\
+    \Cayx & \Cay
+  \end{array}
+  \right]  
+\end{equation}
+and
+\begin{equation}
+  \label{eq:7}
+  \Cpa = \mean{ \wf s^T } = \left[
+  \begin{array}{cc}
+    \mean{ \wf s_x^T } & \mean{ \wf s_y^T }
+  \end{array}
+  \right] = \left[
+    \begin{array}{cc}
+      \Cpax & \Cpay
+    \end{array}
+    \right]  
+\end{equation}
+
+
+For a square $N\times N$ lenslet array, each covariance matrix \Cax, \Caxy, \Cayx and \Cay is a $N^2\times N^2$ 2--level recursive block Toeplitz matrix (2RBT) as shown in Fig.~\ref{fig:1a}.
+Eq.~(\ref{eq:5}) is then solved iteratively using the method in \cite{Lee86} to perform the matrix--to--vector product (MVP).
+% COVARIANCE
+\newcounter{idx}
+\begin{figure*}[htbp]
+  \centering
+ \begin{tikzpicture}[scale=0.75]
+ \draw[help lines,xstep=4cm,ystep=4cm,xshift=0.5cm,yshift=0.5cm] (0,0) grid (16,16);
+\foreach \i/\xi/\yi in {1/0/0,2/0/1,3/0/2,4/0/3,5/1/0,6/1/1,7/1/2,8/1/3,9/2/0,10/2/1,11/2/2,12/2/3,13/3/0,14/3/1,15/3/2,16/3/3} {
+\foreach \j/\xj/\yj in {1/0/0,2/0/1,3/0/2,4/0/3,5/1/0,6/1/1,7/1/2,8/1/3,9/2/0,10/2/1,11/2/2,12/2/3,13/3/0,14/3/1,15/3/2,16/3/3} {
+\draw[->,>=stealth'] (\i,\j) -- +($0.175*( $($(\xj,\yj)-(1.5,1.5)$) - ($1*($(\xi,\yi)-(1.5,1.5)$) $) $ )$);
+}}
+\foreach \i in {1,...,16} {
+ \node at (0,\i) {\scriptsize \i};
+ \node at (\i,0) {\scriptsize \i};
+}
+\draw[red,dashed,thick,rounded corners] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,3) -- ++(-1,0) -- cycle;
+\foreach \x in {1,...,3} {
+\draw[red,dashed,thick,rounded corners,xshift=\x*4cm] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,3) -- ++(-1,0) -- cycle;
+\draw[red,dashed,thick,rounded corners,yshift=\x*4cm] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,3) -- ++(-1,0) -- cycle;
+}
+\setcounter{idx}{0}
+\foreach \x/\y in {0/0,0/-3,0/-6,0/-9,3/-9,6/-9,9/-9} {
+\foreach \i/\j in {1/16,1/15,1/14,1/13,2/13,3/13,4/13} {
+  \stepcounter{idx}
+  \node[inner sep=0,xshift=\x cm,,yshift=\y cm] at (\i,\j) {\emph{\scriptsize\arabic{idx}}};
+}
+}
+\end{tikzpicture}
+  \caption{WFS vectors of measurement pairs.}
+  \label{fig:1a}
+\end{figure*}
+% CROSS-COVARIANCE
+\begin{figure*}[htbp]
+  \centering
+ \begin{tikzpicture}[scale=0.75]
+ \draw[help lines,xstep=4cm,ystep=5cm,xshift=0.5cm,yshift=0.5cm] (0,0) grid (16,25);
+\foreach \i/\xi/\yi in {1/0/0,2/0/1,3/0/2,4/0/3,5/1/0,6/1/1,7/1/2,8/1/3,9/2/0,10/2/1,11/2/2,12/2/3,13/3/0,14/3/1,15/3/2,16/3/3} {
+\foreach \j/\xj/\yj in {1/0/0,2/0/1,3/0/2,4/0/3,5/0/4,6/1/0,7/1/1,8/1/2,9/1/3,10/1/4,11/2/0,12/2/1,13/2/2,14/2/3,15/2/4,16/3/0,17/3/1,18/3/2,19/3/3,20/3/4,21/4/0,22/4/1,23/4/2,24/4/3,25/4/4}{
+\draw[->,>=stealth'] (\i,\j) -- +($0.175*( $($(\xj,\yj)-(2,2)$) - ($1*($(\xi,\yi)-(1.5,1.5)$) $) $ )$);
+}}
+\foreach \i in {1,...,16} {
+ \node at (\i,0) {\scriptsize \i};
+}
+\foreach \i in {1,...,25} {
+ \node at (0,\i) {\scriptsize \i};
+}
+\draw[red,dashed,thick,rounded corners] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,4) -- ++(-1,0) -- cycle;
+\foreach \x in {1,...,3} {
+\draw[red,dashed,thick,rounded corners,xshift=\x*4cm] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,4) -- ++(-1,0) -- cycle;
+\draw[red,dashed,thick,rounded corners,yshift=\x*5cm] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,4) -- ++(-1,0) -- cycle;
+}
+\draw[red,dashed,thick,rounded corners,yshift=20cm] (0.5,0.5) -- ++(4,0) -- ++(0,1) -- ++(-3,0) -- ++(0,4) -- ++(-1,0) -- cycle;
+\setcounter{idx}{0}
+\foreach \x/\y in {0/0,0/-5,0/-10,0/-15,0/-20,4/-20,8/-20,12/-20} {
+\foreach \i/\j in {1/25,1/24,1/23,1/22,1/21,2/21,3/21,4/21} {
+  \stepcounter{idx}
+  \node[inner sep=0,xshift=0.75*\x cm,yshift=0.75*\y cm] at (\i,\j) {\emph{\scriptsize\arabic{idx}}};
+}
+}
+\end{tikzpicture}
+  \caption{vectors of WFS and measurement pairs.}
+  \label{fig:1b}
+\end{figure*}
+%% CROSS-COVARIANCE SAMPLING
+% \begin{figure}[htbp]
+%   \centering
+%   \begin{tikzpicture}%[scale=2]
+%     \draw[help lines,xstep=0.5cm,ystep=0.5cm] (-4,-4) grid (4,4);
+% \foreach \i/\xi/\yi in {1/0/0,2/0/1,3/0/2,4/0/3,5/1/0,6/1/1,7/1/2,8/1/3,9/2/0,10/2/1,11/2/2,12/2/3,13/3/0,14/3/1,15/3/2,16/3/3} {
+% \foreach \j/\xj/\yj in {1/0/0,2/0/1,3/0/2,4/0/3,5/0/4,6/1/0,7/1/1,8/1/2,9/1/3,10/1/4,11/2/0,12/2/1,13/2/2,14/2/3,15/2/4,16/3/0,17/3/1,18/3/2,19/3/3,20/3/4,21/4/0,22/4/1,23/4/2,24/4/3,25/4/4}{
+% \draw[->,>=stealth'] (0,0) -- +($1*( $($(\xj,\yj)-(2,2)$) - ($1*($(\xi,\yi)-(1.5,1.5)$) $) $ )$);
+% }}
+%   \end{tikzpicture}
+%   \caption{Cross-covariance unique set of baseline vectors.}
+%   \label{fig:5}
+% \end{figure}
+
+For a system in the Fried geometry (Fig.~\ref{fig:2}, left side), the cross--covariance matrix \Cpax and \Cpay are rectangular 2RBT matrices (Fig.~\ref{fig:1a}).
+The location of the wavefront samples (black dots) with respect tot the WFS measurements (red circles) are shown in the left side of Fig.~\ref{fig:2}.
+% This geometry is for NGSs, on the left hand side is the geometry corresponding to LGSs.
+% So the geometry shown on the right of Fig.~\ref{fig:2} is used instead where the black circles are the wavefront samples, the red circles correspond to the measured slopes and the blue circles are the ``fake'' zero--valued measurements.
+% In the new geometry, \Cpax and \Cpay are square 2RBT matrices.
+
+% WAVEFRONT NGS SAMPLING
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}
+    \begin{scope}[xshift=-3.25cm]
+    \draw[help lines] (-2,-2) grid (2,2);
+\foreach \x in {0,1,...,4}
+\foreach \y in {0,1,...,4}
+{
+\fill ($(\x,\y)-(2,2)$) circle (0.8mm);
+}
+\foreach \x in {0,1,...,3}
+\foreach \y in {0,1,...,3}
+{
+\draw[red,thick] ($1*($(\x,\y)-(1.5,1.5)$)$) circle (1.2mm);
+}
+    \end{scope}
+    \begin{scope}[xshift=3.25cm]
+   \draw[help lines] (-2,-2) grid (2,2);
+\foreach \x in {0,1,...,4}
+\foreach \y in {0,1,...,4}
+{
+\fill ($(\x,\y)-(2,2)$) circle (0.8mm);
+}
+\foreach \x in {-1,0,...,5}
+\foreach \y in {-1,0,...,5}
+{
+\fill[blue] ($0.8*($(\x,\y)-(2,2)$)$) circle (0.8mm);
+}
+\foreach \x in {0,1,...,3}
+\foreach \y in {0,1,...,3}
+{
+\draw[red,thick] ($0.8*($(\x,\y)-(1.5,1.5)$)$) circle (1.2mm);
+}
+     \end{scope}
+  \end{tikzpicture}
+  \caption{Wavefront and LGS measurement sampling with a $4\times4$ lenslet array. The wavefront sampling in the telescope pupil is given by the black dots, the red circles are the LGS measurement locations at the ground (left) and in altitude (right). The reconstructed wavefront from the cross--covariance is sampled with the blue dots.}
+  \label{fig:2}
+\end{figure}
+
+Fig.~\ref{fig:2} is valid for a NGS based AO system but this geometry is altered in the case of a LGS AO system.
+The geometry resulting from the finite distance of the LGS is show in the right hand side of Fig.~\ref{fig:2}.
+%The geometry depicted in the right hand side of Fig.~\ref{fig:3} is used instead.
+With this geometry, the wavefront is estimated at the locations corresponding to the blue dots.
+%Wavefront and slopes are now defined on the same grid, their covariance is again a 2RBT matrix.
+The wavefront samples on the grid made of the black dots is obtained with a bi--linear interpolation within the blue dots.
+This sequence of operations need to be performed for each layer and the results from each layer are summed.
+For a $N_{atm}$ layer atmospheric profile, Eq.~(\ref{eq:4}) becomes
+\begin{equation}
+  \label{eq:8}
+  \varphi = \left[
+    \begin{array}{c}
+      H_1 \cdots H_{N_{atm}}
+    \end{array}
+\right]
+\left[
+    \begin{array}{cc}
+      \Xi_{x1} & \Xi_{y1} \\
+      \vdots  & \vdots \\ 
+      \Xi_{xN_{atm}} & \Xi_{yN_{atm}} \\
+    \end{array}
+    \right] \left[
+      \begin{array}{c}
+        s_x \\
+        s_y
+      \end{array}
+      \right]
+\end{equation}
+where $H_i$ is the sparse bi--linear interpolation matrix.
+
+
+
+@
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
+The setup method takes as parameters an atmosphere structure [[atm]], the source structure corresponding to the guide star [[guide_star]], the number of guide star [[_N_guide_star]], the source structure corresponding to the science star [[mmse_star]], the number of science star [[N_mmse_star]], the lenslet pitch [[sampling]], the linear side of the lenslet array [[N_SIDE_LENSLET_]] and the iterative solver name either "CG" or "MINRES":
+<<setup>>=
+void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
+		  float sampling, int _N_SIDE_LENSLET_, char *solver_id)
+{
+  N_SIDE_LENSLET_ = _N_SIDE_LENSLET_;
+  osf = 1; // The wavefront over-sampling factor (1 means the same sampling that the WFS)
+  <<setup common>>
+}
+@ with a pupil:
+<<setup with pupil>>=
+void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
+		       float sampling, int _N_SIDE_LENSLET_,
+                       mask *pupil, char *solver_id)
+{
+  N_SIDE_LENSLET_ = _N_SIDE_LENSLET_;
+osf = 1; // The wavefront over-sampling factor (1 means the same sampling that the WFS)
+<<setup common with pupil>>
+}
+@ with a pupil and the wavefront over--sampling factor:
+<<setup with pupil and osf>>=
+void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
+		       float sampling, int _N_SIDE_LENSLET_,
+                       mask *pupil, char *solver_id, int wavefront_osf)
+{
+  N_SIDE_LENSLET_ = _N_SIDE_LENSLET_;
+osf = wavefront_osf; // The wavefront over-sampling factor (1 means the same sampling that the WFS)
+<<setup common with pupil>>
+}
+@ with a Shack--Hartmann:
+<<setup with shackHartmann>>=
+void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
+		       shackHartmann *wfs, char *solver_id)
+{
+float sampling      = wfs->lenslet_pitch;
+N_SIDE_LENSLET_ = wfs->optics_relay.N_SIDE_LENSLET;
+mask *pupil;
+pupil = &(wfs->valid_actuator);
+osf = 1; // The wavefront over-sampling factor (1 means the same sampling that the WFS)
+<<setup common with pupil>>
+}
+@ with a Shack--Hartmann and oversampling the estimated wavefront:
+<<setup with shackHartmann and osf>>=
+void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
+		       shackHartmann *wfs, char *solver_id, 
+                       int osf_, mask *pupil_)
+{
+float sampling      = wfs->lenslet_pitch;
+N_SIDE_LENSLET_ = wfs->optics_relay.N_SIDE_LENSLET;
+mask *pupil;
+pupil = pupil_;
+osf = osf_; // The wavefront over-sampling factor (1 means the same sampling that the WFS)
+<<setup common with pupil>>
+}
+@  
+The setup routine is written: 
+<<setup common>>=
+<<setup common (covariance computation)>>
+<<setup common (covariance matrix)>>
+<<setup common (solver setup and memory allocation)>>
+@ or when a mask object is given:
+<<setup common with pupil>>=
+<<setup common (covariance computation)>>
+<<setup common (covariance matrix with pupil)>>
+<<setup common (solver setup and memory allocation)>>
+@ with
+<<setup common (covariance computation)>>=
+  N_guide_star = guide_star->N_SRC;
+  N_mmse_star  = mmse_star->N_SRC;
+
+  <<setup: AA covariance>>
+
+  NP = osf*N_SIDE_LENSLET_+1; // The number of wavefront sample
+  NS = (osf>1) ? NP : N_SIDE_LENSLET_;
+
+  pa.setup(NP,NS,osf,atm,sampling,
+           mmse_star, N_mmse_star, guide_star, N_guide_star);
+
+@
+<<setup common (covariance matrix)>>=
+  if (mmse_star[0].height==guide_star[0].height) {
+
+     paCov.setup(N_mmse_star,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET_,pa.d__cov);
+
+     PS_E_N_PX = paCov.MT2_TOTAL;
+     nnz = 0;
+
+  } else {
+ 
+    paCov.setup(N_mmse_star*atm->N_LAYER,2*N_guide_star,pa.M_LAYER,N_SIDE_LENSLET_,pa.d__cov);
+  
+     PS_E_N_PX = paCov.MT2_TOTAL;
+
+     NI = NP;
+     nnz = 4*NI*NI*atm->N_LAYER;
+     <<sparse setup>>
+  }
+@
+<<setup common (covariance matrix with pupil)>>=
+  if (mmse_star[0].height==guide_star[0].height) {
+
+     paCov.setup(N_mmse_star,2*N_guide_star,pa.M_LAYER,NS,pa.d__cov);
+     paCov.mask = pupil->m;
+
+     PS_E_N_PX = paCov.MT2_TOTAL;
+     nnz = 0;
+
+  } else {
+ 
+    paCov.setup(N_mmse_star*atm->N_LAYER,2*N_guide_star,pa.M_LAYER,NS,pa.d__cov);
+  
+     PS_E_N_PX = paCov.MT2_TOTAL;
+
+     NI = NP;
+     nnz = 4*atm->N_LAYER*pupil->nnz;
+     <<sparse setup with pupil mask>>
+  }
+@
+<<setup common (solver setup and memory allocation)>>=
+  int N = N_SIDE_LENSLET_*N_SIDE_LENSLET_*2;
+  if (strcmp(solver_id,"CG")==0)
+    iSolve.cg_setup(N*N_guide_star);
+  if (strcmp(solver_id,"MINRES")==0)
+    iSolve.minres_setup(N*N_guide_star);
+
+  iSolve.RTOL = 5E-2;
+
+d__idx = 0;
+d__ce  = 0;
+int N_LENSLET = N_SIDE_LENSLET_*N_SIDE_LENSLET_;
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est_c, sizeof(float)*PS_E_N_PX ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)* N_LENSLET*2*N_guide_star ) );
+HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)* N_LENSLET*2*N_guide_star ) );
+if (osf>1) {
+   int NS2 = NS*NS;
+   HANDLE_ERROR( cudaMalloc((void**)&d__zp_x, sizeof(float)* NS2*2*N_guide_star ) );
+   HANDLE_ERROR( cudaMemset(d__zp_x, 0, sizeof(float)* NS2*2*N_guide_star ) );
+}
+HANDLE_ERROR( cudaEventCreate( &start ) );
+HANDLE_ERROR( cudaEventCreate( &stop ) );
+@
+ 
+The slope covariance matrix is computed first:
+<<setup: AA covariance>>=
+aa.setup(N_SIDE_LENSLET_,atm,sampling,guide_star, N_guide_star);
+@ and the covariance is saved in a [[BTBT]] block 2RBT matrix structure:
+<<setup: AA covariance>>=
+aaCov.setup(2*N_guide_star,2*N_guide_star,N_SIDE_LENSLET_,aa.d__cov);
+@
+Memory is freed with
+<<cleanup>>= 
+void LMMSE::cleanup(void)
+{
+  fprintf(stdout,"@(CEO)>LMMSE: freeing memory!\n");
+
+  fprintf(stdout," |-");
+  aa.cleanup();
+  fprintf(stdout," |-");
+  pa.cleanup();
+  fprintf(stdout," |-");
+  aaCov.cleanup();
+  fprintf(stdout," |-");
+  paCov.cleanup();
+  fprintf(stdout," |-");
+  iSolve.cleanup();
+
+  HANDLE_ERROR( cudaEventDestroy( start ) );
+  HANDLE_ERROR( cudaEventDestroy( stop ) );
+
+  if (d__idx) HANDLE_ERROR( cudaFree( d__idx ) );
+  if (d__ce)  HANDLE_ERROR( cudaFree( d__ce ) );
+  HANDLE_ERROR( cudaFree( d__phase_est_c ) );
+  HANDLE_ERROR( cudaFree(d__x) );
+  if (osf>1) {
+     HANDLE_ERROR( cudaFree(d__zp_x) );
+  }
+  if (nnz) {
+     <<sparse cleanup>>
+  }
+
+}
+@
+\subsection{Wavefront estimation}
+
+<<wavefront estimation>>=
+void LMMSE::estimation(const centroiding *cog)
+{
+  <<wavefront estimation (common)>>
+}
+@ 
+<<wavefront estimation (shackHartmann)>>=
+void LMMSE::estimation(shackHartmann *wfs)
+{
+  centroiding *cog;
+  cog = &(wfs->data_proc);
+  <<wavefront estimation (common)>>
+}
+@ with
+<<wavefront estimation (common)>>=
+HANDLE_ERROR( cudaEventRecord( start, 0 ) );
+
+<<wavefront estimation (solver and projection)>>
+
+if (nnz) {
+//tid.tic();
+
+HANDLE_ERROR_CUSPARSE( cusparseScsrmv(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+				      NI*NI, paCov.MT2_TOTAL, nnz, &alpha,
+				      descr, csrValH, csrRowPtrH, csrColIndH,
+				      d__phase_est_c, &beta, d__phase_est_i),
+		       "Sparse to vector product failed!");
+
+d__phase_est = d__phase_est_i;
+
+//tid.toc("WAVEFRONT ESTIMATION (SPARSE MVM)");
+}
+
+//printf("Solver residue norm           : %.2E\n",iSolve.rnorm);
+//printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration);
+
+HANDLE_ERROR( cudaEventRecord( stop, 0 ) );
+HANDLE_ERROR( cudaEventSynchronize( stop ) );
+HANDLE_ERROR( cudaEventElapsedTime( &elapsed_time, start, stop ) );
+
+
+<<wavefront estimation (solver and projection)>>=
+if (cog->MASK_SET) aaCov.mask = cog->lenslet_mask;
+
+//tid.tic();
+
+iSolve.minres_vorst(d__x, &aaCov, cog->d__c, d__x);
+
+//tid.toc("WAVEFRONT ESTIMATION (MINRES)");
+
+//tid.tic();
+
+if (osf>1) {
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_SIDE_LENSLET_/16+1,N_SIDE_LENSLET_/16+1,N_guide_star);
+  zeroPadding LLL gridDim,blockDim RRR(d__zp_x, NP, d__x, N_SIDE_LENSLET_, osf);
+  paCov.MVM(d__phase_est_c,d__zp_x);
+} else {
+  paCov.MVM(d__phase_est_c,d__x);
+}
+
+d__phase_est = d__phase_est_c;
+
+//tid.toc("WAVEFRONT ESTIMATION (PA MVM)");
+//tid.toc("WAVEFRONT ESTIMATION");
+@ 
+In the case of oversampling the wavefront estimate, the solver solution must be zero padded
+<<zero padding solver solution>>=
+__global__ void zeroPadding(float *d__zp_x, int NP, float *d__x, int N_SIDE_LENSLET, int osf)
+{
+int i, j, ip, jp, k, kp, iSource, NP2, N_LENSLET;
+i = blockIdx.x * blockDim.x + threadIdx.x;
+j = blockIdx.y * blockDim.y + threadIdx.y;
+iSource = blockIdx.z;
+if ( (i<N_SIDE_LENSLET) && (j<N_SIDE_LENSLET) ){
+    NP2 = NP*NP;
+    N_LENSLET = N_SIDE_LENSLET*N_SIDE_LENSLET; 
+    ip = osf*i + osf/2;
+    jp = osf*j + osf/2;
+    k = i*N_SIDE_LENSLET + j;
+    k += N_LENSLET*2*iSource;
+    kp = ip*NP + jp;
+    kp += NP2*2*iSource;
+    d__zp_x[kp] = d__x[k];
+    d__zp_x[kp+NP2] = d__x[k+N_LENSLET];
+}
+}
+@ 
+\subsection{Sparse bi--linear interpolation}
+\label{sec:sparse-bi-linear}
+
+A wavefront $\hat\varphi$ is sampled on a $N_p\times N_p$ square grid with sampling step $\delta_p$.
+The wavefront $\varphi_{bli}$, sampled on a square grid $N\times N$ with sampling step $\delta$ is derived from a bi--linear interpolation of $\hat\varphi$.
+The coordinates of $\hat\varphi$ samples are given by
+\begin{equation}
+  \label{eq:9}
+  \left(
+    \begin{array}{c}
+      x_{i_p} \\
+      y_{j_p}
+    \end{array}
+  \right) = \delta_p \left[ \left(
+    \begin{array}{c}
+      i_p \\
+      j_p
+    \end{array}
+    \right) + {1-N_p \over 2} \right], \forall i,j \in [0,\dots,N_p-1]
+\end{equation}
+and the samples of $\varphi_{bli}$ are located at
+\begin{equation}
+  \label{eq:10}
+  \left(
+    \begin{array}{c}
+      x_i \\
+      y_j
+    \end{array}
+  \right) = \delta \left[ \left(
+    \begin{array}{c}
+      i \\
+      j
+    \end{array}
+    \right) + {1-N \over 2} \right], \forall i,j \in [0,\dots,N-1]  
+\end{equation}
+
+@ The interpolation starts with normalizing the coordinates $(x_i,y_j)$ with respect to the coordinates $(x_{i_p},y_{j_p})$
+<<bilinear interpolation>>=
+scale = delta/(delta_p*(NP-1));
+s = (scale*(i + (1-NI)/2) + 0.5)*(NP-1);
+t = (scale*(j + (1-NI)/2) + 0.5)*(NP-1);
+@  and taking the floor integer part to locate the bottom--left coordinate of the pixels surrounding [[xi]] and [[yi]]
+<<bilinear interpolation>>=
+fs  = floorf(s);
+ft  = floorf(t);
+ndx = __float2int_rd( ft + fs*NP );
+@ Next, one checks if the edges of the array have been reached
+<<bilinear interpolation>>=
+if (s==(NP-1)) { s += 1 - fs; ndx -= NP; } else { s -= fs; }    
+if (t==(NP-1)) { t += 1 - ft; ndx -= 1; }   else { t -= ft; }
+@ and finally the interpolation is computed as
+<<bilinear interpolation>>=	 
+onems = 1 - s;
+onemt = 1 - t;
+ndx += offset;
+csrValH[++idx]  = onems*onemt;
+csrColIndH[idx] = ndx;
+csrValH[++idx]  = onems*t;
+csrColIndH[idx] = ndx + 1;
+csrValH[++idx]  = s*onemt;
+csrColIndH[idx] = ndx + NP;
+csrValH[++idx]  = s*t;
+csrColIndH[idx] = ndx + NP + 1;
+
+
+@ The sparse matrix is stored in the compressed sparse row format and it is computed with the kernel
+<<sparse matrix kernel>>=
+__global__ void bilinearSparseOperator(float *csrValH, int *csrColIndH, int *csrRowPtrH,
+				  int* MT, int NI, layer *turb, int N_LAYER, float z)
+{
+  int i, j, k, idx, ndx, NP, k_LAYER, offset;
+  float scale, s, t, fs, ft, onemt, onems, delta, delta_p;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<NI) && (j<(NI)) ) {
+    delta   = 1.0;
+    k = i*NI + j;
+    idx = N_LAYER*4*k - 1;
+    offset = 0;
+    for (k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++) {
+    	delta_p = 1 - turb[k_LAYER].altitude/z;
+	NP = MT[k_LAYER];
+        <<bilinear interpolation>>
+	offset += NP*NP;
+    }	
+    csrRowPtrH[k+1] = N_LAYER*4*(k+1);
+  }
+}
+@ The sparse matrix is modified to take into account the pupil mask.
+Where the pupil mask is zero, the corresponding row in the sparse matrix must be filled with zeros.
+<<sparse matrix kernel with pupil mask>>=
+__global__ void bilinearSparseOperatorMask(float *csrValH, int *csrColIndH, int *csrRowPtrH,
+				  int* MT, int NI, layer *turb, int N_LAYER, float z, 
+                                  const char *mask, int nnz)
+{
+  int i, j, k, idx, ndx, NP, k_LAYER, offset, l, pos;
+  float scale, s, t, fs, ft, onemt, onems, delta, delta_p;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<NI) && (j<(NI)) ) {
+    delta   = 1.0;
+    k = i*NI + j;
+    if (mask[k]>0) {
+       <<nnz position>>
+       idx =  N_LAYER*4*(pos-1) - 1;
+       offset = 0;
+       for (k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++) {
+         delta_p = 1 - turb[k_LAYER].altitude/z;
+         NP = MT[k_LAYER];
+         <<bilinear interpolation>>
+         offset += NP*NP;
+       }	
+       csrRowPtrH[k] = N_LAYER*4*(pos-1);
+       <<csrRowPtrH for empty rows>>
+       if ( k==(NI*NI-1) )
+          csrRowPtrH[k+1] = N_LAYER*4*nnz;
+    } else { 
+         if ( k==(NI*NI-1) ) {
+           ++k;
+           csrRowPtrH[k] = N_LAYER*4*nnz;
+           <<csrRowPtrH for empty rows>>
+        } 
+     }
+   }
+ }
+@  For a given location in the pupil, the position of the non--zero values in the non-zero value vector is given but the sum of the mask up to that point:
+<<nnz position>>=
+pos = 0;
+for (l=0;l<=k;l++)
+    pos += (mask[l]) ? 1 : 0;
+@ This position is saved in [[csrRowPtrH]].
+The consecutive rows above the current row corresponding to zero values in the pupil mask must have their [[csrRowPtrH]] value set to the same as the current row.
+<<csrRowPtrH for empty rows>>=
+l = k-1;
+ while ( (l>=0) && (!mask[l]) )
+    csrRowPtrH[l--] = csrRowPtrH[k];
+
+
+
+@ Lets define new parameters for the sparse matrix:
+<<parameters>>=
+int nnz, NI;
+float *csrValH;
+int *csrColIndH, *csrRowPtrH;
+float alpha, beta, elapsed_time;
+cudaError_t cudaStat;
+cusparseStatus_t status;
+cusparseHandle_t handle;
+cusparseMatDescr_t descr;
+cudaEvent_t start, stop;
+
+@ and they are setup with:
+<<sparse setup>>=
+<<sparse memory allocation>>
+<<sparse making>>
+<<sparse to dense>>
+@ or with the pupil mask:
+<<sparse setup with pupil mask>>=
+<<sparse memory allocation>>
+<<sparse making with pupil mask>>
+<<sparse to dense>>
+
+@ Memory allocation:
+<<sparse memory allocation>>=
+alpha = 1;
+beta  = 0;
+HANDLE_ERROR_CUSPARSE( cusparseCreate(&handle), 
+		       "CUSPARSE Library initialization failed!");
+HANDLE_ERROR_CUSPARSE( cusparseCreateMatDescr(&descr), 
+		       "Matrix descriptor initialization failed!");
+
+cusparseSetMatType(descr,CUSPARSE_MATRIX_TYPE_GENERAL);
+cusparseSetMatIndexBase(descr,CUSPARSE_INDEX_BASE_ZERO);
+
+HANDLE_ERROR( cudaMalloc((void**)&csrValH,    sizeof(float)*nnz ) );
+HANDLE_ERROR( cudaMalloc((void**)&csrColIndH, sizeof(int)*nnz ) );
+HANDLE_ERROR( cudaMalloc((void**)&csrRowPtrH, sizeof(int)*(NI*NI+1) ) );
+HANDLE_ERROR( cudaMemset(csrRowPtrH, 0, sizeof(int)*(NI*NI+1) ) );
+
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_est_i, sizeof(float)*NI*NI ) );
+
+@ Creation of the sparse matrix:
+<<sparse making>>=
+dim3 blockDim(16,16);
+dim3 gridDim(NI/16+1,NI/16+1);
+bilinearSparseOperator LLL gridDim,blockDim RRR 
+  (csrValH, csrColIndH, csrRowPtrH, paCov.d__MT, NI, 
+   atm->layers, atm->N_LAYER, guide_star[0].height);
+@ Creation of the sparse matrix with the pupil mask:
+<<sparse making with pupil mask>>=
+dim3 blockDim(16,16);
+dim3 gridDim(NI/16+1,NI/16+1);
+bilinearSparseOperatorMask LLL gridDim,blockDim RRR 
+  (csrValH, csrColIndH, csrRowPtrH, paCov.d__MT, NI, 
+   atm->layers, atm->N_LAYER, guide_star[0].height, pupil->m, pupil->nnz);
+
+@ Conversion sparse to dense matrix:
+<<sparse to dense>>=
+/*
+// For debugging purposes:
+
+dev2file("csrValH.bin",csrValH,nnz);
+dev2file("csrColIndH.bin",csrColIndH,nnz);
+dev2file("csrRowPtrH.bin",csrRowPtrH,NI*NI+1);
+
+float *H;
+HANDLE_ERROR( cudaMalloc( (void**)&H, sizeof(float)*NI*NI*paCov.MT2_TOTAL ) );
+HANDLE_ERROR_CUSPARSE(cusparseScsr2dense(handle, NI*NI, paCov.MT2_TOTAL, descr, 
+					 csrValH, csrRowPtrH, csrColIndH,
+					 H, NI*NI),
+		      "Sparse to dense conversion failed!");
+dev2file("H.bin",H,NI*NI*paCov.MT2_TOTAL);
+HANDLE_ERROR( cudaFree( H ) );
+*/
+
+@ and then cleanup with:
+<<sparse cleanup>>=
+HANDLE_ERROR_CUSPARSE( cusparseDestroyMatDescr(descr),
+		       "Matrix descriptor destruction failed!");
+HANDLE_ERROR_CUSPARSE( cusparseDestroy(handle),
+		       "CUSPARSE Library release of resources failed!");
+HANDLE_ERROR( cudaFree( csrValH ) );
+HANDLE_ERROR( cudaFree( csrColIndH ) );
+HANDLE_ERROR( cudaFree( csrRowPtrH ) );
+HANDLE_ERROR( cudaFree( d__phase_est_i ) );
+@
+\subsection{Input/Output}
+\label{sec:inputoutput}
+
+The next routine sets the phase estimate pointer to a device memory address:
+<<phase estimate pointer>>=
+void LMMSE::set_phase_est_ptr(float *data_ptr)
+{
+if (nnz)
+  d__phase_est_i = data_ptr;
+else
+  d__phase_est_c = data_ptr;
+}
+
+@ The phase estimate is written to a file with:
+<<phase estimate pointer>>=
+<<phase estimate to file>>=
+void LMMSE::toFile(const char *filename){
+  dev2file(filename,d__phase_est,NP*NP);
+}
+@
+\section{Tests}
+\label{sec:tests}
+
+
+The test routine is:
+<<LMMSE.bin>>=
+#ifndef __CEO_H__
+#include "h"
+#endif
+#ifndef __SOURCE_H__
+#include "source.h"
+#endif
+#ifndef __ATMOSPHERE_H__
+#include "atmosphere.h"
+#endif
+#ifndef __IMAGING_H__
+#include "imaging.h"
+#endif
+#ifndef __CENTROIDING_H__
+#include "centroiding.h"
+#endif
+#ifndef __AASTATS_H__
+#include "aaStats.h"
+#endif
+#ifndef __BTBT_H__
+#include "BTBT.h"
+#endif
+#include "LMMSE.h"
+
+
+__global__ void fill(float *data, int n_data, float value)
+{
+  int k = blockIdx.x * blockDim.x + threadIdx.x;
+  if (k<n_data)
+    data[k] = value;
+}
+
+// Solving Ax=b
+int main( void) {
+
+  
+<<complete test>>
+}
+@
+A more complete test:
+<<complete test>>=
+int N = _N_LENSLET_*2, NP, PS_N_PX, PS_E_N_PX, i, j ,k, osf;
+float *d__x, *d__b, *b, *d__ce, *d__phase_est, *phase_screen_est, *x;
+float D, d, delta, delta_e, wf_rms, phase2nm, slopes2Angle, cxy0;
+int *idx, *d__idx;
+
+D = 8;
+d = D/N_SIDE_LENSLET;
+delta = d/_N_PX_PUPIL_;
+osf = 2;
+delta_e = d/osf;
+
+NP = osf*N_SIDE_LENSLET+1;
+PS_E_N_PX = NP;
+PS_E_N_PX *= PS_E_N_PX;
+PS_N_PX = N_SIDE_LENSLET*_N_PX_PUPIL_;
+
+printf("\nd    =%.4f\n",d);
+printf("\ndelta=%.4f\n",delta);
+printf("\ndelta_e=%.4f\n",delta_e);
+
+source src, *d__src;
+atmosphere atm;
+imaging lenslet_array;
+centroiding cog;
+LMMSE E;
+stats S;
+S.setup();
+stopwatch tid;
+
+src.setup(ARCSEC(0) , 0, INFINITY);
+HANDLE_ERROR( cudaMalloc( (void**)&d__src, sizeof(source)*_N_SOURCE_ ) );
+HANDLE_ERROR( cudaMemcpy( d__src, &src,
+			  sizeof(source)*_N_SOURCE_ ,
+			  cudaMemcpyHostToDevice ) );
+        
+// Single layer turbulence profile
+float altitude[] = {0},
+  xi0[] = {1},
+  wind_speed[] = {10},
+  wind_direction[] = {0};
+// Atmosphere
+atm.setup(0.15,30,altitude,xi0,wind_speed,wind_direction);
+//atm.reset();
+
+phase2nm = 1E9*atm.wavelength/2/PI;
+slopes2Angle = (atm.wavelength/2/d);
+
+// SH WFS
+lenslet_array.setup();
+
+// Centroid
+cog.setup();
+
+// LMMSE
+E.setup(&atm,N_SIDE_LENSLET,d,"MINRES");
+
+atm.get_phase_screen(delta,PS_N_PX,delta,PS_N_PX,d__src,0);
+
+wf_rms = phase2nm*S.std(d__src->phase, _N_PIXEL_);
+printf("\n WF RMS: %7.2fnm\n",wf_rms);
+
+float phase_screen[_N_PIXEL_];
+HANDLE_ERROR( cudaMemcpy( phase_screen, d__src->phase,
+			  sizeof(float)*_N_PIXEL_,
+			  cudaMemcpyDeviceToHost ) );
+FILE *fid;
+fid = fopen("phaseScreen.bin","wb");
+fwrite(phase_screen,sizeof(float),_N_PIXEL_,fid);
+fclose(fid);
+
+float *d__phase_screen_low_res;
+HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_low_res, sizeof(float)*PS_E_N_PX ) );
+atm.get_phase_screen(d__phase_screen_low_res,delta_e,NP,delta_e,NP,d__src,0);
+
+float *phase_screen_low_res;
+phase_screen_low_res = (float*)malloc(sizeof(float)*PS_E_N_PX);
+HANDLE_ERROR( cudaMemcpy( phase_screen_low_res, d__phase_screen_low_res,
+			  sizeof(float)*PS_E_N_PX,
+			  cudaMemcpyDeviceToHost ) );
+fid = fopen("phaseScreenLowRes.bin","wb");
+fwrite(phase_screen_low_res,sizeof(float),PS_E_N_PX,fid);
+fclose(fid);
+
+<<wavefront sensing>>
+
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(float)*N ) );
+
+char filename[100];
+/* for (k=1;k<6;k++) { */
+k = 20;
+sprintf(filename,"MINRES_phaseEst_%d.bin",k);
+HANDLE_ERROR( cudaMemset(d__x, 0, sizeof(float)*N ) );
+
+tid.tic();
+
+E.estimation(cog.d__c,k,d__x);
+
+tid.toc("WAVEFRONT ESTIMATION");
+
+<<MVM (wrap.)>>
+
+/* printf("\nSolver residue norm           : %.2E\n",iSolve.rnorm); */
+/* printf("\nSolver mean time per iteration: %.2E\n",iSolve.mean_time_per_iteration); */
+
+/* } */
+
+HANDLE_ERROR( cudaFree( d__src) );
+atm.cleanup();
+lenslet_array.cleanup();
+cog.cleanup();
+E.cleanup();
+S.cleanup();
+HANDLE_ERROR( cudaFree( d__x ) );
+HANDLE_ERROR( cudaFree( d__phase_screen_low_res ) );
+free(phase_screen_low_res);
+//free(b);
+//free(phase_screen_est);
+//free(x);
+@ 
+<<wavefront sensing>>=
+lenslet_array.propagate(d__src);
+cxy0 = (_N_PX_PUPIL_ - 1)/2.0;
+cog.get_data(lenslet_array.d__frame, cxy0, cxy0, slopes2Angle);
+HANDLE_ERROR( cudaMalloc((void**)&d__b, sizeof(float)*N ) );
+HANDLE_ERROR( cudaMemcpy( d__b              , cog.d__cx,  
+			  _N_LENSLET_*sizeof(float), cudaMemcpyDeviceToDevice) );
+HANDLE_ERROR( cudaMemcpy( d__b + _N_LENSLET_, cog.d__cy,  
+			  _N_LENSLET_*sizeof(float), cudaMemcpyDeviceToDevice) );
+b = (float *)malloc(sizeof(float)*N);
+HANDLE_ERROR( cudaMemcpy( b, d__b,
+			  sizeof(float)*N,
+			  cudaMemcpyDeviceToHost ) );
+/* printf("\n   Cx       Cy\n"); */
+/* for (k=0;k<_N_LENSLET_;k++) { */
+/*   printf("%+6.4E  %+6.4E\n",b[k],b[k+_N_LENSLET_]); */
+/* } */
+fid = fopen("centroids.bin","wb");
+fwrite(b,sizeof(float),N,fid);
+fclose(fid);
+@ 
+<<MVM (wrap.)>>=
+phase_screen_est     = (float*)malloc(sizeof(float)*PS_E_N_PX);
+HANDLE_ERROR( cudaMemcpy( phase_screen_est, E.d__phase_est,
+			  sizeof(float)*PS_E_N_PX,
+			  cudaMemcpyDeviceToHost ) );
+fid = fopen(filename,"wb");
+//fid = fopen("phaseScreenEst.bin","wb");
+fwrite(phase_screen_est,sizeof(float),PS_E_N_PX,fid);
+fclose(fid);

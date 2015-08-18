@@ -1,0 +1,261 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+
+\section{Optimal LGS asterism}
+\label{sec:open-loop-geometric}
+
+In this section, the LTAO WFE is computed for 25m telescope with several LGS asterisms.
+All the systems employ geometric Shack--Hartmann wavefront sensors (SH--WFS).
+For each system, the on--axis wavefront is estimated several times with a different random draw of the phase screens.
+
+The components common to all the systems are defined first:
+\begin{itemize}
+\item the science source,
+<<setup>>=
+source src;
+src.setup("K",ARCSEC(0) , 0, INFINITY,(N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1), "SRC");
+<<cleanup>>=
+src.cleanup();
+@ \item the atmosphere,
+<<setup>>=
+atmosphere atm;
+//atm.setup(20e-2,30,10e3,10,0);
+atm.gmt_setup(15e-2,60);
+/*
+float altitude[] = {0, 10e3},
+xi0[] = {0.5, 0.5},
+wind_speed[] = {10, 10},
+wind_direction[] = {0, 0};
+atm.setup(20e-2,30,altitude, xi0, wind_speed, wind_direction);
+*/
+<<cleanup>>=
+atm.cleanup();
+@ \item the diameter of the telescope,
+<<setup>>=
+float D = 25; // telescope diameter in meter
+@ leading to a lenslet size of:
+<<setup>>=
+float d = D/N_SIDE_LENSLET;
+@ \item the pupil mask.
+<<setup>>=
+mask pupil_mask;
+pupil_mask.setup( (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1) );
+<<cleanup>>=
+pupil_mask.cleanup();
+@ \item the diffraction limited science imager,
+<<setup>>=
+imaging imager;
+imager.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup>>=
+imager.cleanup();
+@ \item the turbulence limited science imager,
+<<setup>>=
+imaging imager_turb;
+imager_turb.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup>>=
+imager_turb.cleanup();
+@ \item the science imager for LTAO,
+<<setup>>=
+imaging imager_ltao;
+imager_ltao.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup>>=
+imager_ltao.cleanup();
+@ \item the statistical tool.
+<<setup>>=
+stats S;
+S.setup();
+<<cleanup>>=
+S.cleanup();
+@  \end{itemize}
+
+The wavefront sensor of the LGS asterism are setup next with the Fried geometry for a circular pupil with the intensity [[threshold]] enforced:
+<<setup>>=
+float threshold = 0.5;
+centroiding gs_ast_cog;
+int N_GS;
+N_GS = atoi( argv[1] );
+gs_ast_cog.setup(N_SIDE_LENSLET,N_GS);
+gs_ast_cog.MASK_SET = fried_geometry_setup(gs_ast_cog.lenslet_mask, 
+					   pupil_mask.m, 
+					   N_SIDE_LENSLET, 16, threshold);
+<<cleanup>>=
+gs_ast_cog.cleanup();
+
+@ 
+The filtering properties associated with the pupil are set with:
+<<setup>>=
+pupil_mask.set_filter();
+@ 
+The science is propagated through the [[pupil_mask]] to the focal plane of the [[imager]]:
+<<setup>>=
+src.wavefront.M = &pupil_mask;
+src.wavefront.masked();
+imager.propagate(&src);
+char plotly_name[64], plotly_dir[64];
+sprintf(plotly_dir,"LTAO/D=%.1fm, N=%d (%d samples)/",D,N_SIDE_LENSLET,N_SAMPLE);
+if (PLOTLY_LIM==(N_SAMPLE-1)) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/diffraction limited");
+  imager.show_frame(plotly_name);
+}
+
+@ A few useful variables are defined here:
+<<setup>>=
+int NP, NP2, k_SAMPLE;
+float tau=0.;
+NP = N_SIDE_LENSLET+1;
+NP2 = NP*NP;
+k_SAMPLE = 0;
+@
+The science wavefront is propagated through the atmosphere from [[src]] to [[pupil_mask]].
+<<science wavefront>>=
+atm.get_phase_screen(&src,d,NP,d,NP,tau);
+src.wavefront.masked();
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/science phase screen");
+  src.wavefront.show_phase(plotly_name);
+ }
+<<setup>>=
+<<science wavefront>>=
+science_wf_rms[k_gs_radius] += S.var(src.wavefront.phase, &pupil_mask, NP2);
+
+@  and then propagated to the focal plane of the imager:
+<<science wavefront>>=
+imager_turb.propagate(&src);
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/turbulence limited");
+  imager_turb.show_frame(plotly_name);
+ }
+
+@ 
+All CEO programs must include the following headers which also contains the headers for all the CEO library modules.
+<<main header>>=
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+@ The size of the lenslet array is defined in the header:
+<<main header>>=
+#define N_SIDE_LENSLET 60
+#define _N_LENSLET_ (N_SIDE_LENSLET*N_SIDE_LENSLET)
+@ The number of atmosphere sample
+<<main header>>=
+#define N_SAMPLE 200
+#define PLOTLY_LIM (N_SAMPLE) // (N_SAMPLE-1) for plotting, higher for disabling plotting
+@
+The main function is:
+<<ltaoVsAst.bin>>=
+void SET_PLOTLY_NAME(char *name,char *dir,char *path)
+{
+strcpy(name, dir);
+strcat(name,path);
+}
+<<main header>>
+int main(int argc,char *argv[]) {
+cudaSetDevice(1);
+<<setup>>
+float *science_wf_rms;
+float *ltao_wfe_rms;
+float gs_radius[] = {5,10,15,20,25,30,35,40,45,50,55,60};
+int n_gs_radius = 12;
+zenith  = (float*)malloc(sizeof(float)*N_GS);
+azimuth = (float*)malloc(sizeof(float)*N_GS);
+science_wf_rms = (float*)malloc(sizeof(float)*n_gs_radius);
+ltao_wfe_rms   = (float*)malloc(sizeof(float)*n_gs_radius);
+curandState *states0;
+int nel = 4*_N_LAYER_*atm.turbulence.N_k*atm.turbulence.N_a;
+HANDLE_ERROR( cudaMalloc( (void**)&states0, nel*sizeof(curandState)) );
+HANDLE_ERROR( cudaMemcpy( states0, atm.devStates, 
+sizeof(curandState)*nel,cudaMemcpyDeviceToDevice) );
+
+for (k_gs_radius=0;k_gs_radius<n_gs_radius;k_gs_radius++) {
+
+  printf("==> GS radius: %2.0farcsec\n",gs_radius[k_gs_radius]);
+  for (k_gs=0;k_gs<N_GS;k_gs++) {
+    zenith[k_gs] = ARCSEC( gs_radius[k_gs_radius] );
+    azimuth[k_gs] = k_gs*2*PI/N_GS;
+  }
+  gs_ast.setup("R",zenith,azimuth,90e3,N_GS,NP2);
+  gs_ast_lmmse.setup(&atm,&gs_ast,N_GS,&src,1,d,N_SIDE_LENSLET,&pupil_mask,"MINRES");
+
+  science_wf_rms[k_gs_radius]=0.;
+  ltao_wfe_rms[k_gs_radius]=0.;
+  HANDLE_ERROR( cudaMemcpy( atm.devStates, states0,  
+  sizeof(curandState)*nel,  cudaMemcpyDeviceToDevice));
+  fprintf(stdout," [    ] of %d samples",N_SAMPLE);
+  for (k_SAMPLE=0;k_SAMPLE<N_SAMPLE;k_SAMPLE++) {
+    fprintf(stdout,"\r [%4d]",k_SAMPLE);
+    fflush(stdout);
+    atm.reset();
+    <<science wavefront>>
+    <<ltao>>
+  }
+  science_wf_rms[k_gs_radius] = 1E9*sqrtf(science_wf_rms[k_gs_radius]/N_SAMPLE);
+  ltao_wfe_rms[k_gs_radius]   = 1E9*sqrtf(ltao_wfe_rms[k_gs_radius]/N_SAMPLE);
+  fprintf(stdout,"\n");
+  gs_ast.cleanup();
+  gs_ast_lmmse.cleanup();
+
+}
+<<results>>
+free( zenith );
+free( azimuth );
+<<cleanup>>
+}
+
+@
+For the LTAO wavefront estimation, the LGS constellation is defined first.
+We will use 3 LGSs on a 30 arcsec radius ring.
+<<setup>>=
+int k_gs_radius, k_gs;;
+float *zenith, *azimuth;
+source gs_ast;
+
+@ The 3 source are propagated through the atmosphere to the wavefront sensor.
+<<ltao>>=
+atm.get_phase_screen_gradient(&gs_ast_cog,N_SIDE_LENSLET,d,&gs_ast,N_GS,tau);
+
+@ The science wavefront is reconstructed with the tomographic estimator:
+<<setup>>=
+LMMSE gs_ast_lmmse;
+<<ltao>>=
+gs_ast_lmmse.estimation(&gs_ast_cog);
+@  The tomographic wavefront is subtracted from the science wavefront:
+<<ltao>>=
+src.wavefront.add_phase(-1,gs_ast_lmmse.d__phase_est);
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/LMMSE LTAO");
+  src.wavefront.show_phase(plotly_name);
+ }
+<<ltao>>=
+ltao_wfe_rms[k_gs_radius] += S.var(src.wavefront.phase,
+		   &pupil_mask, NP2);
+@ and the residual wavefront corresponding image is computed.
+<<ltao>>=
+imager_ltao.propagate(&src);
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/LMMSE LTAO");
+  imager_ltao.show_frame(plotly_name,&imager);
+ }
+
+@ 
+\subsection{Results}
+\label{sec:results}
+
+<<results>>=
+printf("------------------------------\n");
+printf("Theta   NGS WF      RMS WFE RMS\n");
+for (k_gs_radius=0;k_gs_radius<n_gs_radius;k_gs_radius++) {
+  printf("%4.0f:   %7.2fnm   %8.3fnm\n", gs_radius[k_gs_radius],
+  science_wf_rms[k_gs_radius],ltao_wfe_rms[k_gs_radius]);
+}
+printf("------------------------------\n");
+plotly_properties prop;
+prop.set("xtitle","LGS radius [arcsec]");
+prop.set("ytitle","WFE [nm]");
+prop.set("title","");
+prop.set("filename","LTAO/WFE vs. LGS asterisms");
+prop.set("xdata",gs_radius,n_gs_radius);
+prop.set("ydata",ltao_wfe_rms,n_gs_radius);
+char name[32];
+sprintf(name,"%d LGSs",N_GS);
+prop.set("name",name);
+sprintf(prop.fileopt,"%s",argv[2]);
+plot(&prop); 

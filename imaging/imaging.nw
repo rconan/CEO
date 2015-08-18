@@ -1,0 +1,1475 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+@
+\section{The files}
+
+\subsection{Header}
+
+<<imaging.h>>=
+#ifndef __IMAGING_H__
+#define __IMAGING_H__
+
+#ifndef __UTILITIES_H__
+#include "utilities.h"
+#endif
+
+#ifndef __SOURCE_H__
+#include "source.h"
+#endif
+
+#define NRANK 2
+
+struct imaging {
+
+  <<parameters>>
+
+  void setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
+	     int DFT_osf, float IMAGE_osf, float CAMERA_osf);
+  void setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
+	     int DFT_osf, float IMAGE_osf, float CAMERA_osf, int __N_SOURCE);
+  void setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
+	     int DFT_osf, int N_PX_IMAGE_, float CAMERA_osf, int __N_SOURCE);
+  void setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
+	     int DFT_osf, int N_PX_IMAGE_, int BIN_IMAGE, int __N_SOURCE);
+
+  void cleanup(void);
+
+  void set_pointing_direction(float zen, float azim);
+
+  void reset(void);
+   
+  void propagate(source *src);
+  void propagateThroughFieldStop(source *src, float field_stop_diam);
+  void propagateThroughPyramid(source *src);
+
+  void readout(float exposureTime, float readOutNoiseRms);
+
+  float strehl_ratio(imaging *ref);
+
+  void info(void);
+
+  void frame2file(const char *filename);
+
+  void show_frame(char *filename);
+  void show_frame(char *filename, imaging *ref);
+};
+
+#endif  // __IMAGING_H__
+@
+\subsection{Source}
+
+<<imaging.cu>>=
+#include "imaging.h"
+
+<<detector Poisson and Gaussian noise>>
+<<imaging complex amplitude>>
+<<intensity>>
+<<apply field stop>>
+<<apply pyramid>>
+<<apply irradiance>>
+
+<<binning>>
+<<read-out>>
+
+<<setup I>>
+<<setup II>>
+<<setup III>>
+<<setup IV>>
+
+<<cleanup>>
+
+<<pointing direction>>
+
+<<reset>>
+
+<<info>>
+   
+<<propagation>>
+<<propagation through field stop>>
+<<propagation through pyramid>>
+
+<<strehl ratio>>
+
+<<frame to file>>
+
+<<plot frame>>
+<<plot frame with Strehl ratio>>
+@
+
+\subsection{Python}
+\label{sec:python}
+
+<<imaging.pxd>>=
+from source cimport source
+cdef extern from "imaging.h":
+    cdef cppclass imaging:
+        int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_PX_CAMERA, N_SOURCE
+        float *d__frame
+        void setup(int , int , int , int , int, int)
+        void cleanup()
+        void set_pointing_direction(float , float )
+        void propagate(source *)
+        void propagateThroughFieldStop(source *, float field_stop_diam)
+        void propagateThroughPyramid(source *)
+        void readout(float, float)
+        void reset()
+<<class definitions>>
+@ 
+<<class definitions>>=
+from utilities cimport cuFloatArray
+cdef class Imaging:
+    cdef imaging *_c_imaging
+    cdef public cuFloatArray frame
+@ 
+<<imaging.pyx>>=
+from source cimport Source
+cdef class Imaging:
+    """ 
+    Creates an imaging object.
+
+    Parameters
+    ----------
+    N_PX_PUPIL : int
+       The sampling in pixel of one lenslet.
+    N_SIDE_LENSLET : int
+       The linear size of the lenslet array (>=1).
+    DFT_osf : int
+       The oversampling factor for the Discrete Fourier Transform (>=1).
+    N_PX_IMAGE : int
+       The sampling in pixel of the imagelet (>=1).
+    BIN_IMAGE : int
+       The binning factor of the imagelet (>=1).
+    N_SOURCE : int
+       The number of guide stars (>=1).
+
+    Attributes
+    ----------
+    frame : cuFloatArray
+        The detector frame of size [`N_SOURCE`x`N_PX_CAMERA`,`N_PX_CAMERA`]
+
+
+    See also
+    --------
+    cuFloatArray: class acting as the interface between GPU host and device
+
+    """
+
+    def __cinit__(self, int N_SIDE_LENSLET, int N_PX_PUPIL, 
+		  DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, N_SOURCE=1):
+	self._c_imaging = new imaging()
+        if N_PX_IMAGE is None:
+            N_PX_IMAGE = N_PX_PUPIL
+	self._c_imaging.setup(N_PX_PUPIL, N_SIDE_LENSLET, DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_SOURCE)    
+        self.frame = cuFloatArray(shape=(self._c_imaging.N_SOURCE*self._c_imaging.N_PX_CAMERA,
+				    self._c_imaging.N_PX_CAMERA))
+        self.frame._c_gpu.dev_data = self._c_imaging.d__frame
+
+    def __dealloc__(self):
+        self._c_imaging.cleanup()
+
+    def propagate(self, Source src):
+        self._c_imaging.propagate(src._c_source)
+
+    def propagateThroughFieldStop(self, Source src, float field_stop_diam):
+        self._c_imaging.propagateThroughFieldStop(src._c_source, field_stop_diam)
+
+    def propagateThroughPyramid(self, Source src):
+        self._c_imaging.propagateThroughPyramid(src._c_source)
+
+    def readOut(self,float exposureTime, float readOutNoiseRms):
+        self._c_imaging.readout(exposureTime,readOutNoiseRms)
+
+    def reset(self):
+        self._c_imaging.reset();
+@
+
+\section{Parameters}
+\label{sec:parameters}
+
+The parameters are:
+\begin{itemize}
+\item the linear size of the pupil in pixel [[N_PX_PUPIL]],
+\item the linear size of the discrete Fourier transform $[[N_DFT]]=2*[[N_PX_PUPIL]]$,
+\item the linear size of the lenslet array [[N_SIDE_LENSLET]],
+\item the linear size of the imagelet [[N_PX_IMAGE]],
+\item the linear size of the frame [[N_PX_CAMERA]],
+\item the number of sources [[N_SOURCE]],
+\item the pointing direction vector [[zenith]] and [[azimuth]], 
+if [[zenith]] is negative, the device is align with the guide star,
+if it is positive or null then the guide star is displaced in the image plane according to their relative position,
+\item the pixel scale [[pixel_scale]],
+\item a flag setting the pointing of the imaging device either absolute or relative to the direction of the light source [[absolute_pointing]],
+\end{itemize}
+
+<<parameters>>=
+int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_LENSLET, 
+  N_SOURCE, N_PX_IMAGE, N_PX_CAMERA, N_FRAME;
+cufftHandle plan;
+float2 *d__wave_PUPIL;
+float  *d__frame, zenith, azimuth, theta_x, theta_y, pixel_scale;
+char absolute_pointing;
+curandState *devStates;
+@
+\section{Functions}
+\label{sec:functions}
+
+In this section, we are dealing with the process of computing images from wavefronts in the pupil.
+
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
+A [[setup]] routine is defined to initialize any required variables:
+<<setup I>>=
+void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET, 
+		    int DFT_osf, float IMAGE_osf, float CAMERA_osf) {
+  N_SOURCE    = 1;
+  <<setup common I and II>>
+  <<setup common>>
+}
+<<setup II>>=
+void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET, 
+		    int DFT_osf, float IMAGE_osf, float CAMERA_osf,
+		    int __N_SOURCE) {
+  N_SOURCE    = __N_SOURCE;
+  <<setup common I and II>>
+  <<setup common>>
+}
+<<setup common I and II>>=
+N_PX_PUPIL  = __N_PX_PUPIL;
+N_DFT       = DFT_osf*N_PX_PUPIL;//*round_up_to_nhp2(N_PX_PUPIL);
+N_PX_IMAGE  = IMAGE_osf*N_PX_PUPIL;
+N_PX_CAMERA = CAMERA_osf*N_PX_IMAGE;
+N_SIDE_LENSLET = __N_SIDE_LENSLET;
+N_LENSLET   = N_SIDE_LENSLET*N_SIDE_LENSLET;
+N_FRAME     = 0;
+@ 
+<<setup III>>=
+void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET, 
+		    int DFT_osf, int N_PX_IMAGE_, float CAMERA_osf,
+		    int __N_SOURCE) {
+  N_SOURCE    = __N_SOURCE;
+  <<setup common III>>
+  <<setup common>>
+}
+<<setup common III>>=
+N_PX_PUPIL  = __N_PX_PUPIL;
+N_DFT       = DFT_osf*N_PX_PUPIL;//round_up_to_nhp2(N_PX_PUPIL);
+N_PX_IMAGE  = N_PX_IMAGE_;
+N_PX_CAMERA = CAMERA_osf*N_PX_IMAGE;
+N_SIDE_LENSLET = __N_SIDE_LENSLET;
+N_LENSLET   = N_SIDE_LENSLET*N_SIDE_LENSLET;
+N_FRAME     = 0;
+@ 
+<<setup IV>>=
+void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET, 
+		    int DFT_osf, int N_PX_IMAGE_, int BIN_IMAGE,
+		    int __N_SOURCE) {
+  N_SOURCE    = __N_SOURCE;
+  <<setup common IV>>
+  <<setup common>>
+}
+<<setup common IV>>=
+N_PX_PUPIL  = __N_PX_PUPIL+1;
+printf("N_PX_PUPIL=%d\n",N_PX_PUPIL);
+N_DFT       = DFT_osf*N_PX_PUPIL;//round_up_to_nhp2(N_PX_PUPIL);
+N_PX_IMAGE  = N_PX_IMAGE_;
+N_PX_CAMERA = N_PX_IMAGE/BIN_IMAGE;
+N_SIDE_LENSLET = __N_SIDE_LENSLET;
+N_LENSLET   = N_SIDE_LENSLET*N_SIDE_LENSLET;
+N_FRAME     = 0;
+@ 
+<<setup common>>=
+zenith = -1.0;
+pixel_scale = 0.0;
+absolute_pointing = 0;
+fprintf(stdout,"@(CEO)>imaging: Device memory allocation\n");
+int N_DFT_bytes = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
+cudaMalloc( (void**)&d__wave_PUPIL , sizeof(float2) * N_DFT_bytes);
+cudaMalloc( (void**)&d__frame , 
+	    sizeof(float) *N_PX_CAMERA*N_PX_CAMERA*N_LENSLET*N_SOURCE );
+reset();
+<<imaging CUFFT plan creation>>
+fprintf(stdout,"@(CEO)> Setting up random generator\n");
+int n_data;
+n_data = N_SOURCE*N_LENSLET*N_PX_CAMERA*N_PX_CAMERA;
+cudaMalloc( (void**)&devStates, n_data*sizeof(curandState));
+dim3 blockDim(1024);
+dim3 gridDim(n_data/1024+1);
+setupRandomSequence_imaging LLL gridDim,blockDim RRR (devStates, n_data);
+info();
+@ 
+The pointing direction is set with:
+<<pointing direction>>=
+void imaging::set_pointing_direction(float zen, float azim) {
+  zenith = zen;
+  azimuth = azim;
+  theta_x = tanf(zenith)*cosf(azimuth);
+  theta_y = tanf(zenith)*sinf(azimuth);
+}
+
+@
+\subsection{Propagation}
+\label{sec:propagation}
+
+As we are considering only the case of imaging sources at infinity, the wavefront propagation is performed with the Fraunhofer approximation meaning that the image in the focal plane is simply the Fourier transform of the complex amplitude in the pupil plane.
+The propagation is computing with a call to the [[propagate]] routine:
+<<propagation>>=
+void imaging::propagate(source *src) {
+  int M = N_PX_IMAGE/N_PX_CAMERA;
+  /* if ( (pixel_scale>0) && (zenith<0) ) */
+  /*   set_pointing_direction(0.0,0.0); */
+  /* if (pixel_scale>0 ) { */
+  /*     printf(" pixel scale: %.2E\n",pixel_scale); */
+  /* float dx, dy, dx_int, dy_int; */
+  /* <<angular offset>> */
+  /* printf("ANGULAR OFFSET:\n"); */
+  /* printf(" . x: %3.0f + %4.3f\n",dx_int,dx); */
+  /* printf(" . y: %3.0f + %4.3f\n",dy_int,dy); */
+  /*   } */
+  dim3 gridDim;
+  dim3 blockDim(16,16);
+  gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
+  complexAmplitude LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
+					      src->wavefront.amplitude,
+					      src->wavefront.phase,
+                                              src->wavenumber(),
+					      N_PX_PUPIL, N_PX_IMAGE, M,
+					      N_SIDE_LENSLET, src->dev_ptr,
+                                              pixel_scale, theta_x, theta_y,
+					      absolute_pointing,1);
+  <<propagation (FFT, intensity and binning)>>
+}
+@ which sets the complex amplitude [[d__wave_PUPIL]] with the source wavefront amplitude and phase including the necessary zero padding for the DFT and the phasor to recenter the image.
+Then the DFT is applied in--place to the complex amplitude [[d__wave_PUPIL]].
+<<propagation (FFT, intensity and binning)>>=
+<<imaging CUFFT execution>>
+@ 
+[[d__wave_PUPIL]] is overwritten with the intensity:
+<<propagation (FFT, intensity and binning)>>=
+<<intensity normalization>>
+int N, Nb;
+N = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
+Nb = (int) ceilf( sqrtf(N)/16.0 );
+gridDim  = dim3(Nb,Nb);
+wave2intensity LLL gridDim , blockDim RRR( d__wave_PUPIL, N, intensity_norm);
+if (src->fwhm>0) {
+  <<propagation (convolution)>>
+}
+@ 
+In the case of a resolved source, the images are convoluted by the source irradiance function.
+The convolution is performed in the Fourier domain, multiplying the images by the Fourier transform of the irradiance function.
+The irradiance functions $I_s(x)$ is modeled as a Gaussian function:
+$$I_s(x,y)={1\over \sigma\sqrt{2\pi}}\exp\left( -{x^2+y^2\over 2\sigma^2} \right),$$
+with $$[[fwhm]]=2\sqrt{2\log(2)}\sigma,$$ [[fwhm]] is the full width at half maximum of $I(x,y)$.
+The Fourier transform of $I(x,y)$ is 
+$$\mathcal F\left[ I(x,y) \right](u,v) = \exp\left( -2\pi^2\sigma^2 (u^2 + v^2) \right).$$
+The convolution takes 3 steps:
+\begin{enumerate}
+\item inverse DFT of the images
+<<propagation (convolution)>>=
+HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_INVERSE),
+		    "Unable to execute plan forward FT");
+@ \item multiplication by $\mathcal F\left[ I(x,y) \right](u,v)$
+<<propagation (convolution)>>=
+apply_irradiance LLL gridDim , blockDim RRR (d__wave_PUPIL, N_DFT, N_SIDE_LENSLET, src->fwhm);
+@ \item forward DFTT
+<<propagation (convolution)>>=
+HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_FORWARD),
+		    "Unable to execute plan forward FT");
+@ \end{enumerate} 
+with the kernel:
+<<apply irradiance>>=
+__global__ void apply_irradiance(float2 *wave_PUPIL, const int N_DFT, 
+				   const int N_SIDE_LENSLET, const float fwhm)
+{
+  int i, j, iLenslet, jLenslet, ij_DFT, iSource, w, half, N2;
+  float xi, yj, sigma2, fft_I;
+  iSource = blockIdx.z;
+  if ( threads2lenslet(threadIdx, blockIdx, blockDim,
+                       &i, &j, N_DFT,
+                       &iLenslet, &jLenslet, N_SIDE_LENSLET) ) {
+    ij_DFT = lenslet2row(i,j,N_DFT,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);                  
+    w = N_DFT & 1;
+    half = (N_DFT-2+w)/2;
+    if (i>half)
+      xi = (float) (i - N_DFT);
+    else
+      xi = (float) i;
+    if (j>half)
+      yj = (float) (j - N_DFT);
+    else
+      yj = (float) j;
+    xi /= N_DFT;
+    yj /= N_DFT; 
+    sigma2 = 8*logf(2);
+    sigma2 = fwhm*fwhm/sigma2;
+    fft_I = 2*PI*PI*sigma2;
+    fft_I *= xi*xi + yj*yj;
+    fft_I = expf( -fft_I);
+    N2 = N_DFT*N_DFT;
+    wave_PUPIL[ij_DFT].x *= fft_I/N2;
+    wave_PUPIL[ij_DFT].y *= fft_I/N2;
+  }
+}
+@ 
+The image are binned on the detector pixels:
+<<propagation (FFT, intensity and binning)>>=
+gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
+                N_SOURCE);
+binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
+                                   src->dev_ptr, pixel_scale, theta_x, theta_y,
+				   absolute_pointing,
+                                   N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
+
+++N_FRAME;
+@ 
+The Fourier transform is done with the CUFFT library:
+<<imaging CUFFT execution>>=
+HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_FORWARD),
+		    "Unable to execute plan forward FT");
+@ that computes the discrete Fourier tranform (DFT) from the complex amplitude [[d__wave_PUPIL]] in the pupil plane.
+CUFFT requires to define a plan first:
+<<imaging CUFFT plan creation>>=
+fprintf(stdout,"@(CEO)>imaging: Creating a 2D FFT plan\n");
+int n_DFT[NRANK] = {N_DFT, N_DFT};
+int iodist = N_DFT*N_DFT;
+int BATCH = N_LENSLET*N_SOURCE;
+/* Create a 2D FFT plan. */
+HANDLE_ERROR_CUFFT( cufftPlanMany(&plan, NRANK, n_DFT,
+				  NULL, 1, iodist,
+				  NULL, 1, iodist,
+				  CUFFT_C2C,BATCH), 
+		    "Unable to create plan");
+HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE),
+		    "Unable to set compatibility mode to native");
+@ 
+The intensity is computed with
+<<intensity>>=
+__global__ void wave2intensity(float2 *wave_PUPIL, const int N, float intensity_norm)
+{
+  int i, j, ij;
+  float x ,y;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( ij < N )
+    {
+      x =  wave_PUPIL[ij].x;
+      y =  wave_PUPIL[ij].y;
+      wave_PUPIL[ij].x = x*x + y*y;
+      wave_PUPIL[ij].y = 0.0;
+      wave_PUPIL[ij].x *= intensity_norm;
+    }
+}
+@ 
+The intensity is normalized with respect to the brightness of the source:
+<<intensity normalization>>=
+float intensity_norm;
+intensity_norm = src->n_photon()*src->wavefront.M->area/src->wavefront.M->nnz;
+@
+Dynamically allocated variables are freed with the cleanup routine:
+<<cleanup>>=
+void imaging::cleanup(void) {
+  fprintf(stdout,"@(CEO)>imaging: Device memory free\n");
+  cufftDestroy(plan);
+  cudaFree( d__wave_PUPIL );
+  cudaFree( d__frame );
+}
+
+@ The camera frame is continuously accumulating images and can be reset with:
+<<reset>>=
+void imaging::reset(void) {
+  HANDLE_ERROR( cudaMemset(d__frame, 0, 
+			   sizeof(float)*N_PX_CAMERA*N_PX_CAMERA*N_LENSLET*N_SOURCE) );
+}
+
+@ The rank of the DFT [[NRANK]] is always 2 and the size of each DFT is $[[N_DFT]]\times[[N_DFT]]$.
+CUFFT can execute several Fourier transform in one batch.
+All the inputs wave must be concatenated into a single array and you must specify the number of elements between 2 consecutive waves that is here $[[N_DFT]]^2$.
+[[BATCH]] gives the number of DFT to execute.
+The memory allocate for the plan is freed with
+<<imaging CUFFT plan destruction>>=
+cufftDestroy(plan);
+@
+
+\subsubsection{Propagation through field stop}
+\label{sec:prop-thro-field}
+
+In order to reduce aliasing, a field stop is sometimes introduced in a focal plane.
+The following describes the routine [[propagateThroughFieldStop]] that takes a wavefront from a pupil plane and propagates it to another pupil plane through a focal plane where a field stop is set.
+The angular resolution in the focal plane is given by $\lambda/kD$ with $k=[[N_DFT]]/[[N_PX_PUPIL]]$.
+The angular diameter of the field stop is given as $\beta\lambda/D$ and in pixel it is $k\beta$.
+The pixel coordinate $[i,j]$ in the focal plane are given by $$i,j=\left[ {w-[[N_DFT]]\over 2},\dots,{[[N_DFT]]-2+w\over 2} \right],$$
+with $w=0$ for [[N_DFT]] even or $w=1$ for [[N_DFT]] odd.
+<<propagation through field stop>>=
+void imaging::propagateThroughFieldStop(source *src, float field_stop_diam) {
+  int M = N_PX_IMAGE/N_PX_CAMERA;
+  dim3 gridDim;
+  dim3 blockDim(16,16);
+  gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
+  complexAmplitude LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
+					      src->wavefront.amplitude,
+					      src->wavefront.phase,
+                                              src->wavenumber(),
+					      N_PX_PUPIL, N_PX_IMAGE, M,
+					      N_SIDE_LENSLET, src->dev_ptr,
+                                              pixel_scale, theta_x, theta_y,
+					      absolute_pointing,0);
+  <<imaging CUFFT execution>>
+
+ 
+  field_stop_diam *= N_DFT/N_PX_PUPIL;
+  gridDim = dim3(1+N_DFT/16,1+N_DFT/16);
+  apply_field_stop LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, 
+					       field_stop_diam);
+  <<propagation (FFT, intensity and binning)>>
+}
+@
+<<apply field stop>>=
+__global__ void apply_field_stop(float2 *d__wave_PUPIL, int N_DFT, 
+				 int N_PX_PUPIL, float field_stop_diam)
+{
+  int i, j, k, w, half;
+  float xi, yj, rij, l, c, s, phasor, a, b;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<N_DFT) && (j<N_DFT) ) {
+    w = N_DFT & 1;
+    half = (N_DFT-2+w)/2;
+    if (i>half)
+      xi = (float) (i - N_DFT);
+    else
+      xi = (float) i;
+    if (j>half)
+      yj = (float) (j - N_DFT);
+    else
+      yj = (float) j;
+    rij = hypot(xi,yj);
+    l = 0.5*field_stop_diam;
+    k = i*N_DFT + j;
+    if (rij>l) {
+      d__wave_PUPIL[k].x = d__wave_PUPIL[k].y = 0.0;
+    } else {
+      phasor = 2.*(i+j)*(N_PX_PUPIL-1)/N_DFT;
+      sincospif(phasor,&s,&c);
+      a = d__wave_PUPIL[k].x;
+      b = d__wave_PUPIL[k].y;
+      d__wave_PUPIL[k].x = a*c - b*s;
+      d__wave_PUPIL[k].y = b*c + a*s;
+    }
+  } 
+}
+@
+
+\subsubsection{Propagation through pyramid}
+\label{sec:prop-thro-pym}
+
+The pyramid wavefront sensor is a focal plane wavefront sensor.
+An image is formed on the tip of a glass pyramid and the camera is set behind the pyramid in the next pupil plane.
+The pyramid transmittance function is
+\begin{equation}
+  \label{eq:4}
+  T_{pyr}(x,y) = \exp\left[ -{\pi\over2} \left( \left|x\right| + \left|y\right| \right) \right]
+\end{equation}
+for $x,y=i,j-[[N_DFT]]/2$ with $i,i=0,\dots,[[N_DFT]]-1$.
+For a complex amplitude $\Phi$, the camera image $I$ is given by
+\begin{equation}
+  \label{eq:5}
+  I = \left| \mathcal F \left[ \mathcal F[\Phi] T_{pyr} \right] \right|^2.
+\end{equation}
+
+<<propagation through pyramid>>=
+void imaging::propagateThroughPyramid(source *src) {
+  int M = N_PX_IMAGE/N_PX_CAMERA;
+  dim3 gridDim;
+  dim3 blockDim(16,16);
+  gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
+  complexAmplitude LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
+					      src->wavefront.amplitude,
+					      src->wavefront.phase,
+                                              src->wavenumber(),
+					      N_PX_PUPIL, N_PX_IMAGE, M,
+					      N_SIDE_LENSLET, src->dev_ptr,
+                                              pixel_scale, theta_x, theta_y,
+					      absolute_pointing,0);
+  <<imaging CUFFT execution>>
+ 
+  gridDim = dim3(1+N_DFT/16,1+N_DFT/16);
+  apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL);
+
+  <<propagation (FFT, intensity and binning)>>
+}
+@
+<<apply pyramid>>=
+__global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL)
+{
+  int i, j, k, w, half;
+  float xi, yj, c, s, phasor, a, b;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<N_DFT) && (j<N_DFT) ) {
+    w = N_DFT & 1;
+    half = (N_DFT-2+w)/2;
+    if (i>half)
+      xi = (float) (i - N_DFT);
+    else
+      xi = (float) i;
+    if (j>half)
+      yj = (float) (j - N_DFT);
+    else
+      yj = (float) j;
+    k = i*N_DFT + j;
+    phasor = -2.*(i+j)*(N_PX_PUPIL*1.5+1+w)/N_DFT;
+    phasor -= 0.5*(fabs(xi)+fabs(yj));
+    sincospif(phasor,&s,&c);
+    a = d__wave_PUPIL[k].x;
+    b = d__wave_PUPIL[k].y;
+    d__wave_PUPIL[k].x = a*c - b*s;
+    d__wave_PUPIL[k].y = b*c + a*s;
+  } 
+}
+@
+
+\subsubsection{Imaging numerical model}
+\label{sec:imag-numer-model}
+
+The imaging routine is modeling the propagation of [[N_SOURCE]] sources through a square lenslet array of length $[[N_SIDE_LENSLET]]\geq 1$ to the lenslet focal plane.
+For a given lenslet, the wave $\Psi=[[wave_PUPIL]]$ is sampled with $N_{pupil}\times N_{pupil}$ pixels.
+The complex amplitude in the image plane $\Psi^\prime=[[wave_IMAGE]]$ is given by
+\begin{equation}
+  \label{eq:1}
+  \Psi^\prime_{kl} = \sum_{i=0}^{N_{pupil}-1}\;\sum_{j=0}^{N_{pupil}-1} \Psi_{ij} \exp\left[-2\iota\pi{ik+jl \over N_{pupil} } \right]
+\end{equation}
+with $k\in[0,\dots,N_{pupil}-1]$ and $l\in[0,\dots,N_{pupil}-1]$.
+To avoid numerical aliasing, $\Psi$ is usually padded with zeros, this is usually called a zero--padded DFT (ZP--DFT).
+The new size of $\Psi$ is $N_{DFT}\times N_{DFT}$ with $N_{DFT} = 2 N_{pupil}$.
+$\Psi^\prime$ is rewritten
+\begin{equation}
+  \label{eq:3}
+  \Psi^\prime_{kl} = \sum_{i=0}^{N_{DFT}-1}\;\sum_{j=0}^{N_{DFT}-1} \Psi_{ij} \exp\left[-2\iota\pi{ik+jl \over N_{DFT} } \right]
+\end{equation}
+with $k\in[0,\dots,N_{DFT}-1]$ and $l\in[0,\dots,N_{DFT}-1]$.
+the zero frequency point in the image is at the pixel [0,0] whereas it should be located on the system optical axis.
+To shift the image, the following substitution is performed
+$$k \leftarrow k - { 1 - N_{DFT} + w \over 2 },$$
+$$l \leftarrow l - { 1 - N_{DFT} + w \over 2 }$$
+and
+$$\Psi_{ij} \leftarrow \Psi_{ij}\exp\left[\iota\pi{(i+j)(1 - N_{DFT} + w) \over N_{DFT} }\right].$$
+
+% When the pupil is mapped with a lenslet array, the complex amplitude of each lenslet must be stacked in a row.
+% A pixel $(i_p,j_p)$ in the lenslet $(i_L,j_L)$ of a square lenslet array of side length [[N_SIDE_LENSLET]] is at coordinates $(i,j)$ in the lenslet array and at coordinates $(i^\prime,j^\prime)$ in the row of lenslets with 
+% \begin{eqnarray}
+%   \label{eq:1}
+%   i &=& i_LN_{pupil} + i_p \\
+%   j &=& j_LN_{pupil} + j_p \\
+% \end{eqnarray}
+% and
+% \begin{eqnarray}
+%   \label{eq:2}
+%   i^\prime &=& k_LN_{pupil} + i_p \\
+%   j^\prime &=& j_p
+% \end{eqnarray}
+% with $k_L= i_L[[N_SIDE_LENSLET]] + j_L$.
+
+When the imaging device and the source are not aligned, the source is displaced in the image plane.
+The source location is given by its direction vector $\vec\theta_\ast$.
+The device is pointing in the direction given by the vector $\vec\theta_d$.
+The angular displacement in the image plane is: $$\vec\delta=\delta_M\vec\theta_\ast-\vec\theta_d.$$
+The pointing of the imaging device can be either absolute $\delta_M=1$ i.e. with respect to the zenith direction or relative to the source direction i.e. $\delta_M=0$ the default.
+If $p$ is the angular pixel scale on the camera, then the displacement in pixel is $\vec d=\vec\delta/p$.
+The pixel displacement is divided into the integer pixel displacement on the camera, $\text{round}(\vec d)$, and the displacement in the imagelets,  $M\left(\vec d - \text{round}(\vec d)\right)$ with $M=[[N_PX_IMAGE]]/[[N_PX_CAMERA]]$.
+The displacement in pixel is computed with:
+<<angular offset>>=
+if (pixel_scale>0) {
+  dx  = absolute_pointing*src->theta_x - theta_x;
+  dx /= pixel_scale;
+  dx_int = rintf( dx );
+  dx -= dx_int; 
+  dx *= M;
+  dy  = absolute_pointing*src->theta_y - theta_y;
+  dy /= pixel_scale;
+  dy_int = rintf( dy );
+  dy -= dy_int; 
+  dy *= M;
+}
+@ 
+<<imaging complex amplitude>>=
+__global__ void complexAmplitude(float2 *wave_PUPIL, int N_DFT,
+                                 float *wavefront_amplitude,
+				 float *wavefront_phase,
+				 float wavenumber,
+				 int N_PX_PUPIL, int N_PX_IMAGE, int M,
+				 int N_SIDE_LENSLET, source *src,
+				 float pixel_scale,
+				 float theta_x, float theta_y,
+				 char absolute_pointing, char DFT_SHIFT)
+{
+  int i, j, iLenslet, jLenslet, ij_PUPIL, ij_DFT, iSource;
+  float c ,s, phasor, dx, dy, dx_int, dy_int;
+  dx = dy = 0.0;
+@ The source index is given by the third coordinates of the thread block
+<<imaging complex amplitude>>=
+  // source index
+  iSource = blockIdx.z;
+@ The  pixel coordinates ([[i]],[[j]]) in the lenslet ([[iLenslet]],[[jLenslet]]) is derived from the thread blocks:
+<<imaging complex amplitude>>=
+  //  wave pixel coordinate (N_DFTLxN_SIDE_LENSLET)^2
+  if ( threads2lenslet(threadIdx, blockIdx, blockDim, 
+		       &i, &j, N_DFT, 
+		       &iLenslet, &jLenslet, N_SIDE_LENSLET) ) {
+@ The linear index of the vertically concatenated lenslet array is computed
+<<imaging complex amplitude>>=
+    ij_DFT = lenslet2row(i,j,N_DFT,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
+    if ((i<N_PX_PUPIL) && (j<N_PX_PUPIL))
+      {
+@ The linear index in the square lenslet array is computed
+<<imaging complex amplitude>>=
+ij_PUPIL = lenslet2array_overlap(i,j,N_PX_PUPIL,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
+@ The phase shift is applied on the wavefront
+<<imaging complex amplitude>>=
+        phasor = (DFT_SHIFT==0) ? 0.0 : PI*(i+j)*(1-N_DFT + (N_PX_IMAGE & 1))/N_DFT;
+        <<angular offset>>
+	phasor -= 2*PI*(i*dx+j*dy)/N_DFT;
+        phasor += wavefront_phase[ij_PUPIL]*wavenumber;
+        sincosf(phasor,&c,&s);
+@ The wavefront in the pupil plane is written in the complex amplitude array ready to be processed by CUFFT
+<<imaging complex amplitude>>=
+  wave_PUPIL[ij_DFT].x = wave_PUPIL[ij_DFT].y = wavefront_amplitude[ij_PUPIL];
+        wave_PUPIL[ij_DFT].x *= c;
+        wave_PUPIL[ij_DFT].y *= s;
+        return;
+      }
+    if ((i<N_DFT) && (j<N_DFT))
+      wave_PUPIL[ij_DFT].x = wave_PUPIL[ij_DFT].y = 0;
+  }
+}
+@
+\begin{figure}
+  \centering
+  \begin{tikzpicture}[x=1mm,y=1mm]
+    \begin{scope}[xshift=-60mm]
+      \fill[orange!20] (-8,-8) rectangle (8,8); 
+      \draw[step=1,gray,thin] (-8,-8) grid (8,8);
+      \node[anchor=south] at (0,8) {Pupil plane};
+      \draw[<->,yshift=-2mm] (-8,-8) -- node[below] {[[N_PX_PUPIL]]} (8,-8);
+    \end{scope}
+    \begin{scope}[xshift=-10mm]
+      \fill[blue!20] (-35,-35) rectangle (35,35); 
+      \fill[green!50] (-16,-16) rectangle (16,16); 
+      \draw[step=1,gray,thin] (-35,-35) grid (35,35);
+      \draw[step=5,red,thin] (-35,-35) grid (35,35);
+      \node[anchor=south] at (0,35) {Nyquist sampled image plane};
+      \draw[<->,yshift=-2mm] (-16,-35) -- node[below] {[[N_DFT]]} (16,-35);
+      \draw[<->,yshift=-6mm] (-35,-35) -- node[below] {[[N_PX_IMAGE]]} (35,-35);
+    \end{scope}
+    \begin{scope}[xshift=65mm]
+      \fill[red!50] (-35,-35) rectangle (35,35); 
+      \draw[step=5,red,thin] (-35,-35) grid (35,35);
+      \node[anchor=south] at (0,35) {Binned image plane};
+      \draw[<->,yshift=-2mm] (-35,-35) -- node[below] {[[N_PX_CAM]]} (35,-35);
+   \end{scope}
+  \end{tikzpicture}
+  \caption{Pupil and image arrays}
+  \label{fig:4}
+\end{figure}
+@
+The imagelets are binned into framelets on the detector frame:
+<<binning>>=
+__global__ void binning(float *frame, const float2 *wave, int N_DFT, 
+			source *src, float pixel_scale,
+			float theta_x, float theta_y, char absolute_pointing,
+			int N_PX_IMAGE, int N_PX_CAMERA, int N_SIDE_LENSLET)
+{
+  int u, v, iLenslet, jLenslet, ij_DFT, 
+    M, offset, iPxL, jPxL, i, j, ij_CAM, ii, jj,iSource;
+  float dx, dy, dx_int, dy_int;
+  dx_int = dy_int = 0.0;
+
+  // source index
+  iSource = blockIdx.z;
+  
+  // BINNING
+  if ( threads2lenslet(threadIdx, blockIdx, blockDim, 
+		       &u, &v, N_PX_CAMERA, 
+		       &iLenslet, &jLenslet, N_SIDE_LENSLET) )
+    {
+
+      M = N_PX_IMAGE/N_PX_CAMERA;
+      offset = (N_PX_IMAGE-N_DFT)/2;
+  
+      __shared__ float bin[16][16];
+      ii = threadIdx.x;
+      jj = threadIdx.y;
+
+      bin[ii][jj] = 0.0;
+      for (i=0;i<M;i++)
+      	{
+      	  iPxL = u*M + i - offset;
+      	  if ( iPxL>=0 && iPxL<N_DFT)
+      	    for (j=0;j<M;j++)
+      	      {
+      		jPxL = v*M + j - offset;
+      		if ( jPxL>=0 && jPxL<N_DFT)
+      		  {
+      		    ij_DFT = lenslet2row(iPxL,jPxL,N_DFT,
+					 iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
+      		    bin[ii][jj] += wave[ij_DFT].x;
+      		  }
+      	      }
+      	}
+      <<angular offset>>
+      u += dx_int;
+      v += dy_int;
+      ij_CAM = lenslet2array(u,v,N_PX_CAMERA,
+			     iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
+      frame[ij_CAM] +=   bin[ii][jj]/(N_DFT*N_DFT);
+    }
+
+}
+@
+
+\subsection{Detector read--out noise}
+\label{sec:rand-numb-gener}
+
+Poisson and Gaussian noise are added to the frame with the [[readout]] routine
+<<read-out>>=
+void imaging::readout(float exposureTime, float readOutNoiseRms) {
+  int N, Nb;
+  N = N_PX_CAMERA * N_PX_CAMERA * N_LENSLET*N_SOURCE;
+  Nb = (int) ceilf( sqrtf(N)/16.0 );
+  dim3 blockDim(16,16);
+  dim3 gridDim(Nb,Nb);
+  noisify LLL gridDim, blockDim RRR (devStates, d__frame, N, 
+                                     readOutNoiseRms, exposureTime);
+}
+@  with the kernels defined in the following
+<<detector Poisson and Gaussian noise>>=
+<<random numbers>>
+__global__ void noisify(curandState *state, float *frame, const int n_frame,
+			 const float readOutNoiseRms, float exposureTime)
+ {
+   int i, j, id;
+   float lambda;
+   curandState localState;
+   i = blockIdx.x * blockDim.x + threadIdx.x;
+   j = blockIdx.y * blockDim.y + threadIdx.y;
+   id = j * gridDim.x * blockDim.x + i;
+   //int id = threadIdx.x + blockIdx.x*blockDim.x;
+   if ( id < n_frame )
+     {
+       localState = state[id];
+       frame[id] *= exposureTime;
+       lambda = frame[id];
+       frame[id] = (lambda<30) ? 
+	 curand_poisson_knuth( &localState, lambda) : 
+	 curand_poisson_atkinson( &localState, lambda);
+       frame[id] += (readOutNoiseRms>0) ? 
+	 curand_normal(&localState)*readOutNoiseRms : 0;
+       state[id] = localState;
+     }
+ }
+@ 
+In CUDA, there are as many random generator states as the number of threads.
+These states are initialized providing a used defined seed number [[RAND_SEED]];
+
+<<random numbers>>=
+  __global__ void setupRandomSequence_imaging(curandState *state, int n_data)
+{
+  int id = threadIdx.x + blockIdx.x*blockDim.x;
+  if (id<n_data)
+    curand_init(RAND_SEED, id, 0, &state[id]);
+}
+
+@
+\subsubsection{Poisson distribution}
+\label{sec:poisson-distribution}
+
+Two random number generators for the Poisson distribution have been implemented.
+Both are using uniformly distributed random numbers.
+
+The first method used the famous algorithm of D. Knuth:
+<<random numbers>>=
+__device__ float curand_poisson_knuth(curandState *state, float lambda)
+{
+  unsigned int k = 0;
+  float p=exp(lambda);
+  do{
+      k++;
+      p *= curand_uniform(state);
+  }while (p > 1.0);
+  return (float) k-1;
+}
+@ 
+The execution speed of D. Knuth algorithm is proportional to $\lambda$.
+For large $\lambda$, a preferable algorithm is the one derived by A. C. Atkinson:
+<<random numbers>>=
+__device__ float curand_poisson_atkinson(curandState *state, float lambda)
+{
+  /*
+    The algorithm is ???method PA??? from ???The Computer Generation of Poisson Random Variables??? by A. C. Atkinson, Journal of the Royal Statistical Society Series C (Applied Statistics) Vol. 28, No. 1. (1979), pages 29-35. Method PA is on page 32.
+   */
+  float c, beta, alpha, k, u, x, n, v, y, lhs, rhs;
+  c = 0.767 - 3.36/lambda;
+  beta = PI/sqrt(3.0*lambda);
+  alpha = beta*lambda;
+  k = logf(c) - lambda - logf(beta);
+  do{
+    u = curand_uniform(state);
+    x = (alpha - logf((1.0 - u)/u))/beta;
+    n = floorf(x + 0.5);
+    if (n >= 0)
+      {
+	v = curand_uniform(state);
+	y = alpha - beta*x;
+        lhs = 1.0 + expf(y);
+	lhs *= lhs;
+	lhs = y + logf(v/lhs);
+	rhs = k + n*logf(lambda) - lgammaf(n+1);
+      }
+  }while(lhs > rhs);
+  return n;
+}
+@
+
+\subsection{Image analysis}
+\label{sec:image-analysis}
+
+The following routines are used to evaluate image properties: Strehl ratio, entrapped energy and full width at half maximum.
+
+\subsubsection{Strehl ratio}
+\label{sec:strehl-ratio}
+
+The Strehl ratio is given by the ratio between the PSF at frequency 0 and a reference PSF a frequency 0.
+<<strehl ratio>>=
+float imaging::strehl_ratio(imaging *ref)
+{
+  int idx;
+  idx = (N_PX_CAMERA - 1)/2;
+  float psf0, ref_psf0, sr;
+  HANDLE_ERROR( cudaMemcpy( &psf0, d__frame+idx*(1+N_PX_CAMERA),sizeof(float),
+			    cudaMemcpyDeviceToHost ) );
+  HANDLE_ERROR( cudaMemcpy( &ref_psf0, ref->d__frame+idx*(1+N_PX_CAMERA),sizeof(float),
+			    cudaMemcpyDeviceToHost ) );
+
+  sr = (psf0*ref->N_FRAME)/(ref_psf0*N_FRAME);
+  return sr;
+}
+
+@ 
+\subsection{Input/Output}
+\label{sec:inputoutput}
+
+The main parameters are displayed with:
+<<info>>=
+void imaging::info(void)
+{
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>imaging:\x1B[;42m\n");
+  fprintf(stdout," . imaging device    : %4d\n",N_LENSLET);
+  fprintf(stdout," . pupil sampling    : %4d\n",N_PX_PUPIL);
+  fprintf(stdout," . DFT sampling      : %4d\n",N_DFT);
+  fprintf(stdout," . imagelet sampling : %4d\n",N_PX_IMAGE);
+  fprintf(stdout," . frame sampling    : %4d\n",N_PX_CAMERA);
+  fprintf(stdout," . source #          : %4d\n",N_SOURCE);
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n"); 
+}
+@ 
+The frame is saved to a file with:
+<<frame to file>>=
+void imaging::frame2file(const char *filename){
+  int n;
+  n = N_PX_CAMERA*N_SIDE_LENSLET;
+  n *= n;
+  printf("n=%d\n",n);
+  dev2file(filename,d__frame,n*N_SOURCE,n,N_SOURCE);
+}
+
+@ The frame is plotted with the plot.ly
+<<plot frame>>=
+void imaging::show_frame(char *filename)
+{
+  int nbyte;
+  float *data;
+  plotly_properties prop;
+
+  nbyte = sizeof(float) *N_PX_CAMERA*N_PX_CAMERA*N_LENSLET*N_SOURCE;
+  HANDLE_ERROR( cudaHostAlloc( (void**)&data, nbyte, 
+			       cudaHostAllocDefault ) );
+  HANDLE_ERROR( cudaMemcpy( data, d__frame,nbyte,
+			    cudaMemcpyDeviceToHost ) );
+
+  prop.set("xtitle","X");
+  prop.set("ytitle","Y");
+  prop.set("ztitle","[au]");
+  prop.set("title","");
+  prop.set("filename",filename);
+  prop.aspect_ratio = N_SOURCE;
+  prop.set("zdata",data,
+	   N_PX_CAMERA*N_SIDE_LENSLET,
+	   N_PX_CAMERA*N_SIDE_LENSLET*N_SOURCE);
+  prop.set("colorscale","YIGnBu");
+  imagesc(&prop); 
+
+  HANDLE_ERROR( cudaFreeHost( data ) );
+}
+<<plot frame with Strehl ratio>>=
+void imaging::show_frame(char *filename, imaging *ref)
+{
+  int nbyte;
+  char title[32];
+  float *data;
+  plotly_properties prop;
+
+  nbyte = sizeof(float)*N_PX_CAMERA*N_PX_CAMERA;
+  HANDLE_ERROR( cudaHostAlloc( (void**)&data, nbyte, 
+			       cudaHostAllocDefault ) );
+  HANDLE_ERROR( cudaMemcpy( data, d__frame,nbyte,
+			    cudaMemcpyDeviceToHost ) );
+
+  prop.set("xtitle","X");
+  prop.set("ytitle","Y");
+  prop.set("ztitle","[au]");
+  sprintf(title,"Strehl ratio=%.2f%%",strehl_ratio(ref)*100);
+  prop.set("title",title);
+  prop.set("filename",filename);
+  prop.set("zdata",data,N_PX_CAMERA,N_PX_CAMERA);
+  prop.set("colorscale","YIGnBu");
+  imagesc(&prop); 
+
+  HANDLE_ERROR( cudaFreeHost( data ) );
+}
+
+@
+\section{Tests}
+\label{sec:tests}
+
+\subsection{Test 1}
+\label{sec:test-1}
+
+For this test, the relative position of the guide star and the weavefront sensor is demonstrated.
+
+@
+The main function is:
+<<imaging.bin>>=
+<<main header>>
+int main(int argc,char *argv[]) {
+<<test 1 setup>>  
+gs.wavefront.show_amplitude("imaging/pupil");
+imgr.pixel_scale = 2*1E-6*gs.wavelength()/2.0;
+imgr.set_pointing_direction(imgr.pixel_scale*5,PI/4);
+// imgr.set_pointing_direction(0.0,0.0);
+imgr.propagate(&gs);
+imgr.show_frame("imaging/frame");
+<<test 1 cleanup>>  
+}
+@ 
+The telescope pupil is defined with the [[mask]] structure,
+the pupil is sample with [[N_PX]] pixels accross the diameter:
+<<test 1 setup>>=
+int N_PX, N_PX2;
+N_PX2 = N_PX = 60;
+N_PX2 *= N_PX;
+mask telescope;
+telescope.setup_circular(N_PX);
+<<test 1 cleanup>>=
+telescope.cleanup();
+@ 
+Lets define a guide star:
+<<test 1 setup>>=
+source gs;
+gs.setup(0.0,0.0,INFINITY,N_PX2);
+gs.photometric_band = "I";
+gs.wavefront.masked(&telescope);
+<<test 1 cleanup>>=
+gs.cleanup();
+@
+The imager is defined with the [[imaging]] structure:
+<<test 1 setup>>=
+imaging imgr;
+imgr.setup(N_PX,1,2,50,0.5,1);
+<<test 1 cleanup>>=
+imgr.cleanup();
+
+@
+% --------------------
+
+\subsection{C}
+\label{sec:c}
+
+
+Test suite:
+
+<<main header>>=
+#ifndef __CEO_H__
+#include "h"
+#endif
+<<imaging.bin.old>>=
+<<main header>>
+int main(int argc,char *argv[]) {
+
+  int nLenslet, nLenslet2, nPxLenslet;
+  nLenslet = nLenslet2 = 1;
+  nLenslet2 *= nLenslet;
+  nPxLenslet = 61;
+
+  <<test setup>>
+
+  dev2file("amplitude.bin",src.wavefront.amplitude,src.wavefront.N_PX);
+
+  /* float wf_rms, d; */
+  /* d = 0.04; */
+  /* atm.get_phase_screen(&src,d,NPX,d,NPX,0); */
+  /* wf_rms = 1E9*S.std(src.wavefront.phase, NPX2); */
+  /* printf("\n NGS WF RMS: %7.2fnm\n",wf_rms); */
+  /* src.phase2file("phaseScreen.bin"); */
+
+  src.photometric_band = "V";
+  printf(" . SRC wavelength %.2E\n",src.wavelength());
+
+  lenslet_array.propagate(&src);
+  lenslet_array.frame2file("frame.bin");
+
+  printf(" __ TERMINATING ... __\n");
+  <<test cleanup>>
+}
+@ Source:
+<<test setup>>=
+int NPX, NPX2;
+NPX = nLenslet*nPxLenslet;
+NPX2 = NPX*NPX;
+source src;
+src.setup(ARCSEC(0) , 0, INFINITY, NPX2, "SRC");
+<<test cleanup>>=
+src.cleanup();
+@ Atmosphere:
+<<test setup>>=
+atmosphere atm;
+atm.setup(20e-2,30,10e3,10,0);
+<<test cleanup>>=
+atm.cleanup();
+@ Statistics:
+<<test setup>>=
+stats S;
+S.setup();
+<<test cleanup>>=
+S.cleanup();
+@ Lenslet array:
+<<test setup>>=
+imaging lenslet_array;
+lenslet_array.setup(nPxLenslet,nLenslet,
+		    2,1,1);
+<<test cleanup>>=
+lenslet_array.cleanup();
+@
+
+\subsection{Python}
+\label{sec:python-tests}
+
+<<imaging.py>>=
+#!/usr/bin/env python
+
+import sys
+sys.path.append("/home/rconan/CEO/python")
+from pylab import *
+from import *
+
+<<main test>>
+@ 
+The test suite consists of:
+\begin{description}
+\item[the main test] 
+<<main test>>=
+n = 256
+nn = array([n,n],dtype=int32)
+zen = array( [0], dtype=float32)
+azi = array( [0], dtype=float32)
+src = Source("V",zen,azi,float("inf"),nn)
+
+tel = GMT(n, 25.5)
+src.masked(tel)
+
+imgr = Imaging(n, 1, 4, 4*n, 1, 1)
+imgr.propagate(src)
+
+frame0 = zeros( (n*4,n*4), order="c", dtype=float32)
+imgr.getframe(frame0)
+
+figure(1)
+ax = imshow(frame0**0.25,interpolation='None') 
+colorbar(ax)
+draw()
+
+atm = GmtAtmosphere(15e-2,30)
+D = 25.0
+p = D/n
+atm.get_phase_screen(src, 1,  p, n, p, n, 0.0)
+src.masked(tel)
+
+imgr.reset()
+imgr.propagate(src)
+
+#frame0 = zeros( (n*4,n*4), order="c", dtype=float32)
+imgr.getframe(frame0)
+
+figure(2)
+ax = imshow(frame0,interpolation='None') 
+colorbar(ax)
+show()
+@ \item[the field stop test] 
+<<field stop test>>=
+n = 32
+nn = array([n,n],dtype=int32)
+zen = zeros( 1, dtype=float32)
+azi = zeros( 1, dtype=float32)
+src = Source("V",zen,azi,float("inf"),nn)
+
+tel = Telescope(n)
+src.masked(tel)
+osf = 4
+
+imgr = Imaging(n, 1, osf, osf*n, 1, 1)
+imgr.propagateThroughFieldStop(src,8.0)
+
+frame0 = zeros( (n*osf,n*osf), order="c", dtype=float32)
+imgr.getframe(frame0)
+
+figure(1)
+ax = imshow(frame0,interpolation='None') 
+colorbar(ax)
+show()
+@ \item[the pyramid WFS test] 
+<<pyramid test>>=
+n = 32
+nn = array([n,n],dtype=int32)
+zen = zeros( 1, dtype=float32)
+azi = zeros( 1, dtype=float32)
+src = Source("V",zen,azi,float("inf"),nn)
+
+tel = Telescope(n)
+src.masked(tel)
+osf = 4
+
+imgr = Imaging(n, 1, osf, osf*n, 1, 1)
+imgr.propagateThroughPyramid(src)
+
+frame0 = zeros( (n*osf,n*osf), order="c", dtype=float32)
+imgr.getframe(frame0)
+
+figure(1)
+ax = imshow(frame0,interpolation='None') 
+colorbar(ax)
+show()
+@ \end{description}
+
+\subsection{Matlab MEX}
+\label{sec:matlab-mex}
+
+
+The test suite is a Matlab script.
+It calls the mex function (THIS IS BROKEN):
+<<imaging.mex>>=
+#include <math.h>
+#include <cuda_runtime.h>
+#include "cublas_v2.h"
+#include "mex.h"
+#include "gpu/mxGPUArray.h"
+
+#ifndef __CEO_H__
+#include "h"
+#endif
+#ifndef __SOURCE_H__
+#include "source.h"
+#endif
+#ifndef __ATMOSPHERE_H__
+#include "atmosphere.h"
+#endif
+#ifndef __IMAGING_H__
+#include "imaging.h"
+#endif
+#ifndef __CENTROIDING_H__
+#include "centroiding.h"
+#endif
+
+__global__ void apply_phase_offset(float* phase_io, const float* phase_offset, int n_phase)
+{
+  int idx;
+  idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx<n_phase)
+    phase_io[idx] += phase_offset[idx];
+}
+
+static source src;
+static atmosphere atm;
+static imaging lenslet_array;
+static centroiding cog;
+
+static unsigned int INIT=0;
+
+static void cleanup(void)
+{
+  src.cleanup();
+  atm.cleanup();
+  lenslet_array.cleanup();
+  //cog.cleanup();
+  INIT = 0;
+}
+void mexFunction(int nlhs, mxArray *plhs[],
+        int nrhs, mxArray const *prhs[])
+{
+    unsigned int inputIndex;
+    float const *d__phase_offset;
+    float *d__phase_screen;
+    double *reset, *L0, *time, *delta, *nSample;
+    mwSize dims[2];
+    
+    char const * const errId = "parallel:gpu:CEO_SCAO_MEX:InvalidInput";
+    char const * const errMsg = "Invalid input to MEX file.";
+    
+    /* Check for proper number of input and output arguments */
+    if (!( (nrhs == 5) || (nrhs == 6) )) {
+        mexErrMsgIdAndTxt( "MATLAB:mxislogical:invalidNumInputs",
+                "Five or six input argument required.");
+    }
+    if(nlhs > 5){
+        mexErrMsgIdAndTxt( "MATLAB:mxislogical:maxlhs",
+                "Too many output arguments.");
+    }
+
+    inputIndex = 0;
+    
+    /* Create GPUArray from mxArray input and get underlying pointer. */
+    /* mxGPUArray const *x; */
+    /* x = mxGPUCreateFromMxArray(prhs[inputIndex++]); */
+    /* if (mxGPUGetClassID(x) != mxSINGLE_CLASS) { */
+    /*     mexErrMsgIdAndTxt(errId, errMsg); */
+    /* } */
+    /* d__x = (float const *)(mxGPUGetDataReadOnly(x)); */
+    /* // --------------------------------------- */
+    /* mxGPUArray const *y; */
+    /* y = mxGPUCreateFromMxArray(prhs[inputIndex++]); */
+    /* if (mxGPUGetClassID(y) != mxSINGLE_CLASS) { */
+    /*     mexErrMsgIdAndTxt(errId, errMsg); */
+    /* } */
+    /* d__y = (float const *)(mxGPUGetDataReadOnly(y)); */
+    // ---------------------------------------
+    delta = mxGetPr(prhs[inputIndex++]);
+    nSample = mxGetPr(prhs[inputIndex++]);
+    reset = mxGetPr(prhs[inputIndex++]);
+    L0 = mxGetPr(prhs[inputIndex++]);
+    time = mxGetPr(prhs[inputIndex++]);
+    // ---------------------------------------
+    if (nrhs==6)
+      {
+	mxGPUArray const *phase_offset;
+	phase_offset = mxGPUCreateFromMxArray(prhs[inputIndex++]);
+	if (mxGPUGetClassID(phase_offset) != mxSINGLE_CLASS) {
+	  mexErrMsgIdAndTxt(errId, errMsg);
+	}
+	d__phase_offset = (float const *)(mxGPUGetDataReadOnly(phase_offset));
+      }
+ 
+    /* Create GPUArray to hold the result and get underlying pointer. */
+    mxGPUArray *phase_screen;
+    dims[0] = *nSample;
+    dims[1] = *nSample;
+    phase_screen = mxGPUCreateGPUArray(2,dims,
+				       mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
+    d__phase_screen = (float *)(mxGPUGetData(phase_screen));
+    mxGPUArray *frame;
+    dims[0] = _N_PX_CAMERA_*N_SIDE_LENSLET;
+    dims[1] = _N_PX_CAMERA_*N_SIDE_LENSLET;
+    frame = mxGPUCreateGPUArray(2,dims,
+				mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
+    mxGPUArray *cx;
+    dims[0] = _N_LENSLET_*_N_SOURCE_;
+    dims[1] = 1;
+    cx = mxGPUCreateGPUArray(2,dims,
+			     mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
+    mxGPUArray *cy;
+    cy = mxGPUCreateGPUArray(2,dims,
+			     mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
+    mxGPUArray *flux;
+    flux = mxGPUCreateGPUArray(2,dims,
+			       mxSINGLE_CLASS,mxREAL,MX_GPU_INITIALIZE_VALUES);
+
+    if (INIT==0) {
+        // Source
+      src.setup(ARCSEC(0) , 0, INFINITY, (*nSample)*(*nSample));
+        
+        // Single layer turbulence profile
+        float altitude[] = {0},
+              xi0[] = {1},
+              wind_speed[] = {10},
+              wind_direction[] = {0};
+	      /*
+        // GMT 7 layers turbulence profile
+        float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
+              xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
+              wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
+              wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+              */
+        // Atmosphere
+        atm.setup(0.078125,(float) (*L0),altitude,xi0,wind_speed,wind_direction);
+
+	// SH WFS
+	lenslet_array.setup();
+	HANDLE_ERROR( cudaFree( lenslet_array.d__frame ) );
+
+	// Centroid
+	cog.setup();
+	cog.cleanup();
+
+        mexAtExit(cleanup);
+        INIT = 1;
+    }
+    
+   if (*reset>0) { atm.reset(); }
+    
+   if (nlhs>1) {
+     //  atm.get_phase_screen(d__x,d__y,_N_PIXEL_,d__src,(float)(*time));
+     atm.get_phase_screen(*delta,*nSample,*delta,*nSample,&src,(float)(*time));
+
+     if (nrhs==6)
+       {
+	 mexPrintf("\nApplying phase offset!\n");
+	 dim3 gridDim(ceilf(_SOURCE_N_PX_/256),1);
+	 dim3 blockDim(256,1);
+	 apply_phase_offset LLL gridDim,blockDim RRR (src.wavefront.phase, 
+						      d__phase_offset, 
+						      _SOURCE_N_PX_);
+       }
+
+     HANDLE_ERROR( cudaMemcpy( d__phase_screen, src.wavefront.phase,
+			       sizeof(float)*_SOURCE_N_PX_,
+			       cudaMemcpyDeviceToDevice ) );
+ 
+     lenslet_array.d__frame  = (float *)(mxGPUGetData(frame));
+     lenslet_array.propagate(&src);
+     cog.d__cx   = (float *)(mxGPUGetData(cx));
+     cog.d__cy   = (float *)(mxGPUGetData(cy));
+     cog.d__mass = (float *)(mxGPUGetData(flux));
+     cog.get_data(lenslet_array.d__frame);
+   } else {
+   mexPrintf("Computing phase screen...\n");
+   //atm.get_phase_screen(d__phase_screen,*delta,*nSample,*delta,*nSample,&src,(float)(*time));
+     atm.get_phase_screen(&src,*delta,*nSample,*delta,*nSample,0);
+     HANDLE_ERROR( cudaMemcpy( src.wavefront.phase,d__phase_screen,
+     			       sizeof(float)*_SOURCE_N_PX_,
+     			       cudaMemcpyDeviceToDevice ) );
+   }
+
+   /* Wrap the result up as a MATLAB gpuArray for return. */
+   plhs[0] = mxGPUCreateMxArrayOnGPU(phase_screen);
+   plhs[1] = mxGPUCreateMxArrayOnGPU(frame);
+   plhs[2] = mxGPUCreateMxArrayOnGPU(cx);
+   plhs[3] = mxGPUCreateMxArrayOnGPU(cy);
+   plhs[4] = mxGPUCreateMxArrayOnGPU(flux);
+   
+   //   atm.cleanup();
+   /* mxGPUDestroyGPUArray(x); */
+   /* mxGPUDestroyGPUArray(y); */
+   mxGPUDestroyGPUArray(phase_screen);
+   mxGPUDestroyGPUArray(frame);
+   mxGPUDestroyGPUArray(cx);
+   mxGPUDestroyGPUArray(cy);
+   mxGPUDestroyGPUArray(flux);
+
+}

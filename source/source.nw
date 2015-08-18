@@ -1,0 +1,1767 @@
+% -*- mode: Noweb; noweb-code-mode: python-mode -*-
+
+The source structure contains all the data associated with a remote optical emitter: its location, wavefront, irradiance, ...
+
+\section{The files}
+
+\subsection{Header}
+
+<<source.h>>=
+#ifndef __SOURCE_H__
+#define __SOURCE_H__
+
+#ifndef __UTILITIES_H__
+#include "utilities.h"
+#endif
+
+#ifndef __PLOTLY_H__
+#include "plotly.h"
+#endif
+
+#ifndef __RAYTRACING_H__
+#include "rayTracing.h"
+#endif
+
+<<complex amplitude structure>>
+
+struct source {
+
+  <<source parameters>>
+
+  void setup(char *_photometric_band, 
+	     float zenith, float azimuth, float height);
+  void setup(char *_photometric_band, 
+	     float zenith, float azimuth, float height, 
+	     int resolution);
+  void setup(char *_photometric_band, 
+	     float zenith, float azimuth, float height, 
+	     char *tag_in);
+  void setup(char *_photometric_band, 
+	     float zenith, float azimuth, float height, 
+	     int resolution, char *tag_in);
+  void setup(char *_photometric_band, 
+	     float *_zenith, float *_azimuth, float _height, 
+	     int _N_SRC);
+  void setup(char *_photometric_band, 
+	     float *_zenith, float *_azimuth, float _height, 
+	     int _N_SRC, int resolution);
+  void setup(char *_photometric_band, 
+	     float *_zenith, float *_azimuth, float _height, 
+	     int _N_SRC, rtd _L_, int _N_L_, vector origin);
+  void cleanup(void);
+
+  void reset_rays(void);
+
+  void trace(gmt_m1 *M1);
+  void trace(gmt_m2 *M2);
+  void stop(gmt_m2 *M2);
+  void opd2phase(void);
+   
+  void info(void);
+
+  void phase2file(const char *filename);
+
+  float wavelength(void);
+  float n_photon(void);
+  float wavenumber(void);
+
+  void transform_to_S(source *src, conic *F);
+  void transform_to_S(source *src, aperture *A);
+  void transform_to_R(source *src, conic *F);
+  void transform_to_R(source *src, aperture *A);
+  void intersect(source *src, conic *F);
+  void reflect(source *src);
+};
+#endif // __SOURCE_H__
+@
+\subsection{Source}
+
+<<source.cu>>=
+#include "source.h"
+
+<<square geometry>>
+<<apply mask>>
+<<piston removal>>
+
+<<complex amplitude setup I>>
+<<complex amplitude setup II>>
+<<complex amplitude cleanup>>
+<<resetting the wavefront>>
+<<resetting the wavefront to new wavefront>>
+<<adding wavefront phase>>
+<<masking wavefront amplitude I>>
+<<masking wavefront amplitude II>>
+<<wavefront stats>>
+
+<<phase to file>>
+
+<<bundle coordinates kernel>>
+<<bundle coordinates kernel (box)>>
+<<gathering wavefront kernel>>
+
+<<setup>>
+<<setup with wavefront resolution>>
+<<setup with tag>>
+<<setup with wavefront resolution and tag>>
+<<setup for multiple sources>>
+<<setup for multiple sources with wavefront resolution>>
+<<setup for multiple sources with wavefront resolution and ray bundle>>
+<<cleanup>>
+
+<<reset rays>>
+<<ray tracing>>
+
+<<info>>
+
+<<wavelength>>
+<<number of photons>>
+<<wavenumber>>
+<<plot phase>>
+<<plot amplitude I>>
+<<plot amplitude II>>
+@ 
+<<ray tracing code chunks>>=
+<<transformation to surface system kernel>>
+<<transformation to surface system>>
+<<intersection with surface kernel>>
+<<intersection with surface>>
+<<reflection kernel>>
+<<reflection>>
+
+@
+\subsection{Python}
+\label{sec:python}
+
+<<source.pxd>>=
+from utilities cimport mask
+from rayTracing cimport bundle, gmt_m1, gmt_m2, vector, rtd
+cdef extern from "source.h":
+    cdef cppclass complex_amplitude:
+        int N
+        int N_PX
+        float *phase
+        float *amplitude
+        void reset()
+        void masked(mask *)
+        void masked()
+        void add_phase(float , float *)
+        void rms(float *)
+    cdef cppclass source:
+        int N_SRC
+        char *photometric_band
+        float fwhm, magnitude
+        complex_amplitude wavefront
+        bundle rays
+        void setup(char *,float , float , float )
+	void setup(char *,float , float , float , int )
+        void setup(char *,float *, float *, float , int , int )
+        void setup(char *,float *, float *, float , int , rtd, int, vector)
+        void cleanup()
+        void reset_rays()
+        void trace(gmt_m1 *)
+        void trace(gmt_m2 *)
+        void block(gmt_m2 *)
+        void opd2phase()
+        void info()
+        float n_photon()
+        float wavelength()
+<<class definitions>>
+@
+<<class definitions>>= 
+from numpy cimport ndarray
+from utilities cimport cuFloatArray, MaskAbstract
+from rayTracing cimport Bundle
+cdef class Complex_amplitude:
+    cdef complex_amplitude *_c_complex_amplitude
+    cdef public cuFloatArray phase
+    cdef public cuFloatArray amplitude
+cdef class Source:
+    cdef source *_c_source
+    cdef public int N_SRC
+    cdef int n, m
+    cdef public int size
+    cdef public ndarray zenith, azimuth
+    cdef public float height
+    cdef public Bundle rays
+    cdef public Complex_amplitude wavefront
+    cdef public sphere_distance
+@
+<<source.pyx>>=
+import numpy as np
+cimport cython
+cimport numpy as np
+from utilities cimport cuFloatArray, MaskAbstract
+from rayTracing cimport Bundle
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cdef class Complex_amplitude:
+    """
+    A class to represent a wavefront complex amplitude
+
+    Parameters
+    ----------
+    Source : Source
+        a CEO Source object
+
+    Attributes
+    -----------
+    phase : float
+        The complex amplitude angle
+    amplitude : float, read only
+        the complex amplitude magnitude
+
+    See also
+    --------
+    Source: a class for astronomical sources
+    """
+    def __cinit__(self,Source src):
+        self._c_complex_amplitude = new complex_amplitude()
+        self._c_complex_amplitude = &(src._c_source.wavefront)
+        self.phase = cuFloatArray(shape=(self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N,
+                                         self._c_complex_amplitude.N))
+        self.phase._c_gpu.dev_data = self._c_complex_amplitude.phase
+        self.amplitude = cuFloatArray(shape=(self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N,
+                                             self._c_complex_amplitude.N))
+        self.amplitude._c_gpu.dev_data = self._c_complex_amplitude.amplitude
+
+
+    def rms(self):
+        """
+        Computes the rms of the wavefront phase
+
+        Returns
+        -------
+        float
+            the wavefront phase rms
+        """
+        cdef np.ndarray[float,ndim=1] rms = np.zeros(self._c_complex_amplitude.N, dtype=np.single)
+        self._c_complex_amplitude.rms(<float *>rms.data)
+        return rms
+        
+    def piston(self, np.ndarray mask=None):
+        """
+        Get the piston corresponding to each segment
+
+        Parameters
+        ----------
+        mask: ndarray, optionnal
+            The mask where to compute the piston on as a 2D array n_maskXsampling
+            where n_mask is the number of mask (default: 1) and sampling is the mask
+            sampling that must match the wavefront sampling
+
+        Returns
+        -------
+        ndarray of float
+            The vector of piston values
+        """
+        amplitude = self.amplitude.host()
+        if mask is None:
+            return np.sum(self.phase.host()[amplitude>0])/np.sum(amplitude)
+        else:
+            Q = mask*amplitude.T
+            return np.dot(Q,np.reshape( self.phase.host() , (-1,) ) ).flatten()/np.sum(Q,axis=1)    
+
+    def reset(self, cuFloatArray phase = None):
+        self._c_complex_amplitude.reset()
+        if phase is not None:
+            self._c_complex_amplitude.add_phase(1,phase._c_gpu.dev_data)
+
+cdef class Source:
+    """ 
+    A class to represent an astronomical source
+
+    Parameters
+    ----------
+    photometric_band : char
+        The sources photometric band
+    zenith : list, tuple or numpy array, optionnal
+        The sources zenith angles [rd], defaults to 0.
+    azimuth :  list, tuple or numpy array, optionnal
+        The sources azimuth angles [rd], defaults to 0.
+    height : float, optionnal
+        The sources altitude [m], defaults to infinity.
+    resolution : tuple
+        A 2 element tuple with the sampling [n,m] in pixel of the source wavefront complex amplitude.
+    fwhm : float, optionnal
+        The fwhm of the source intensity distribution, defaults to None.
+    rays_box_size : float, optionnal
+        The size of the ray bundle [m], defaults to None.
+    rays_box_sampling : int, optionnal
+        The linear sampling of the ray bundle
+    rays_origin : list, optionnal
+         A 3 element list, with the first 2 being the (x,y) origin of the ray bundle and the 3rd the ray bundle starting z coordinates
+
+    Attributes
+    ----------
+    n : int
+        wavefront resolution
+    m : int
+        wavefront resolution
+    size : int
+        number of sources
+    zenith : ndarray
+        zenith angle
+    azimuth : ndarray
+        azimuth angle
+    height : float
+        source height
+    ray : Bundle
+        geometric ray bundle
+    phase : cuFloatArray
+        wavefront phase
+    wavelength : float, read only
+        the wavelength of the source
+    nPhoton : float, read only
+        number of photon
+    magnitude : float, write only
+        star magnitude
+    wavefront : Complex_amplitude
+        the wavefront complex amplitude
+    sphere_distance : float
+        the distance to the reference sphere used to compute the OPD
+
+    Examples
+    --------
+    >>> import math
+    >>> import numpy as np
+    >>> import ceo
+
+    An on-axis source in K band is simply defined with:
+
+    >>> src = Source("K")
+
+    The resolution of the source wavefront is specifed with
+
+    >>> n = 256
+    >>> src = Source("K",resolution=(n,n))
+
+    For a 20" off-axis and 10th magnitude source, zenith and azimuth are set with
+
+    >>> src = Source("K",zenith=20*math.pi/180/3600,azimuth=math.pi/4,resolution=(n,n),magnitude=10)
+
+    A Laser guide star constellation of 6 sources is defined with
+
+    >>> zen = np.ones(6)*30*math.pi/180/3600,
+    >>> azi = np.linspace(0,5,6)*2*math.pi/6
+    >>> lgs = ceo.Source("R",zenith=zen,azimuth=azi,height=90e3,resolution=(n,n)) 
+
+    If the source is to be used for ray tracing through an optical model like the GMT, then
+
+    >>> lgs = ceo.Source("R",zenith=zen,azimuth=azi,height=90e3,resolution=(n,n),
+                        rays_box_size=25.5, rays_box_sampling=n, rays_origin=[0,0,25]) 
+
+    """
+
+    def __cinit__(self,char *_photometric_band,  
+		  zenith=0, azimuth=0, 
+                  magnitude=None,
+		  height=float("inf"), 
+		  resolution = (0,0),
+		  fwhm = None,
+                  rays_box_size=None, 
+		  rays_box_sampling=None, 
+		  rays_origin=None):
+
+	self._c_source = new source()
+        if rays_box_sampling is not None:
+            resolution = [rays_box_sampling, rays_box_sampling]
+        self.n = resolution[0]
+        self.m = resolution[1]
+        self.zenith  = np.array( zenith,  dtype=np.float32)
+        self.azimuth = np.array( azimuth, dtype=np.float32)
+        self.height  = float(height);
+        self.size = self.zenith.size
+        cdef vector _origin_
+        if rays_box_size is None:
+            self._c_source.setup(_photometric_band, 
+                                 <float *>self.zenith.data, 
+                                 <float *>self.azimuth.data, height, 
+                                 self.size, np.prod(resolution))
+        else:
+            _origin_.x = <float>rays_origin[0]
+            _origin_.y = <float>rays_origin[1]
+            _origin_.z = <float>rays_origin[2]
+            self._c_source.setup(_photometric_band, 
+                                 <float *>self.zenith.data, 
+                                 <float *>self.azimuth.data, height, 
+                                 self.size, 
+                                 rays_box_size, 
+				 rays_box_sampling, 
+				 _origin_)
+        if magnitude is not None:
+            self._c_source.magnitude = magnitude
+        if fwhm is not None:
+            self._c_source.fwhm = fwhm
+        self.wavefront = Complex_amplitude(self)
+        self.rays = Bundle(self)
+        self.N_SRC = self._c_source.N_SRC
+        self.sphere_distance = None
+
+    def __dealloc__(self):
+        self._c_source.cleanup()
+
+    def trace(self, optics):
+        optics.trace(self.rays)
+
+    def stop(self, optics):
+        optics.blocking(self.rays)
+
+    def opd2phase(self):
+        self._c_source.opd2phase()                        
+
+    property phase:
+        def __get__(self):
+            x = cuFloatArray(shape=(self.n*self.size,self.m))
+            x._c_gpu.dev_data = self._c_source.wavefront.phase
+            return x
+        def __set__(self,cuFloatArray val):
+            self._c_source.wavefront.add_phase(1,val._c_gpu.dev_data)
+
+    property amplitude:
+        def __get__(self):
+            x = cuFloatArray(shape=(self.n*self.size,self.m))
+            x._c_gpu.dev_data = self._c_source.wavefront.amplitude
+            return x
+    
+    property wavelength:
+        def __get__(self):
+            return self._c_source.wavelength()
+
+    property nPhoton:
+        def __get__(self):
+            return self._c_source.n_photon()
+
+    property magnitude:
+        def __set__(self,value):
+            self._c_source.magnitude = value
+           
+    def masked(self, MaskAbstract tel):
+        """
+        Apply the binary mask of the telescope pupil to the source wavefront
+
+        Parameters
+        ----------
+        mask : Mask
+            The binary mask structure
+        """
+        self._c_source.wavefront.masked(tel._c_mask)
+
+    def masked(self):
+        """
+        Apply the binary mask of the telescope pupil to the source wavefront
+        """    
+        self._c_source.wavefront.masked()
+    
+    def reset(self):
+        """
+        Reset the wavefront amplitude to 1 and phase to 0
+        """
+        self._c_source.wavefront.reset()
+        self._c_source.reset_rays()
+@
+\subsubsection{Ray tracing routines}
+\label{sec:ray-tracing-routines-1}
+
+<<source.pxd (opt-out)>>=
+    void transform_to_S(source *, conic *)
+    void transform_to_S(source *, aperture *)
+    void transform_to_R(source *, conic *)
+    void transform_to_R(source *, aperture *)
+    void intersect(source *, conic *)
+    void reflect(source *)
+    void thin_lens(source *)
+@ 
+<<source.pyx (opt-out)>>=
+# ray tracing
+def Transform_to_S(Source src, Conic F):
+    transform_to_S(src._c_source, F._c_conic)
+def Transform_to_S_from_A(Source src, Aperture A):
+    transform_to_S(src._c_source, A._c_aperture)
+def Transform_to_R(Source src, Conic F):
+    transform_to_R(src._c_source, F._c_conic)
+def Transform_to_R_from_A(Source src, Aperture A):
+    transform_to_R(src._c_source, A._c_aperture)
+def Intersect(Source src, Conic F):
+    intersect(src._c_source, F._c_conic)
+def Reflect(Source src):
+    reflect(src._c_source)
+@
+
+\section{Parameters}
+\label{sec:params}
+
+The source structure is a collection of [[N_SRC]] light sources.
+<<source parameters>>=
+int N_SRC;
+@ 
+The source locations are given by their [[zenith]] and [[azimuth]] angles, all the sources share the same height.
+<<source parameters>>=
+float zenith, azimuth, height, theta_x, theta_y;
+@ The coordinates of the unit vector pointing towards the sources are given by [[theta_x]] and [[theta_y]].
+The wavefront is the complex amplitude of the light beam.
+It is given by its amplitude and phase, both are arrays of [[N_PX]] values.
+The complex amplitude is defined in a new structure:
+<<complex amplitude structure>>=
+struct complex_amplitude {
+
+  <<complex amplitude parameters>>
+
+  void setup(int n_pixel);
+  void setup(int n_pixel, int n_src);
+  void cleanup(void);
+  void reset(void);
+  void reset(complex_amplitude wavefront_prime);
+  void add_phase(float alpha, float *phase_prime);
+  void masked(void);
+  void masked(mask *M_in);
+  void rms(float *rms);
+  void show_phase(char *filename);
+  void show_phase(char *filename, int N_SRC);
+  void show_amplitude(char *filename);
+  void show_amplitude(char *filename, int N, int M);
+};
+@ with the parameters: 
+<<complex amplitude parameters>>=
+int N_PX, N;
+float *amplitude, *phase;
+@ The physical extent of the amplitude is set by the pupil mask:
+<<complex amplitude parameters>>=
+mask *M;
+@ The magnitude at a given photometric band are set with:
+<<source parameters>>=
+char *photometric_band;
+float magnitude;
+@ If the source is resolved by the  optical system, the irradiance is assumed to have a Gaussian shape of full width a half maximum [[fwhm]]
+<<source parameters>>=
+float fwhm;
+@  The wavefront is added to the source
+<<source parameters>>=
+complex_amplitude wavefront;
+@ Source structures will be allocated on the device:
+<<source parameters>>=
+source *dev_ptr;
+@ and the source can be tagged with
+<<source parameters>>=
+char tag[8];
+@ A source can also be propagated geometrically through optical components
+<<source parameters>>=
+char rays_exist;
+bundle rays; 
+@
+\section{Functions}
+\label{sec:functions}
+
+@
+\subsection{Setup \& cleanup}
+\label{sec:setup--cleanup}
+
+Sources are initialized with the setup function:
+\begin{itemize}
+\item for a single source:
+<<setup>>=
+void source::setup(char *_photometric_band, 
+		   float _zenith, float _azimuth, 
+		   float _height) {
+  <<setup single source contents>>
+  wavefront.setup(0);
+  strcpy(tag,"source");
+  info();
+}
+@ \item for a single source with wavefront resolution:
+<<setup with wavefront resolution>>=
+void source::setup(char *_photometric_band, 
+		   float _zenith, float _azimuth, 
+		   float _height, int resolution) {
+  <<setup single source contents>>
+  wavefront.setup(resolution);
+  strcpy(tag,"source");
+  info();
+}
+@ \item for a single source with tag:
+<<setup with tag>>=
+void source::setup(char *_photometric_band, 
+		   float _zenith, float _azimuth, 
+		   float _height, char *tag_in) {
+  <<setup single source contents>>
+  wavefront.setup(0);
+  strcpy(tag,tag_in);
+  info();
+}
+@ \item for a single source with wavefront resolution and tag:
+<<setup with wavefront resolution and tag>>=
+void source::setup(char *_photometric_band, 
+		   float _zenith, float _azimuth, float _height, 
+		   int resolution, char *tag_in) {
+  <<setup single source contents>>
+  wavefront.setup(resolution);
+  strcpy(tag,tag_in);
+  info();
+}
+@ with
+<<setup single source contents>>=
+rays_exist = 0;
+N_SRC   = 1;
+zenith  = _zenith;
+azimuth = _azimuth;
+height  = _height;
+theta_x = tanf(zenith)*cosf(azimuth);
+theta_y = tanf(zenith)*sinf(azimuth);
+photometric_band = _photometric_band;
+magnitude = 0.0;
+fwhm = 0.0;
+source __src;
+__src.zenith  = zenith;
+__src.azimuth = azimuth;
+__src.height  = height;
+__src.theta_x = theta_x;
+__src.theta_y = theta_y;
+HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source) ) );
+HANDLE_ERROR( cudaMemcpy( dev_ptr, &__src,
+                          sizeof(source) ,
+                          cudaMemcpyHostToDevice ) );
+
+@ \item for multiple sources:
+<<setup for multiple sources>>=
+void source::setup(char *_photometric_band, 
+		   float *_zenith, float *_azimuth, 
+		   float _height, int _N_SRC) {
+  rays_exist = 0;
+  N_SRC = _N_SRC;
+  height = _height;
+  photometric_band = _photometric_band;
+  magnitude = 0.0;
+  fwhm = 0.0;
+  source __src;
+  HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
+  strcpy(tag,"sources");
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
+    __src.zenith  = _zenith[i_SRC];
+    __src.azimuth = _azimuth[i_SRC];
+    __src.height  = _height;
+    __src.theta_x = tanf(_zenith[i_SRC])*cosf(_azimuth[i_SRC]);
+    __src.theta_y = tanf(_zenith[i_SRC])*sinf(_azimuth[i_SRC]);
+    HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
+			      sizeof(source) ,
+			      cudaMemcpyHostToDevice ) );
+    fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
+	    _zenith[i_SRC]*RADIAN2ARCSEC,
+	    _azimuth[i_SRC]*180/PI,_height,
+	    wavelength(),magnitude);
+  }
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+  wavefront.setup(0);
+}
+@  \item for multiple sources with wavefront resolution:
+<<setup for multiple sources with wavefront resolution>>=
+void source::setup(char *_photometric_band, 
+		   float *_zenith, float *_azimuth, float _height, 
+		   int _N_SRC, int resolution) {
+  rays_exist = 0;
+  N_SRC = _N_SRC;
+  height = _height;
+  photometric_band = _photometric_band;
+  magnitude = 0.0;
+  fwhm = 0.0;
+  source __src;
+  HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
+  strcpy(tag,"sources");
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
+    __src.zenith  = _zenith[i_SRC];
+    __src.azimuth = _azimuth[i_SRC];
+    __src.height  = _height;
+    __src.theta_x = tanf(_zenith[i_SRC])*cosf(_azimuth[i_SRC]);
+    __src.theta_y = tanf(_zenith[i_SRC])*sinf(_azimuth[i_SRC]);
+    HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
+			      sizeof(source) ,
+			      cudaMemcpyHostToDevice ) );
+    fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
+	    _zenith[i_SRC]*RADIAN2ARCSEC,
+	    _azimuth[i_SRC]*180/PI,_height,
+	    wavelength(),magnitude);
+  }
+  wavefront.setup(resolution,N_SRC);
+  fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+}
+@  \item for multiple sources with wavefront resolution and with ray bundle:
+<<setup for multiple sources with wavefront resolution and ray bundle>>=
+void source::setup(char *_photometric_band, 
+		   float *_zenith, float *_azimuth, float _height, 
+		   int _N_SRC, rtd L, int N_L, vector origin) {
+  N_SRC = _N_SRC;
+  height = _height;
+  photometric_band = _photometric_band;
+  magnitude = 0.0;
+  fwhm = 0.0;
+  source __src;
+  HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
+  strcpy(tag,"sources");
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
+    __src.zenith  = _zenith[i_SRC];
+    __src.azimuth = _azimuth[i_SRC];
+    __src.height  = _height;
+    __src.theta_x = tanf(_zenith[i_SRC])*cosf(_azimuth[i_SRC]);
+    __src.theta_y = tanf(_zenith[i_SRC])*sinf(_azimuth[i_SRC]);
+    HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
+			      sizeof(source) ,
+			      cudaMemcpyHostToDevice ) );
+    fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
+	    _zenith[i_SRC]*RADIAN2ARCSEC,
+	    _azimuth[i_SRC]*180/PI,_height,
+	    wavelength(),magnitude);
+  }
+  wavefront.setup(N_L*N_L,N_SRC);
+  fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
+  rays_exist = 1;
+  rays.setup(L, N_L, origin, N_SRC);
+  reset_rays();
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+}
+@ with
+<<reset rays>>=
+void source::reset_rays(void)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, rays.N_BUNDLE);
+  ray_coordinates LLL gridDim , blockDim RRR (rays.d__chief_ray, 1, 
+                                              dev_ptr,
+                                              0.0, 2, 1, rays.d__origin);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(rays.N_L/16+1,rays.N_L/16+1, rays.N_BUNDLE);
+  ray_coordinates_box LLL gridDim , blockDim RRR (rays.d__ray, rays.N_RAY, 
+                                                  dev_ptr,
+                                                  rays.L, rays.N_L, 
+                                                  rays.d__origin);    
+}
+@ and
+<<bundle coordinates kernel>>=
+__global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
+                                rtd RADIUS, int N_RADIUS, int N_THETA, 
+                                vector *origin)
+{
+  int i, j, k, iSource;
+  rtd rho, theta;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  //k = j * gridDim.x * blockDim.x + i;
+  if ( (i<N_RADIUS) && (j<N_THETA) )
+  {
+    rho   = RADIUS*i/(N_RADIUS-1);
+    if (i==0) {
+      j = 0;
+      k = 0;
+    } else
+      k = j + (i - 1)*N_THETA + 1;
+    k += iSource*N_RAY;
+    theta = 2*PI*j/N_THETA; 
+    d__ray[k].coordinates.x = rho*cos(theta) + origin->x; 
+    d__ray[k].coordinates.y = rho*sin(theta) + origin->y; 
+    d__ray[k].coordinates.z = origin->z;
+    d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
+    d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
+    d__ray[k].directions.z  = -cos(src[iSource].zenith);
+    d__ray[k].optical_path_length = 0.0;
+    d__ray[k].optical_path_difference = 0.0;
+    d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
+    d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
+    d__ray[k].v = 1;
+  }
+}
+@ and
+<<bundle coordinates kernel (box)>>=
+__global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
+                                    rtd L, int N_L, vector *origin)
+{
+  int i, j, k, iSource;
+  rtd x, y;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  if ( (i<N_L) && (j<N_L) )
+  {
+    <<rays box coordinates definition>>
+    k = i + j*N_L + iSource*N_RAY;
+    d__ray[k].coordinates.x = x + origin->x; 
+    d__ray[k].coordinates.y = y + origin->y; 
+    d__ray[k].coordinates.z = origin->z;
+    d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
+    d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
+    d__ray[k].directions.z  = -cos(src[iSource].zenith);
+    d__ray[k].optical_path_length = 0.0;
+    d__ray[k].optical_path_difference = 0.0;
+    d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
+    d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
+    d__ray[k].v = 1;
+  }
+}
+@ with
+<<rays box coordinates definition>>=
+x   = L*(i - (N_L-1)*0.5)/(N_L-1);
+y   = L*(j - (N_L-1)*0.5)/(N_L-1);
+@ \end{itemize}
+@
+\subsubsection{Complex amplitude}
+\label{sec:complex-amplitude}
+
+
+The complex amplitude structure is initialized with
+<<complex amplitude setup I>>=
+void complex_amplitude::setup(int n_pixel) {
+  N = 1;
+  <<complex amplitude setup common>>
+}
+<<complex amplitude setup II>>=
+void complex_amplitude::setup(int n_pixel, int n_src) {
+  N = n_src;
+  <<complex amplitude setup common>>
+}
+<<complex amplitude setup common>>=
+N_PX = n_pixel*N;
+M = NULL;
+if (N_PX>0) {
+  HANDLE_ERROR( cudaMalloc( (void**)&amplitude,  sizeof(float)*N_PX ) );
+  HANDLE_ERROR( cudaMalloc( (void**)&phase,      sizeof(float)*N_PX ) );
+  reset();
+} else {
+  amplitude  = NULL;
+  phase      = NULL;
+}
+
+@ and memory is de--allocated with:
+<<complex amplitude cleanup>>=
+void complex_amplitude::cleanup(void) {
+  if (amplitude!=NULL)          
+    HANDLE_ERROR( cudaFree( amplitude ) );
+  if (phase!=NULL)
+    HANDLE_ERROR( cudaFree( phase ) );
+}
+@ Allocated variable are freed with the [[cleanup]] routine
+<<cleanup>>=
+void source::cleanup(void) {
+  fprintf(stdout,"@(CEO)>%s: freeing memory!\n",tag);
+//  fprintf(stdout," |-");
+  wavefront.cleanup();
+  if (rays_exist==1) {
+    fprintf(stdout," |-");
+    rays.cleanup();
+  }
+  HANDLE_ERROR( cudaFree( dev_ptr) );
+}
+
+@ 
+The amplitude and phase are initialized to respectively 1 and 0:
+<<square geometry>>=
+  __global__ void squarePupil(float* amplitude, float *phase, const int N) {
+  int id;
+  id = blockIdx.x * blockDim.x + threadIdx.x;
+  if (id<N) {
+    amplitude[id] = 1.0;
+    phase[id]     = 0.0;
+  }
+}
+
+@
+
+\subsection{Photometry}
+\label{sec:photometry}
+
+The [[wavelength]] in \textsl{micron} corresponding to the photometric band is given by
+<<wavelength>>=
+float source::wavelength(void) {
+  float lambda;
+  if (strcmp(photometric_band,"V")==0)
+    lambda = 0.550;
+  if (strcmp(photometric_band,"R")==0)
+    lambda = 0.640;
+  if (strcmp(photometric_band,"I")==0)
+    lambda = 0.790;
+  if (strcmp(photometric_band,"J")==0)
+    lambda = 1.215;
+  if (strcmp(photometric_band,"H")==0)
+    lambda = 1.654;
+  if (strcmp(photometric_band,"K")==0)
+    lambda = 2.179;
+  if (strcmp(photometric_band,"Ks")==0)
+    lambda = 2.157;
+  return lambda;
+}
+@ The number of photon in $m^{-2}.s^{-1}$ is derived with
+<<number of photons>>=
+float source::n_photon(void) {
+  float zero_point;
+  if (strcmp(photometric_band,"V")==0)
+    zero_point = 8.97e9;
+  if (strcmp(photometric_band,"R")==0)
+    zero_point = 10.87e9 ;
+  if (strcmp(photometric_band,"I")==0)
+    zero_point = 7.34e9;
+  if (strcmp(photometric_band,"J")==0)
+    zero_point = 5.16e9;
+  if (strcmp(photometric_band,"H")==0)
+    zero_point = 2.99e9;
+  if (strcmp(photometric_band,"K")==0)
+    zero_point = 1.90e9;
+  if (strcmp(photometric_band,"Ks")==0)
+    zero_point = 1.49e19;
+  return zero_point*powf(10 , -0.4*magnitude );
+}
+@ The wave number is given by
+<<wavenumber>>=
+float source::wavenumber(void) {
+  float lambda;
+  if (strcmp(photometric_band,"V")==0)
+    lambda = 0.550;
+  if (strcmp(photometric_band,"R")==0)
+    lambda = 0.640;
+  if (strcmp(photometric_band,"I")==0)
+    lambda = 0.790;
+  if (strcmp(photometric_band,"J")==0)
+    lambda = 1.215;
+  if (strcmp(photometric_band,"H")==0)
+    lambda = 1.654;
+  if (strcmp(photometric_band,"K")==0)
+    lambda = 2.179;
+  if (strcmp(photometric_band,"Ks")==0)
+    lambda = 2.157;
+  return 1E6*2*PI/lambda;
+}
+
+@
+\subsection{Wavefront manipulation}
+\label{sec:wavefr-manip}
+
+\subsubsection{Resetting the wavefront}
+\label{sec:resetting-wavefront}
+The following resets the wavefront amplitude to zero and phase to 1:
+<<resetting the wavefront>>=
+void complex_amplitude::reset(void)
+{
+  dim3 blockDim(16,1);
+  dim3 gridDim(N_PX/16+1,1);
+  squarePupil LLL gridDim,blockDim RRR (amplitude, phase, N_PX);
+  /* if (M!=NULL) */
+  /*   apply_mask LLL gridDim,blockDim RRR (amplitude, phase, M->m, N_PX);   */
+}
+@  masked following resets the wavefront phase to the phase of the new wavefront:
+<<resetting the wavefront to new wavefront>>=
+void complex_amplitude::reset(complex_amplitude wavefront_prime)
+{
+  reset();
+  add_phase(1, wavefront_prime.phase);
+}
+
+@ 
+\subsubsection{Adding wavefront phase}
+\label{sec:adding-wavefr-phase}
+The following adds a phase aberration to the wavefront phase $$\varphi = \varphi + \alpha \varphi^\prime$$:
+<<adding wavefront phase>>=
+void complex_amplitude::add_phase(float alpha, float *phase_prime)
+{
+  cublasHandle_t handle;
+  cublasCreate(&handle);
+  CUBLAS_ERROR( cublasSaxpy(handle, N_PX, &alpha, phase_prime, 1, phase, 1) );
+  cublasDestroy(handle);
+}
+
+@
+\subsubsection{Masking wavefront amplitude}
+\label{sec:mask-wavefr-ampl}
+The following applies the pupil mask to the wavefront:
+<<masking wavefront amplitude I>>=
+void complex_amplitude::masked(void)
+{
+<<masking wavefront common>>
+}
+@ 
+<<masking wavefront amplitude II>>=
+void complex_amplitude::masked(mask *M_in)
+{
+M = M_in;
+<<masking wavefront common>>
+}
+@ with
+<<masking wavefront common>>=
+dim3 blockDim(16,1);
+dim3 gridDim(N_PX/16+1,N);
+apply_mask LLL gridDim,blockDim RRR (amplitude, phase, M->m, N_PX/N);  
+@ and with the kernel:
+<<apply mask>>=
+__global__ void apply_mask(float* amplitude, float* phase, const char *pupil_mask, const int N) {
+  int id;
+  id = blockIdx.x * blockDim.x + threadIdx.x;
+  if ( (id<N) && (pupil_mask[id]==0) ) {
+    amplitude[id + blockIdx.y*N] = 0.0;
+    phase[id + blockIdx.y*N]     = 0.0;
+  }
+}
+@
+\subsubsection{Wavefront rms}
+\label{sec:wavefront-rms}
+
+<<wavefront stats>>=
+void complex_amplitude::rms(float *rms)
+{
+  float mean_data, nnz;
+  int n_data = N_PX/N, idx, k;
+  cublasHandle_t handle;
+  cublasCreate(&handle);
+   for (k=0;k<N;k++) {
+    idx = k*n_data;
+    CUBLAS_ERROR( cublasSdot(handle, n_data, phase + idx, 1, M->f + idx, 1, &mean_data) );
+    CUBLAS_ERROR( cublasSasum(handle, n_data, M->f + idx, 1, &nnz) );
+    mean_data /= nnz;
+    CUBLAS_ERROR( cublasSdot(handle, n_data, phase + idx, 1, phase + idx, 1, rms+k) );
+    rms[k] /= nnz;
+    rms[k] -= (mean_data*mean_data);
+    rms[k] = sqrt(rms[k]);
+  }
+  cublasDestroy(handle);
+}
+@ 
+\subsection{Ray tracing}
+\label{sec:ray-tracing}
+
+
+\subsubsection{Coordinates transformation}
+\label{sec:coord-transf}
+
+The coordinates and cosine directions of the rays need to be transformed into the surface coordinates system first.
+The matrix [[R]] in the conic structure transforms the coordinates in the LCS $(x,y,z)$ into the GCS $(\bar x,\bar y,\bar z)$ i.e.
+\begin{equation}
+  \left[
+  \begin{array}{c}
+    \bar x - \bar x_o \\
+    \bar y - \bar y_o \\
+    \bar z - \bar z_o
+  \end{array}
+  \right] = R \left[
+    \begin{array}{c}
+      x \\
+      y \\
+      z
+    \end{array}
+\right]
+\end{equation}
+The reverse transform is simply
+\begin{equation}
+  \left[
+    \begin{array}{c}
+      x \\
+      y \\
+      z
+    \end{array}
+\right] = R^T \left[
+  \begin{array}{c}
+    \bar x - \bar x_o \\
+    \bar y - \bar y_o \\
+    \bar z - \bar z_o
+  \end{array}
+  \right] = \left( \left[
+  \begin{array}{c}
+    \bar x - \bar x_o \\
+    \bar y - \bar y_o \\
+    \bar z - \bar z_o
+  \end{array}
+  \right]^T R \right)^T 
+\end{equation}
+<<transformation to surface system>>=
+void transform_to_S(source *src, conic *F)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1);
+  transform_to_S_kernel LLL gridDim , blockDim RRR (src->rays.d__chief_ray, 1,
+                                                    F->ref_frame.d__R, 
+                                                    F->ref_frame.d__origin);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(src->rays.N_RAY/256+1,1);
+  transform_to_S_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY,
+                                                    F->ref_frame.d__R, 
+                                                    F->ref_frame.d__origin);
+}
+void transform_to_S(source *src, aperture *A)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1);
+  transform_to_S_kernel LLL gridDim , blockDim RRR (src->rays.d__chief_ray, 1,
+                                                    A->ref_frame.d__R, 
+                                                    A->ref_frame.d__origin);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(src->rays.N_RAY/256+1,1);
+  transform_to_S_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY,
+                                                    A->ref_frame.d__R, 
+                                                    A->ref_frame.d__origin);
+}
+@ 
+<<transformation to surface system kernel>>=
+__global__ void transform_to_S_kernel(ray *d__ray, int N_RAY, 
+				      rtd *d__R, vector *d__origin)
+{
+  int i, j, ij;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    forward_transform(&(d__ray[ij].coordinates), &(d__ray[ij].coordinates),
+		      d__R, d__origin);
+    forward_transform_centered(&(d__ray[ij].directions), &(d__ray[ij].directions),
+			       d__R);
+  }
+}
+@ with the projection of the ray coordinates in the surface reference frame LCS:
+<<coordinates forward transform>>=
+__host__ __device__  void forward_transform(vector *v_out, vector *v_in,
+					 rtd *d__R, vector *d__origin)
+{
+  rtd u, v, w;
+  u = v_in->x - d__origin->x;
+  v = v_in->y - d__origin->y;
+  w = v_in->z - d__origin->z;
+
+  v_out->x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
+  v_out->y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
+  v_out->z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
+}  
+__host__ __device__  void forward_transform_centered(vector *v_out, vector *v_in,
+						  rtd *d__R)
+{
+  rtd u, v, w;
+  u = v_in->x;
+  v = v_in->y;
+  w = v_in->z;
+
+  v_out->x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
+  v_out->y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
+  v_out->z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
+}  
+@ 
+<<transformation to rays system>>=
+void transform_to_R(source *src, conic *F)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1);
+  transform_to_R_kernel LLL gridDim , blockDim RRR (src->rays.d__chief_ray, 1,
+        	 				     F->ref_frame.d__R, F->ref_frame.d__origin);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(src->rays.N_RAY/256+1,1);
+  transform_to_R_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY,
+        	 				     F->ref_frame.d__R, F->ref_frame.d__origin);
+}
+void transform_to_R(source *src, aperture *A)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1);
+  transform_to_R_kernel LLL gridDim , blockDim RRR (src->rays.d__chief_ray, 1,
+        	 				     A->ref_frame.d__R, A->ref_frame.d__origin);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(src->rays.N_RAY/256+1,1);
+  transform_to_R_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY,
+        	 				     A->ref_frame.d__R, A->ref_frame.d__origin);
+}
+@ 
+<<transformation to rays system kernel>>=
+__global__ void transform_to_R_kernel(ray *d__ray, int N_RAY,
+                                      rtd *d__R, vector *d__origin)
+{
+  int i, j, ij;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    backward_transform(&(d__ray[ij].coordinates), &(d__ray[ij].coordinates),
+		       d__R, d__origin);
+    backward_transform_centered(&(d__ray[ij].directions), &(d__ray[ij].directions),
+				d__R);
+  }
+}
+@ with the projection of the ray coordinates in the rays reference frame LCS:
+@ 
+<<coordinates backward transform>>=
+__host__ __device__  void backward_transform(vector *v_out, vector *v_in,
+                                    rtd *d__R, vector *d__origin)
+{
+  rtd u, v, w;
+
+  u = v_in->x;
+  v = v_in->y;
+  w = v_in->z;
+
+  v_out->x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
+  v_out->y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
+  v_out->z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
+
+  v_out->x += d__origin->x;
+  v_out->y += d__origin->y;
+  v_out->z += d__origin->z;    
+}  
+__host__ __device__  void backward_transform_centered(vector *v_out, vector *v_in,
+						  rtd *d__R)
+{
+  rtd u, v, w;
+
+  u = v_in->x;
+  v = v_in->y;
+  w = v_in->z;
+
+  v_out->x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
+  v_out->y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
+  v_out->z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
+}  
+@ 
+
+\subsubsection{Surface intersection}
+\label{sec:surface-intersection}
+
+<<intersection with surface>>=
+void intersect(source *src, conic *F)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1);
+  intersect_chief_kernel LLL gridDim , blockDim RRR (src->rays.d__chief_ray, 1,
+						     F->k, F->c, F->d__origin);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(src->rays.N_RAY/256+1,1);
+  intersect_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY, 
+					       F->k, F->c, F->d__origin,
+					       src->rays.d__chief_ray);
+}
+
+<<intersection with surface kernel>>=
+__global__ void intersect_chief_kernel(ray *d__ray, int N_RAY, 
+				 const rtd Fk, const rtd Fc,
+				 vector *d__origin)
+{
+  int j, ij;
+  rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
+  vector vv;
+  ij = 0;
+
+  <<intersection with z=0 plane>>
+  d__ray[ij].optical_path_length = s0;
+  s0 = s1 = 0;
+  for (j=0; j<SNELL_N_ITERATION; j++)
+    {
+      <<Newton-Raphson>>
+      s0 = s1;
+    }
+}
+__global__ void intersect_kernel(ray *d__ray, int N_RAY, 
+				 const rtd Fk, const rtd Fc,
+				 vector *d__origin,
+                                 ray *d__chief_ray)
+{
+  int i, j, ij;
+  rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
+  vector vv;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    <<intersection with z=0 plane>>
+    d__ray[ij].optical_path_length = s0;
+    s0 = s1 = 0;
+    for (j=0; j<SNELL_N_ITERATION; j++)
+    {
+      <<Newton-Raphson>>
+	s0 = s1;
+    }
+  d__ray[ij].optical_path_difference += 
+    d__ray[ij].optical_path_length - d__chief_ray->optical_path_length;
+  }
+}
+@
+The intersection of a ray with the surface is derived using the parametric equations of the ray
+\begin{eqnarray}
+  \label{eq:3}
+  x &=& x_0 + ks \\
+  y &=& y_0 + ls \\
+  z &=& z_0 + ms   
+\end{eqnarray}
+where $s$ is the distance along the ray from the point $(x_0,y_0,z_0)$.
+Eq.~(\ref{eq:3}) are inserted into the surface definition Eq.~(\ref{eq:4}) that is solved for $s$.
+
+The intersection with the plane $z=0$ in the LCS is derived first leading to 
+\begin{eqnarray}
+  \label{eq:5}
+  s_0 &=& -z_0/m \\
+  x_1 &=& x_0 + ks_0 \\
+  y_1 &=& y_0 + ls_0 
+\end{eqnarray}
+<<intersection with z=0 plane>>=
+k  = d__ray[ij].directions.x;
+l  = d__ray[ij].directions.y;
+m  = d__ray[ij].directions.z;
+if (m==0) { return; }
+s0 = -d__ray[ij].coordinates.z/m;
+x1 = d__ray[ij].coordinates.x + k*s0;
+y1 = d__ray[ij].coordinates.y + l*s0;
+@
+and giving a new set of parametric equations
+\begin{eqnarray}
+  \label{eq:6}
+  x &=& x_1 + ks \\
+  y &=& y_1 + ls \\
+  z &=& ms     
+\end{eqnarray}
+ 
+The distance $s$ to the surface is obtained with the Newton--Raphson iterative method
+\begin{equation}
+  \label{eq:7}
+  s_{j+1} = s_j - { F(x_j,y_j,z_j) \over F^\prime(x_j,y_j,z_j) }
+\end{equation}
+where
+\begin{eqnarray}
+  \label{eq:8}
+  x_j &=& x_1 + ks_j \\
+  y_j &=& y_1 + ls_j \\
+  z_j &=& ms_j       
+\end{eqnarray}
+<<Newton-Raphson>>=
+vv.x = x1 + k*s0;
+vv.y = y1 + l*s0;
+vv.z = m*s0;
+@ and where
+\begin{eqnarray}
+  \label{eq:9}
+  F^\prime(x_j,y_j,z_j) &=& \left. { {\mathrm d} F \over {\mathrm d} s  } \right|_{s=s_j} \\
+                      &=& k\left.{ \partial F(x,y,z) \over \partial x } \right|_j + l\left. { \partial F(x,y,z) \over \partial y }\right|_j + m\left.{ \partial F(x,y,z) \over \partial z }\right|_j
+\end{eqnarray}
+<<Newton-Raphson>>=
+S = conic_surface(&vv, d__origin, Fk, Fc);
+K = partial_x_conic_surface(&vv, d__origin, Fk, Fc);
+L = partial_y_conic_surface(&vv, d__origin, Fk, Fc);
+M = partial_z_conic_surface();
+dSds = K*k + L*l + M*m;
+if (dSds==0) { return; }
+s1 = s0 - S/dSds;
+if (abs(s1-s0)<TOL)
+{
+  d__ray[ij].coordinates.x = x1 + k*s1;
+  d__ray[ij].coordinates.y = y1 + l*s1;
+  d__ray[ij].coordinates.z = m*s1;
+  d__ray[ij].surface_normal.x    = 
+    partial_x_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc);
+  d__ray[ij].surface_normal.y    =
+    partial_y_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc);
+  d__ray[ij].surface_normal.z    = partial_z_conic_surface();
+  d__ray[ij].optical_path_length += s1;
+  d__ray[ij].n_iteration = j;
+  break;
+}
+@
+The iterative process is started with
+\begin{equation}
+  \label{eq:11}
+  s_1 = 0,
+\end{equation}
+and is terminated when
+\begin{equation}
+  \label{eq:12}
+  \left|s_{j+1} - s_j \right| < \epsilon,
+\end{equation}
+where $\epsilon$ is a tolerance set by the required accuracy.
+
+The final distance along a ray from the point $(x_0,y_0,z_0)$ is
+\begin{equation}
+  \label{eq:13}
+  s = s_0 + s_{j+1}.
+\end{equation}
+
+The surface normal at the intersection point will be needed to compute the refracted ray:
+\begin{eqnarray}
+  \label{eq:1}
+  K &=& \left.{ \partial F(x,y,z) \over \partial x } \right|_{j+1} \\
+  L &=& \left.{ \partial F(x,y,z) \over \partial y } \right|_{j+1} \\
+  M &=& \left.{ \partial F(x,y,z) \over \partial z } \right|_{j+1}.
+\end{eqnarray}
+@
+
+\subsubsection{Snell's law}
+\label{sec:snells-law}
+
+\paragraph{Refraction}
+\label{sec:refraction}
+
+\def\np{n^\prime}
+\def\kp{k^\prime}
+\def\lp{l^\prime}
+\def\mp{m^\prime}
+\def\Sp{S^\prime}
+
+The Snell's law can be written as
+\begin{equation}
+  \label{eq:10}
+  \np \vec \Sp \times \vec r = n \vec S \times \vec r.
+\end{equation}
+$\vec S:(k,l,m)$ and $\vec \Sp:(\kp,\lp,\mp)$ are both unit vectors along the incident and refracted rays, respectively.
+$\vec r:(K,L,M)$ is a unit vector normal to the refraction surface at the ray intersection point.
+$n$ and $\np$ are the refractive indices for the incident and refracted rays, respectively.
+
+Eq.~(\ref{eq:10}) implies that the three vectors $\vec S$, $\vec \Sp$ and $\vec r$ are co--planar, from which it follows that
+\begin{equation}
+  \label{eq:14}
+  \vec \Sp = \mu \vec S + \Gamma \vec r,
+\end{equation}
+where $\mu=n/\np$ and $\Gamma$ has to be determined.
+$\Gamma$ is derived by solving
+\begin{equation}
+  \label{eq:15}
+  \left| \vec \Sp \right|^2 - \left| \mu \vec S + \Gamma \vec r \right|^2 = 0
+\end{equation}
+Developing Eq.~(\ref{eq:15}) leads to $\Gamma$ being the solution of a quadratic equation
+\begin{equation}
+  \label{eq:16}
+  \Gamma^2 + 2a\Gamma + b = 0
+\end{equation}
+where
+\begin{equation}
+  \label{eq:17}
+  a = \mu { kK +lL + mM \over K^2 + L^2 + M^2 },
+\end{equation}
+<<a equation>>=
+K = d__ray[ij].surface_normal.x;
+L = d__ray[ij].surface_normal.y;
+M = d__ray[ij].surface_normal.z;
+G2 = K*K + L*L + M*M;
+k = d__ray[ij].directions.x;
+l = d__ray[ij].directions.y;
+m = d__ray[ij].directions.z;
+a = mu*(k*K + l*L + m*M)/G2;
+@  and
+\begin{equation}
+  \label{eq:18}
+  b = { \mu^2 -1 \over K^2 + L^2 + M^2 }.
+\end{equation}
+<<b equation>>=
+b = (mu*mu-1)/G2;
+@ 
+Eq.~(\ref{eq:16}) is solved with the Newton--Raphson iterative method by introducing the new function
+\begin{equation}
+  \label{eq:19}
+  V(\Gamma) = \Gamma^2 + 2a\Gamma + b,
+\end{equation}
+and writing $\Gamma$ as
+\begin{equation}
+  \label{eq:20}
+  \Gamma_{j+1} = \Gamma_j - { V(\Gamma_j) \over V^\prime(\Gamma_j) }.
+\end{equation}
+Noting that
+\begin{equation}
+  \label{eq:21}
+  V^\prime(\Gamma_j) = \left. { \mathrm d V \over \mathrm d \Gamma } \right|_j = 2\left( \Gamma_j + a \right),
+\end{equation}
+Eq.~(\ref{eq:20}) becomes
+\begin{equation}
+  \label{eq:22}
+  \Gamma_{j+1} = { \Gamma_j^2 - b \over 2(\Gamma_j + a) }.
+\end{equation}
+with
+\begin{equation}
+  \label{eq:23}
+  \Gamma_1 = {-b \over 2a }.
+\end{equation}
+
+<<refraction>>=
+void refract(source *src, const rtd mu)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(src->rays.N_RAY/256+1,1);
+  refract_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY, mu);
+}
+@ 
+<<refraction kernel>>=
+__global__ void refract_kernel(ray *d__ray, int N_RAY, const rtd mu)
+{
+  int i, j, ij;
+  rtd k, l, m, K, L ,M, G2, a, b, gamma0, gamma1, gamma_relative_error;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    <<a equation>>
+    <<b equation>>
+    gamma0 = -0.5*b/a;
+    for (j=0; j<SNELL_N_ITERATION; j++)
+    {
+      gamma1 = 0.5*(gamma0*gamma0-b)/(gamma0+a);
+      gamma_relative_error = abs( gamma1/gamma0 - 1.0 );
+      if (gamma_relative_error<0.01)
+      {
+        d__ray[ij].directions.x = mu*k + gamma1*K;
+        d__ray[ij].directions.y = mu*l + gamma1*L;
+        d__ray[ij].directions.z = mu*m + gamma1*M;
+        return;
+      }
+      gamma0 = gamma1;
+    }
+  }
+}
+@
+\paragraph{Reflection}
+\label{sec:reflection}
+
+In the case of reflection, one have $\mu=1$, $b=0$ and
+\begin{equation}
+  \label{eq:24}
+  \Gamma = -2a.
+\end{equation}
+Eq.~(\ref{eq:14}) thus becomes
+\begin{equation}
+  \label{eq:25}
+    \vec \Sp = \vec S -2a \vec r.
+\end{equation}
+<<reflection>>=
+void reflect(source *src)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1);
+  reflect_kernel LLL gridDim , blockDim RRR (src->rays.d__chief_ray, 1, 1.0);
+  blockDim = dim3(16,16);
+  gridDim  = dim3(src->rays.N_RAY/256+1,1);
+  reflect_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY, 1.0);
+}
+@ 
+Setting $\mu=-1$ makes the mirror behaving like a thin lens:
+<<thin lens>>=
+void thin_lens(source *src)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(src->rays.N_RAY/256+1,1);
+  reflect_kernel LLL gridDim , blockDim RRR (src->rays.d__ray, src->rays.N_RAY, -1.0);
+}
+@ 
+<<reflection kernel>>=
+    __global__ void reflect_kernel(ray *d__ray, int N_RAY, float mu)
+{
+  int i, j, ij;
+  rtd k, l, m, K, L ,M, G2, a;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    <<a equation>>
+    a *= -2.0;
+    d__ray[ij].directions.x = mu*k + a*K;
+    d__ray[ij].directions.y = mu*l + a*L;
+    d__ray[ij].directions.z = mu*m + a*M;
+  }
+}
+@
+\subsubsection{Trace}
+\label{sec:trace}
+
+Ray tracing through the GMT M1 and M2 mirrors are achieved with:
+<<ray tracing>>=
+void source::trace(gmt_m1 *M1)
+{
+  M1->trace(&rays);
+}
+void source::trace(gmt_m2 *M2)
+{
+  M2->trace(&rays);
+}
+void source::stop(gmt_m2 *M2)
+{
+  M2->blocking(&rays);
+}
+@ 
+The ray tracing data are transferred to the wavefront structure with
+<<ray tracing>>=
+void source::opd2phase(void)
+{
+//  printf("Setting wavefront!\n");
+  dim3 blockDim(16,16);
+  dim3 gridDim(rays.N_L/16+1, rays.N_L/16+1, rays.N_BUNDLE);
+  opd2phase_kernel LLL gridDim , blockDim RRR (wavefront.amplitude, 
+                                                   wavefront.phase,
+						   rays.V.m,
+                                                   rays.d__ray, rays.N_RAY,
+                                                   rays.L, rays.N_L,
+                                                   dev_ptr);
+  rays.V.set_filter_quiet();
+  wavefront.M = &(rays.V);
+  //wavefront.masked(&(rays.V));
+}
+@ 
+<<gathering wavefront kernel>>=
+__global__ void opd2phase_kernel(float *amplitude, float *phase,
+				 char *m, ray *d__ray,  int N_RAY,
+				 rtd L,  int N_L,
+				 source *src)
+{
+  int i, j, k, iSource;
+  rtd x, y;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  if ( (i<N_L) && (j<N_L) ) {
+    <<rays box coordinates definition>>
+    k = i + j*N_L + iSource*N_RAY;
+    if (d__ray[k].v==1)
+      {
+    	m[k]         = 1;
+    	/* amplitude[k] = 1.0; */
+    	/* phase[k] = 0.0; */
+    	phase[k]     += d__ray[k].optical_path_difference +
+    	  x*src[iSource].theta_x +
+    	  y*src[iSource].theta_y;
+      } else {
+    	m[k]         = 0;
+    	amplitude[k] = 0.0;
+    	phase[k]     = 0.0;
+    }
+  }
+}
+
+@ 
+\subsection{Input/Output}
+\label{sec:inputoutput}
+
+The main parameters of the source are displayed with the [[info]] routine:
+<<info>>=
+void source::info(void)
+{
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
+	  zenith*RADIAN2ARCSEC,
+	  azimuth*180.0/PI,height,wavelength(),
+	  magnitude);
+  if (wavefront.N_PX>0)
+    fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+}
+
+@ The wavefront phase is save to a file with
+<<phase to file>>=
+void source::phase2file(const char *filename) {
+  dev2file(filename,wavefront.phase,wavefront.N_PX,wavefront.N_PX/N_SRC,N_SRC);
+}
+
+@ The wavefront phase is plotted with the plot.ly
+<<plot phase>>=
+void complex_amplitude::show_phase(char *filename)
+{
+  char title[1024];
+  float *data, *d__data, alpha, piston;
+  plotly_properties prop;
+  stats S;
+
+  HANDLE_ERROR( cudaMalloc((void**)&d__data, sizeof(float)*N_PX) );
+  HANDLE_ERROR( cudaMemcpy( d__data, phase,
+			    sizeof(float)*N_PX,
+			    cudaMemcpyDeviceToDevice ) );
+
+  S.setup();
+  alpha = 1E9;
+  CUBLAS_ERROR( cublasSscal(S.handle, N_PX, &alpha, d__data, 1) );
+  
+  
+  if (M!=NULL) {
+
+    int k, nel;
+    char rms[32];
+    nel = N_PX/N;
+    dim3 blockDim(256);
+    dim3 gridDim(N_PX/256+1);
+    sprintf(title,"RMS=");
+
+    for (k=0;k<N;k++) {
+      piston = S.mean(d__data + k*nel, M, nel);
+      
+      remove_piston LLL gridDim,blockDim RRR (d__data + k*nel,
+					      M->m, nel, piston);
+      
+      sprintf(rms,"%.2fnm ",S.std(d__data+ k*nel,M,nel));
+      strcat(title,rms);
+    }
+    prop.set("title",title);
+  }
+  
+
+  S.cleanup();
+ 
+  HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
+			       cudaHostAllocDefault) );
+  HANDLE_ERROR( cudaMemcpy( data, d__data, sizeof(float)*N_PX,
+			    cudaMemcpyDeviceToHost ) );
+
+  prop.set("xtitle","X");
+  prop.set("ytitle","Y");
+  prop.set("ztitle","[nm]");
+  prop.set("filename",filename);
+  int n = (int) sqrtf(N_PX/N);
+  prop.aspect_ratio = N;
+  prop.set("zdata",data,n,n*N);
+  prop.set("colorscale","Portland");
+  imagesc(&prop); 
+
+  HANDLE_ERROR( cudaFree( d__data ) );
+  HANDLE_ERROR( cudaFreeHost( data ) );
+}
+@  with the kernel
+<<piston removal>>=
+__global__ void remove_piston(float *data, const char* mask, int n_data, float p) 
+{
+int i;
+i = blockIdx.x * blockDim.x + threadIdx.x;
+ if ( (i<n_data) && (mask[i]>0) )
+       data[i] -= p;
+}
+
+@ The wavefront amplitude is plotted with the plot.ly
+<<plot amplitude I>>=
+void complex_amplitude::show_amplitude(char *filename)
+{
+  float *data;
+  plotly_properties prop;
+
+  HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
+			       cudaHostAllocDefault) );
+  HANDLE_ERROR( cudaMemcpy( data, amplitude, sizeof(float)*N_PX,
+			    cudaMemcpyDeviceToHost ) );
+
+  prop.set("xtitle","X");
+  prop.set("ytitle","Y");
+  prop.set("ztitle","[au]");
+  prop.set("filename",filename);
+  int n = (int) sqrtf(N_PX/N);
+  prop.aspect_ratio = N;
+  prop.set("zdata",data,n,n*N);
+  imagesc(&prop); 
+
+  HANDLE_ERROR( cudaFreeHost( data ) );
+}
+<<plot amplitude II>>=
+  void complex_amplitude::show_amplitude(char *filename, int N, int M)
+{
+  float *data;
+  plotly_properties prop;
+
+  HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
+			       cudaHostAllocDefault) );
+  HANDLE_ERROR( cudaMemcpy( data, amplitude, sizeof(float)*N_PX,
+			    cudaMemcpyDeviceToHost ) );
+
+  prop.set("xtitle","X");
+  prop.set("ytitle","Y");
+  prop.set("ztitle","[au]");
+  prop.set("filename",filename);
+  prop.aspect_ratio = M/N;
+  prop.set("zdata",data,N,M);
+  imagesc(&prop); 
+
+  HANDLE_ERROR( cudaFreeHost( data ) );
+}

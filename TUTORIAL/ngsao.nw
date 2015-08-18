@@ -1,0 +1,280 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+
+\section{Natural guide star adaptive optics}
+\label{sec:ngsao}
+
+In this section, the performance of NGS AO systems are computed.
+The on--axis wavefront is estimated with a NGS LMMSE.
+All the systems employ geometric Shack--Hartmann wavefront sensors (SH--WFS).
+For each system, the on--axis wavefront is estimated several times with a different random draw of the phase screens.
+
+The components common to all the systems are defined first:
+\begin{itemize}
+\item the science source,
+<<setup>>=
+source src;
+src.setup("J",ARCSEC(0) , 0, INFINITY,(N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1), "SRC");
+<<cleanup>>=
+src.cleanup();
+@ \item the atmosphere,
+<<setup>>=
+atmosphere atm;
+//atm.setup(20e-2,30,10e3,10,0);
+atm.gmt_setup(15e-2,60);
+/*
+float altitude[] = {0, 10e3},
+xi0[] = {0.5, 0.5},
+wind_speed[] = {10, 10},
+wind_direction[] = {0, 0};
+atm.setup(20e-2,30,altitude, xi0, wind_speed, wind_direction);
+*/
+<<cleanup>>=
+atm.cleanup();
+@ \item @ the diameter of the telescope,
+<<setup>>=
+float D = 10; // telescope diameter in meter
+@ leading to a lenslet size of:
+<<setup>>=
+float d = D/N_SIDE_LENSLET;
+@ \item the pupil mask.
+<<setup>>=
+mask pupil_mask;
+pupil_mask.setup( (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1) );
+<<cleanup>>=
+pupil_mask.cleanup();
+@ \item the wavefront sensor centroid container,
+<<setup>>=
+centroiding cog;
+cog.setup(N_SIDE_LENSLET,1);
+<<cleanup>>=
+cog.cleanup();
+@ \item the diffraction limited science imager,
+<<setup>>=
+imaging imager;
+imager.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup>>=
+imager.cleanup();
+@ \item the turbulence limited science imager,
+<<setup>>=
+imaging imager_turb;
+imager_turb.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup>>=
+imager_turb.cleanup();
+@ \item the science imager for NGSAO LMMSE,
+<<setup>>=
+imaging imager_ngsao_lmmse;
+imager_ngsao_lmmse.setup(N_SIDE_LENSLET+1,1,4,1,1);
+<<cleanup>>=
+imager_ngsao_lmmse.cleanup();
+@ \item the statistical tool.
+<<setup>>=
+stats S;
+S.setup();
+<<cleanup>>=
+S.cleanup();
+@  \end{itemize}
+
+A wide field imager with a set of NGS in a large FOV are also defined:
+\begin{description}
+\item[FOV sources] 
+<<setup>>=
+source *fov_src;
+float z, a;
+int k_FOV_SRC, N_FOV_SRC = 25;
+fov_src = (source *)malloc(sizeof(source)*N_FOV_SRC);
+fov_src[0].setup("J",ARCSEC(0) , 0, INFINITY,(N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1));
+k_FOV_SRC = 0;
+for (int k_radius=1;k_radius<4;k_radius++) {
+  z = k_radius*10.0;
+  for (int k_angle=0;k_angle<8;k_angle++) {
+    a = 2.0*PI*k_angle/8.0;
+    fov_src[++k_FOV_SRC].setup("J",ARCSEC(z) , a, INFINITY,(N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1));
+  }
+ }
+<<cleanup>>=
+for (k_FOV_SRC=0;k_FOV_SRC<N_FOV_SRC;k_FOV_SRC++) {
+  fov_src[k_FOV_SRC].cleanup();
+}
+@ \item[wide field imager] 
+<<setup>>=
+imaging fov_imager;
+fov_imager.setup(N_SIDE_LENSLET+1,1,2,251,1,1);
+fov_imager.pixel_scale =
+  1e-6*fov_src[0].wavelength()*N_SIDE_LENSLET/D/2;
+fov_imager.set_pointing_direction(0.0,0.0);
+printf("FOV IMAGER PIXEL SCALE %6.2farcsec\n",
+       fov_imager.pixel_scale*RADIAN2ARCSEC);
+<<cleanup>>=
+fov_imager.cleanup();
+@ \end{description}
+
+@ 
+The Fried geometry for a circular pupil with the intensity [[threshold]] is enforced::
+<<setup>>=
+float threshold = 0.5;
+cog.MASK_SET = fried_geometry_setup(cog.lenslet_mask, pupil_mask.m, 
+				    N_SIDE_LENSLET, 16, threshold);
+@ 
+The filtering properties associated with the pupil are set with:
+<<setup>>=
+pupil_mask.set_filter();
+@ 
+The science is propagated through the [[pupil_mask]] to the focal plane of the [[imager]]:
+<<setup>>=
+src.wavefront.masked(&pupil_mask);
+imager.propagate(&src);
+//imager.frame2file("refFrame.bin");
+char plotly_name[64], plotly_dir[64];
+sprintf(plotly_dir,"NGSAO/D=%.1fm, N=%d (%d samples)/",D,N_SIDE_LENSLET,N_SAMPLE);
+SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/diffraction limited");
+imager.show_frame(plotly_name);
+
+@ A few useful variables are defined here:
+<<setup>>=
+int NP, NP2, k_SAMPLE;
+float tau=0.;
+NP = N_SIDE_LENSLET+1;
+NP2 = NP*NP;
+k_SAMPLE = 0;
+@
+The science wavefront is propagated through the atmosphere from [[src]] to [[pupil_mask]].
+<<science wavefront>>=
+atm.get_phase_screen(&src,d,NP,d,NP,tau);
+src.wavefront.masked();
+if (k_SAMPLE==(N_SAMPLE-1)) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/science phase screen");
+  src.wavefront.show_phase(plotly_name);
+ }
+<<setup>>=
+float science_wf_rms=0.;
+<<science wavefront>>=
+science_wf_rms += S.var(src.wavefront.phase, &pupil_mask, NP2);
+
+@  and then propagated to the focal plane of the imager:
+<<science wavefront>>=
+imager_turb.propagate(&src);
+if (k_SAMPLE==(N_SAMPLE-1)) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/turbulence limited");
+  imager_turb.show_frame(plotly_name);
+ }
+@ The turbulence wavefront is saved apart for later use:
+<<science wavefront>>=
+complex_amplitude phase_screen;
+phase_screen.setup((N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1));
+phase_screen.add_phase(1,src.wavefront.phase);
+
+@ 
+All CEO programs must include the following headers which also contains the headers for all the CEO library modules.
+<<main header>>=
+#ifndef __CEO_H__
+#include "ceo.h"
+#endif
+@ The size of the lenslet array is defined in the header:
+<<main header>>=
+#define N_SIDE_LENSLET 20
+#define _N_LENSLET_ (N_SIDE_LENSLET*N_SIDE_LENSLET)
+@ The number of atmosphere sample
+<<main header>>=
+#define N_SAMPLE 100
+#define PLOTLY_LIM (N_SAMPLE-1) // (N_SAMPLE-1) for plotting, higher for disabling plotting
+@
+The main function is:
+<<ngsao.bin>>=
+<<main header>>
+void SET_PLOTLY_NAME(char *name,char *dir,char *path)
+{
+strcpy(name, dir);
+strcat(name,path);
+}
+int main(int argc,char *argv[]) {
+cudaSetDevice(0);
+<<setup>>
+fprintf(stderr," Samples: %d:\n",N_SAMPLE);
+for (k_SAMPLE=0;k_SAMPLE<N_SAMPLE;k_SAMPLE++) {
+  fprintf(stderr,"\r%4d",k_SAMPLE);
+  atm.reset();
+<<science wavefront>>
+<<ngsao>>
+    }
+ fprintf(stderr,"\n");
+<<results>>
+<<cleanup>>
+}
+
+@ 
+The natural guide star (NGS) is given by:
+<<setup>>=
+source ngs;
+ngs.setup("R",ARCSEC(0) , 0, INFINITY, (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1), "NGS");
+<<cleanup>>=
+ngs.cleanup();
+
+@  The NGS wavefront gradients are computed with:
+<<ngsao>>=
+atm.get_phase_screen_gradient(&cog,N_SIDE_LENSLET,d,&ngs,tau);
+
+@ 
+The wavefront is reconstructed from the NGS centroids:
+<<setup>>=
+LMMSE ngs_lmmse;
+ngs_lmmse.setup(&atm,&ngs,&src,d,N_SIDE_LENSLET,&pupil_mask,"MINRES");
+int cvgce_iteration=0;
+float elapsed_time=0.;
+<<ngsao>>=
+ngs_lmmse.estimation(&cog);
+elapsed_time += ngs_lmmse.elapsed_time;
+cvgce_iteration += ngs_lmmse.iSolve.cvgce_iteration;
+@ The LMMMSE NGS wavefront estimate is subtracted from the science wavefront:
+<<ngsao>>=
+src.wavefront.reset(phase_screen);
+src.wavefront.add_phase(-1,ngs_lmmse.d__phase_est);
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"phases/LMMSE NGS AO");
+  src.wavefront.show_phase(plotly_name);
+ }
+<<setup>>=
+float ngs_wfe_rms_lmmse=0.;
+<<ngsao>>=
+ngs_wfe_rms_lmmse += S.var(src.wavefront.phase, 
+		   &pupil_mask, NP2);
+//ngs_lmmse.toFile("phaseEstNgsItp.bin");
+<<cleanup>>=
+ngs_lmmse.cleanup();
+@ and the residual wavefront corresponding image is computed.
+<<ngsao>>=
+imager_ngsao_lmmse.propagate(&src);
+//imager.frame2file("ngsLmmseFrame.bin");
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/LMMSE NGS AO");
+  imager_ngsao_lmmse.show_frame(plotly_name,&imager);
+ }
+@ wide field imaging:
+<<ngsao>>=
+for (k_FOV_SRC=0;k_FOV_SRC<N_FOV_SRC;k_FOV_SRC++) {
+  atm.get_phase_screen(fov_src + k_FOV_SRC,d,NP,d,NP,tau);
+  fov_src[k_FOV_SRC].wavefront.masked(&pupil_mask);
+  fov_src[k_FOV_SRC].wavefront.add_phase(-1,ngs_lmmse.d__phase_est);
+  fov_imager.propagate(fov_src + k_FOV_SRC);  
+}
+if (k_SAMPLE==PLOTLY_LIM) {
+  SET_PLOTLY_NAME(plotly_name,plotly_dir,"frames/LMMSE NGS AO WIDE FIELD");
+  fov_imager.show_frame(plotly_name);
+}
+
+@ 
+\subsection{Results}
+\label{sec:results}
+
+<<results>>=
+science_wf_rms    = 1E9*sqrtf(science_wf_rms/N_SAMPLE);
+ngs_wfe_rms_lmmse = 1E9*sqrtf(ngs_wfe_rms_lmmse/N_SAMPLE);
+elapsed_time /= N_SAMPLE;
+cvgce_iteration /= N_SAMPLE;
+printf("------------------------------\n");
+printf("___  TURBULENCE WAVEFRONT ___\n");
+printf("\n NGS WF RMS: %7.2fnm\n", science_wf_rms);
+printf("\n___ ON-AXIS WAVEFRONT ESTIMATE FROM NGS ___\n");
+printf("\n NGS MMSE WFE RMS: %8.3fnm in %.2fms with %d iterations\n",
+       ngs_wfe_rms_lmmse,elapsed_time,cvgce_iteration);
+printf("------------------------------\n");
+
