@@ -47,7 +47,7 @@ GMT_MX
     :members:
 
 SegmentPistonSensor
-~~~~~~
+~~~~~~~~~~~~~~~~~~~
 .. autoclass:: SegmentPistonSensor
     :members:
 
@@ -68,18 +68,22 @@ ShackHartmann
 
 rayTracing
 ----------
+
 Bundle
 ~~~~~~
 .. autoclass:: Bundle
     :members:
+
 ZernikeS
-~~~~~~
+~~~~~~~~
 .. autoclass:: ZernikeS
     :members:
+
 GMT M1
 ~~~~~~
 .. autoclass:: GMT_M1
     :members:
+
 GMT M2
 ~~~~~~
 .. autoclass:: GMT_M1

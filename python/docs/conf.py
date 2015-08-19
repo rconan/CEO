@@ -32,9 +32,11 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.doctest',
     'sphinx.ext.mathjax',
+    'sphinx.ext.viewcode',
     'sphinx.ext.autosummary',
-    'numpydoc'
+    'numpydoc',
 ]
+numpydoc_show_class_members = False
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -182,7 +184,7 @@ html_static_path = ['_static']
 #html_file_suffix = None
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = 'CEOdoc'
+htmlhelp_basename = 'Qdoc'
 
 
 # -- Options for LaTeX output ---------------------------------------------
