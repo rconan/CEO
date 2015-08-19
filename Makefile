@@ -41,6 +41,9 @@ test:
 ripython:
 	env PYTHONPATH="$(CEOPATH)/python" ipython notebook --no-browser
 
+ipythonserver:
+	env PYTHONPATH="$(CEOPATH)/python" ipython notebook --profile=nbserver
+
 ipython:
 	env PYTHONPATH="$(CEOPATH)/python" ipython notebook
 
