@@ -24,6 +24,8 @@ The ray tracing method involves 4 steps \cite{}:
 
 #define SNELL_N_ITERATION 100
 #define TOL 1E-9
+#define N_THREAD 16
+#define N_THREAD2 256
 
 <<ray tracing data type>>
 
@@ -976,8 +978,8 @@ and
 \end{equation}
 <<bundle coordinates>>=
 <<chief ray init>>
-blockDim = dim3(16,16);
-gridDim  = dim3(N_RADIUS/16+1,N_THETA/16+1, N_BUNDLE);
+blockDim = dim3(N_THREAD,N_THREAD);
+gridDim  = dim3(N_RADIUS/N_THREAD+1,N_THETA/N_THREAD+1, N_BUNDLE);
 ray_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
                                             L, N_RADIUS, N_THETA, d__origin);
 @ 
@@ -1066,8 +1068,8 @@ The cartesian coordinates $x$ and $y$ of the rays are given by
 \end{eqnarray}
 <<bundle coordinates (box)>>=
 <<chief ray init>>
-blockDim = dim3(16,16);
-gridDim  = dim3(N_L/16+1,N_L/16+1, N_BUNDLE);
+blockDim = dim3(N_THREAD,N_THREAD);
+gridDim  = dim3(N_L/N_THREAD+1,N_L/N_THREAD+1, N_BUNDLE);
 ray_coordinates_box LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
                                                             L, N_L, d__origin);
 @ 
@@ -1129,8 +1131,8 @@ The rays are propagated to the plane $z=[[z__plane]]$ with
 void bundle::to_z_plane(rtd z_plane)
 {
   to_z_plane_chief_kernel LLL 1, 1, N_BUNDLE RRR (d__chief_ray, 1, z_plane);
-  dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1,N_BUNDLE);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
   to_z_plane_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, z_plane, d__chief_ray);
 }
 @ where
@@ -1389,8 +1391,8 @@ to_sphere_chief_kernel LLL gridDim , blockDim RRR (d__chief_ray, 1,
 @
 The optical path difference of the source rays is computed last
 <<rays optical path difference>>= 
-blockDim = dim3(16,16);
-gridDim  = dim3(N_RAY/256+1,1, N_BUNDLE);
+blockDim = dim3(N_THREAD,N_THREAD);
+gridDim  = dim3(N_RAY/N_THREAD2+1,1, N_BUNDLE);
 to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
                                              d__sphere_origin, d__sphere_radius, 
                                              d__chief_ray);
@@ -1441,8 +1443,8 @@ The coordinates, directions, optical path length and vignetting map are copied i
 <<gathering ray coordinates>>=
 void bundle::get_coordinates(double *d__coord)
 {
-  dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1, N_BUNDLE);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1, N_BUNDLE);
   get_coordinates_kernel LLL gridDim , blockDim RRR (d__coord, d__ray, N_RAY);
 }
 @ 
@@ -1475,8 +1477,8 @@ __global__ void get_coordinates_kernel(double *d__coord, ray *d__ray, int N_RAY)
 <<gathering ray directions>>=
 void bundle::get_directions(double *d__dir)
 {
-  dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1,N_BUNDLE);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
   get_directions_kernel LLL gridDim , blockDim RRR (d__dir, d__ray, N_RAY);
 }
 @ 
@@ -1509,8 +1511,8 @@ __global__ void get_directions_kernel(double *d__dir, ray *d__ray, int N_RAY)
 <<gathering ray optical path length>>=
 void bundle::get_optical_path_length(double *d__opl)
 {
-  dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1,N_BUNDLE);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
   get_optical_path_length_kernel LLL gridDim , blockDim RRR (d__opl, d__ray, N_RAY);
 }
 @ 
@@ -1541,8 +1543,8 @@ __global__ void get_optical_path_length_kernel(double *d__opl, ray *d__ray, int 
 void bundle::get_optical_path_difference(double *d__opd)
 {
   HANDLE_ERROR( cudaMemset(d__opd, 0, sizeof(double)*N_RAY*N_BUNDLE ) );
-  dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1,N_BUNDLE);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
   get_optical_path_difference_kernel LLL gridDim , blockDim RRR (d__opd, d__ray, N_RAY);
 }
 @ 
@@ -1607,8 +1609,8 @@ void bundle::get_optical_path_difference(double *d__opd,
   /* printf("y max idx = %d\n",idx); */
 
   HANDLE_ERROR( cudaMemset(d__opd, 0, sizeof(double)*N_x*N_y ) );
-  dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1);
   get_optical_path_difference_interp_kernel LLL gridDim , blockDim RRR (d__opd, d__ray, N_RAY,
   									delta_x, N_x,
   									delta_y, N_y,
@@ -1678,8 +1680,8 @@ __global__ void get_optical_path_difference_interp_kernel(double *d__opd,
 <<gathering ray vignetting map>>=
 void bundle::get_vignetting(double *d__v)
 {
-  dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1,N_BUNDLE);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
   get_vignetting_kernel LLL gridDim , blockDim RRR (d__v, d__ray, N_RAY);
 }
 @ 
@@ -1700,8 +1702,8 @@ void bundle::get_vignetting(double *d__v)
 void bundle::get_wavefront(source *src)
 {
 //  printf("Setting wavefront!\n");
-  dim3 blockDim(16,16);
-  dim3 gridDim(N_RAY/256+1,1, N_BUNDLE);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1, N_BUNDLE);
   get_wavefront_kernel LLL gridDim , blockDim RRR (src->wavefront.amplitude, 
                                                    src->wavefront.phase,
 						   V.m,
@@ -2562,8 +2564,8 @@ void zernikeS::cleanup(void)
 <<zernikeS functions>>=
 void zernikeS::surface(rtd *d__S, rtd *d__r, rtd *d__o, const int N)
 {
-    dim3 blockDim(16,16);
-    dim3 gridDim(N/256+1,1);
+    dim3 blockDim(N_THREAD,N_THREAD);
+    dim3 gridDim(N/N_THREAD2+1,1);
     surface_kern LLL gridDim, blockDim RRR (d__S, d__r, d__o, N, max_n, d__a);
 }
 @ 
@@ -2571,8 +2573,8 @@ void zernikeS::surface(rtd *d__S, rtd *d__r, rtd *d__o, const int N)
 void zernikeS::surface(rtd *d__S, rtd *d__r, rtd *d__o, const int N, int surf_id)
 {
   fprintf(stdout,"a offset = %d\n",surf_id*n_mode);
-    dim3 blockDim(16,16);
-    dim3 gridDim(N/256+1,1);
+    dim3 blockDim(N_THREAD,N_THREAD);
+    dim3 gridDim(N/N_THREAD2+1,1);
     surface_kern LLL gridDim, blockDim RRR (d__S, d__r, d__o, N, max_n, d__a + surf_id*n_mode);
 
 }
@@ -2756,8 +2758,8 @@ The x and y derivatives of the Zernike surface are computed with
 void zernikeS::surface_derivatives(rtd *d__dSdx, rtd *d__dSdy, 
 				   rtd *d__r, rtd *d__o, const int N)
 {
-  dim3 blockDim(16,16);
-  dim3 gridDim(N/256+1,1);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N/N_THREAD2+1,1);
   surface_kern LLL gridDim, blockDim RRR (d__dSdx, d__r, d__o, N, max_n-1, d__cx);
   surface_kern LLL gridDim, blockDim RRR (d__dSdy, d__r, d__o, N, max_n-1, d__cy);
 }
@@ -2982,8 +2984,8 @@ void aperture::vignetting(bundle *rays)
   R2 = D_seg*D_seg*0.25;
   Rri2 = R2*ri*ri;
   fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
-  dim3 blockDim(16,16);
-  dim3 gridDim(rays->N_RAY/256+1,1);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   HANDLE_ERROR( cudaMemset(V.m, 0, sizeof(char)*rays->N_RAY ) );
   vignetting_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
 						Rri2, R2,
@@ -3092,15 +3094,15 @@ The reverse transform is simply
 <<transformation to surface system>>=
 void transform_to_S(bundle *rays, conic *F)
 {
-  dim3 blockDim(16,16);
-  dim3 gridDim(rays->N_RAY/256+1,1);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   transform_to_S_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
 					     F->ref_frame.d__R, F->ref_frame.d__origin);
 }
 void transform_to_S(bundle *rays, aperture *A)
 {
-  dim3 blockDim(16,16);
-  dim3 gridDim(rays->N_RAY/256+1,1);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   transform_to_S_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
 					     A->ref_frame.d__R, A->ref_frame.d__origin);
 }
@@ -3151,15 +3153,15 @@ __host__ __device__  void forward_transform_centered(vector *v_out, vector *v_in
 <<transformation to rays system>>=
 void transform_to_R(bundle *rays, conic *F)
 {
-  dim3 blockDim(16,16);
-  dim3 gridDim(rays->N_RAY/256+1,1);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   transform_to_R_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
         	 				     F->ref_frame.d__R, F->ref_frame.d__origin);
 }
 void transform_to_R(bundle *rays, aperture *A)
 {
-  dim3 blockDim(16,16);
-  dim3 gridDim(rays->N_RAY/256+1,1);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   transform_to_R_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
         	 				     A->ref_frame.d__R, A->ref_frame.d__origin);
 }
@@ -3223,8 +3225,8 @@ void intersect(bundle *rays, conic *F)
 {
   intersect_chief_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
 						     F->k, F->c, F->d__origin);
-  dim3 blockDim(16,16);
-  dim3 gridDim(rays->N_RAY/256+1,1);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   intersect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, 
 					       F->k, F->c, F->d__origin,
 					       rays->d__chief_ray);
@@ -3469,8 +3471,8 @@ with
 <<refraction>>=
 void refract(bundle *rays, const rtd mu)
 {
-  dim3 blockDim(16,16);
-  dim3 gridDim(rays->N_RAY/256+1,1);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   refract_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, mu);
 }
 @ 
@@ -3519,8 +3521,8 @@ Eq.~(\ref{eq:14}) thus becomes
 <<reflection>>=
 void reflect(bundle *rays)
 {
-  dim3 blockDim(16,16);
-  dim3 gridDim(rays->N_RAY/256+1,1);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   reflect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, 1.0);
 }
 @ 
@@ -3528,8 +3530,8 @@ Setting $\mu=-1$ makes the mirror behaving like a thin lens:
 <<thin lens>>=
 void thin_lens(bundle *rays)
 {
-  dim3 blockDim(16,16);
-  dim3 gridDim(rays->N_RAY/256+1,1);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   reflect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, -1.0);
 }
 @ 
@@ -3946,11 +3948,11 @@ void gmt_m1::blocking(bundle *rays)
  // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
  // printf("N_BUNDLE=%d\n",rays->N_BUNDLE);
  int nel = rays->N_RAY*rays->N_BUNDLE;
- dim3 blockDim(256);
- dim3 gridDim(nel/256+1);
+ dim3 blockDim(N_THREAD2);
+ dim3 gridDim(nel/N_THREAD2+1);
  fill_ones_char LLL gridDim,blockDim RRR (V.m,nel);
- blockDim = dim3(16,16);
- gridDim  = dim3(rays->N_RAY/256+1,1,rays->N_BUNDLE);
+ blockDim = dim3(N_THREAD,N_THREAD);
+ gridDim  = dim3(rays->N_RAY/N_THREAD2+1,1,rays->N_BUNDLE);
  m1_blocking_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
 					     Rri2, R2,
 					     aperture_CS.d__R,
@@ -4027,8 +4029,8 @@ void gmt_m1::trace(bundle *rays)
 						   ZS->max_n, ZS->n_mode,
 						   ZS->d__a, ZS->d__cx, ZS->d__cy,
 						   0.5*D_full);
- blockDim = dim3(16,16);
- gridDim  = dim3(rays->N_RAY/256+1,1,rays->N_BUNDLE);
+ blockDim = dim3(N_THREAD,N_THREAD);
+ gridDim  = dim3(rays->N_RAY/N_THREAD2+1,1,rays->N_BUNDLE);
  HANDLE_ERROR( cudaMemset(V.m, 0, sizeof(char)*rays->N_RAY*rays->N_BUNDLE ) );
  HANDLE_ERROR( cudaMemset(d__piston_mask, 0, sizeof(int)*rays->N_RAY*rays->N_BUNDLE ) );
  m1_trace_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
@@ -4648,7 +4650,7 @@ void gmt_m2::coma_neutral(float tip, float tilt)
 \label{sec:tests}
 
 <<rayTracing.bin>>=
-<<benchmark>>
+<<profile>>
 @ 
 \subsection{Benchmark}
 \label{sec:benchmark}
@@ -4660,7 +4662,7 @@ void gmt_m2::coma_neutral(float tip, float tilt)
 using namespace std;
 
 int main(int argc,char *argv[]) {
-  int N_GS, N_GS_max, nPx, k_nPx, k_GS;
+  int N_GS, N_GS_max, nPx, k_nPx, k_GS, zern_j, zern_n, k;
   float elaspedTime;
   rtd D;
   vector src_origin, zern_origin, zern_euler_angles;
@@ -4680,10 +4682,15 @@ int main(int argc,char *argv[]) {
   gmt_m1 M1;
   gmt_m2 M2;
 
-  rtd a[] = {0.0};
+  zern_n = 0;
+  zern_j = (zern_n+1)*(zern_n+2)/2;
+  rtd *a;
+  a = (rtd *)malloc( sizeof(rtd)*zern_j );
+  for (k=0;k<zern_j;k++)
+    a[k] = 1e-6;
   zern_origin.x = zern_origin.y = zern_origin.z = 0.0;
   zern_euler_angles.x = zern_euler_angles.y = zern_euler_angles.z = 0.0;
-  zern.setup(0,a,zern_origin,zern_euler_angles,7);
+  zern.setup(zern_n,a,zern_origin,zern_euler_angles,7);
 
   N_GS_max = 3;
 
@@ -4716,7 +4723,7 @@ int main(int argc,char *argv[]) {
       tid.tic();
 
       M2.blocking( &(src.rays) );
-      M2.trace( &(src.rays) );
+      M1.trace( &(src.rays) );
       M2.trace( &(src.rays) );
       src.rays.to_sphere(-5.830,2.197173);
       src.opd2phase();
@@ -4735,6 +4742,7 @@ int main(int argc,char *argv[]) {
   } // nPx
   f.close();
   zern.cleanup();
+  free(a);
  }
 @ 
 \subsection{Profile}
@@ -4776,13 +4784,23 @@ int main(int argc,char *argv[]) {
   M2.setup(D,nPx,&zern,N_GS);
 
   tid.tic();
-
   M2.blocking( &(src.rays) );
-  M2.trace( &(src.rays) );
-  M2.trace( &(src.rays) );
-  src.rays.to_sphere(-5.830,2.197173);
-  src.opd2phase();
+  tid.toc();
 
+  tid.tic();
+  M1.trace( &(src.rays) );
+  tid.toc();
+
+  tid.tic();
+  M2.trace( &(src.rays) );
+  tid.toc();
+
+  tid.tic();
+  src.rays.to_sphere(-5.830,2.197173);
+  tid.toc();
+
+  tid.tic();
+  src.opd2phase();
   tid.toc();
 
   src.cleanup();
