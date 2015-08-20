@@ -2372,7 +2372,8 @@ void zernikeS::setup(int _max_n_, rtd *_a_, int _N_)
 }
 @ or with
 <<zernikeS functions>>=
-void zernikeS::setup(int _max_n_, rtd *_a_, vector _origin_, vector _euler_angles_, int _N_)
+void zernikeS::setup(int _max_n_, rtd *_a_, 
+		     vector _origin_, vector _euler_angles_, int _N_)
 {
   N = _N_;
   max_n = _max_n_;
@@ -2538,18 +2539,21 @@ Memory is freed with:
 <<zernikeS functions>>=
 void zernikeS::cleanup(void)
 {
+  fprintf(stdout,"@(CEO)>zernikeS: freeing memory!\n");
   free( a );
-  free( bx );
-  free( bx_row_idx );
-  free( bx_col_ptr );
-  free( by );
-  free( by_row_idx );
-  free( by_col_ptr );
-  free( cx );
-  free( cy );
   HANDLE_ERROR( cudaFree( d__a) );
-  HANDLE_ERROR( cudaFree( d__cx) );
-  HANDLE_ERROR( cudaFree( d__cy) );
+  if (max_n>0) {
+    free( bx );
+    free( bx_row_idx );
+    free( bx_col_ptr );
+    free( by );
+    free( by_row_idx );
+    free( by_col_ptr );
+    free( cx );
+    free( cy );
+    HANDLE_ERROR( cudaFree( d__cx) );
+    HANDLE_ERROR( cudaFree( d__cy) );
+  }
 }
 @
 \subsection{Zernike surface equation}
@@ -3878,15 +3882,20 @@ Memory is freed with
 <<GMT M1 functions>>=
 void gmt_m1::cleanup(void)
 {
+  fprintf(stdout,"@(CEO)>gmt_m1: freeing memory!\n");
   <<GMT cleanup common>>
 }
 @ with
 <<GMT cleanup common>>=
-fprintf(stdout,"@(CEO)>gmt_m1: freeing memory!\n");
+fprintf(stdout," |-");
 V.cleanup();
+fprintf(stdout," |-");
 aperture_CS.cleanup();
+fprintf(stdout," |-");
 conic_CS.cleanup();
+fprintf(stdout," |-");
 rigid_body_CS.cleanup();
+fprintf(stdout," |-");
 motion_CS.cleanup();
 HANDLE_ERROR( cudaFree( d__conic_origin ) );
 HANDLE_ERROR( cudaFree( d__piston_mask ) );
@@ -4521,6 +4530,7 @@ Memory is freed with
 <<GMT M2 functions>>=
 void gmt_m2::cleanup(void)
 {
+  fprintf(stdout,"@(CEO)>gmt_m2: freeing memory!\n");
   <<GMT cleanup common>>
 }
 @
@@ -4637,3 +4647,122 @@ void gmt_m2::coma_neutral(float tip, float tilt)
 \section{Tests}
 \label{sec:tests}
 
+<<rayTracing.bin>>=
+<<benchmark>>
+@ 
+\subsection{Benchmark}
+\label{sec:benchmark}
+
+<<benchmark>>=
+#include "ceo.h"
+int main(int argc,char *argv[]) {
+  int N_GS, nPx;
+  rtd D;
+  vector src_origin, zern_origin, zern_euler_angles;
+
+  N_GS = 1;
+  float zen[] = {0.0};
+  float azi[] = {0.0};
+  
+  D = 25.5;
+  src_origin.x =  0.0;
+  src_origin.y =  0.0;
+  src_origin.z = 25.0;
+
+  nPx = 256;
+
+  stopwatch tid;
+  source src;
+  zernikeS zern;
+  gmt_m1 M1;
+  gmt_m2 M2;
+
+  rtd a[] = {0.0};
+  zern_origin.x = zern_origin.y = zern_origin.z = 0.0;
+  zern_euler_angles.x = zern_euler_angles.y = zern_euler_angles.z = 0.0;
+  zern.setup(0,a,zern_origin,zern_euler_angles,7);
+
+  int k;
+  nPx = 2;
+  for (k=2;k<11;k++) {
+
+    nPx*=2;
+    fprintf(stdout," . nPx=%3d\n",nPx);
+
+    src.setup("R",zen,azi,INFINITY,N_GS,D,nPx,src_origin);
+    M1.setup(D,nPx,&zern,N_GS);
+    M2.setup(D,nPx,&zern,N_GS);
+
+    tid.tic();
+
+    M2.blocking( &(src.rays) );
+    M2.trace( &(src.rays) );
+    M2.trace( &(src.rays) );
+    src.rays.to_sphere(-5.830,2.197173);
+    src.opd2phase();
+
+    tid.toc();
+
+    src.cleanup();
+    M1.cleanup();
+    M2.cleanup();
+
+  }
+  
+  zern.cleanup();
+    
+ }
+@ 
+\subsection{Profile}
+\label{sec:profile}
+
+<<profile>>=
+#include "ceo.h"
+int main(int argc,char *argv[]) {
+  int N_GS, nPx;
+  rtd D;
+  vector src_origin, zern_origin, zern_euler_angles;
+
+  N_GS = 1;
+  float zen[] = {0.0};
+  float azi[] = {0.0};
+  
+  D = 25.5;
+  src_origin.x =  0.0;
+  src_origin.y =  0.0;
+  src_origin.z = 25.0;
+
+  nPx = 256;
+
+  stopwatch tid;
+
+  source src;
+  src.setup("R",zen,azi,INFINITY,N_GS,D,nPx,src_origin);
+
+  zernikeS zern;
+  rtd a[] = {0.0};
+  zern_origin.x = zern_origin.y = zern_origin.z = 0.0;
+  zern_euler_angles.x = zern_euler_angles.y = zern_euler_angles.z = 0.0;
+  zern.setup(0,a,zern_origin,zern_euler_angles,7);
+
+  gmt_m1 M1;
+  M1.setup(D,nPx,&zern,N_GS);
+
+  gmt_m2 M2;
+  M2.setup(D,nPx,&zern,N_GS);
+
+  tid.tic();
+
+  M2.blocking( &(src.rays) );
+  M2.trace( &(src.rays) );
+  M2.trace( &(src.rays) );
+  src.rays.to_sphere(-5.830,2.197173);
+  src.opd2phase();
+
+  tid.toc();
+
+  src.cleanup();
+  zern.cleanup();
+  M1.cleanup();
+  M2.cleanup();
+ }

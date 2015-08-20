@@ -90,7 +90,7 @@ class GMT_MX:
         src.stop(self.M2)
         src.trace(self.M1)
         src.trace(self.M2)
-        src.sphere_distance
+#        src.sphere_distance
 #        src.rays.to_sphere(self.sphere_radius,sphere_distance = src.sphere_distance)
         src.rays.to_sphere(focal_plane_distance=self.focal_plane_distance,
                            focal_plane_radius=self.focal_plane_radius)
@@ -128,6 +128,7 @@ class GMT_MX:
             def get_slopes(stroke_sign):
                 self.reset()
                 action(stroke_sign*stroke)
+                gs.reset()
                 self.propagate(gs)
                 wfs.reset()
                 wfs.analyze(gs)
