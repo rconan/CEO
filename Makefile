@@ -67,6 +67,9 @@ clean:
 	for i in $(SOURCE_DIR); do (make -C $$i clean); done
 	rm -f *.*~
 	rm -f lib/libceo.a
+	rm -f python/ceo/*.so
+	rm -f python/ceo/*.pxd
+	rm -f python/ceo/*.pyx*
 
 cleanbins: makefile
 	for i in $(SOURCE_DIR); do (make -C $$i cleanbins); done

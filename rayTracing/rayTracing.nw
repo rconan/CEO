@@ -480,70 +480,113 @@ void blocking(bundle *)
 from utilities cimport cuIntArray
 cdef class GMT_M1:
     <<GMT M12 docstring>>
-    cdef gmt_m1 *_c_gmt_m1
+    cdef gmt_m1 *_c_gmt_m12
     cdef cuIntArray _piston_mask_
     <<GMT M12 class properties>>    
 
     def __cinit__(self, float D, int D_px, int radial_order=0, int N_SRC=1):
-        self._c_gmt_m1 = new gmt_m1()
-        self.zernike = ZernikeS(radial_order,N_SURF=7)
-        self._c_gmt_m1.setup(D, D_px, <zernikeS *> self.zernike._c_zernikeS, N_SRC)
+        self._c_gmt_m12 = new gmt_m1()
+        <<GMT M12 constructor>>
         self._piston_mask_ = cuIntArray(shape=(D_px*D_px*N_SRC))
-        self._piston_mask_._c_gpu.dev_data = self._c_gmt_m1.d__piston_mask;
-        self.aperture_CS = Coordinate_system(7)
-        self.aperture_CS._c_coordinate_system = &(self._c_gmt_m1.aperture_CS)
-        self.conic_CS = Coordinate_system(7)
-        self.conic_CS._c_coordinate_system = &(self._c_gmt_m1.conic_CS)
-        self.motion_CS = Coordinate_system(7)
-        self.motion_CS._c_coordinate_system = &(self._c_gmt_m1.motion_CS)
-        self.rigid_body_CS = Coordinate_system(7)
-        self.rigid_body_CS._c_coordinate_system = &(self._c_gmt_m1.rigid_body_CS)
+        self._piston_mask_._c_gpu.dev_data = self._c_gmt_m12.d__piston_mask;
 
-    def __dealloc__(self):
-        self._c_gmt_m1.cleanup()
-
-    def trace(self, Bundle rays):
-        self._c_gmt_m1.trace(rays._c_bundle)
+    <<GMT M12 methods>>
 
     def test(self):
-        self._c_gmt_m1.test_ray_tracing();
+        self._c_gmt_m12.test_ray_tracing();
 
-    def blocking(self, Bundle rays):
-        self._c_gmt_m1.blocking(rays._c_bundle)
-
-    def update(self, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0], int idx=0):
+    def global_tiptilt(self, float tip, float tilt):
         """
-        Update the position of the mirror segments
+        Applies a global tip--tilt to M1
 
         Parameters
         ----------
-        origin : list of float, optionnal
-            The location of a segment center; default: [0,0,0]
-        euler_angles : list of float, optionnal
-            The tip, tilt and clock angles of a segment; default: [0,0,0]
-        idx : int
-            The segment index from 1 to 7
+        tip : float
+            The x axis angle
+        tilt : float
+            The y axis angle
         """
-        cdef vector __origin
-        __origin.x = <float>origin[0]
-        __origin.y = <float>origin[1]
-        __origin.z = <float>origin[2]
-        cdef vector __euler_angles
-        __euler_angles.x = <float>euler_angles[0]
-        __euler_angles.y = <float>euler_angles[1]
-        __euler_angles.z = <float>euler_angles[2]
-        self._c_gmt_m1.update(__origin, __euler_angles, idx)
-
-    def global_tiptilt(self, float tip, float tilt):
-        self._c_gmt_m1.global_tiptilt(tip, tilt);
-        
-    def reset(self):
-        self._c_gmt_m1.reset()
+        self._c_gmt_m12.global_tiptilt(tip, tilt);
 
     property piston_mask:
         def __get__(self):
             P = self._piston_mask_.host()
             return np.array( [P.flatten()==k for k in range(1,8)] )
+@
+<<GMT M12 constructor>>=
+self.zernike = ZernikeS(radial_order,N_SURF=7)
+self._c_gmt_m12.setup(D, D_px, <zernikeS *> self.zernike._c_zernikeS, N_SRC)
+self.aperture_CS = Coordinate_system(7)
+self.aperture_CS._c_coordinate_system = &(self._c_gmt_m12.aperture_CS)
+self.conic_CS = Coordinate_system(7)
+self.conic_CS._c_coordinate_system = &(self._c_gmt_m12.conic_CS)
+self.motion_CS = Coordinate_system(7)
+self.motion_CS._c_coordinate_system = &(self._c_gmt_m12.motion_CS)
+self.rigid_body_CS = Coordinate_system(7)
+self.rigid_body_CS._c_coordinate_system = &(self._c_gmt_m12.rigid_body_CS)
+@ 
+<<GMT M12 methods>>=
+def __dealloc__(self):
+    self._c_gmt_m12.cleanup()
+
+def trace(self, Bundle rays):
+    """
+    Ray tracing to the mirror
+
+    Parameters
+    ----------
+    rays : Bundle
+        A ray bundle used to propagate the light
+
+    See also
+    --------
+    Bundle: a class representing a bundle of light rays used for geometric propagation
+    """
+    self._c_gmt_m12.trace(rays._c_bundle)
+
+def blocking(self, Bundle rays):
+    """
+    Makes the mirror acting as a stop
+
+    Parameters
+    ----------
+    rays : Bundle
+        A ray bundle used to propagate the light
+
+    See also
+    --------
+    Bundle: a class representing a bundle of light rays used for geometric propagation
+    """
+    self._c_gmt_m12.blocking(rays._c_bundle)
+
+def update(self, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0], int idx=0):
+    """
+    Update the position of the mirror segments
+
+    Parameters
+    ----------
+    origin : list of float, optionnal
+        The location of a segment center; default: [0,0,0]
+    euler_angles : list of float, optionnal
+        The tip, tilt and clock angles of a segment; default: [0,0,0]
+    idx : int
+        The segment index from 1 to 7
+    """
+    cdef vector __origin
+    __origin.x = <float>origin[0]
+    __origin.y = <float>origin[1]
+    __origin.z = <float>origin[2]
+    cdef vector __euler_angles
+    __euler_angles.x = <float>euler_angles[0]
+    __euler_angles.y = <float>euler_angles[1]
+    __euler_angles.z = <float>euler_angles[2]
+    self._c_gmt_m12.update(__origin, __euler_angles, idx)
+
+def reset(self):
+    """
+    Reset the segments to their original prescription
+    """
+    self._c_gmt_m12.reset()
 @ with
 <<GMT M12 docstring>>=
 """
@@ -560,6 +603,11 @@ radial_order : int, optionnal
 N_SRC : int, optionnal
     The number of sources, defaults to 1
 
+Attributes
+----------
+piston_mask : numpy ndarray
+    A 7 columns array where each column is a mask corresponding to 1 segment
+
 Examples
 --------
 >>> import ceo
@@ -572,6 +620,21 @@ With multiple sources:
 With Zernike modes
 
 >>> M1 = ceo.GMT_M1(25.5,101,radial_order=4)
+
+An M1 segment (#2) is displaced in x of 2 micron and tilted in y of 50mas with
+
+>>> import math
+>>> theta = 50e-3*math.pi/180/3600
+>>> M1.update(origin=[2e-6,0,0],euler_angles=[0,theta,0],idx=2)
+
+A global tip-tilt of M1 is achieved with
+
+>>> M1.global_tiptilt(theta,-theta)
+
+M2 pointing neutral and coma neutral tip-tilt are realized with
+
+>>> M2.pointing_neutral(theta,-theta)
+>>> M2.coma_neutral(theta,-theta)
 """
 @ and with
 <<GMT M12 class properties>>=
@@ -595,50 +658,40 @@ cdef public Coordinate_system motion_CS
 # GMT M2
 cdef class GMT_M2:
     <<GMT M12 docstring>>
-    cdef gmt_m2 *_c_gmt_m2
+    cdef gmt_m2 *_c_gmt_m12
     <<GMT M12 class properties>>    
     
     def __cinit__(self, float D, int D_px, radial_order=0, int N_SRC=1):
-        self._c_gmt_m2 = new gmt_m2()
-        self.zernike = ZernikeS(radial_order,N_SURF=7)
-        self._c_gmt_m2.setup(D, D_px, <zernikeS *> self.zernike._c_zernikeS, N_SRC)
-        self.aperture_CS = Coordinate_system(7)
-        self.aperture_CS._c_coordinate_system = &(self._c_gmt_m2.aperture_CS)
-        self.conic_CS = Coordinate_system(7)
-        self.conic_CS._c_coordinate_system = &(self._c_gmt_m2.conic_CS)
-        self.motion_CS = Coordinate_system(7)
-        self.motion_CS._c_coordinate_system = &(self._c_gmt_m2.motion_CS)
-        self.rigid_body_CS = Coordinate_system(7)
-        self.rigid_body_CS._c_coordinate_system = &(self._c_gmt_m2.rigid_body_CS)
+        self._c_gmt_m12 = new gmt_m2()
+        <<GMT M12 constructor>>
 
-    def __dealloc__(self):
-        self._c_gmt_m2.cleanup()
-
-    def trace(self, Bundle rays):
-        self._c_gmt_m2.trace(rays._c_bundle)
-
-    def blocking(self, Bundle rays):
-        self._c_gmt_m2.blocking(rays._c_bundle)
-
-    def update(self, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0], int idx=0):
-        cdef vector __origin
-        __origin.x = <float>origin[0]
-        __origin.y = <float>origin[1]
-        __origin.z = <float>origin[2]
-        cdef vector __euler_angles
-        __euler_angles.x = <float>euler_angles[0]
-        __euler_angles.y = <float>euler_angles[1]
-        __euler_angles.z = <float>euler_angles[2]
-        self._c_gmt_m2.update(__origin, __euler_angles, idx)
+    <<GMT M12 methods>>
 
     def pointing_neutral(self, float tip, float tilt):
-        self._c_gmt_m2.pointing_neutral(tip, tilt);
+        """
+        Applies a pointing neutral global tip--tilt to M2
+
+        Parameters
+        ----------
+        tip : float
+            The x axis angle
+        tilt : float
+            The y axis angle
+        """
+        self._c_gmt_m12.pointing_neutral(tip, tilt);
 
     def coma_neutral(self, float tip, float tilt):
-        self._c_gmt_m2.coma_neutral(tip, tilt);
+        """
+        Applies a coma neutral global tip--tilt to M2
 
-    def reset(self):
-        self._c_gmt_m2.reset()
+        Parameters
+        ----------
+        tip : float
+            The x axis angle
+        tilt : float
+            The y axis angle
+        """
+        self._c_gmt_m12.coma_neutral(tip, tilt);
 @
 \subsubsection{Zernike}
 \label{sec:zernike}

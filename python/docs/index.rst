@@ -86,7 +86,7 @@ GMT M1
 
 GMT M2
 ~~~~~~
-.. autoclass:: GMT_M1
+.. autoclass:: GMT_M2
     :members:
 
 utilities

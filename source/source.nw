@@ -263,6 +263,18 @@ cdef class Complex_amplitude:
             return np.dot(Q,np.reshape( self.phase.host() , (-1,) ) ).flatten()/np.sum(Q,axis=1)    
 
     def reset(self, cuFloatArray phase = None):
+        """
+        Reset the wavefront amplitude to 1 and phase to 0 or to the given phase
+
+        Parameters
+        ----------
+        phase : cuFloatArray
+            The GPU array the wavefront phase is reset to
+
+        See also
+        --------
+        cuFloatArray : a class for GPU host and device float data 
+        """
         self._c_complex_amplitude.reset()
         if phase is not None:
             self._c_complex_amplitude.add_phase(1,phase._c_gpu.dev_data)
@@ -402,12 +414,41 @@ cdef class Source:
         self._c_source.cleanup()
 
     def trace(self, optics):
+        """
+        Ray tracing to the optic device
+
+        Parameters
+        ----------
+        optics: GMT_M1 or GMT_M2
+            The GMT mirror M1 or M2 models 
+
+        See also
+        --------
+        GMT_M1 : the class for GMT M1 model
+        GMT_M2 : the class for GMT M2 model
+        """
         optics.trace(self.rays)
 
     def stop(self, optics):
+        """
+        Ray tracing to the optic device acting as a stop
+
+        Parameters
+        ----------
+        optics: GMT_M1 or GMT_M2
+            The GMT mirror M1 or M2 models 
+
+        See also
+        --------
+        GMT_M1 : the class for GMT M1 model
+        GMT_M2 : the class for GMT M2 model
+        """
         optics.blocking(self.rays)
 
     def opd2phase(self):
+        """
+        Transfer the OPD from ray tracing to the wavefront phase
+        """
         self._c_source.opd2phase()                        
 
     property phase:
@@ -455,7 +496,7 @@ cdef class Source:
     
     def reset(self):
         """
-        Reset the wavefront amplitude to 1 and phase to 0
+        Reset the wavefront amplitude to 1 and phase to 0 and re--initialize the ray bundle
         """
         self._c_source.wavefront.reset()
         self._c_source.reset_rays()
