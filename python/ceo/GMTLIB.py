@@ -22,12 +22,23 @@ class GMT_MX:
 
     Attributes
     ----------
+    D : float
+        The size of the pupil plane in meter
+    D_px : int
+        The size of the pupil plane in pixel
     M1 : GMT_M1
         The GMT M1 CEO class
     M2 : GMT_M2
         The GMT M2 CEO class
     sphere_radius : float
         The curvature radius of the ray tracing reference sphere
+
+    See also
+    --------
+    GMT_M1 : the class for GMT M1 model
+    GMT_M2 : the class for GMT M2 model
+    Source : a class for astronomical sources
+    cuFloatArray : an interface class between GPU host and device data for floats
 
     Examples
     --------
@@ -44,6 +55,19 @@ class GMT_MX:
     A combination of Zernike polynomials can be applied to M1 and M2 segments by specifying the largest radial order on each mirror
 
     >>> gmt = ceo.GMT_MX(25.5,256, M1_radial_order=8, M2_radial_order=14)
+
+    A source is propagated (geometrically) through the telescope with the following procedure:
+
+    >>> src = ceo.Source("R",rays_box_size=25.5,rays_box_sampling=256,rays_origin=[0.0,0.0,25])
+    >>> gmt.propagate(src)
+
+    and the wavefront phase is retrieved either as a 2D map cuFloatArray object with
+
+    >>> gpu_ps2d = src.phase()
+
+    or as a 1D vector with 
+
+    >>> gpu_ps1d = src.wavefront.phase()
     """
     def __init__(self, D, D_px, M1_radial_order=0, M2_radial_order=0, N_SRC=1):
         self.D = D
@@ -333,8 +357,8 @@ class SegmentPistonSensor:
 
     See also
     --------
-    GMT_MX: a class for GMT M1 and M2 mirrors
-    Source: a class for astronomical sources
+    GMT_MX : a class for GMT M1 and M2 mirrors
+    Source : a class for astronomical sources
 
     Examples
     --------
