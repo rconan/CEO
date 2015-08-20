@@ -4654,15 +4654,18 @@ void gmt_m2::coma_neutral(float tip, float tilt)
 \label{sec:benchmark}
 
 <<benchmark>>=
+#include <iostream>
+#include <fstream>
 #include "ceo.h"
+using namespace std;
+
 int main(int argc,char *argv[]) {
-  int N_GS, nPx;
+  int N_GS, N_GS_max, nPx, k_nPx, k_GS;
+  float elaspedTime;
   rtd D;
   vector src_origin, zern_origin, zern_euler_angles;
-
-  N_GS = 1;
-  float zen[] = {0.0};
-  float azi[] = {0.0};
+  ofstream f;
+  float *zen, *azi;
   
   D = 25.5;
   src_origin.x =  0.0;
@@ -4682,35 +4685,56 @@ int main(int argc,char *argv[]) {
   zern_euler_angles.x = zern_euler_angles.y = zern_euler_angles.z = 0.0;
   zern.setup(0,a,zern_origin,zern_euler_angles,7);
 
-  int k;
+  N_GS_max = 3;
+
+  f.open("bench0.txt");
+  f.precision(3);
+  f << "nPx";
+  for (k_GS=1;k_GS<=N_GS_max;k_GS++) 
+    f << "\t" << k_GS << "GS";
+  f << endl;
+
   nPx = 2;
-  for (k=2;k<11;k++) {
+  for (k_nPx=2;k_nPx<11;k_nPx++) {
 
     nPx*=2;
-    fprintf(stdout," . nPx=%3d\n",nPx);
+    f << nPx;
 
-    src.setup("R",zen,azi,INFINITY,N_GS,D,nPx,src_origin);
-    M1.setup(D,nPx,&zern,N_GS);
-    M2.setup(D,nPx,&zern,N_GS);
+    for (N_GS=1; N_GS<=N_GS_max; N_GS++) {
 
-    tid.tic();
+      zen = (float *) malloc( sizeof(float)*N_GS );
+      azi = (float *) malloc( sizeof(float)*N_GS );
+      for (k_GS=0;k_GS<N_GS;k_GS++) {
+	zen[k_GS] = 0.0;
+	azi[k_GS] = 0.0;
+      }    
 
-    M2.blocking( &(src.rays) );
-    M2.trace( &(src.rays) );
-    M2.trace( &(src.rays) );
-    src.rays.to_sphere(-5.830,2.197173);
-    src.opd2phase();
+      src.setup("R",zen,azi,INFINITY,N_GS,D,nPx,src_origin);
+      M1.setup(D,nPx,&zern,N_GS);
+      M2.setup(D,nPx,&zern,N_GS);
 
-    tid.toc();
+      tid.tic();
 
-    src.cleanup();
-    M1.cleanup();
-    M2.cleanup();
+      M2.blocking( &(src.rays) );
+      M2.trace( &(src.rays) );
+      M2.trace( &(src.rays) );
+      src.rays.to_sphere(-5.830,2.197173);
+      src.opd2phase();
 
-  }
-  
+      tid.toc(&elaspedTime);
+      f << "\t" << elaspedTime;
+
+      src.cleanup();
+      M1.cleanup();
+      M2.cleanup();
+      free(zen);
+      free(azi);
+
+    } // N_GS
+    f << endl;
+  } // nPx
+  f.close();
   zern.cleanup();
-    
  }
 @ 
 \subsection{Profile}
