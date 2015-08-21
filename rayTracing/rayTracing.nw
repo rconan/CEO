@@ -4650,7 +4650,7 @@ void gmt_m2::coma_neutral(float tip, float tilt)
 \label{sec:tests}
 
 <<rayTracing.bin>>=
-<<profile>>
+<<benchmark>>
 @ 
 \subsection{Benchmark}
 \label{sec:benchmark}
@@ -4682,7 +4682,7 @@ int main(int argc,char *argv[]) {
   gmt_m1 M1;
   gmt_m2 M2;
 
-  zern_n = 0;
+  zern_n = 10;
   zern_j = (zern_n+1)*(zern_n+2)/2;
   rtd *a;
   a = (rtd *)malloc( sizeof(rtd)*zern_j );
@@ -4720,6 +4720,13 @@ int main(int argc,char *argv[]) {
       M1.setup(D,nPx,&zern,N_GS);
       M2.setup(D,nPx,&zern,N_GS);
 
+
+      M2.blocking( &(src.rays) );
+      M1.trace( &(src.rays) );
+      M2.trace( &(src.rays) );
+      src.rays.to_sphere(-5.830,2.197173);
+      src.opd2phase();
+
       tid.tic();
 
       M2.blocking( &(src.rays) );
@@ -4752,7 +4759,7 @@ int main(int argc,char *argv[]) {
 #include <cuda_profiler_api.h>
 #include "ceo.h"
 int main(int argc,char *argv[]) {
-  int N_GS, nPx;
+  int N_GS, nPx, k, nIteration;
   rtd D;
   vector src_origin, zern_origin, zern_euler_angles;
 
@@ -4783,7 +4790,7 @@ int main(int argc,char *argv[]) {
 
   gmt_m2 M2;
   M2.setup(D,nPx,&zern,N_GS);
-
+  /*
   tid.tic();
   M2.blocking( &(src.rays) );
   tid.toc();
@@ -4805,6 +4812,21 @@ int main(int argc,char *argv[]) {
   tid.tic();
   src.opd2phase();
   tid.toc();
+  */
+
+  nIteration = 10;
+  /* cudaProfilerStart(); */
+  for (k=0;k<nIteration;k++) {
+    tid.tic();
+    //    src.wavefront.reset();
+    M2.blocking( &(src.rays) );
+    M1.trace( &(src.rays) );
+    M2.trace( &(src.rays) );
+    src.rays.to_sphere(-5.830,2.197173);
+    src.opd2phase();
+    tid.toc();
+  }
+  /* cudaProfilerStop(); */
 
   src.cleanup();
   zern.cleanup();

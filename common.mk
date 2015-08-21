@@ -12,8 +12,7 @@ WEAVE   	= $(NOWEBPATH)/bin/noweave
 TANGLE    	= $(NOWEBPATH)/bin/notangle
 CPIF	    	= $(NOWEBPATH)/bin/cpif
 TEXTOPDF  	= pdflatex
-NVCCFLAGS	= -gencode=arch=compute_20,code=\"sm_20,compute_20\" \
-		--compiler-options=-ansi,-D_GNU_SOURCE,-fwrapv,-fPIC,-fno-omit-frame-pointer,-pthread,-fno-strict-aliasing -O2
+NVCCFLAGS	= -arch=sm_30 -lineinfo --compiler-options=-ansi,-D_GNU_SOURCE,-fwrapv,-fPIC,-fno-omit-frame-pointer,-pthread,-fno-strict-aliasing -O3
 LIBS 		= -L$(CEOPATH)/lib $(CUDALIBPATH:%=-L%) -lceo -lcurl -ljsmn $(CUDALIBS:%=-l%)
 INCS		= -I. -I$(CEOPATH)/include -I/usr/local/cuda/include/ -I$(PYTHONPATH)/include #$(MATLABINCS)
 SHELL		= /bin/bash
@@ -57,7 +56,7 @@ libsrc = $(CEOPATH)/lib/libceo.a
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
 	mv $@ $@.cu
 	make -C $(CEOPATH) all
-	$(NVCC) $(INCS) $(LIBS) $@.cu
+	$(NVCC) $(NVCCFLAGS) -lineinfo $(INCS) $(LIBS) $@.cu
 
 .nw.py:
 	$(TANGLE) -R$@ $< > $@
