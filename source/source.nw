@@ -1623,6 +1623,7 @@ The ray tracing data are transferred to the wavefront structure with
 void source::opd2phase(void)
 {
 //  printf("Setting wavefront!\n");
+  HANDLE_ERROR( cudaMemset(rays.V.m, 0, sizeof(char)*rays.N_RAY*rays.N_BUNDLE ) ); 
   dim3 blockDim(16,16);
   dim3 gridDim(rays.N_L/16+1, rays.N_L/16+1, rays.N_BUNDLE);
   opd2phase_kernel LLL gridDim , blockDim RRR (wavefront.amplitude, 
@@ -1631,9 +1632,9 @@ void source::opd2phase(void)
                                                    rays.d__ray, rays.N_RAY,
                                                    rays.L, rays.N_L,
                                                    dev_ptr);
+  wavefront.masked(&(rays.V));
   rays.V.set_filter_quiet();
-  wavefront.M = &(rays.V);
-  //wavefront.masked(&(rays.V));
+  /* wavefront.M = &(rays.V); */
 }
 @ 
 <<gathering wavefront kernel>>=
@@ -1647,22 +1648,13 @@ __global__ void opd2phase_kernel(float *amplitude, float *phase,
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
-  if ( (i<N_L) && (j<N_L) ) {
+  k = i + j*N_L + iSource*N_RAY;
+  if ( ( (i<N_L) && (j<N_L) ) &&  (d__ray[k].v==1) ) {
     <<rays box coordinates definition>>
-    k = i + j*N_L + iSource*N_RAY;
-    if (d__ray[k].v==1)
-      {
-    	m[k]         = 1;
-    	/* amplitude[k] = 1.0; */
-    	/* phase[k] = 0.0; */
-    	phase[k]     += d__ray[k].optical_path_difference +
-    	  x*src[iSource].theta_x +
-    	  y*src[iSource].theta_y;
-      } else {
-    	m[k]         = 0;
-    	amplitude[k] = 0.0;
-    	phase[k]     = 0.0;
-    }
+    m[k]         = 1;
+    phase[k]     += d__ray[k].optical_path_difference +
+      x*src[iSource].theta_x +
+      y*src[iSource].theta_y;
   }
 }
 

@@ -1031,6 +1031,9 @@ float area;
 @ \item the x and y pixel scale [[delta]],
 <<mask parameters>>=
 float delta[2];  
+@ \item the CUBLAS handle
+<<mask parameters>>=
+cublasHandle_t handle;
 @ \end{itemize}
 
 The mask structure definition is:
@@ -1072,6 +1075,7 @@ HANDLE_ERROR( cudaMalloc((void**)&f, sizeof(float)*nel ) );
 HANDLE_ERROR( cudaMemset( m, 0, sizeof(char)*nel) );
 HANDLE_ERROR( cudaMemset( f, 0, sizeof(float)*nel) );
 HANDLE_ERROR( cudaMalloc((void**)&idx, sizeof(int)*nel ) );
+cublasCreate(&handle);
 @ \item with a square mask of [[n]] pixel across and [[L]] meter width:
 <<mask functions>>=
 void mask::setup(int n, float L) {
@@ -1174,11 +1178,8 @@ void mask::set_filter(void) {
   dim3 gridDim(nel/256+1);
   fill_ones_filtered LLL gridDim,blockDim RRR (f, m, nel);
 
-  cublasHandle_t handle;
-  cublasCreate(&handle);
   CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
   fprintf(stdout,"@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
-  cublasDestroy(handle);
 
   nnz_idx LLL 1,1 RRR (idx, m, nel);
 }
@@ -1186,16 +1187,14 @@ void mask::set_filter_quiet(void) {
   dim3 blockDim(256);
   dim3 gridDim(nel/256+1);
   fill_ones_filtered LLL gridDim,blockDim RRR (f, m, nel);
-  cublasHandle_t handle;
-  cublasCreate(&handle);
   CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
-  cublasDestroy(handle);
-  nnz_idx LLL 1,1 RRR (idx, m, nel);
+  //  nnz_idx LLL 1,1 RRR (idx, m, nel); time comsuming!!!
 }
 @ \item [[cleanup]]
 <<mask functions>>=
 void mask::cleanup(void) {
   fprintf(stdout,"@(CEO)>mask: freeing memory!\n");
+  cublasDestroy(handle);
   HANDLE_ERROR( cudaFree( m ) );
   HANDLE_ERROR( cudaFree( f ) );
   HANDLE_ERROR( cudaFree( idx ) );
