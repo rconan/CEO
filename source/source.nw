@@ -233,7 +233,7 @@ cdef class Complex_amplitude:
         Returns
         -------
         float
-            the wavefront phase rms in meters
+            the wavefront phase rms
         """
         cdef np.ndarray[float,ndim=1] rms = np.zeros(self._c_complex_amplitude.N, dtype=np.single)
         self._c_complex_amplitude.rms(<float *>rms.data)
@@ -253,7 +253,27 @@ cdef class Complex_amplitude:
         Returns
         -------
         ndarray of float
-            The vector of piston values
+            The vector of piston values in meters
+
+        Examples
+        --------
+        >>> import ceo
+        >>> gs = ceo.Source("V",rays_box_size=25.5, rays_box_sampling=256, rays_origin=[0,0,25]) 
+        >>> gmt = ceo.GMT_MX(25.5,256)
+        >>> gmt.propagate(gs)
+        
+        The piston over the entire pupil is obtained with:
+        
+        >>> gs.wavefront.piston()
+
+        The 7 segment pistons are retrieved with
+
+        >>> gs.wavefront.piston(gmt.M1.piston_mask)
+
+        See also
+        --------
+        GMT_MX : a class embedding GMT M1 and M2 classes 
+        GMT_M1 : a class for GMT M1 model
         """
         amplitude = self.amplitude.host()
         if mask is None:
@@ -360,7 +380,7 @@ cdef class Source:
 
     If the source is to be used for ray tracing through an optical model like the GMT, then
 
-    >>> lgs = ceo.Source("R",zenith=zen,azimuth=azi,height=90e3,resolution=(n,n),
+    >>> lgs = ceo.Source("R",zenith=zen,azimuth=azi,height=90e3,
                         rays_box_size=25.5, rays_box_sampling=n, rays_origin=[0,0,25]) 
 
     """
@@ -1623,6 +1643,7 @@ The ray tracing data are transferred to the wavefront structure with
 void source::opd2phase(void)
 {
 //  printf("Setting wavefront!\n");
+  HANDLE_ERROR( cudaMemset(rays.V.m, 0, sizeof(char)*rays.N_RAY*rays.N_BUNDLE ) ); 
   dim3 blockDim(16,16);
   dim3 gridDim(rays.N_L/16+1, rays.N_L/16+1, rays.N_BUNDLE);
   opd2phase_kernel LLL gridDim , blockDim RRR (wavefront.amplitude, 
@@ -1631,9 +1652,9 @@ void source::opd2phase(void)
                                                    rays.d__ray, rays.N_RAY,
                                                    rays.L, rays.N_L,
                                                    dev_ptr);
+  wavefront.masked(&(rays.V));
   rays.V.set_filter_quiet();
-  wavefront.M = &(rays.V);
-  //wavefront.masked(&(rays.V));
+  /* wavefront.M = &(rays.V); */
 }
 @ 
 <<gathering wavefront kernel>>=
@@ -1647,22 +1668,13 @@ __global__ void opd2phase_kernel(float *amplitude, float *phase,
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
-  if ( (i<N_L) && (j<N_L) ) {
+  k = i + j*N_L + iSource*N_RAY;
+  if ( ( (i<N_L) && (j<N_L) ) &&  (d__ray[k].v==1) ) {
     <<rays box coordinates definition>>
-    k = i + j*N_L + iSource*N_RAY;
-    if (d__ray[k].v==1)
-      {
-    	m[k]         = 1;
-    	/* amplitude[k] = 1.0; */
-    	/* phase[k] = 0.0; */
-    	phase[k]     += d__ray[k].optical_path_difference +
-    	  x*src[iSource].theta_x +
-    	  y*src[iSource].theta_y;
-      } else {
-    	m[k]         = 0;
-    	amplitude[k] = 0.0;
-    	phase[k]     = 0.0;
-    }
+    m[k]         = 1;
+    phase[k]     += d__ray[k].optical_path_difference +
+      x*src[iSource].theta_x +
+      y*src[iSource].theta_y;
   }
 }
 
