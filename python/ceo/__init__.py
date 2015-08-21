@@ -1,4 +1,4 @@
-from utilities import cuFloatArray, cuDoubleArray, cuIntArray, Mask, Telescope, GMT, StopWatch
+from utilities import cuFloatArray, cuDoubleArray, cuIntArray, MaskAbstract, Mask, Telescope, GMT, StopWatch
 from source import Complex_amplitude, Source
 from atmosphere import Atmosphere, GmtAtmosphere
 from centroiding import Centroiding

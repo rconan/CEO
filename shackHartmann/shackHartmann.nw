@@ -123,15 +123,29 @@ cdef class ShackHartmann:
        The lenslet pitch [m].
     DFT_osf : int, optionnal
        The oversampling factor for the Discrete Fourier Transform, defaults to 2
-    N_PX_IMAGE : int
+    N_PX_IMAGE : int, optionnal
        The sampling in pixel of the imagelet, defaults to N_PX_LENSLET
-    BIN_IMAGE : int
+    BIN_IMAGE : int, optionnal
        The binning factor of the imagelet, default to 1
-    N_GS : an int number
+    N_GS : int, optionnal
        The number of guide stars, defaults to 1
 
     Attributes
     ----------
+    N_SIDE_LENSLET : int
+       The linear size of the lenslet array (>=1).
+    N_PX_LENSLET : int
+       The sampling in pixel of one lenslet.
+    DFT_osf : int
+       The oversampling factor for the Discrete Fourier Transform
+    N_PX_IMAGE : int
+       The sampling in pixel of the imagelet
+    BIN_IMAGE : int
+       The binning factor of the imagelet
+    N_GS : int
+       The number of guide stars
+    N_PX_FRAME : int
+        The detector resolution
     valid_lenslet : MaskAbstract
         The mask object representing the valid lenslet location
     valid_actuator : MaskAbstract
@@ -144,6 +158,50 @@ cdef class ShackHartmann:
         The size of the detector pixel in radian
     pixel_scale_arcsec : float
         The size of the detector pixel in arcsec
+    frame : cuFloatArray
+         The detector frame
+    c0 : cuFloatArray
+         The reference slopes vector as [N_GSx2 N_SIDE_LENSLET**2]
+    c : cuFloatArray
+         The slopes vector as [N_GSx2 N_SIDE_LENSLET**2]
+    flux : cuFloatArray
+         The map of flux per lenset
+    valid_slopes : cuFloatArray
+         The vector of valid slopes
+
+    See also
+    --------
+    MaskAbstract : a class to hold masks properties
+    cuFloatArray : an interface class for GPU host and device float data
+
+    Examples
+    --------
+    A 30x30, 1m lenslet pitch, Nyquist sampled Shack-Hartmann WFS with 8x8 pixel per lenslet is created with
+
+    >>> wfs = ShackHartmann(30,8,1.0)
+
+    The detector resolution is 240 pixels with a lenslet field of view of :math:`8\lambda / 2d`.
+
+    Twice the Nyquist sampling is realized with
+
+    >>> wfs = ShackHartmann(30,8,1.0,DFT_osf=4)
+
+    The detector resolution is still 240 pixels but with a lenslet field of view of :math:`8\lambda / 4d`.
+
+    Half the Nyquist sampling is obtained with
+
+    >>> wfs = ShackHartmann(30,8,1.0, BIN_IMAGE=2)
+
+    The detector resolution is now 120 pixels with a lenslet field of view of :math:`4\lambda / d`.
+    A 240 pixels detector resolution is restored with
+
+    >>> wfs = ShackHartmann(30,8,1.0, N_PX_IMAGE=16, BIN_IMAGE=2)
+
+    increasing the field of view by a factor 2 i.e. :math:`8\lambda / d`.
+
+    The number of guide star need to be passed if larger than 1:
+
+    >>> wfs = ShackHartmann(..., N_GS=6)
     """
 
     def __cinit__(self, int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
@@ -187,26 +245,90 @@ cdef class ShackHartmann:
         self._c_shackHartmann.cleanup()
 
     def calibrate(self, Source gs, float threshold):
+        """
+        Selects the WFS valid lenslet and calibrated the reference slopes
+
+        Parameters
+        ----------
+        gs : Source
+            The WFS guide star
+        threshold : float
+            The intensity threshold, a lenslet is discared if the flux of the lenslet divided by the fully illuminated flux of the lenslet is less than the threshold
+
+        See also
+        --------
+        Source : a class for astronomical sources
+        """
         self._c_shackHartmann.calibrate(gs._c_source, threshold)
         self._valid_slopes_ = cuFloatArray(shape=(1,self._c_shackHartmann.valid_lenslet.nnz*2),
                                            dev_malloc=True)
 
     def analyze(self, Source gs):
+        """
+        Propagates the guide star to the WFS detector (noiseless) and processes the frame
+
+        Parameters
+        ----------
+        gs : Source
+            The WFS guide star
+
+        See also
+        --------
+        Source : a class for astronomical sources
+        """
         self._c_shackHartmann.analyze(gs._c_source)
 
     def propagate(self, Source gs):
+        """
+        Propagates the guide star to the WFS detector (noiseless)
+
+        Parameters
+        ----------
+        gs : Source
+            The WFS guide star
+
+        See also
+        --------
+        Source : a class for astronomical sources
+        """
         self._c_shackHartmann.propagate(gs._c_source)
 
     def process(self):
+        """
+        Processes the WFS detector frame
+        """
         self._c_shackHartmann.process()
 
     def readOut(self,float exposureTime, float readOutNoiseRms):
+        """
+        Reads-out the WFS detector frame adding photon and read-out noises
+
+        Parameters
+        ----------
+        exposureTime : float
+            The detector integration time [s]
+        readoutNoiseRms : float
+            The rms of the detector read-out noise
+        """
         self._c_shackHartmann.optics_relay.readout(exposureTime,readOutNoiseRms)
 
     def reset(self):
+        """
+        Resets the WFS detector frame to 0
+        """
         self._c_shackHartmann.optics_relay.reset()
 
     def pointing(self,float zen, float azim):
+        """
+        Sets the pointing of the WFS relative to the guide star
+
+        Parameters
+        ----------
+        zen : float
+            The zenith angle [rd]
+        azim : float
+            The azimuth angle [rd]
+        """
         self._c_shackHartmann.optics_relay.set_pointing_direction(zen, azim)
 
     property valid_slopes:
