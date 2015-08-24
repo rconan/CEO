@@ -17,8 +17,6 @@ class GMT_MX:
         The largest radial order of the Zernike polynomials on M1 segments, default to 0
     M2_radial_order : int, optionnal
         The largest radial order of the Zernike polynomials on M2 segments, default to 0
-    N_SRC : int 
-        The total number of sources to be propagated through the system
 
     Attributes
     ----------
@@ -69,11 +67,11 @@ class GMT_MX:
 
     >>> gpu_ps1d = src.wavefront.phase()
     """
-    def __init__(self, D, D_px, M1_radial_order=0, M2_radial_order=0, N_SRC=1):
+    def __init__(self, D, D_px, M1_radial_order=0, M2_radial_order=0):
         self.D = D
         self.D_px = D_px
-        self.M1 = GMT_M1(D, D_px, radial_order=M1_radial_order, N_SRC=N_SRC)
-        self.M2 = GMT_M2(D, D_px, radial_order=M2_radial_order, N_SRC=N_SRC)
+        self.M1 = GMT_M1(D, D_px, radial_order=M1_radial_order)
+        self.M2 = GMT_M2(D, D_px, radial_order=M2_radial_order)
         self.focal_plane_distance = -5.830
         self.focal_plane_radius   =  2.197173
 
@@ -371,13 +369,12 @@ class SegmentPistonSensor:
     >>> SPS = ceo.SegmentPistonSensor(gmt,src)
     >>> src.reset()
     >>> gmt.propagate(src)
-    >>> SPS.P = gmt.M1.piston_mask
 
     The piston per M1 segment is obtained with
 
     >>> SPS.piston(src,segment='full')
 
-    The 12 differential piston are given by
+    The 12 differential pistons are given by
 
     >>> SPS.piston(src,segment='edge')
     """
@@ -398,20 +395,23 @@ class SegmentPistonSensor:
         #print xy_rp
         self.W = 1.5
         self.L = 1.5
-        xySrc = 82.5*np.array( [[src.zenith*math.cos(src.azimuth)],[src.zenith*math.sin(src.azimuth)]] )
-        #print xySrc        
-        M = []
-        for k in range(6):
-            theta = -k*math.pi/3
-            #print ROT(theta)
-            xyp = np.dot(ROT(theta),xy) - xy_rc - xySrc
-            M.append( np.logical_and( np.abs(xyp[0,:])<self.L/2,  np.abs(xyp[1,:])<self.W/2 ) )
-        for k in range(6):
-            theta = (1-k)*math.pi/3
-            #print ROT(theta)
-            xyp = np.dot(ROT(theta),xy) - xy_rp - xySrc
-            M.append( np.logical_and( np.abs(xyp[0,:])<self.L/2,  np.abs(xyp[1,:])<self.W/2 ) )
-        self.M = np.array( M )
+        self.M = []
+        for k_SRC in range(src.N_SRC):
+            xySrc = 82.5*np.array( [[src.zenith[k_SRC]*math.cos(src.azimuth[k_SRC])],
+                                    [src.zenith[k_SRC]*math.sin(src.azimuth[k_SRC])]] )
+            #print xySrc        
+            _M_ = []
+            for k in range(6):
+                theta = -k*math.pi/3
+                #print ROT(theta)
+                xyp = np.dot(ROT(theta),xy) - xy_rc - xySrc
+                _M_.append( np.logical_and( np.abs(xyp[0,:])<self.L/2,  np.abs(xyp[1,:])<self.W/2 ) )
+            for k in range(6):
+                theta = (1-k)*math.pi/3
+                #print ROT(theta)
+                xyp = np.dot(ROT(theta),xy) - xy_rp - xySrc
+                _M_.append( np.logical_and( np.abs(xyp[0,:])<self.L/2,  np.abs(xyp[1,:])<self.W/2 ) )
+            self.M.append( np.array( _M_ ) )
         #print self.M.shape
 
     def piston(self,src, segment="full"):
@@ -432,14 +432,18 @@ class SegmentPistonSensor:
         """
         
         if segment=="full":
-            p = src.wavefront.piston(mask=self.P)
+            p = src.piston(where='segments')
         if segment=="edge":
-            W = np.reshape( src.wavefront.phase.host() , (-1,) )
-            p = np.zeros(12)
-            for k in range(6):
-                #print k,(k+1)%6
-                p[2*k] = np.sum( W*self.P[k,:]*self.M[k,:] )/np.sum( self.P[k,:]*self.M[k,:] ) - \
-                         np.sum( W*self.P[6,:]*self.M[k,:] )/np.sum( self.P[6,:]*self.M[k,:] )
-                p[2*k+1] = np.sum( W*self.P[k,:]*self.M[k+6,:] )/np.sum( self.P[k,:]*self.M[k+6,:] ) - \
-                           np.sum( W*self.P[(k+1)%6,:]*self.M[k+6,:] )/np.sum( self.P[(k+1)%6,:]*self.M[k+6,:] )
+            
+            W = src.wavefront.phase.host()
+            p = np.zeros((src.N_SRC,12))
+            for k_SRC in range(src.N_SRC):
+                _P_ = src.rays.piston_mask[k_SRC]
+                _M_ = self.M[k_SRC]
+                for k in range(6):
+                    #print k,(k+1)%6
+                    p[k_SRC,2*k] = np.sum( W[k_SRC,:]*_P_[k,:]*_M_[k,:] )/np.sum( _P_[k,:]*_M_[k,:] ) - \
+                             np.sum( W[k_SRC,:]*_P_[6,:]*_M_[k,:] )/np.sum( _P_[6,:]*_M_[k,:] )
+                    p[k_SRC,2*k+1] = np.sum( W[k_SRC,:]*_P_[k,:]*_M_[k+6,:] )/np.sum( _P_[k,:]*_M_[k+6,:] ) - \
+                               np.sum( W[k_SRC,:]*_P_[(k+1)%6,:]*_M_[k+6,:] )/np.sum( _P_[(k+1)%6,:]*_M_[k+6,:] )
         return p

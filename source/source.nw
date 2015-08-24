@@ -218,11 +218,11 @@ cdef class Complex_amplitude:
     def __cinit__(self,Source src):
         self._c_complex_amplitude = new complex_amplitude()
         self._c_complex_amplitude = &(src._c_source.wavefront)
-        self.phase = cuFloatArray(shape=(self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N,
-                                         self._c_complex_amplitude.N))
+        self.phase = cuFloatArray(shape=(self._c_complex_amplitude.N,
+                                         self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N))
         self.phase._c_gpu.dev_data = self._c_complex_amplitude.phase
-        self.amplitude = cuFloatArray(shape=(self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N,
-                                             self._c_complex_amplitude.N))
+        self.amplitude = cuFloatArray(shape=(self._c_complex_amplitude.N,
+                                             self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N))
         self.amplitude._c_gpu.dev_data = self._c_complex_amplitude.amplitude
 
 
@@ -238,49 +238,6 @@ cdef class Complex_amplitude:
         cdef np.ndarray[float,ndim=1] rms = np.zeros(self._c_complex_amplitude.N, dtype=np.single)
         self._c_complex_amplitude.rms(<float *>rms.data)
         return rms
-        
-    def piston(self, np.ndarray mask=None):
-        """
-        Get the piston corresponding to each segment
-
-        Parameters
-        ----------
-        mask: ndarray, optionnal
-            The mask where to compute the piston on as a 2D array n_maskXsampling
-            where n_mask is the number of mask (default: 1) and sampling is the mask
-            sampling that must match the wavefront sampling
-
-        Returns
-        -------
-        ndarray of float
-            The vector of piston values in meters
-
-        Examples
-        --------
-        >>> import ceo
-        >>> gs = ceo.Source("V",rays_box_size=25.5, rays_box_sampling=256, rays_origin=[0,0,25]) 
-        >>> gmt = ceo.GMT_MX(25.5,256)
-        >>> gmt.propagate(gs)
-        
-        The piston over the entire pupil is obtained with:
-        
-        >>> gs.wavefront.piston()
-
-        The 7 segment pistons are retrieved with
-
-        >>> gs.wavefront.piston(gmt.M1.piston_mask)
-
-        See also
-        --------
-        GMT_MX : a class embedding GMT M1 and M2 classes 
-        GMT_M1 : a class for GMT M1 model
-        """
-        amplitude = self.amplitude.host()
-        if mask is None:
-            return np.sum(self.phase.host()[amplitude>0])/np.sum(amplitude)
-        else:
-            Q = mask*amplitude.T
-            return np.dot(Q,np.reshape( self.phase.host() , (-1,) ) ).flatten()/np.sum(Q,axis=1)    
 
     def reset(self, cuFloatArray phase = None):
         """
@@ -520,6 +477,53 @@ cdef class Source:
         """
         self._c_source.wavefront.reset()
         self._c_source.reset_rays()
+        
+    def piston(self, where='pupil'):
+        """
+        Get the piston corresponding to either the pupil or the segments
+
+        Parameters
+        ----------
+        where : string, optionnal
+            Either "pupil" for a piston on the full pupil or "segments" for pistons of each segment
+
+        Returns
+        -------
+        ndarray of float
+            The vector of piston values in meters as either an N_SRC vector for "pupil" or a N_SRCx7 array for "segments"
+
+        Examples
+        --------
+        >>> import ceo
+        >>> gs = ceo.Source("V",rays_box_size=25.5, rays_box_sampling=256, rays_origin=[0,0,25]) 
+        >>> gmt = ceo.GMT_MX(25.5,256)
+        >>> gmt.propagate(gs)
+        
+        The piston over the entire pupil is obtained with:
+        
+        >>> gs.piston(where="pupil")
+
+        The 7 segment pistons are retrieved with
+
+        >>> gs.piston(where="segments")
+
+        See also
+        --------
+        GMT_MX : a class embedding GMT M1 and M2 classes 
+        GMT_M1 : a class for GMT M1 model
+        """
+        amplitude = self.wavefront.amplitude.host()
+        if where=='pupil':
+            return np.sum(self.wavefront.phase.host(),axis=1)/np.sum(amplitude,axis=1)
+        else:
+#            Q = mask*amplitude.T
+#            return np.dot(Q,np.reshape( self.wavefront.phase.host() , (-1,) ) ).flatten()/np.sum(Q,axis=1)    
+            ps = np.zeros((self.size,7))
+            for k in range(self.size):
+                Q = self.rays.piston_mask[k]*self.wavefront.amplitude.host()[k,:]
+                ps[k,:] = np.dot(Q,self.wavefront.phase.host()[k,:])/np.sum(Q,axis=1)
+            return ps
+                
 @
 \subsubsection{Ray tracing routines}
 \label{sec:ray-tracing-routines-1}
