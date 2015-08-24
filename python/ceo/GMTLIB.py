@@ -17,8 +17,6 @@ class GMT_MX:
         The largest radial order of the Zernike polynomials on M1 segments, default to 0
     M2_radial_order : int, optionnal
         The largest radial order of the Zernike polynomials on M2 segments, default to 0
-    N_SRC : int 
-        The total number of sources to be propagated through the system
 
     Attributes
     ----------
@@ -371,13 +369,12 @@ class SegmentPistonSensor:
     >>> SPS = ceo.SegmentPistonSensor(gmt,src)
     >>> src.reset()
     >>> gmt.propagate(src)
-    >>> SPS.P = gmt.M1.piston_mask
 
     The piston per M1 segment is obtained with
 
     >>> SPS.piston(src,segment='full')
 
-    The 12 differential piston are given by
+    The 12 differential pistons are given by
 
     >>> SPS.piston(src,segment='edge')
     """
