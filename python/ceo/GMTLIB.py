@@ -69,11 +69,11 @@ class GMT_MX:
 
     >>> gpu_ps1d = src.wavefront.phase()
     """
-    def __init__(self, D, D_px, M1_radial_order=0, M2_radial_order=0, N_SRC=1):
+    def __init__(self, D, D_px, M1_radial_order=0, M2_radial_order=0):
         self.D = D
         self.D_px = D_px
-        self.M1 = GMT_M1(D, D_px, radial_order=M1_radial_order, N_SRC=N_SRC)
-        self.M2 = GMT_M2(D, D_px, radial_order=M2_radial_order, N_SRC=N_SRC)
+        self.M1 = GMT_M1(D, D_px, radial_order=M1_radial_order)
+        self.M2 = GMT_M2(D, D_px, radial_order=M2_radial_order)
         self.focal_plane_distance = -5.830
         self.focal_plane_radius   =  2.197173
 
@@ -400,7 +400,8 @@ class SegmentPistonSensor:
         self.L = 1.5
         self.M = []
         for k_SRC in range(src.N_SRC):
-            xySrc = 0.0#82.5*np.array( [[src.zenith*math.cos(src.azimuth)],[src.zenith*math.sin(src.azimuth)]] )
+            xySrc = 82.5*np.array( [[src.zenith[k_SRC]*math.cos(src.azimuth[k_SRC])],
+                                    [src.zenith[k_SRC]*math.sin(src.azimuth[k_SRC])]] )
             #print xySrc        
             _M_ = []
             for k in range(6):
@@ -434,12 +435,13 @@ class SegmentPistonSensor:
         """
         
         if segment=="full":
-            p = src.wavefront.piston(mask=self.P)
+            p = src.piston(where='segments')
         if segment=="edge":
+            
             W = src.wavefront.phase.host()
             p = np.zeros((src.N_SRC,12))
             for k_SRC in range(src.N_SRC):
-                _P_ = self.P[k_SRC]
+                _P_ = src.rays.piston_mask[k_SRC]
                 _M_ = self.M[k_SRC]
                 for k in range(6):
                     #print k,(k+1)%6

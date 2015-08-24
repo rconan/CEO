@@ -135,6 +135,7 @@ from utilities cimport cuDoubleArray
 <<rayTracing.pxd contents>>=
     cdef cppclass bundle:
         int N_RAY, N_BUNDLE
+	int *d__piston_mask
         rtd *d__sphere_radius
         rtd *d__sphere_distance
         vector *d__sphere_origin
@@ -159,7 +160,7 @@ from utilities cimport cuDoubleArray
         void get_vignetting(double *)
 @
 <<class definitions>>=
-from utilities cimport cuFloatArray, cuDoubleArray
+from utilities cimport cuFloatArray, cuDoubleArray, cuIntArray
 from source cimport Source
 # Bundle
 cdef class Bundle:
@@ -175,6 +176,7 @@ cdef class Bundle:
     cdef public cuDoubleArray sphere_radius
     cdef public cuDoubleArray sphere_distance
     cdef double[:,::1] _d__sphere_origin_
+    cdef cuIntArray _piston_mask_
 <<rayTracing.pyx>>=
 # polar bundle
 cdef class Bundle:
@@ -212,6 +214,8 @@ cdef class Bundle:
         The radius of the reference sphere used to compute the optical path difference
     sphere_distance : cuDoubleArray, read only
         The distance from the last surface to the reference sphere used to compute the optical path difference
+    piston_mask : numpy ndarray
+        A 7 columns array where each column is a mask corresponding to 1 segment
     """
 
     def __cinit__(self, Source src):
@@ -239,6 +243,9 @@ cdef class Bundle:
         self.sphere_radius._c_gpu.dev_data = self._c_bundle.d__sphere_radius
         self.sphere_distance = cuDoubleArray( shape=(self._c_bundle.N_BUNDLE,1),dev_malloc=False)
         self.sphere_distance._c_gpu.dev_data = self._c_bundle.d__sphere_distance
+
+        self._piston_mask_ = cuIntArray(shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY))
+        self._piston_mask_._c_gpu.dev_data = self._c_bundle.d__piston_mask;
 
     <<bundle common>>
 @ 
@@ -273,6 +280,7 @@ def to_sphere(self, sphere_origin=None,
         The location of the focal plane on the optical axis; default: 0.0
     focal_plane_radius : double, optional
         The radius of curvature of the focal plane; default: 0.0
+
     """
     cdef vector origin
     if sphere_origin is not None:
@@ -336,6 +344,12 @@ property vignetting:
     def __get__(self):
         self._c_bundle.get_vignetting(self._vignetting_._c_gpu.dev_data)
         return self._vignetting_
+
+
+property piston_mask:
+    def __get__(self):
+        P = self._piston_mask_.host()
+        return [ np.array( [P[kk,:].flatten()==k for k in range(1,8)] ) for kk in range(self._piston_mask_.shape[0])]
 @
 
 \subsubsection{Coordinate system}
@@ -465,13 +479,13 @@ cdef class Aperture:
 	void global_tiptilt(float , float )
 @  where
 <<python GMT M12 functions>>=
-int *d__piston_mask
 coordinate_system aperture_CS
 coordinate_system conic_CS
 coordinate_system rigid_body_CS
 coordinate_system motion_CS
 void setup(float , int )
 void setup(float , int , int)
+void setup(float , int, zernikeS *)
 void setup(float , int, zernikeS *, int)
 void cleanup()
 void update(vector , vector ,int )
@@ -481,18 +495,14 @@ void blocking(bundle *)
 @
 <<rayTracing.pyx>>=
 # GMT M1
-from utilities cimport cuIntArray
 cdef class GMT_M1:
     <<GMT M12 docstring>>
     cdef gmt_m1 *_c_gmt_m12
-    cdef public cuIntArray _piston_mask_
     <<GMT M12 class properties>>    
 
     def __cinit__(self, float D, int D_px, int radial_order=0, int N_SRC=1):
         self._c_gmt_m12 = new gmt_m1()
         <<GMT M12 constructor>>
-        self._piston_mask_ = cuIntArray(shape=(N_SRC,D_px*D_px))
-        self._piston_mask_._c_gpu.dev_data = self._c_gmt_m12.d__piston_mask;
 
     <<GMT M12 methods>>
 
@@ -511,15 +521,10 @@ cdef class GMT_M1:
             The y axis angle
         """
         self._c_gmt_m12.global_tiptilt(tip, tilt);
-
-    property piston_mask:
-        def __get__(self):
-            P = self._piston_mask_.host()
-            return [ np.array( [P[kk,:].flatten()==k for k in range(1,8)] ) for kk in range(self._piston_mask_.shape[0])]
 @
 <<GMT M12 constructor>>=
 self.zernike = ZernikeS(radial_order,N_SURF=7)
-self._c_gmt_m12.setup(D, D_px, <zernikeS *> self.zernike._c_zernikeS, N_SRC)
+self._c_gmt_m12.setup(D, D_px, <zernikeS *> self.zernike._c_zernikeS, 0)
 self.aperture_CS = Coordinate_system(7)
 self.aperture_CS._c_coordinate_system = &(self._c_gmt_m12.aperture_CS)
 self.conic_CS = Coordinate_system(7)
@@ -605,13 +610,6 @@ D_px : float
     The size in pxixel of the pupil plane
 radial_order : int, optionnal
     The radial order of the last Zernike polynomials, default to 0
-N_SRC : int, optionnal
-    The number of sources, defaults to 1
-
-Attributes
-----------
-piston_mask : numpy ndarray
-    A 7 columns array where each column is a mask corresponding to 1 segment
 
 Examples
 --------
@@ -936,6 +934,9 @@ The optical path difference is computed with respect to a reference sphere which
 <<ray bundle parameters>>=
 rtd *d__sphere_distance, *d__sphere_radius;
 vector *d__sphere_origin;
+@ The GMT segment piston mask:
+<<ray bundle parameters>>=
+int *d__piston_mask;
 @
 \subsection{Setup \& Cleanup}
 \label{sec:bundle-setup--cleanup}
@@ -1052,6 +1053,7 @@ The cartesian coordinates are defined with the sampling of the square box length
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY*N_BUNDLE ) );
   <<chief ray allocation>>
 }
 @ 
@@ -1111,6 +1113,7 @@ void bundle::cleanup(void)
   HANDLE_ERROR( cudaFree( d__chief_ray ) );
   HANDLE_ERROR( cudaFree( d__origin ) );
   HANDLE_ERROR( cudaFree( d__chief_origin ) );
+  HANDLE_ERROR( cudaFree( d__piston_mask ) );
   HANDLE_ERROR( cudaFree( d__sphere_origin ) );
   HANDLE_ERROR( cudaFree( d__sphere_radius ) );
   HANDLE_ERROR( cudaFree( d__sphere_distance ) );
@@ -3644,7 +3647,7 @@ rtd height;
 @
 \item the M1 pupil mask [[V]]:
 <<GMT M12 parameters>>=
-mask V;
+mask *V;
 @
 \item the segment index offset (0 for M1 and 3 for M2):
 <<GMT M12 parameters>>=
@@ -3723,8 +3726,6 @@ void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
 @  where
 <<GMT setup common>>=
 
-HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*D_px*D_px*N_SRC ) );
-
 vector __v0 = {0.0,0.0,0.0},
        __v = {D_full*0.5,0.0,0.0},
        origin[7],
@@ -3746,7 +3747,6 @@ zo = conic_equation(&__v,&__v0,conic_k,conic_c);
 
 <<M12 motion definition>>
 
-V.setup(D_px*D_px*N_SRC);
 @
 The rigid body coordinate systems are aligned with the segment coordinate systems.
 The origins $[x_O, y_O, z_O]$ of the segment coordinate systems are given with respect to the global coordinate system which origin is at the vertex of M1 conic surface: 
@@ -3891,8 +3891,6 @@ void gmt_m1::cleanup(void)
 @ with
 <<GMT cleanup common>>=
 fprintf(stdout," |-");
-V.cleanup();
-fprintf(stdout," |-");
 aperture_CS.cleanup();
 fprintf(stdout," |-");
 conic_CS.cleanup();
@@ -3901,7 +3899,6 @@ rigid_body_CS.cleanup();
 fprintf(stdout," |-");
 motion_CS.cleanup();
 HANDLE_ERROR( cudaFree( d__conic_origin ) );
-HANDLE_ERROR( cudaFree( d__piston_mask ) );
 @
 The rigid body motion parameters are updated with:
 <<GMT M1 functions>>=
@@ -3946,15 +3943,16 @@ void gmt_m1::blocking(bundle *rays)
  rtd R2, Rri2;
  R2 = D_clear*D_clear*0.25;
  Rri2 = R2*ri*ri;
+ V = &(rays->V);
  // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
  // printf("N_BUNDLE=%d\n",rays->N_BUNDLE);
  int nel = rays->N_RAY*rays->N_BUNDLE;
  dim3 blockDim(N_THREAD2);
  dim3 gridDim(nel/N_THREAD2+1);
- fill_ones_char LLL gridDim,blockDim RRR (V.m,nel);
+ fill_ones_char LLL gridDim,blockDim RRR (V->m,nel);
  blockDim = dim3(N_THREAD,N_THREAD);
  gridDim  = dim3(rays->N_RAY/N_THREAD2+1,1,rays->N_BUNDLE);
- m1_blocking_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
+ m1_blocking_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY, 
 					     Rri2, R2,
 					     aperture_CS.d__R,
 					     aperture_CS.d__origin,
@@ -3962,7 +3960,7 @@ void gmt_m1::blocking(bundle *rays)
 					     rigid_body_CS.d__origin,
 					     motion_CS.d__R,
 					     motion_CS.d__origin);
- GMT_intersection LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY);
+ GMT_intersection LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY);
 @ and with the kernel
 <<GMT blocking kernel>>=
 __global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY, 
@@ -4015,10 +4013,11 @@ void gmt_m1::trace(bundle *rays)
  rtd R2, Rri2;
  R2 = D_clear*D_clear*0.25;
  Rri2 = R2*ri*ri;
+ V = &(rays->V);
  // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
  dim3 blockDim(1,1);
  dim3 gridDim(1,1,rays->N_BUNDLE);
- m1_trace_chief_kernel LLL gridDim , blockDim RRR (V.m, rays->d__chief_ray, 1, 
+ m1_trace_chief_kernel LLL gridDim , blockDim RRR (V->m, rays->d__chief_ray, 1, 
 						   conic_CS.d__R,
 						   conic_CS.d__origin,
 						   conic_k, conic_c,
@@ -4032,9 +4031,10 @@ void gmt_m1::trace(bundle *rays)
 						   0.5*D_full);
  blockDim = dim3(N_THREAD,N_THREAD);
  gridDim  = dim3(rays->N_RAY/N_THREAD2+1,1,rays->N_BUNDLE);
- HANDLE_ERROR( cudaMemset(V.m, 0, sizeof(char)*rays->N_RAY*rays->N_BUNDLE ) );
- HANDLE_ERROR( cudaMemset(d__piston_mask, 0, sizeof(int)*rays->N_RAY*rays->N_BUNDLE ) );
- m1_trace_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY, 
+ HANDLE_ERROR( cudaMemset(V->m, 0, sizeof(char)*rays->N_RAY*rays->N_BUNDLE ) );
+ HANDLE_ERROR( cudaMemset(rays->d__piston_mask, 0, 
+			  sizeof(int)*rays->N_RAY*rays->N_BUNDLE ) );
+ m1_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY, 
 					     Rri2, R2,
 					     aperture_CS.d__R,
 					     aperture_CS.d__origin,
@@ -4050,8 +4050,8 @@ void gmt_m1::trace(bundle *rays)
 					     ZS->d__a, ZS->d__cx, ZS->d__cy,
 					     0.5*D_full,
 					     rays->d__chief_ray,
-					     d__piston_mask);
- GMT_intersection LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY);
+					     rays->d__piston_mask);
+ GMT_intersection LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY);
 
 @ and with the kernel
 <<GMT ray tracing kernel>>=
