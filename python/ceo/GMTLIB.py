@@ -398,20 +398,22 @@ class SegmentPistonSensor:
         #print xy_rp
         self.W = 1.5
         self.L = 1.5
-        xySrc = 82.5*np.array( [[src.zenith*math.cos(src.azimuth)],[src.zenith*math.sin(src.azimuth)]] )
-        #print xySrc        
-        M = []
-        for k in range(6):
-            theta = -k*math.pi/3
-            #print ROT(theta)
-            xyp = np.dot(ROT(theta),xy) - xy_rc - xySrc
-            M.append( np.logical_and( np.abs(xyp[0,:])<self.L/2,  np.abs(xyp[1,:])<self.W/2 ) )
-        for k in range(6):
-            theta = (1-k)*math.pi/3
-            #print ROT(theta)
-            xyp = np.dot(ROT(theta),xy) - xy_rp - xySrc
-            M.append( np.logical_and( np.abs(xyp[0,:])<self.L/2,  np.abs(xyp[1,:])<self.W/2 ) )
-        self.M = np.array( M )
+        self.M = []
+        for k_SRC in range(src.N_SRC):
+            xySrc = 0.0#82.5*np.array( [[src.zenith*math.cos(src.azimuth)],[src.zenith*math.sin(src.azimuth)]] )
+            #print xySrc        
+            _M_ = []
+            for k in range(6):
+                theta = -k*math.pi/3
+                #print ROT(theta)
+                xyp = np.dot(ROT(theta),xy) - xy_rc - xySrc
+                _M_.append( np.logical_and( np.abs(xyp[0,:])<self.L/2,  np.abs(xyp[1,:])<self.W/2 ) )
+            for k in range(6):
+                theta = (1-k)*math.pi/3
+                #print ROT(theta)
+                xyp = np.dot(ROT(theta),xy) - xy_rp - xySrc
+                _M_.append( np.logical_and( np.abs(xyp[0,:])<self.L/2,  np.abs(xyp[1,:])<self.W/2 ) )
+            self.M.append( np.array( _M_ ) )
         #print self.M.shape
 
     def piston(self,src, segment="full"):
@@ -434,12 +436,15 @@ class SegmentPistonSensor:
         if segment=="full":
             p = src.wavefront.piston(mask=self.P)
         if segment=="edge":
-            W = np.reshape( src.wavefront.phase.host() , (-1,) )
-            p = np.zeros(12)
-            for k in range(6):
-                #print k,(k+1)%6
-                p[2*k] = np.sum( W*self.P[k,:]*self.M[k,:] )/np.sum( self.P[k,:]*self.M[k,:] ) - \
-                         np.sum( W*self.P[6,:]*self.M[k,:] )/np.sum( self.P[6,:]*self.M[k,:] )
-                p[2*k+1] = np.sum( W*self.P[k,:]*self.M[k+6,:] )/np.sum( self.P[k,:]*self.M[k+6,:] ) - \
-                           np.sum( W*self.P[(k+1)%6,:]*self.M[k+6,:] )/np.sum( self.P[(k+1)%6,:]*self.M[k+6,:] )
+            W = src.wavefront.phase.host()
+            p = np.zeros((src.N_SRC,12))
+            for k_SRC in range(src.N_SRC):
+                _P_ = self.P[k_SRC]
+                _M_ = self.M[k_SRC]
+                for k in range(6):
+                    #print k,(k+1)%6
+                    p[k_SRC,2*k] = np.sum( W[k_SRC,:]*_P_[k,:]*_M_[k,:] )/np.sum( _P_[k,:]*_M_[k,:] ) - \
+                             np.sum( W[k_SRC,:]*_P_[6,:]*_M_[k,:] )/np.sum( _P_[6,:]*_M_[k,:] )
+                    p[k_SRC,2*k+1] = np.sum( W[k_SRC,:]*_P_[k,:]*_M_[k+6,:] )/np.sum( _P_[k,:]*_M_[k+6,:] ) - \
+                               np.sum( W[k_SRC,:]*_P_[(k+1)%6,:]*_M_[k+6,:] )/np.sum( _P_[(k+1)%6,:]*_M_[k+6,:] )
         return p

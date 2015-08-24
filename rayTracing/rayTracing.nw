@@ -485,13 +485,13 @@ from utilities cimport cuIntArray
 cdef class GMT_M1:
     <<GMT M12 docstring>>
     cdef gmt_m1 *_c_gmt_m12
-    cdef cuIntArray _piston_mask_
+    cdef public cuIntArray _piston_mask_
     <<GMT M12 class properties>>    
 
     def __cinit__(self, float D, int D_px, int radial_order=0, int N_SRC=1):
         self._c_gmt_m12 = new gmt_m1()
         <<GMT M12 constructor>>
-        self._piston_mask_ = cuIntArray(shape=(D_px*D_px*N_SRC))
+        self._piston_mask_ = cuIntArray(shape=(N_SRC,D_px*D_px))
         self._piston_mask_._c_gpu.dev_data = self._c_gmt_m12.d__piston_mask;
 
     <<GMT M12 methods>>
@@ -515,7 +515,7 @@ cdef class GMT_M1:
     property piston_mask:
         def __get__(self):
             P = self._piston_mask_.host()
-            return np.array( [P.flatten()==k for k in range(1,8)] )
+            return [ np.array( [P[kk,:].flatten()==k for k in range(1,8)] ) for kk in range(self._piston_mask_.shape[0])]
 @
 <<GMT M12 constructor>>=
 self.zernike = ZernikeS(radial_order,N_SURF=7)

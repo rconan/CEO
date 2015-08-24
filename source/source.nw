@@ -218,11 +218,11 @@ cdef class Complex_amplitude:
     def __cinit__(self,Source src):
         self._c_complex_amplitude = new complex_amplitude()
         self._c_complex_amplitude = &(src._c_source.wavefront)
-        self.phase = cuFloatArray(shape=(self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N,
-                                         self._c_complex_amplitude.N))
+        self.phase = cuFloatArray(shape=(self._c_complex_amplitude.N,
+                                         self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N))
         self.phase._c_gpu.dev_data = self._c_complex_amplitude.phase
-        self.amplitude = cuFloatArray(shape=(self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N,
-                                             self._c_complex_amplitude.N))
+        self.amplitude = cuFloatArray(shape=(self._c_complex_amplitude.N,
+                                             self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N))
         self.amplitude._c_gpu.dev_data = self._c_complex_amplitude.amplitude
 
 
@@ -239,7 +239,7 @@ cdef class Complex_amplitude:
         self._c_complex_amplitude.rms(<float *>rms.data)
         return rms
         
-    def piston(self, np.ndarray mask=None):
+    def piston(self, list mask=None):
         """
         Get the piston corresponding to each segment
 
@@ -277,10 +277,16 @@ cdef class Complex_amplitude:
         """
         amplitude = self.amplitude.host()
         if mask is None:
-            return np.sum(self.phase.host()[amplitude>0])/np.sum(amplitude)
+            return np.sum(self.phase.host(),axis=1)/np.sum(amplitude,axis=1)
         else:
-            Q = mask*amplitude.T
-            return np.dot(Q,np.reshape( self.phase.host() , (-1,) ) ).flatten()/np.sum(Q,axis=1)    
+#            Q = mask*amplitude.T
+#            return np.dot(Q,np.reshape( self.phase.host() , (-1,) ) ).flatten()/np.sum(Q,axis=1)    
+            ps = np.zeros((self._c_complex_amplitude.N,7))
+            for k in range(self._c_complex_amplitude.N):
+                Q = mask[k]*self.amplitude.host()[k,:]
+                ps[k,:] = np.dot(Q,self.phase.host()[k,:])/np.sum(Q,axis=1)
+            return ps
+                
 
     def reset(self, cuFloatArray phase = None):
         """
