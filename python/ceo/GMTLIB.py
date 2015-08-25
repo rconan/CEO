@@ -121,6 +121,8 @@ class GMT_MX:
             for M2: "pointing neutral", "coma neutral", "zernike", "Txyz", "segment tip-tilt", "TT7 segment tip-tilt"
         stroke : float
             The amplitude of the motion
+	segment : string
+	    Idealized Segment Piston measurement type: "full" or "edge" (see SegmentPistonSensor documentation).
         """
         def pushpull(action):
             def get_slopes(stroke_sign):
@@ -143,6 +145,17 @@ class GMT_MX:
                 wfs.reset()
                 wfs.analyze(gs)
                 return wfs.c7
+            s_push = get_slopes(+1)
+            s_pull = get_slopes(-1)
+            return 0.5*(s_push-s_pull)/stroke
+
+        def SPS_pushpull(action):
+            def get_slopes(stroke_sign):
+                self.reset()
+                action(stroke_sign*stroke)
+                gs.reset()
+                self.propagate(gs)
+                return wfs.piston(gs, segment=segment)
             s_push = get_slopes(+1)
             s_pull = get_slopes(-1)
             return 0.5*(s_push-s_pull)/stroke
@@ -265,7 +278,25 @@ class GMT_MX:
                     D[:,idx] = TT7_pushpull( Ry )
                     idx += 1
                 sys.stdout.write("\n")
-
+	    if mode=="segment piston":
+		if segment=="edge":
+		    n_meas = 12
+		elif segment=="full":
+		    n_meas = 7
+		else : 
+		    sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
+		n_mode = 6
+		D = np.zeros((n_meas,n_mode))
+		idx = 0	
+                Tz = lambda x : self.M2.update(origin=[0,0,x],euler_angles=[0,0,0],idx=kSeg)
+                sys.stdout.write("Segment #:")
+                for kSeg in range(1,7):
+                    sys.stdout.write("%d "%kSeg)
+                    D[:,idx] = SPS_pushpull( Tz )
+                    idx += 1
+                if segment=="full":
+		    D = D[0:6,:]
+		sys.stdout.write("\n")
         sys.stdout.write("------------\n")
 
         return D
