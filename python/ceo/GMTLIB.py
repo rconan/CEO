@@ -103,7 +103,7 @@ class GMT_MX:
         self.M2.reset()
         self.M2.zernike.reset()
 
-    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None):
+    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None):
         """
         Calibrate the different degrees of freedom of the  mirrors 
 
@@ -155,7 +155,7 @@ class GMT_MX:
                 action(stroke_sign*stroke)
                 gs.reset()
                 self.propagate(gs)
-                return wfs.piston(gs, segment=segment)
+                return wfs.piston(gs, segment=segment).ravel()
             s_push = get_slopes(+1)
             s_pull = get_slopes(-1)
             return 0.5*(s_push-s_pull)/stroke
@@ -286,7 +286,7 @@ class GMT_MX:
 		else : 
 		    sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
 		n_mode = 6
-		D = np.zeros((n_meas,n_mode))
+		D = np.zeros((n_meas*gs.N_SRC,n_mode))
 		idx = 0	
                 Tz = lambda x : self.M2.update(origin=[0,0,x],euler_angles=[0,0,0],idx=kSeg)
                 sys.stdout.write("Segment #:")
@@ -462,7 +462,8 @@ class SegmentPistonSensor:
             A 6 element piston vector for segment="full" or a 12 element differential piston vector for segment="edge"
         """
         
-        if segment=="full":
+        assert segment=="full" or segment=="edge", "segment is either ""full"" or ""edge"""
+	if segment=="full":
             p = src.piston(where='segments')
         if segment=="edge":
             
