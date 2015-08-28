@@ -430,7 +430,7 @@ class SegmentPistonSensor:
         p : numpy ndarray
             A 6 element piston vector for segment="full" or a 12 element differential piston vector for segment="edge"
         """
-        
+        assert segment=="full" or segment=="edge", "segment parameter is either ""full"" or ""edge"""
         if segment=="full":
             p = src.piston(where='segments')
         if segment=="edge":
