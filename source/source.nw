@@ -1,4 +1,4 @@
-% -*- mode: Noweb; noweb-code-mode: python-mode -*-
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
 
 The source structure contains all the data associated with a remote optical emitter: its location, wavefront, irradiance, ...
 
@@ -512,10 +512,11 @@ cdef class Source:
         GMT_MX : a class embedding GMT M1 and M2 classes 
         GMT_M1 : a class for GMT M1 model
         """
+        assert where=="pupil" or where=="segments", "where parameter is either ""pupil"" or ""segments"""        
         amplitude = self.wavefront.amplitude.host()
         if where=='pupil':
             return np.sum(self.wavefront.phase.host(),axis=1)/np.sum(amplitude,axis=1)
-        else:
+        if where=='segments':
 #            Q = mask*amplitude.T
 #            return np.dot(Q,np.reshape( self.wavefront.phase.host() , (-1,) ) ).flatten()/np.sum(Q,axis=1)    
             ps = np.zeros((self.size,7))
@@ -1055,16 +1056,16 @@ M = M_in;
 @ with
 <<masking wavefront common>>=
 dim3 blockDim(16,1);
-dim3 gridDim(N_PX/16+1,N);
-apply_mask LLL gridDim,blockDim RRR (amplitude, phase, M->m, N_PX/N);  
+dim3 gridDim(N_PX/16+1);
+apply_mask LLL gridDim,blockDim RRR (amplitude, phase, M->m, N_PX);  
 @ and with the kernel:
 <<apply mask>>=
 __global__ void apply_mask(float* amplitude, float* phase, const char *pupil_mask, const int N) {
   int id;
   id = blockIdx.x * blockDim.x + threadIdx.x;
   if ( (id<N) && (pupil_mask[id]==0) ) {
-    amplitude[id + blockIdx.y*N] = 0.0;
-    phase[id + blockIdx.y*N]     = 0.0;
+    amplitude[id] = 0.0;
+    phase[id]     = 0.0;
   }
 }
 @

@@ -462,11 +462,10 @@ class SegmentPistonSensor:
             A 6 element piston vector for segment="full" or a 12 element differential piston vector for segment="edge"
         """
         
-        assert segment=="full" or segment=="edge", "segment is either ""full"" or ""edge"""
-	if segment=="full":
+        assert segment=="full" or segment=="edge", "segment parameter is either ""full"" or ""edge"""
+        if segment=="full":
             p = src.piston(where='segments')
         if segment=="edge":
-            
             W = src.wavefront.phase.host()
             p = np.zeros((src.N_SRC,12))
             for k_SRC in range(src.N_SRC):

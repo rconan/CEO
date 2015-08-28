@@ -3,4 +3,5 @@ c.NbConvertApp.notebooks = ["../atmosphere/Atmosphere.ipynb",
                             "../atmosphere/AtmospherePhaseScreenGradient.ipynb",
                             "../LMMSE/LaserTomography.ipynb",
                             "../shackHartmann/Shack-HartmannWavefrontSensor.ipynb",
-                            "../shackHartmann/Shack-HartmannNoisePropagation.ipynb"]
+                            "../shackHartmann/Shack-HartmannNoisePropagation.ipynb",
+                            "../rayTracing/GMT-Ray-Tracing.ipynb"]
