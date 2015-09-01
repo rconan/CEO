@@ -1625,6 +1625,7 @@ void host2dev()
 @ 
 <<class definitions>>=
 # cuFloatArray
+from operator import mul
 from numpy cimport ndarray
 cdef class cuFloatArray:
     cdef gpu *_c_gpu
@@ -1662,7 +1663,9 @@ cdef class cuFloatArray:
             self._c_gpu.host_data = <float *>self.host_data.data;
             self._c_gpu.host2dev()
             self.dev_malloc = True    
-        self.units = {'micron': 1e6, 'nm': 1e9, 'arcsec': 180*3600/math.pi}
+            self.units = {'micron': 1e6, 'nm': 1e9, 
+                          'arcsec': 180*3600/math.pi, 
+                          'mas',: 1e-3*180*3600/math.pi}
 
     def __dealloc__(self):
          if self.dev_malloc:
@@ -1673,6 +1676,7 @@ cdef class cuFloatArray:
         if self.shape==(0,0) or self.shape is None:
             raise ValueError("Data must have a size greater than zero!!")
         if shape is not None:
+            assert reduce(mul,shape,1)==reduce(mul,self.shape,1), "Total size of array must be unchanged!"
             self.shape = shape
         self.host_data = np.zeros(self.shape,order='c',dtype=np.float32)
         self._c_gpu.host_data = <float *>self.host_data.data;

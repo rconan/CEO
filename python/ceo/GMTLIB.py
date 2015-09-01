@@ -55,7 +55,7 @@ class GMT_MX:
     >>> gmt = ceo.GMT_MX(25.5,256, M1_radial_order=8, M2_radial_order=14)
 
     A source is propagated (geometrically) through the telescope with the following procedure:
-
+u
     >>> src = ceo.Source("R",rays_box_size=25.5,rays_box_sampling=256,rays_origin=[0.0,0.0,25])
     >>> gmt.propagate(src)
 
