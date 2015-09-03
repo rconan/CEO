@@ -495,15 +495,22 @@ class EdgeSensors:
             L = mirror.D_assembly/2
             q = mirror.D_full**2 - (L-x)**2 - (conic(L)-conic(x))**2
             return q
-        
+    
+        p = mirror.M_ID - 1
+        print p
+
         self.rho0 = brenth(fun,mirror.D_clear/2,1+mirror.D_clear/2)
-        self.x0 = np.array([(mirror.L-self.rho0)*math.cos(math.pi*(-2*k-3)/6) for k in range(6)])
-        self.y0 = np.array([(mirror.L-self.rho0)*math.sin(math.pi*(-2*k-3)/6) for k in range(6)])
+        k = np.arange(6)
+        o = math.pi*( p + (-2.0*k-3.0)/6.0 )
+        self.x0 = (mirror.L-self.rho0)*np.cos(o)
+        self.y0 = (mirror.L-self.rho0)*np.sin(o)
         R = mirror.D_full/2
-        self.x1 = np.array([R*math.cos(math.pi*(-2*k-1)/6) for k in range(6)])
-        self.y1 = np.array([R*math.sin(math.pi*(-2*k-1)/6) for k in range(6)])
-        self.x2 = np.roll( np.array([R*math.cos(math.pi*(7-2*k)/6) for k in range(6)]) , -1)
-        self.y2 = np.roll( np.array([R*math.sin(math.pi*(7-2*k)/6) for k in range(6)]) , -1)
+        o = math.pi*( p + (-2.0*k-1.0)/6.0 )
+        self.x1 = R*np.cos(o)
+        self.y1 = R*np.sin(o)
+        o = np.pi*( p + (7.0-2.0*k)/6.0 )
+        self.x2 = np.roll( R*np.cos(o) , -1 )
+        self.y2 = np.roll( R*np.sin(o) , -1 )
         self.z  = np.zeros(6)
 
     def read(self):
