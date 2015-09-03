@@ -480,9 +480,11 @@ class SegmentPistonSensor:
                                np.sum( W[k_SRC,:]*_P_[(k+1)%6,:]*_M_[k+6,:] )/np.sum( _P_[(k+1)%6,:]*_M_[k+6,:] )
         return p
 
-class edgeSensors:
+class EdgeSensors:
 
     def __init__(self, mirror):
+
+        self.M = mirror
         
         def conic(r):
             c = mirror.conic_c
@@ -495,3 +497,19 @@ class edgeSensors:
             return q
         
         self.rho0 = brenth(fun,mirror.D_clear/2,1+mirror.D_clear/2)
+        self.x0 = np.array([(mirror.L-self.rho0)*math.cos(math.pi*(-2*k-3)/6) for k in range(6)])
+        self.y0 = np.array([(mirror.L-self.rho0)*math.sin(math.pi*(-2*k-3)/6) for k in range(6)])
+        R = mirror.D_full/2
+        self.x1 = np.array([R*math.cos(math.pi*(-2*k-1)/6) for k in range(6)])
+        self.y1 = np.array([R*math.sin(math.pi*(-2*k-1)/6) for k in range(6)])
+        self.x2 = np.roll( np.array([R*math.cos(math.pi*(7-2*k)/6) for k in range(6)]) , -1)
+        self.y2 = np.roll( np.array([R*math.sin(math.pi*(7-2*k)/6) for k in range(6)]) , -1)
+        self.z  = np.zeros(6)
+
+    def read(self):
+        u0,v0,w0 = self.M.edge_sensors(self.x0,self.y0,self.z)
+        u1,v1,w1 = self.M.edge_sensors(self.x1,self.y1,self.z,edgeSensorId=6)
+        u2,v2,w2 = self.M.edge_sensors(self.x2,self.y2,self.z,segId0=1,edgeSensorId=6)
+        return np.concatenate((v0,v1-v2)),np.concatenate((w0,w1-w2))
+
+

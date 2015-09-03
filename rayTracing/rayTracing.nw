@@ -482,7 +482,7 @@ cdef class Aperture:
         void track(float *, float *, float *, int, int)
 @  where
 <<python GMT M12 functions>>=
-rtd D_assembly, D_full, D_clear, conic_c, conic_k
+rtd D_assembly, D_full, D_clear, L, conic_c, conic_k
 coordinate_system aperture_CS
 coordinate_system conic_CS
 coordinate_system rigid_body_CS
@@ -537,18 +537,6 @@ cdef class GMT_M1:
                               gy._c_gpu.dev_data,
                               gz._c_gpu.dev_data,
                               x.size, segId)
-        return gx.host(), gy.host(), gz.host()
-
-    def edge_sensors(self, np.ndarray x, np.ndarray y, np.ndarray z, int segId0=0, int edgeSensorId=0):
-
-        cdef cuFloatArray gx, gy, gz
-        gx = cuFloatArray( host_data = x )
-        gy = cuFloatArray( host_data = y )
-        gz = cuFloatArray( host_data = z )
-        self._c_gmt_m12.edge_sensors(gx._c_gpu.dev_data,
-                              gy._c_gpu.dev_data,
-                              gz._c_gpu.dev_data,
-       			      x.size, segId0, edgeSensorId)
         return gx.host(), gy.host(), gz.host()
 @
 <<GMT M12 constructor>>=
@@ -627,6 +615,19 @@ def reset(self):
     """
     self._c_gmt_m12.reset()
 
+
+def edge_sensors(self, double[:] x, double[:] y, double[:] z, int segId0=0, int edgeSensorId=0):
+
+    cdef cuFloatArray gx, gy, gz
+    gx = cuFloatArray( host_data = x )
+    gy = cuFloatArray( host_data = y )
+    gz = cuFloatArray( host_data = z )
+    self._c_gmt_m12.edge_sensors(gx._c_gpu.dev_data,
+                          gy._c_gpu.dev_data,
+                          gz._c_gpu.dev_data,
+                          x.size, segId0, edgeSensorId)
+    return gx.host(), gy.host(), gz.host()
+
 property D_assembly:
     def __get__(self):
         return self._c_gmt_m12.D_assembly
@@ -638,6 +639,10 @@ property D_full:
 property D_clear:
     def __get__(self):
         return self._c_gmt_m12.D_clear
+
+property L:
+    def __get__(self):
+        return self._c_gmt_m12.L
 
 property conic_c:
     def __get__(self):
@@ -3997,18 +4002,22 @@ We define 12 edge sensor coordinate systems (ESCS).
 \end{center}
 @ 
 <<M12 edge sensor definition>>=
+<<center segment edge sensors>>
+<<outer segment edge sensors>>
+sprintf(tag,"M%d EDGE SENSORS",M_ID);
+edge_sensors_CS.setup(origin, euler_angles, 12, tag);
 @ 
 The first 6 ESCSs are located on the center segment rim at azimuths $\pi(3-2k)/6,\quad \forall k \in [0,5]$ and the y--axis ($\xi$) points towards the center of the nearest outer segment i.e. it is rotated of $-\pi k/3$ around the z--axis.
 <<center segment edge sensors>>=
 for (k=0; k<6; k++)
 {
-  o = PI*(3-2*k)/6.0;
+  o = PI*(3-2*k)/6.0 + (M_ID-1)*PI;
   origin[k].x = 0.5*D_full*cos(o);
   origin[k].y = 0.5*D_full*sin(o);
   origin[k].z = height + conic_equation(origin + k, &__v0, conic_k, conic_c);;
   euler_angles[k].x = 0.0;
   euler_angles[k].y = 0.0;
-  euler_angles[k].z = -PI*k/3.0;
+  euler_angles[k].z = -PI*k/3.0 + (M_ID-1)*PI;
 }
 @
 The other 6 ESCSs are located in the middle of the line joining the center of two adjacent outer segments.
@@ -4019,13 +4028,13 @@ float R;
 R = sqrt(3.0)*L/2.0;
 for (k=0; k<6; k++)
 {
-  o = PI*(1-k)/3.0;
+  o = PI*(1-k)/3.0 + (M_ID-1)*PI;
   origin[k+6].x = R*cos(o);
   origin[k+6].y = R*sin(o);
   origin[k+6].z = height + conic_equation(origin + k + 6, &__v0, conic_k, conic_c);
   euler_angles[k+6].x = 0.0;
   euler_angles[k+6].y = 0.0;
-  euler_angles[k+6].z = PI*(1-k)/3.0;
+  euler_angles[k+6].z = PI*(1-k)/3.0 + (M_ID-1)*PI;
 }
 @ 
 There is measurement point for the 6 inner ESCSs.
@@ -4067,16 +4076,6 @@ void gmt_m1::edge_sensors(float *x, float *y, float *z, int N, int idx0, int idx
 }
 @  with
 <<GMT edge sensors common>>=
-int k;
-float o;
-vector origin[12], euler_angles[12];
-vector __v0 = {0.0,0.0,0.0};
-char tag[16];
-<<center segment edge sensors>>
-<<outer segment edge sensors>>
-sprintf(tag,"M%d EDGE SENSORS",M_ID);
-coordinate_system edge_sensors_CS;
-edge_sensors_CS.setup(origin, euler_angles, 12, tag);
 dim3 blockDim(6,1);
 dim3 gridDim(1,1);
 edge_sensors_kernel LLL gridDim, blockDim RRR (x, y, z, 6,
