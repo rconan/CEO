@@ -30,6 +30,7 @@ libsrc = $(CEOPATH)/lib/libceo.a
 
 .cu.o: 
 	$(NVCC) $(INCS) $(NVCCFLAGS) -o $@ -c $<
+	cp $@ ../lib/
 
 .nw.tex:
 	$(WEAVE) -delay -index $< > $@

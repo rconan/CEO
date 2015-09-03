@@ -1,6 +1,7 @@
 import sys
 import math
 import numpy as np
+from scipy.optimize import brenth
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann
 
 class GMT_MX:
@@ -478,3 +479,19 @@ class SegmentPistonSensor:
                     p[k_SRC,2*k+1] = np.sum( W[k_SRC,:]*_P_[k,:]*_M_[k+6,:] )/np.sum( _P_[k,:]*_M_[k+6,:] ) - \
                                np.sum( W[k_SRC,:]*_P_[(k+1)%6,:]*_M_[k+6,:] )/np.sum( _P_[(k+1)%6,:]*_M_[k+6,:] )
         return p
+
+class edgeSensors:
+
+    def __init__(self, mirror):
+        
+        def conic(r):
+            c = mirror.conic_c
+            k = mirror.conic_k
+            return c*r*r/(1+np.sqrt(1-k*(c*r)**2))
+
+        def fun(x):
+            L = mirror.D_assembly/2
+            q = mirror.D_full**2 - (L-x)**2 - (conic(L)-conic(x))**2
+            return q
+        
+        self.rho0 = brenth(fun,mirror.D_clear/2,1+mirror.D_clear/2)
