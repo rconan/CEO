@@ -478,7 +478,6 @@ cdef class Aperture:
     cdef cppclass gmt_m1:
         void test_ray_tracing()
         <<python GMT M12 functions>>
-	void global_tiptilt(float , float )
         void track(float *, float *, float *, int, int)
 @  where
 <<python GMT M12 functions>>=
@@ -497,6 +496,7 @@ void update(vector , vector ,int )
 void reset()
 void trace(bundle *)
 void blocking(bundle *)
+void global_tiptilt(float , float )
 void edge_sensors(float *, float *, float *, int, int, int)
 @
 <<rayTracing.pyx>>=
@@ -514,19 +514,6 @@ cdef class GMT_M1:
 
     def test(self):
         self._c_gmt_m12.test_ray_tracing();
-
-    def global_tiptilt(self, float tip, float tilt):
-        """
-        Applies a global tip--tilt to M1
-
-        Parameters
-        ----------
-        tip : float
-            The x axis angle
-        tilt : float
-            The y axis angle
-        """
-        self._c_gmt_m12.global_tiptilt(tip, tilt);
 
     def track(self, np.ndarray x, np.ndarray y, np.ndarray z, int segId):
 
@@ -616,6 +603,18 @@ def reset(self):
     """
     self._c_gmt_m12.reset()
 
+def global_tiptilt(self, float tip, float tilt):
+    """
+    Applies a global tip--tilt to M1
+
+    Parameters
+    ----------
+    tip : float
+        The x axis angle
+    tilt : float
+        The y axis angle
+    """
+    self._c_gmt_m12.global_tiptilt(tip, tilt);
 
 def edge_sensors(self, double[:] x, double[:] y, double[:] z, int segId0=0, int edgeSensorId=0):
 
@@ -3625,7 +3624,6 @@ A new structure to hold GMT M1 and M2 parameters and functions is defined.
 struct gmt_m1 {
   <<GMT M12 parameters>>
   <<GMT M12 functions>>
-  void global_tiptilt(float tip, float tilt);
 };
 @  with
 <<GMT M12 functions>>=
@@ -3638,6 +3636,7 @@ void update(vector _origin_, vector _euler_angles_,int idx);
 void reset(void);
 void trace(bundle *rays);
 void blocking(bundle *rays);
+void global_tiptilt(float tip, float tilt);
 void test_ray_tracing(void);
 void track(float *x, float *y, float *z, int N, int idx);
 void edge_sensors(float *x, float *y, float *z, int N, int idx0, int idx_edge_sensor);
@@ -4767,33 +4766,36 @@ where $\vec O_R$ is the rotation point.
 <<GMT M1 functions>>=
 void gmt_m1::global_tiptilt(float tip, float tilt)
 {
-  double alpha, beta, *d__C;
-  vector origin, euler_angles;
-  cublasHandle_t handle;
-  coordinate_system TT_CS;
-
-  origin.x = origin.y = origin.z = 0.0;
-  euler_angles.x = tip;
-  euler_angles.y = tilt;
-  euler_angles.z = 0.0;
-
-  TT_CS.setup(origin, euler_angles);
-  cublasCreate(&handle);
-
-  alpha = 1;
-  beta  = 0;
-  HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
-  int k, k9;
-  for (k=0;k<N;k++)
-    {
-      k9 = k*9;
-      <<global tip-tilt transformation>>
-    }
-
-  cublasDestroy(handle);
-  TT_CS.cleanup();
-  HANDLE_ERROR( cudaFree( d__C ) );
+  <<GMT global tip-tilt common>>
 }    
+@  with
+<<GMT global tip-tilt common>>=
+double alpha, beta, *d__C;
+vector origin, euler_angles;
+cublasHandle_t handle;
+coordinate_system TT_CS;
+
+origin.x = origin.y = origin.z = 0.0;
+euler_angles.x = tip;
+euler_angles.y = tilt;
+euler_angles.z = 0.0;
+
+TT_CS.setup(origin, euler_angles);
+cublasCreate(&handle);
+
+alpha = 1;
+beta  = 0;
+HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
+int k, k9;
+for (k=0;k<N;k++)
+  {
+    k9 = k*9;
+    <<global tip-tilt transformation>>
+	}
+
+cublasDestroy(handle);
+TT_CS.cleanup();
+HANDLE_ERROR( cudaFree( d__C ) );
 
 @ 
 \section{GMT M2}
@@ -4907,6 +4909,15 @@ void gmt_m2::edge_sensors(float *x, float *y, float *z, int N, int idx0, int idx
 \subsection{Global motions}
 \label{sec:global-motions}
 
+\subsection{Global tip--tilt}
+\label{sec:global-tip-tilt-1}
+
+<<GMT M2 functions>>=
+void gmt_m2::global_tiptilt(float tip, float tilt)
+{
+  <<GMT global tip-tilt common>>
+}    
+@
 \subsubsection{Tip--tilt neutral}
 \label{sec:tip-tilt-neutral}
 
