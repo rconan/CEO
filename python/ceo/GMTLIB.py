@@ -103,7 +103,7 @@ class GMT_MX:
         self.M2.reset()
         self.M2.zernike.reset()
 
-    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None):
+    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,agws=None,recmat=None):
         """
         Calibrate the different degrees of freedom of the  mirrors 
 
@@ -154,6 +154,31 @@ class GMT_MX:
                 self.reset()
                 action(stroke_sign*stroke)
                 gs.reset()
+                self.propagate(gs)
+                return wfs.piston(gs, segment=segment).ravel()
+            s_push = get_slopes(+1)
+            s_pull = get_slopes(-1)
+            return 0.5*(s_push-s_pull)/stroke
+
+        def FDSP_pushpull(action):
+	    def close_M2_segTT_loop():
+		niter = 7 
+		myTTest1 = np.zeros(14)
+		for ii in range(niter):
+        	    gs.reset()
+		    self.propagate(gs)
+        	    agws.reset()
+        	    agws.analyze(gs)
+        	    slopevec = agws.valid_slopes.host().ravel()
+        	    myTTest1 += np.dot(recmat, slopevec)
+        	    myTTest = myTTest1.reshape((7,2))
+        	    for idx in range(7): self.M2.update(euler_angles=
+				np.array([-myTTest[idx,0],-myTTest[idx,1],0]), idx=idx+1)
+            def get_slopes(stroke_sign):
+		self.reset()
+                action(stroke_sign*stroke)
+                close_M2_segTT_loop()
+		gs.reset()
                 self.propagate(gs)
                 return wfs.piston(gs, segment=segment).ravel()
             s_push = get_slopes(+1)
@@ -214,6 +239,46 @@ class GMT_MX:
                         D[:,idx] = pushpull( M1_zernike_update )
                         idx += 1
                     sys.stdout.write("\n")
+	    if mode=="segment piston":
+		if segment=="edge":
+		    n_meas = 12
+		elif segment=="full":
+		    n_meas = 7
+		else : 
+		    sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
+		n_mode = 6
+		D = np.zeros((n_meas*gs.N_SRC,n_mode))
+		idx = 0	
+                Tz = lambda x : self.M1.update(origin=[0,0,x],euler_angles=[0,0,0],idx=kSeg)
+                sys.stdout.write("Segment #:")
+                for kSeg in range(1,7):
+                    sys.stdout.write("%d "%kSeg)
+                    D[:,idx] = SPS_pushpull( Tz )
+                    idx += 1
+                if segment=="full":
+		    D = D[0:6,:]
+		sys.stdout.write("\n")
+	    if mode=="FDSP":	
+		if segment=="edge":
+		    n_meas = 12
+		elif segment=="full":
+		    n_meas = 7
+		else : 
+		    sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
+		D = np.zeros((n_meas*gs.N_SRC,2*6))
+                idx = 0
+                Rx = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
+                Ry = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
+                sys.stdout.write("Segment #:")
+                for kSeg in range(1,7):
+                    sys.stdout.write("%d "%kSeg)
+                    D[:,idx] = FDSP_pushpull( Rx )
+                    idx += 1
+                    D[:,idx] = FDSP_pushpull( Ry )
+                    idx += 1
+                if segment=="full":
+		    D = D[0:6,:]
+                sys.stdout.write("\n")
 
         if mirror=="M2":
             sys.stdout.write("___ M2 ___\n")
