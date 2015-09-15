@@ -371,14 +371,14 @@ cdef class Coordinate_system:
     cdef coordinate_system *_c_coordinate_system
     cdef double[:,::1] _origin_
     cdef double[:,::1] _euler_angles_
-    cdef public double[::1] R
+    cdef double[:,:,::1] _R_
     cdef int N
 
     def __cinit__(self, int N=1):
         self.N = N
         self._c_coordinate_system = new coordinate_system()
         self._origin_       = np.empty((N,3), dtype=np.float64)
-        self._euler_angles_ = np.empty((N,3), dtype=np.float64)
+        self._euler_angles_ = np.empty((N,3), dtype=np.float64)        
 
     property origin:
         def __get__(self):
@@ -387,7 +387,7 @@ cdef class Coordinate_system:
                 self._origin_[k,0] = self._c_coordinate_system.origin[k].x
                 self._origin_[k,1] = self._c_coordinate_system.origin[k].y
                 self._origin_[k,2] = self._c_coordinate_system.origin[k].z
-            return np.asarray(self._origin_)
+            return np.array(self._origin_)
 
     property euler_angles:
         def __get__(self):
@@ -396,7 +396,12 @@ cdef class Coordinate_system:
                 self._euler_angles_[k,0] = self._c_coordinate_system.euler_angles[k].x
                 self._euler_angles_[k,1] = self._c_coordinate_system.euler_angles[k].y
                 self._euler_angles_[k,2] = self._c_coordinate_system.euler_angles[k].z
-            return np.asarray(self._euler_angles_)
+            return np.array(self._euler_angles_)
+
+    property R:
+        def __get__(self):
+            self._R_ = <double[:self.N,:3,:3]>self._c_coordinate_system.R
+            return np.array(self._R_)
 @
 \subsubsection{Conic surface}
 \label{sec:surface-1}
@@ -487,6 +492,7 @@ coordinate_system aperture_CS
 coordinate_system conic_CS
 coordinate_system rigid_body_CS
 coordinate_system motion_CS
+coordinate_system TT_CS
 void setup(float , int )
 void setup(float , int , int)
 void setup(float , int, zernikeS *)
@@ -538,6 +544,8 @@ self.motion_CS = Coordinate_system(7)
 self.motion_CS._c_coordinate_system = &(self._c_gmt_m12.motion_CS)
 self.rigid_body_CS = Coordinate_system(7)
 self.rigid_body_CS._c_coordinate_system = &(self._c_gmt_m12.rigid_body_CS)
+self.TT_CS = Coordinate_system(1)
+self.TT_CS._c_coordinate_system = &(self._c_gmt_m12.TT_CS)
 @ 
 <<GMT M12 methods>>=
 def __dealloc__(self):
@@ -699,11 +707,13 @@ M2 pointing neutral and coma neutral tip-tilt are realized with
 """
 @ and with
 <<GMT M12 class properties>>=
-cdef public ZernikeS zernike
-cdef public Coordinate_system aperture_CS
-cdef public Coordinate_system conic_CS
-cdef public Coordinate_system rigid_body_CS
-cdef public Coordinate_system motion_CS
+cdef:
+    public ZernikeS zernike
+    public Coordinate_system aperture_CS
+    public Coordinate_system conic_CS
+    public Coordinate_system rigid_body_CS
+    public Coordinate_system motion_CS
+    public Coordinate_system TT_CS
 @ 
 
 \subsubsection{GMT M2}
@@ -3647,15 +3657,15 @@ The GMT M12 parameters are:
 <<GMT M12 parameters>>=
 int M_ID;
 @
-\item the mirror assembly diameter $[[D_assembly]]$m:
+\item the mirror assembly diameter $[[D_assembly]]$:
 <<GMT M12 parameters>>=
 rtd D_assembly;
 @
-\item the segment clear aperture diameter $[[D_clear]]$m:
+\item the segment clear aperture diameter $[[D_clear]]$:
 <<GMT M12 parameters>>=
 rtd D_clear;
 @
-\item the segment full aperture diameter $[[D_full]]$m:
+\item the segment full aperture diameter $[[D_full]]$:
 <<GMT M12 parameters>>=
 rtd D_full;
 @
@@ -3728,8 +3738,24 @@ int *d__piston_mask;
 \item the reference frames of the edge sensors:
 <<GMT M12 parameters>>=
 coordinate_system edge_sensors_CS;
-@ \end{itemize}
 @
+\item global tip--tilt transformation variables:
+  \begin{itemize}
+  \item a coordinate system:
+<<GMT M12 parameters>>=
+coordinate_system TT_CS;
+@
+\item a pointer to a matrix array:
+<<GMT M12 parameters>>=
+double *d__C;
+@
+\item a CUBLAS handle:
+<<GMT M12 parameters>>=
+cublasHandle_t handle;
+@
+\end{itemize}
+ \end{itemize}
+
 
 \subsection{Setup \& Cleanup}
 \label{sec:setup--cleanup-1}
@@ -3815,6 +3841,8 @@ zo = conic_equation(&__v,&__v0,conic_k,conic_c);
 <<M12 motion definition>>
 
 <<M12 edge sensor definition>>
+
+<<GMT global tip-tilt setup>>
 @
 \subsubsection{Rigid body coordinate systems}
 \label{sec:rigid-body-coord}
@@ -4150,6 +4178,8 @@ void gmt_m1::cleanup(void)
 }
 @ with
 <<GMT cleanup common>>=
+fprintf(stdout," |-");
+<<GMT global tip-tilt cleanup>>
 fprintf(stdout," |-");
 aperture_CS.cleanup();
 fprintf(stdout," |-");
@@ -4770,34 +4800,36 @@ void gmt_m1::global_tiptilt(float tip, float tilt)
   <<GMT global tip-tilt common>>
 }    
 @  with
+<<GMT global tip-tilt setup>>=
+sprintf(tag,"GLOBAL TIP-TILT");
+vector TT_CS_origin, TT_CS_euler_angles;
+TT_CS_origin.x = TT_CS_origin.y = TT_CS_origin.z = 0.0;
+TT_CS_euler_angles.x = TT_CS_euler_angles.y = TT_CS_euler_angles.z = 0.0;
+TT_CS.setup(&TT_CS_origin, &TT_CS_euler_angles, 1, tag);
+cublasCreate(&handle);
+HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
+@
+<<GMT global tip-tilt cleanup>>=
+TT_CS.cleanup();
+cublasDestroy(handle);
+HANDLE_ERROR( cudaFree( d__C ) );
+@  and 
 <<GMT global tip-tilt common>>=
-double alpha, beta, *d__C;
+double alpha, beta;
+alpha = 1.0;
+beta  = 0.0;
+int k, k9;
 vector origin, euler_angles;
-cublasHandle_t handle;
-coordinate_system TT_CS;
-
 origin.x = origin.y = origin.z = 0.0;
 euler_angles.x = tip;
 euler_angles.y = tilt;
 euler_angles.z = 0.0;
-
-TT_CS.setup(origin, euler_angles);
-cublasCreate(&handle);
-
-alpha = 1;
-beta  = 0;
-HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
-int k, k9;
+TT_CS.update(origin,euler_angles,0);
 for (k=0;k<N;k++)
   {
     k9 = k*9;
     <<global tip-tilt transformation>>
-	}
-
-cublasDestroy(handle);
-TT_CS.cleanup();
-HANDLE_ERROR( cudaFree( d__C ) );
-
+  }
 @ 
 \section{GMT M2}
 \label{sec:gmt-m2}
