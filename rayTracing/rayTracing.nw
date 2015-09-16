@@ -87,6 +87,8 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 <<GMT ray tracing kernel>>
 <<GMT blocking kernel>>
 <<GMT aperture intersection>>
+<<GMT track kernel>>
+<<GMT edge sensors kernel>>
 
 <<ray bundle functions>>
 
@@ -369,14 +371,14 @@ cdef class Coordinate_system:
     cdef coordinate_system *_c_coordinate_system
     cdef double[:,::1] _origin_
     cdef double[:,::1] _euler_angles_
-    cdef public double[::1] R
+    cdef double[:,:,::1] _R_
     cdef int N
 
     def __cinit__(self, int N=1):
         self.N = N
         self._c_coordinate_system = new coordinate_system()
         self._origin_       = np.empty((N,3), dtype=np.float64)
-        self._euler_angles_ = np.empty((N,3), dtype=np.float64)
+        self._euler_angles_ = np.empty((N,3), dtype=np.float64)        
 
     property origin:
         def __get__(self):
@@ -385,7 +387,7 @@ cdef class Coordinate_system:
                 self._origin_[k,0] = self._c_coordinate_system.origin[k].x
                 self._origin_[k,1] = self._c_coordinate_system.origin[k].y
                 self._origin_[k,2] = self._c_coordinate_system.origin[k].z
-            return np.asarray(self._origin_)
+            return np.array(self._origin_)
 
     property euler_angles:
         def __get__(self):
@@ -394,7 +396,12 @@ cdef class Coordinate_system:
                 self._euler_angles_[k,0] = self._c_coordinate_system.euler_angles[k].x
                 self._euler_angles_[k,1] = self._c_coordinate_system.euler_angles[k].y
                 self._euler_angles_[k,2] = self._c_coordinate_system.euler_angles[k].z
-            return np.asarray(self._euler_angles_)
+            return np.array(self._euler_angles_)
+
+    property R:
+        def __get__(self):
+            self._R_ = <double[:self.N,:3,:3]>self._c_coordinate_system.R
+            return np.array(self._R_)
 @
 \subsubsection{Conic surface}
 \label{sec:surface-1}
@@ -476,13 +483,16 @@ cdef class Aperture:
     cdef cppclass gmt_m1:
         void test_ray_tracing()
         <<python GMT M12 functions>>
-	void global_tiptilt(float , float )
+        void track(float *, float *, float *, int, int)
 @  where
 <<python GMT M12 functions>>=
+int M_ID
+rtd D_assembly, D_full, D_clear, L, conic_c, conic_k
 coordinate_system aperture_CS
 coordinate_system conic_CS
 coordinate_system rigid_body_CS
 coordinate_system motion_CS
+coordinate_system TT_CS
 void setup(float , int )
 void setup(float , int , int)
 void setup(float , int, zernikeS *)
@@ -492,6 +502,8 @@ void update(vector , vector ,int )
 void reset()
 void trace(bundle *)
 void blocking(bundle *)
+void global_tiptilt(float , float )
+void edge_sensors(float *, float *, float *, int, int, int)
 @
 <<rayTracing.pyx>>=
 # GMT M1
@@ -509,18 +521,17 @@ cdef class GMT_M1:
     def test(self):
         self._c_gmt_m12.test_ray_tracing();
 
-    def global_tiptilt(self, float tip, float tilt):
-        """
-        Applies a global tip--tilt to M1
+    def track(self, np.ndarray x, np.ndarray y, np.ndarray z, int segId):
 
-        Parameters
-        ----------
-        tip : float
-            The x axis angle
-        tilt : float
-            The y axis angle
-        """
-        self._c_gmt_m12.global_tiptilt(tip, tilt);
+        cdef cuFloatArray gx, gy, gz
+        gx = cuFloatArray( host_data = x )
+        gy = cuFloatArray( host_data = y )
+        gz = cuFloatArray( host_data = z )
+        self._c_gmt_m12.track(gx._c_gpu.dev_data,
+                              gy._c_gpu.dev_data,
+                              gz._c_gpu.dev_data,
+                              x.size, segId)
+        return gx.host(), gy.host(), gz.host()
 @
 <<GMT M12 constructor>>=
 self.zernike = ZernikeS(radial_order,N_SURF=7)
@@ -533,6 +544,8 @@ self.motion_CS = Coordinate_system(7)
 self.motion_CS._c_coordinate_system = &(self._c_gmt_m12.motion_CS)
 self.rigid_body_CS = Coordinate_system(7)
 self.rigid_body_CS._c_coordinate_system = &(self._c_gmt_m12.rigid_body_CS)
+self.TT_CS = Coordinate_system(1)
+self.TT_CS._c_coordinate_system = &(self._c_gmt_m12.TT_CS)
 @ 
 <<GMT M12 methods>>=
 def __dealloc__(self):
@@ -597,6 +610,59 @@ def reset(self):
     Reset the segments to their original prescription
     """
     self._c_gmt_m12.reset()
+
+def global_tiptilt(self, float tip, float tilt):
+    """
+    Applies a global tip--tilt to M1
+
+    Parameters
+    ----------
+    tip : float
+        The x axis angle
+    tilt : float
+        The y axis angle
+    """
+    self._c_gmt_m12.global_tiptilt(tip, tilt);
+
+def edge_sensors(self, double[:] x, double[:] y, double[:] z, int segId0=0, int edgeSensorId=0):
+
+    cdef cuFloatArray gx, gy, gz
+    gx = cuFloatArray( host_data = x )
+    gy = cuFloatArray( host_data = y )
+    gz = cuFloatArray( host_data = z )
+    self._c_gmt_m12.edge_sensors(gx._c_gpu.dev_data,
+                          gy._c_gpu.dev_data,
+                          gz._c_gpu.dev_data,
+                          x.size, segId0, edgeSensorId)
+    return gx.host(), gy.host(), gz.host()
+
+property D_assembly:
+    def __get__(self):
+        return self._c_gmt_m12.D_assembly
+
+property D_full:
+    def __get__(self):
+        return self._c_gmt_m12.D_full
+
+property D_clear:
+    def __get__(self):
+        return self._c_gmt_m12.D_clear
+
+property L:
+    def __get__(self):
+        return self._c_gmt_m12.L
+
+property conic_c:
+    def __get__(self):
+        return self._c_gmt_m12.conic_c
+
+property conic_k:
+    def __get__(self):
+        return self._c_gmt_m12.conic_k
+
+property M_ID:
+    def __get__(self):
+        return self._c_gmt_m12.M_ID
 @ with
 <<GMT M12 docstring>>=
 """
@@ -641,11 +707,13 @@ M2 pointing neutral and coma neutral tip-tilt are realized with
 """
 @ and with
 <<GMT M12 class properties>>=
-cdef public ZernikeS zernike
-cdef public Coordinate_system aperture_CS
-cdef public Coordinate_system conic_CS
-cdef public Coordinate_system rigid_body_CS
-cdef public Coordinate_system motion_CS
+cdef:
+    public ZernikeS zernike
+    public Coordinate_system aperture_CS
+    public Coordinate_system conic_CS
+    public Coordinate_system rigid_body_CS
+    public Coordinate_system motion_CS
+    public Coordinate_system TT_CS
 @ 
 
 \subsubsection{GMT M2}
@@ -3566,7 +3634,6 @@ A new structure to hold GMT M1 and M2 parameters and functions is defined.
 struct gmt_m1 {
   <<GMT M12 parameters>>
   <<GMT M12 functions>>
-  void global_tiptilt(float tip, float tilt);
 };
 @  with
 <<GMT M12 functions>>=
@@ -3579,7 +3646,10 @@ void update(vector _origin_, vector _euler_angles_,int idx);
 void reset(void);
 void trace(bundle *rays);
 void blocking(bundle *rays);
+void global_tiptilt(float tip, float tilt);
 void test_ray_tracing(void);
+void track(float *x, float *y, float *z, int N, int idx);
+void edge_sensors(float *x, float *y, float *z, int N, int idx0, int idx_edge_sensor);
 @ 
 The GMT M12 parameters are:
 \begin{itemize}
@@ -3587,23 +3657,27 @@ The GMT M12 parameters are:
 <<GMT M12 parameters>>=
 int M_ID;
 @
-\item the segment clear aperture diameter $[[D_clear]]=8.365$m:
+\item the mirror assembly diameter $[[D_assembly]]$:
+<<GMT M12 parameters>>=
+rtd D_assembly;
+@
+\item the segment clear aperture diameter $[[D_clear]]$:
 <<GMT M12 parameters>>=
 rtd D_clear;
 @
-\item the segment full aperture diameter $[[D_full]]=8.417$m:
+\item the segment full aperture diameter $[[D_full]]$:
 <<GMT M12 parameters>>=
 rtd D_full;
 @
-\item the obscuration ratio of the center segment $[[ri]]=2.4412/8.365$
+\item the obscuration ratio of the center segment $[[ri]]$
 <<GMT M12 parameters>>=
 rtd ri;
 @
-\item the tilt angle of the peripheral segment $[[beta]]=13.522$degree
+\item the tilt angle of the peripheral segment $[[beta]]$degree
 <<GMT M12 parameters>>=
 rtd beta;
 @
-\item the distance from the optical axis to the center of the tilted peripheral segments $[[L]]=8.710$m:
+\item the distance from the optical axis to the center of the tilted peripheral segments $[[L]]$m:
 <<GMT M12 parameters>>=
 rtd L;
 @
@@ -3616,7 +3690,7 @@ int D_px;
 <<GMT M12 parameters>>=
 int N;
 @
-\item the edge to center depth of the segment conic $[[depth]]=(0.691-0.445)$m:
+\item the edge to center depth of the segment conic $[[depth]]$m:
 <<GMT M12 parameters>>=
 rtd depth;
 @
@@ -3660,8 +3734,28 @@ zernikeS *ZS;
 \item the segment piston mask
 <<GMT M12 parameters>>=
 int *d__piston_mask;
-@ \end{itemize}
 @
+\item the reference frames of the edge sensors:
+<<GMT M12 parameters>>=
+coordinate_system edge_sensors_CS;
+@
+\item global tip--tilt transformation variables:
+  \begin{itemize}
+  \item a coordinate system:
+<<GMT M12 parameters>>=
+coordinate_system TT_CS;
+@
+\item a pointer to a matrix array:
+<<GMT M12 parameters>>=
+double *d__C;
+@
+\item a CUBLAS handle:
+<<GMT M12 parameters>>=
+cublasHandle_t handle;
+@
+\end{itemize}
+ \end{itemize}
+
 
 \subsection{Setup \& Cleanup}
 \label{sec:setup--cleanup-1}
@@ -3677,7 +3771,6 @@ The size must be 25.5m or more to contain M1 fully.
 <<GMT M1 functions>>=
 void gmt_m1::setup(float _D_, int _D_px_)
 {
-  int  N_SRC = 1;
   ZS = NULL;
   <<M1 parameters>>
   <<GMT setup common>>
@@ -3686,7 +3779,6 @@ void gmt_m1::setup(float _D_, int _D_px_)
 <<GMT M1 functions>>=
 void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_)
 {
-  int  N_SRC = 1;
   ZS = _ZS_;
   <<M1 parameters>>
   <<GMT setup common>>
@@ -3696,6 +3788,7 @@ void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_)
  M_ID    = 1;
  D_px    = _D_px_;
  D       = _D_;
+ D_assembly = 25.498;
  D_full  = 8.417;
  D_clear = 8.365;
  ri      = 2.4412/8.365;
@@ -3728,8 +3821,8 @@ void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
 
 vector __v0 = {0.0,0.0,0.0},
        __v = {D_full*0.5,0.0,0.0},
-       origin[7],
-       euler_angles[7];
+       origin[12],
+       euler_angles[12];
 rtd D_c, o, zo;
  int k, idx;    
 char tag[16];
@@ -3747,7 +3840,14 @@ zo = conic_equation(&__v,&__v0,conic_k,conic_c);
 
 <<M12 motion definition>>
 
+<<M12 edge sensor definition>>
+
+<<GMT global tip-tilt setup>>
 @
+\subsubsection{Rigid body coordinate systems}
+\label{sec:rigid-body-coord}
+
+
 The rigid body coordinate systems are aligned with the segment coordinate systems.
 The origins $[x_O, y_O, z_O]$ of the segment coordinate systems are given with respect to the global coordinate system which origin is at the vertex of M1 conic surface: 
 \begin{eqnarray}
@@ -3800,7 +3900,11 @@ rigid_body_CS.setup(origin, euler_angles, N, tag);
 @ with
 <<segment index offset>>=
 idx = (k + idx_offset)%6;
-@ 
+@
+\subsubsection{Aperture coordinate systems}
+\label{sec:apert-coord-syst}
+
+
 The coordinate systems of the segment apertures are defined with respect to the coordinate systems of the rigid body motions.
 The apertures are directly above the segments such as they rest on the rim of the segments. 
 <<M12 aperture definition>>=
@@ -3819,7 +3923,11 @@ for (k=0; k<N-1; k++)
 }
 sprintf(tag,"M%d APERTURE",M_ID);
 aperture_CS.setup(origin, euler_angles, N, tag);
-@ 
+@
+\subsubsection{Conic coordinate systems}
+\label{sec:conic-coord-syst}
+
+
 The coordinate systems of the segment conics are defined with respect to the coordinate systems of the rigid body motions.
 Both coordinate systems share the same origin but x--axis and y--axis are parallel to the x--axis and y--axis of the GCS.
 The origins of the segment conics are also given in the coordinate systems of the segment conics.
@@ -3865,7 +3973,11 @@ conic_CS.setup(origin, euler_angles, N, tag);
 HANDLE_ERROR( cudaMalloc((void**)&d__conic_origin, sizeof(vector)*N ) );
 HANDLE_ERROR( cudaMemcpy( d__conic_origin, conic_origin, 
 			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
-@ 
+@
+\subsubsection{Segment motion coordinate systems}
+\label{sec:segm-moti-coord}
+
+
 The motion coordinate systems are defined with respect to the coordinate systems of the rigid body motions.
 For unperturbed segments, both coordinate systems coincide.
 <<M12 motion definition>>=
@@ -3880,7 +3992,183 @@ for (k=0; k<N; k++)
 }
 sprintf(tag,"M%d MOTION",M_ID);
 motion_CS.setup(origin, euler_angles, N, tag);
+@
+\subsubsection{Edge sensors}
+\label{sec:edge-sensors}
+
+There are twelve edge sensors located across the twelve closest gaps of the 7 mirrors.
+We define 12 edge sensor coordinate systems (ESCS).
+
+\begin{center}
+\begin{tikzpicture}
+  \draw[->] (-25mm,0) -- (35mm,0) node[below] {$\bar x$};
+  \draw[->] (0,-25mm) -- (0,35mm) node[right] {$\bar y$};
+  \draw[thin,dotted] (0,0) circle [radius=21mm];
+  \coordinate (O) at (0,0);
+  \draw (O) circle [radius=10mm] node[above left=3mm] {7};
+  % \draw[->,thick,red] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\hat x$};
+  % \draw[->,thick,red] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\hat y$};
+  \draw[dashed,thin] (150:21mm) -- (-30:21mm);
+  \draw[dashed,thin] (-150:21mm) -- (30:21mm);
+  \foreach \x in {1,...,6} {
+    \coordinate (O) at (150-\x*60:21mm);
+    \coordinate (O next) at (90-\x*60:21mm);
+    \draw[dashed] (O) -- (O next);
+    \coordinate (Oes) at (120-\x*60:18.2mm);
+    \draw[->,thick,red,rotate=-60*(\x-2)] ($(Oes)$) -- ($(Oes)+(5mm,0)$) node[below] {$\psi$};
+    \draw[->,thick,red,rotate=-60*(\x-2)] ($(Oes)$) -- ($(Oes)+(0,5mm)$) node[right] {$\xi$};
+    \fill[blue] (O) circle [radius=0.5mm];
+  }    
+  \foreach \x in {1,...,6} {
+    \coordinate (O) at (150-\x*60:21mm);
+    \draw (O) circle [radius=10mm] node[above left=3mm] {\x};
+    \coordinate (Oes) at (150-\x*60:10mm);
+    \draw[->,thick,red,rotate=-60*(\x-1)] ($(Oes)$) -- ($(Oes)+(5mm,0)$) node[below] {$\psi$};
+    \draw[->,thick,red,rotate=-60*(\x-1)] ($(Oes)$) -- ($(Oes)+(0,5mm)$) node[right] {$\xi$};
+    \fill[white,draw=red,thin] (150-\x*60:11mm) circle [radius=1pt];
+    \coordinate (O next) at (90-\x*60:21mm);
+    \fill[white,draw=red,thin] ($ (O) !.47! (O next) $) circle [radius=1pt];
+    \fill[white,draw=red,thin] ($ (O) !.53! (O next) $) circle [radius=1pt];
+  }    
+\end{tikzpicture}  
+\end{center}
 @ 
+<<M12 edge sensor definition>>=
+<<center segment edge sensors>>
+<<outer segment edge sensors>>
+sprintf(tag,"M%d EDGE SENSORS",M_ID);
+edge_sensors_CS.setup(origin, euler_angles, 12, tag);
+@ 
+The first 6 ESCSs are located on the center segment rim at azimuths $\pi(3-2k)/6,\quad \forall k \in [0,5]$ and the y--axis ($\xi$) points towards the center of the nearest outer segment i.e. it is rotated of $-\pi k/3$ around the z--axis.
+<<center segment edge sensors>>=
+for (k=0; k<6; k++)
+{
+  o = PI*(3-2*k)/6.0 + (M_ID-1)*PI;
+  origin[k].x = 0.5*D_full*cos(o);
+  origin[k].y = 0.5*D_full*sin(o);
+  origin[k].z = height + conic_equation(origin + k, &__v0, conic_k, conic_c);;
+  euler_angles[k].x = 0.0;
+  euler_angles[k].y = 0.0;
+  euler_angles[k].z = -PI*k/3.0 + (M_ID-1)*PI;
+}
+@
+The other 6 ESCSs are located in the middle of the line joining the center of two adjacent outer segments.
+The distance from the GCS origin to the outer ESCS is $\sqrt 3 L/2$.
+The y--axis ($\xi$) is aligned with the line joining the center of two adjacent outer segments i.e. it is rotated of $-\pi (1-k)/3$ around the z--axis.
+<<outer segment edge sensors>>=
+float R;
+R = sqrt(3.0)*L/2.0;
+for (k=0; k<6; k++)
+{
+  o = PI*(1-k)/3.0 + (M_ID-1)*PI;
+  origin[k+6].x = R*cos(o);
+  origin[k+6].y = R*sin(o);
+  origin[k+6].z = height + conic_equation(origin + k + 6, &__v0, conic_k, conic_c);
+  euler_angles[k+6].x = 0.0;
+  euler_angles[k+6].y = 0.0;
+  euler_angles[k+6].z = PI*(1-k)/3.0 + (M_ID-1)*PI;
+}
+@ 
+There is measurement point for the 6 inner ESCSs.
+There coordinates in the conic CS are given in polar coordinates by
+\begin{eqnarray}
+  \label{eq:64}
+  \rho &=& [[L]] - \rho_0, \\
+  \theta &=& -\pi{2k+3\over 6},
+\end{eqnarray}
+where $\rho_0$ is the root of
+\begin{equation}
+  \label{eq:65}
+  [[D_full]]^2 - ([[D_assembly/2]]-\rho_0)^2 - \left[ F([[D_assembly/2]]) - F(\rho_0) \right]^2 = 0,
+\end{equation}
+and with
+\begin{equation}
+  \label{eq:66}
+  F(r) = {c r^2 \over 1 + \sqrt{1-\kappa(cr)^2} } .
+\end{equation}
+
+There are 2 measurement points for the 6 outer ESCSs.
+The polar coordinates in the conic CS are given by
+\begin{eqnarray}
+  \label{eq:67}
+  \rho &=& [[D_full]]/2, \\
+  \theta &=& -\pi{2k+1\over 6},  
+\end{eqnarray}
+and
+\begin{eqnarray}
+  \label{eq:68}
+  \rho &=& [[D_full]]/2, \\
+  \theta &=& \pi{7-2k\over 6}.
+\end{eqnarray}
+
+<<GMT M1 functions>>=
+void gmt_m1::edge_sensors(float *x, float *y, float *z, int N, int idx0, int idx_edge_sensor)
+{
+<<GMT edge sensors common>>
+}
+@  with
+<<GMT edge sensors common>>=
+dim3 blockDim(6,1);
+dim3 gridDim(1,1);
+edge_sensors_kernel LLL gridDim, blockDim RRR (x, y, z, 6,
+					idx0,
+					conic_CS.d__R,
+					conic_CS.d__origin,
+					conic_k, conic_c,
+					d__conic_origin,
+					rigid_body_CS.d__R,
+					rigid_body_CS.d__origin,
+					motion_CS.d__R,
+					motion_CS.d__origin,
+                                        edge_sensors_CS.d__R,
+                                        edge_sensors_CS.d__origin, idx_edge_sensor);
+
+@ and
+<<GMT edge sensors kernel>>= 
+__global__ void edge_sensors_kernel(float *x, float *y, float *z, const int N,
+			     const int iCoordSys0,
+			     rtd *d__conic_R, vector *d__conic_origin,
+			     const rtd Fk, const rtd Fc,
+			     vector *d__conic_self_origin,
+			     rtd *d__rigid_body_R, vector *d__rigid_body_origin,
+			     rtd *d__motion_R, vector *d__motion_origin,
+                             rtd *d__edge_sensors_R, vector *d__edge_sensors_origin,
+                             int i0)
+ {
+   int i, i_seg, i_edge;
+   vector v, v0;
+   i = blockIdx.x * blockDim.x + threadIdx.x;
+   if (i<N) {
+     i_seg = (i + iCoordSys0)%6;
+     i_edge = i + i0;
+     v0.x = v0.y = 0.0;
+     v.x = x[i];
+     v.y = y[i];
+     v.z = conic_equation(&v,  d__conic_self_origin + i_seg, Fk, Fc) - 
+           conic_equation(&v0, d__conic_self_origin + i_seg, Fk, Fc);
+     // CONIC <<<
+     forward_transform_centered(&v, &v,
+				d__conic_R+i_seg*9);
+     // MOTION <<<
+     backward_transform(&v, &v,
+			d__motion_R+i_seg*9, d__motion_origin+i_seg);
+     // RIGID_BODY <<<
+     backward_transform(&v, &v,
+			d__rigid_body_R+i_seg*9,
+			d__rigid_body_origin+i_seg);
+     // EDGE SENSORS <<<
+     forward_transform(&v, &v,
+		  d__edge_sensors_R+i_edge*9, d__edge_sensors_origin+i_edge);
+     x[i] = v.x;
+     y[i] = v.y;
+     z[i] = v.z;
+   }
+}
+@
+\subsubsection{Cleanup, update \& reset}
+\label{sec:cleanup-update-reset}
+
+
 Memory is freed with
 <<GMT M1 functions>>=
 void gmt_m1::cleanup(void)
@@ -3891,6 +4179,8 @@ void gmt_m1::cleanup(void)
 @ with
 <<GMT cleanup common>>=
 fprintf(stdout," |-");
+<<GMT global tip-tilt cleanup>>
+fprintf(stdout," |-");
 aperture_CS.cleanup();
 fprintf(stdout," |-");
 conic_CS.cleanup();
@@ -3898,6 +4188,8 @@ fprintf(stdout," |-");
 rigid_body_CS.cleanup();
 fprintf(stdout," |-");
 motion_CS.cleanup();
+fprintf(stdout," |-");
+edge_sensors_CS.cleanup();
 HANDLE_ERROR( cudaFree( d__conic_origin ) );
 @
 The rigid body motion parameters are updated with:
@@ -4330,6 +4622,67 @@ for (j=0; j<SNELL_N_ITERATION; j++)
   s0 = s1;
 }
 @
+
+\subsection{Mirror location tracker}
+\label{sec:mirr-locat-track}
+
+The track function computes the location of a point of the mirror in the GCS for a given $(x,y)$ coordinate in the conic CS.
+
+<<GMT M1 functions>>=
+void gmt_m1::track(float *x, float *y, float *z, int N, int idx)
+{
+  <<GMT track common>>
+}
+@  with
+<<GMT track common>>=
+dim3 blockDim(N_THREAD,1);
+dim3 gridDim(N/N_THREAD+1,1);
+track_kernel LLL gridDim, blockDim RRR (x, y, z, N,
+					idx,
+					conic_CS.d__R,
+					conic_CS.d__origin,
+					conic_k, conic_c,
+					d__conic_origin,
+					rigid_body_CS.d__R,
+					rigid_body_CS.d__origin,
+					motion_CS.d__R,
+					motion_CS.d__origin);
+@ and
+<<GMT track kernel>>= 
+__global__ void track_kernel(float *x, float *y, float *z, const int N,
+			     const int iCoordSys,
+			     rtd *d__conic_R, vector *d__conic_origin,
+			     const rtd Fk, const rtd Fc,
+			     vector *d__conic_self_origin,
+			     rtd *d__rigid_body_R, vector *d__rigid_body_origin,
+			     rtd *d__motion_R, vector *d__motion_origin)
+ {
+   int i;
+   vector v, v0;
+   i = blockIdx.x * blockDim.x + threadIdx.x;
+   if (i<N) {
+     v0.x = v0.y = 0.0;
+     v.x = x[i];
+     v.y = y[i];
+     v.z = conic_equation(&v,  d__conic_self_origin + iCoordSys, Fk, Fc) - 
+           conic_equation(&v0, d__conic_self_origin + iCoordSys, Fk, Fc);
+     // CONIC <<<
+     forward_transform_centered(&v, &v,
+				d__conic_R+iCoordSys*9);
+     // MOTION <<<
+     backward_transform(&v, &v,
+			d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
+     // RIGID_BODY <<<
+     backward_transform(&v, &v,
+			d__rigid_body_R+iCoordSys*9,
+			d__rigid_body_origin+iCoordSys);
+     x[i] = v.x;
+     y[i] = v.y;
+     z[i] = v.z;
+   }
+}
+
+@ 
 \subsection{Global tip--tilt}
 \label{sec:global-tip-tilt}
 
@@ -4427,6 +4780,7 @@ where $\vec O_R$ is the rotation point.
  HANDLE_ERROR( cudaMemcpy( motion_CS.d__origin+k, motion_CS.origin+k, 
 			   sizeof(vector), cudaMemcpyHostToDevice ) );
 
+/*
  fprintf(stdout,"#%d >> MOTION CS origins [micron]  : %+.3e, %+.3e, %+.3e\n",k,
 	 motion_CS.origin[k].x*1e6,
 	 motion_CS.origin[k].y*1e6,
@@ -4438,39 +4792,44 @@ where $\vec O_R$ is the rotation point.
 	 r2d*motion_CS.euler_angles[k].x,
 	 r2d*motion_CS.euler_angles[k].y,
 	 r2d*motion_CS.euler_angles[k].z);
-
+*/
 
 <<GMT M1 functions>>=
 void gmt_m1::global_tiptilt(float tip, float tilt)
 {
-  double alpha, beta, *d__C;
-  vector origin, euler_angles;
-  cublasHandle_t handle;
-  coordinate_system TT_CS;
-
-  origin.x = origin.y = origin.z = 0.0;
-  euler_angles.x = tip;
-  euler_angles.y = tilt;
-  euler_angles.z = 0.0;
-
-  TT_CS.setup(origin, euler_angles);
-  cublasCreate(&handle);
-
-  alpha = 1;
-  beta  = 0;
-  HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
-  int k, k9;
-  for (k=0;k<N;k++)
-    {
-      k9 = k*9;
-      <<global tip-tilt transformation>>
-    }
-
-  cublasDestroy(handle);
-  TT_CS.cleanup();
-  HANDLE_ERROR( cudaFree( d__C ) );
+  <<GMT global tip-tilt common>>
 }    
-
+@  with
+<<GMT global tip-tilt setup>>=
+sprintf(tag,"GLOBAL TIP-TILT");
+vector TT_CS_origin, TT_CS_euler_angles;
+TT_CS_origin.x = TT_CS_origin.y = TT_CS_origin.z = 0.0;
+TT_CS_euler_angles.x = TT_CS_euler_angles.y = TT_CS_euler_angles.z = 0.0;
+TT_CS.setup(&TT_CS_origin, &TT_CS_euler_angles, 1, tag);
+cublasCreate(&handle);
+HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
+@
+<<GMT global tip-tilt cleanup>>=
+TT_CS.cleanup();
+cublasDestroy(handle);
+HANDLE_ERROR( cudaFree( d__C ) );
+@  and 
+<<GMT global tip-tilt common>>=
+double alpha, beta;
+alpha = 1.0;
+beta  = 0.0;
+int k, k9;
+vector origin, euler_angles;
+origin.x = origin.y = origin.z = 0.0;
+euler_angles.x = tip;
+euler_angles.y = tilt;
+euler_angles.z = 0.0;
+TT_CS.update(origin,euler_angles,0);
+for (k=0;k<N;k++)
+  {
+    k9 = k*9;
+    <<global tip-tilt transformation>>
+  }
 @ 
 \section{GMT M2}
 \label{sec:gmt-m2}
@@ -4490,7 +4849,6 @@ struct gmt_m2 {
 <<GMT M2 functions>>=
 void gmt_m2::setup(float _D_, int _D_px_)
 {
-  int N_SRC = 1;
   <<M2 parameters>>
   <<GMT setup common>>
 }
@@ -4499,6 +4857,7 @@ void gmt_m2::setup(float _D_, int _D_px_)
  M_ID    = 2;
  D_px    = _D_px_;
  D       = _D_;
+ D_assembly = 3.168;
  D_full  = 1.0425*1.005; // slightly larger to always encompass M1; needed for the Zernike
  D_clear = 1.0415;
  ri      = 0.0;
@@ -4571,9 +4930,27 @@ void gmt_m2::reset(void)
     <<GMT M12 reset>>
 }
 @
+\subsection{Edge sensors}
+\label{sec:edge-sensors-1}
+
+<<GMT M2 functions>>=
+void gmt_m2::edge_sensors(float *x, float *y, float *z, int N, int idx0, int idx_edge_sensor)
+{
+  <<GMT edge sensors common>>
+}
+@
 \subsection{Global motions}
 \label{sec:global-motions}
 
+\subsection{Global tip--tilt}
+\label{sec:global-tip-tilt-1}
+
+<<GMT M2 functions>>=
+void gmt_m2::global_tiptilt(float tip, float tilt)
+{
+  <<GMT global tip-tilt common>>
+}    
+@
 \subsubsection{Tip--tilt neutral}
 \label{sec:tip-tilt-neutral}
 

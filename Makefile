@@ -16,6 +16,7 @@ endif
 	mkdir -p include lib
 	for i in $(SOURCE_DIR); do (make -C $$i src);echo -e "\n"; done
 	for i in $(SOURCE_DIR); do (make -C $$i lib);echo -e "\n"; done
+	make -C lib all
 
 tex: makefile $(texsrc)
 	for i in $(SOURCE_DIR); do (make -C $$i tex); done

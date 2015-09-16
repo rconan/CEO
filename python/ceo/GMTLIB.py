@@ -1,6 +1,7 @@
 import sys
 import math
 import numpy as np
+from scipy.optimize import brenth
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann
 
 class GMT_MX:
@@ -118,7 +119,7 @@ u
         mode : string
             The degrees of freedom label
             for M1: "global tip-tilt", "zernike", "Txyz", "segment tip-tilt"
-            for M2: "pointing neutral", "coma neutral", "zernike", "Txyz", "segment tip-tilt", "TT7 segment tip-tilt"
+            for M2: "global tip-tilt", "pointing neutral", "coma neutral", "zernike", "Txyz", "Rxyz", "segment tip-tilt", "TT7 segment tip-tilt"
         stroke : float
             The amplitude of the motion
 	segment : string
@@ -215,6 +216,22 @@ u
                     D[:,idx] = pushpull( Tz )
                     idx += 1
                 sys.stdout.write("\n")
+            if mode=="Rxyz":
+                D = np.zeros((wfs.valid_lenslet.nnz*2,3*7))
+                idx = 0
+                Rx = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
+                Ry = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
+                Rz = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,0,x],idx=kSeg)
+                sys.stdout.write("Segment #:")
+                for kSeg in range(1,8):
+                    sys.stdout.write("%d "%kSeg)
+                    D[:,idx] = pushpull( Rx )
+                    idx += 1
+                    D[:,idx] = pushpull( Ry )
+                    idx += 1
+                    D[:,idx] = pushpull( Rz )
+                    idx += 1
+                sys.stdout.write("\n")
             if mode=="segment tip-tilt":
                 D = np.zeros((wfs.valid_lenslet.nnz*2,2*7))
                 idx = 0
@@ -282,6 +299,10 @@ u
 
         if mirror=="M2":
             sys.stdout.write("___ M2 ___\n")
+            if mode=="global tip-tilt":
+                D = np.zeros((wfs.valid_lenslet.nnz*2,2))
+                D[:,0] = pushpull( lambda x : self.M2.global_tiptilt(x,0) )
+                D[:,1] = pushpull( lambda x : self.M2.global_tiptilt(0,x) )
             if mode=="pointing neutral":
                 D = np.zeros((wfs.valid_lenslet.nnz*2,2))
                 D[:,0] = pushpull( lambda x : self.M2.pointing_neutral(x,0) )
@@ -304,6 +325,22 @@ u
                     D[:,idx] = pushpull( Ty )
                     idx += 1
                     D[:,idx] = pushpull( Tz )
+                    idx += 1
+                sys.stdout.write("\n")
+            if mode=="Rxyz":
+                D = np.zeros((wfs.valid_lenslet.nnz*2,3*7))
+                idx = 0
+                Rx = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
+                Ry = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
+                Rz = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,0,x],idx=kSeg)
+                sys.stdout.write("Segment #:")
+                for kSeg in range(1,8):
+                    sys.stdout.write("%d "%kSeg)
+                    D[:,idx] = pushpull( Rx )
+                    idx += 1
+                    D[:,idx] = pushpull( Ry )
+                    idx += 1
+                    D[:,idx] = pushpull( Rz )
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="segment tip-tilt":
@@ -543,3 +580,44 @@ class SegmentPistonSensor:
                     p[k_SRC,2*k+1] = np.sum( W[k_SRC,:]*_P_[k,:]*_M_[k+6,:] )/np.sum( _P_[k,:]*_M_[k+6,:] ) - \
                                np.sum( W[k_SRC,:]*_P_[(k+1)%6,:]*_M_[k+6,:] )/np.sum( _P_[(k+1)%6,:]*_M_[k+6,:] )
         return p
+
+class EdgeSensors:
+
+    def __init__(self, mirror):
+
+        self.M = mirror
+        
+        def conic(r):
+            c = mirror.conic_c
+            k = mirror.conic_k
+            return c*r*r/(1+np.sqrt(1-k*(c*r)**2))
+
+        def fun(x):
+            L = mirror.D_assembly/2
+            q = mirror.D_full**2 - (L-x)**2 - (conic(L)-conic(x))**2
+            return q
+    
+        p = mirror.M_ID - 1
+        print p
+
+        self.rho0 = brenth(fun,mirror.D_clear/2,1+mirror.D_clear/2)
+        k = np.arange(6)
+        o = math.pi*( p + (-2.0*k-3.0)/6.0 )
+        self.x0 = (mirror.L-self.rho0)*np.cos(o)
+        self.y0 = (mirror.L-self.rho0)*np.sin(o)
+        R = mirror.D_full/2
+        o = math.pi*( p + (-2.0*k-1.0)/6.0 )
+        self.x1 = R*np.cos(o)
+        self.y1 = R*np.sin(o)
+        o = np.pi*( p + (7.0-2.0*k)/6.0 )
+        self.x2 = np.roll( R*np.cos(o) , -1 )
+        self.y2 = np.roll( R*np.sin(o) , -1 )
+        self.z  = np.zeros(6)
+
+    def read(self):
+        u0,v0,w0 = self.M.edge_sensors(self.x0,self.y0,self.z)
+        u1,v1,w1 = self.M.edge_sensors(self.x1,self.y1,self.z,edgeSensorId=6)
+        u2,v2,w2 = self.M.edge_sensors(self.x2,self.y2,self.z,segId0=1,edgeSensorId=6)
+        return np.concatenate((v0,v1-v2)),np.concatenate((w0,w1-w2))
+
+
