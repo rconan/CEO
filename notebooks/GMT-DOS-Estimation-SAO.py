@@ -6,7 +6,7 @@ AGWS_photometric_band = "R"
 N_LENSLET = 26
 lenslet_pitch_meter = 1
 pixel_size_arcsec = 0.132
-N_PX_LENLSET = 36
+N_PX_LENLSET = 18
 lenslet_flux_threshold = 0.8
 read_out_noise = 0
 optics_throughtput = 1
@@ -14,12 +14,12 @@ optics_throughtput = 1
 # GMT
 entrance_pupil_size_meter = N_LENSLET*lenslet_pitch_meter
 M1_zernike_radial_order = 4
-M1_init = {"global tip-tilt [arcsec]": 0.5,
-    "Rx [arcsec]": 0.5,
-    "Ry [arcsec]": 0.5,
+M1_init = {"global tip-tilt [arcsec]": 0.25,
+    "Rx [arcsec]": 0.,
+    "Ry [arcsec]": 0.,
     "bending modes [micron]": 0.1}
-M2_init = {"Tx [micron]": 100, 
-    "Ty [micron]": 100,
+M2_init = {"Tx [micron]": 20, 
+    "Ty [micron]": 20,
     "Tz [micron]": 1,
     "Rx [arcsec]": 0.1,
     "Ry [arcsec]": 0.1,

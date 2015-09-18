@@ -581,6 +581,44 @@ class SegmentPistonSensor:
                                np.sum( W[k_SRC,:]*_P_[(k+1)%6,:]*_M_[k+6,:] )/np.sum( _P_[(k+1)%6,:]*_M_[k+6,:] )
         return p
 
+class SegmentTipTiltSensor:
+    """
+    A class for the GMT segment tip-tilt geometric sensor
+    """
+
+    def __init__(self):
+        pass
+
+    def tiptilt(self,src):
+        """
+        Return the tip and tilt of the wavefront on each segment
+
+        Parameters
+        ----------
+        src : Source
+            The piston sensing guide star object
+
+        Return
+        ------
+        tt : numpy ndarray
+            A 14 element array
+        """
+        P = np.rollaxis(np.array( src.rays.piston_mask ),0,3)
+        u = np.arange(src.n)
+        v = np.arange(src.m)
+        x,y = np.meshgrid(u,v)
+        x = x.reshape(1,-1,1)
+        y = y.reshape(1,-1,1)
+        xc = np.sum(x*P,axis=1)/P.sum(axis=1)
+        yc = np.sum(y*P,axis=1)/P.sum(axis=1)
+        Z2 = (x - xc.reshape(7,1,src.N_SRC))*P
+        Z3 = (y - yc.reshape(7,1,src.N_SRC))*P
+        W = np.rollaxis( src.wavefront.phase.host(shape=(1,src.N_SRC,src.n*src.m)), 1, 3)
+        a23 = np.zeros((14,src.N_SRC))
+        a23[:7,:] = np.sum(W*Z2,axis=1)/np.sum(Z2*Z2,axis=1)
+        a23[7:,:] = np.sum(W*Z3,axis=1)/np.sum(Z3*Z3,axis=1)
+        return a23
+
 class EdgeSensors:
 
     def __init__(self, mirror):
