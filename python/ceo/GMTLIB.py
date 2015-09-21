@@ -161,6 +161,17 @@ u
             s_pull = get_slopes(-1)
             return 0.5*(s_push-s_pull)/stroke
 
+        def STS_pushpull(action):
+            def get_slopes(stroke_sign):
+                self.reset()
+                action(stroke_sign*stroke)
+                gs.reset()
+                self.propagate(gs)
+                return wfs.tiptilt(gs).ravel()
+            s_push = get_slopes(+1)
+            s_pull = get_slopes(-1)
+            return 0.5*(s_push-s_pull)/stroke
+
         def FDSP_pushpull(action):
 	    def close_M2_segTT_loop():
 		niter = 7 
@@ -399,6 +410,20 @@ u
                 if segment=="full":
 		    D = D[0:6,:]
 		sys.stdout.write("\n")
+	    if mode=="geometric segment tip-tilt":
+                n_meas = 14
+		D = np.zeros((n_meas*gs.N_SRC,14))
+		idx = 0	
+                Rx = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
+                Ry = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
+                sys.stdout.write("Segment #:")
+                for kSeg in range(1,8):
+                    sys.stdout.write("%d "%kSeg)
+                    D[:,idx] = STS_pushpull( Rx )
+                    idx += 1
+                    D[:,idx] = STS_pushpull( Ry )
+                    idx += 1
+                sys.stdout.write("\n")
         sys.stdout.write("------------\n")
 
         return D
