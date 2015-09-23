@@ -181,6 +181,8 @@ cdef class Bundle:
     cdef cuIntArray _piston_mask_
 <<rayTracing.pyx>>=
 # polar bundle
+from scipy.optimize import brentq
+from ceo.constants import ARCSEC2RAD
 cdef class Bundle:
     """
     A class to represent a bundle of rays    
@@ -292,7 +294,10 @@ def to_sphere(self, sphere_origin=None,
         self._c_bundle.to_sphere(origin)
 
     if focal_plane_distance!=0.0:
-        self._c_bundle.to_sphere(focal_plane_distance, focal_plane_radius);
+        self._c_bundle.to_sphere(focal_plane_distance, focal_plane_radius)
+
+def to_focal_plane(self, rtd focal_plane_distance):
+    self._c_bundle.to_z_plane(focal_plane_distance)
 
 def get_optical_path_difference(self,
                                 float delta_x, int N_x,
@@ -302,6 +307,26 @@ def get_optical_path_difference(self,
                                                delta_x, N_x,
                                                delta_y, N_y)
     return opd
+
+def ee80(self):
+    """
+    Computes the size of the geometric EE80 square 
+
+    Return
+    ------
+    float
+        The size of the geometric EE80 square in radian
+    """
+    V = self.vignetting.host().flatten()==1
+    xyz = self.coordinates.host()
+    x = np.abs( xyz[V,0] )
+    y = np.abs( xyz[V,1] )
+    def ensquared(hd):
+        idx = np.logical_and(x<=hd , y<=hd)
+        return float(idx.sum())/V.sum()
+    f = lambda x: ensquared(x)-0.8
+    b = np.maximum(x.max(),y.max())
+    return 2*brentq(f,0,b)*(ARCSEC2RAD/1e-3)
 
 property N_BUNDLE:
     def __get__(self):
@@ -1440,8 +1465,7 @@ void bundle::to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane)
   <<rays optical path difference>>
 }
 @
-Given the distance of the chief ray [[s_chief_on_axis]] from the last surface to the object for an on--axis source, the radius of curvature of the focal plane [[rho_focal_plane]] and the radius of the reference sphere [[sphere_radius]],
-the distance to the object from the last surface is given by
+Given the $z$ location of the focal plane on axis [[z_chief_on_axis]] and the radius of curvature of the focal plane [[rho_focal_plane]], the distance to the object from the last surface for the chief ray is given by
 <<reference sphere distance>>= 
 to_focal_surface_chief_kernel LLL gridDim , blockDim RRR (d__sphere_distance, d__chief_ray, 1, 
                                                           z_chief_on_axis, 
@@ -1515,6 +1539,7 @@ The coordinates, directions, optical path length and vignetting map are copied i
 <<gathering ray coordinates>>=
 void bundle::get_coordinates(double *d__coord)
 {
+  HANDLE_ERROR( cudaMemset( d__coord, 0, sizeof(double)*N_RAY*3 ) );  
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(N_RAY/N_THREAD2+1,1, N_BUNDLE);
   get_coordinates_kernel LLL gridDim , blockDim RRR (d__coord, d__ray, N_RAY);
@@ -1531,14 +1556,15 @@ void bundle::get_chief_coordinates(double *d__coord)
 <<gathering ray coordinates kernel>>=
 __global__ void get_coordinates_kernel(double *d__coord, ray *d__ray, int N_RAY)
 {
-  int i, j, k, l, iSource;
+  int i, j, k0, k, l, iSource;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
   iSource = blockIdx.z;
-  if ( k<N_RAY )
+  k0 = k;
+  k += iSource*N_RAY;
+  if ( ( k0<N_RAY ) && (d__ray[k].v==1) )
   {
-    k += iSource*N_RAY;
     l = k*3;
     d__coord[l++] = d__ray[k].coordinates.x;
     d__coord[l++] = d__ray[k].coordinates.y;

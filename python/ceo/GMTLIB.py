@@ -76,7 +76,7 @@ u
         self.focal_plane_distance = -5.830
         self.focal_plane_radius   =  2.197173
 
-    def propagate(self,src):
+    def propagate(self,src,where_to="exit pupil"):
         """
         Propagate the Source object to the pupil plane conjugated to M1
 
@@ -84,6 +84,8 @@ u
         ----------
         src : Source
             The Source object
+        where_to: char, optionnal
+            Either "exit pupil" or "focal plane"; default: "exit pupil"
         """
         #src.reset()
         src.stop(self.M2)
@@ -91,9 +93,12 @@ u
         src.trace(self.M2)
 #        src.sphere_distance
 #        src.rays.to_sphere(self.sphere_radius,sphere_distance = src.sphere_distance)
-        src.rays.to_sphere(focal_plane_distance=self.focal_plane_distance,
-                           focal_plane_radius=self.focal_plane_radius)
-        src.opd2phase()
+        if where_to=="exit pupil":
+            src.rays.to_sphere(focal_plane_distance=self.focal_plane_distance,
+                               focal_plane_radius=self.focal_plane_radius)
+            src.opd2phase()
+        if where_to=="focal plane":
+            src.rays.to_z_plane(self.focal_plane_distance)
 
     def reset(self):
         """
