@@ -821,6 +821,44 @@ cdef class ZernikeS:
         The number of Zernike surfaces
     a : ndarray
         The Zernike polynomial coefficients as a N_SURFxn_modes array
+
+    Examples
+    --------
+    >>> import ceo
+    >>> import numpy as np
+    >>> import matplotlib as plt
+
+    Lets define a Zernike surface made of the first 15 Zernike polynomials (4th radial order)
+
+    >>> Z = ceo.ZernikeS(4)
+
+    and setting it to be a pure focus mode:
+
+    >>> Z.a[3] = 1.0
+    >>> Z.update()
+
+    The surface is computed with
+
+    >>> npx = 512
+    >>> u = np.linspace(-1,1,npx)
+    >>> x,y = np.meshgrid(u,u, indexing='xy')
+    >>> r = np.hypot(x,y)
+    >>> o = np.arctan2(y,x)
+    >>> cuo = ceo.cuDoubleArray(host_data=o)
+    >>> cur = ceo.cuDoubleArray(host_data=r)
+    >>> S = Z.surface(cur,cuo)
+
+    and its derivative with
+
+    >>> (dSdx,dSdy) = Z.surface_derivatives(cur,cuo)
+    >>> fig, (ax1,ax2,ax3) = plt.subplots(ncols=3,sharey=True)
+    >>> fig.set_size_inches(20,4.5)
+    >>> h1 = ax1.imshow(S_,interpolation=None,origin='lower')
+    >>> plt.colorbar(h1,ax=ax1)
+    >>> h2 = ax2.imshow(dSdx.host(),interpolation=None,origin='lower')
+    >>> plt.colorbar(h2,ax=ax2)
+    >>> h3 = ax3.imshow(dSdy.host(),interpolation=None,origin='lower')
+    >>> plt.colorbar(h3,ax=ax3)
     """
     cdef zernikeS *_c_zernikeS
     cdef public int max_n, n_mode, N_SURF
