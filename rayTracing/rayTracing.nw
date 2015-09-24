@@ -181,6 +181,8 @@ cdef class Bundle:
     cdef cuIntArray _piston_mask_
 <<rayTracing.pyx>>=
 # polar bundle
+from scipy.optimize import brentq
+from ceo.constants import ARCSEC2RAD
 cdef class Bundle:
     """
     A class to represent a bundle of rays    
@@ -292,7 +294,10 @@ def to_sphere(self, sphere_origin=None,
         self._c_bundle.to_sphere(origin)
 
     if focal_plane_distance!=0.0:
-        self._c_bundle.to_sphere(focal_plane_distance, focal_plane_radius);
+        self._c_bundle.to_sphere(focal_plane_distance, focal_plane_radius)
+
+def to_focal_plane(self, rtd focal_plane_distance):
+    self._c_bundle.to_z_plane(focal_plane_distance)
 
 def get_optical_path_difference(self,
                                 float delta_x, int N_x,
@@ -302,6 +307,26 @@ def get_optical_path_difference(self,
                                                delta_x, N_x,
                                                delta_y, N_y)
     return opd
+
+def ee80(self):
+    """
+    Computes the size of the geometric EE80 square 
+
+    Returns
+    ------
+    float
+        The size of the geometric EE80 square in radian
+    """
+    V = self.vignetting.host().flatten()==1
+    xyz = self.coordinates.host()
+    x = np.abs( xyz[V,0] )
+    y = np.abs( xyz[V,1] )
+    def ensquared(hd):
+        idx = np.logical_and(x<=hd , y<=hd)
+        return float(idx.sum())/V.sum()
+    f = lambda x: ensquared(x)-0.8
+    b = np.maximum(x.max(),y.max())
+    return 2*brentq(f,0,b)*(ARCSEC2RAD/1e-3)
 
 property N_BUNDLE:
     def __get__(self):
@@ -583,7 +608,7 @@ def blocking(self, Bundle rays):
 
 def update(self, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0], int idx=0):
     """
-    Update the position of the mirror segments
+    Updates the position of the mirror segments
 
     Parameters
     ----------
@@ -783,6 +808,20 @@ cdef class GMT_M2:
 <<rayTracing.pyx>>=
 # Zernike surface
 cdef class ZernikeS:
+    """
+    A class to represent a surface as the weighted sum of Zernike polynomials
+
+    Parameters
+    ----------
+    max_n : int
+        The largest of the radial orders
+    n_mode : int
+        The total number of Zernike modes
+    N_SURF : int
+        The number of Zernike surfaces
+    a : ndarray
+        The Zernike polynomial coefficients as a N_SURFxn_modes array
+    """
     cdef zernikeS *_c_zernikeS
     cdef public int max_n, n_mode, N_SURF
     cdef public np.ndarray a
@@ -814,13 +853,36 @@ cdef class ZernikeS:
         self._c_zernikeS.cleanup();
 
     def update(self):
+        """
+        Updates the Zernike surface based on the Zernike coefficients
+        """
         self._c_zernikeS.update(<rtd *>self.a.data)
 
     def reset(self):
+        """
+        Resets the Zernike coefficients to zero and update the Zernike surface
+        """
         self.a = np.zeros((self.N_SURF,self.n_mode))
         self.update()
         
     def surface(self, cuDoubleArray r, cuDoubleArray o, int surf_id=0):
+        """
+        Computes the Zernike surface in polar coordinates
+
+        Parameters
+        ----------
+        r : cuDoubleArray
+            The normalized radius
+        o : cuDoubleArray
+            The azimuth
+        surf_id : int, optionnal
+            The surface index; default: 0
+
+        Returns
+        -------
+        S : cuDoubleArray
+            The Zernike surface
+        """
         S = cuDoubleArray(shape=r.shape, dev_malloc = True)
         self._c_zernikeS.surface(S._c_gpu.dev_data, 
                                  r._c_gpu.dev_data, o._c_gpu.dev_data, 
@@ -828,6 +890,23 @@ cdef class ZernikeS:
         return S
 
     def surface_derivatives(self, cuDoubleArray r, cuDoubleArray o):
+        """
+        Computes the Zernike surface x and y derivatives in polar coordinates
+
+        Parameters
+        ----------
+        r : cuDoubleArray
+            The normalized radius
+        o : cuDoubleArray
+            The azimuth
+
+        Returns
+        -------
+        dSdx : cuDoubleArray
+            The Zernike surface x derivative
+        dSdy : cuDoubleArray
+            The Zernike surface y derivative
+        """
         dSdx = cuDoubleArray(shape=r.shape, dev_malloc = True)
         dSdy = cuDoubleArray(shape=r.shape, dev_malloc = True)
         self._c_zernikeS.surface_derivatives(dSdx._c_gpu.dev_data, dSdy._c_gpu.dev_data, 
@@ -835,6 +914,9 @@ cdef class ZernikeS:
         return dSdx,dSdy
 
     def projection(self, cuFloatArray phase, cuDoubleArray r, cuDoubleArray o):
+        """
+        IN PROGRESS...
+        """
         self._c_zernikeS.projection(phase._c_gpu.dev_data, r._c_gpu.dev_data, o._c_gpu.dev_data, r.size)
 
 def Zernike_Surface(rtd r, rtd o, int max_n, np.ndarray a):
@@ -1440,8 +1522,7 @@ void bundle::to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane)
   <<rays optical path difference>>
 }
 @
-Given the distance of the chief ray [[s_chief_on_axis]] from the last surface to the object for an on--axis source, the radius of curvature of the focal plane [[rho_focal_plane]] and the radius of the reference sphere [[sphere_radius]],
-the distance to the object from the last surface is given by
+Given the $z$ location of the focal plane on axis [[z_chief_on_axis]] and the radius of curvature of the focal plane [[rho_focal_plane]], the distance to the object from the last surface for the chief ray is given by
 <<reference sphere distance>>= 
 to_focal_surface_chief_kernel LLL gridDim , blockDim RRR (d__sphere_distance, d__chief_ray, 1, 
                                                           z_chief_on_axis, 
@@ -1515,6 +1596,7 @@ The coordinates, directions, optical path length and vignetting map are copied i
 <<gathering ray coordinates>>=
 void bundle::get_coordinates(double *d__coord)
 {
+  HANDLE_ERROR( cudaMemset( d__coord, 0, sizeof(double)*N_RAY*3 ) );  
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(N_RAY/N_THREAD2+1,1, N_BUNDLE);
   get_coordinates_kernel LLL gridDim , blockDim RRR (d__coord, d__ray, N_RAY);
@@ -1531,14 +1613,15 @@ void bundle::get_chief_coordinates(double *d__coord)
 <<gathering ray coordinates kernel>>=
 __global__ void get_coordinates_kernel(double *d__coord, ray *d__ray, int N_RAY)
 {
-  int i, j, k, l, iSource;
+  int i, j, k0, k, l, iSource;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   k = j * gridDim.x * blockDim.x + i;
   iSource = blockIdx.z;
-  if ( k<N_RAY )
+  k0 = k;
+  k += iSource*N_RAY;
+  if ( ( k0<N_RAY ) && (d__ray[k].v==1) )
   {
-    k += iSource*N_RAY;
     l = k*3;
     d__coord[l++] = d__ray[k].coordinates.x;
     d__coord[l++] = d__ray[k].coordinates.y;
