@@ -312,8 +312,8 @@ def ee80(self):
     """
     Computes the size of the geometric EE80 square 
 
-    Return
-    ------
+    Returns
+    -------
     float
         The size of the geometric EE80 square in radian
     """
@@ -608,7 +608,7 @@ def blocking(self, Bundle rays):
 
 def update(self, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0], int idx=0):
     """
-    Update the position of the mirror segments
+    Updates the position of the mirror segments
 
     Parameters
     ----------
@@ -808,6 +808,71 @@ cdef class GMT_M2:
 <<rayTracing.pyx>>=
 # Zernike surface
 cdef class ZernikeS:
+    """
+    A class to represent a surface as the weighted sum of Zernike polynomials
+
+    Parameters
+    ----------
+    max_n : int
+        The largest of the radial orders
+    a : ndarray, optionnal
+        The Zernike polynomial coefficients as a N_SURFxn_modes array; default to all 0
+    N_SURF : int, optionnal
+        The number of Zernike surfaces; default: 1
+    origin : list, optionnal
+        Origin of the coordinate system of the Zernike polynomials; default: [0,0,0]
+    euler_angles : list, optionnal
+        Euler angles of the coordinate system of the Zernike polynomials; default: [0,0,0]
+
+    Attributes
+    ----------
+    max_n : int
+        The largest of the radial orders
+    n_mode : int
+        The total number of Zernike modes
+    N_SURF : int
+        The number of Zernike surfaces
+    a : ndarray
+        The Zernike polynomial coefficients as a N_SURFxn_modes array
+
+    Examples
+    --------
+    >>> import ceo
+    >>> import numpy as np
+    >>> import matplotlib as plt
+
+    Lets define a Zernike surface made of the first 15 Zernike polynomials (4th radial order)
+
+    >>> Z = ceo.ZernikeS(4)
+
+    and setting it to be a pure focus mode:
+
+    >>> Z.a[3] = 1.0
+    >>> Z.update()
+
+    The surface is computed with
+
+    >>> npx = 512
+    >>> u = np.linspace(-1,1,npx)
+    >>> x,y = np.meshgrid(u,u, indexing='xy')
+    >>> r = np.hypot(x,y)
+    >>> o = np.arctan2(y,x)
+    >>> cuo = ceo.cuDoubleArray(host_data=o)
+    >>> cur = ceo.cuDoubleArray(host_data=r)
+    >>> S = Z.surface(cur,cuo)
+
+    and its derivative with
+
+    >>> (dSdx,dSdy) = Z.surface_derivatives(cur,cuo)
+    >>> fig, (ax1,ax2,ax3) = plt.subplots(ncols=3,sharey=True)
+    >>> fig.set_size_inches(20,4.5)
+    >>> h1 = ax1.imshow(S.host(),interpolation=None,origin='lower')
+    >>> plt.colorbar(h1,ax=ax1)
+    >>> h2 = ax2.imshow(dSdx.host(),interpolation=None,origin='lower')
+    >>> plt.colorbar(h2,ax=ax2)
+    >>> h3 = ax3.imshow(dSdy.host(),interpolation=None,origin='lower')
+    >>> plt.colorbar(h3,ax=ax3)
+    """
     cdef zernikeS *_c_zernikeS
     cdef public int max_n, n_mode, N_SURF
     cdef public np.ndarray a
@@ -839,13 +904,36 @@ cdef class ZernikeS:
         self._c_zernikeS.cleanup();
 
     def update(self):
+        """
+        Updates the Zernike surface based on the Zernike coefficients
+        """
         self._c_zernikeS.update(<rtd *>self.a.data)
 
     def reset(self):
+        """
+        Resets the Zernike coefficients to zero and update the Zernike surface
+        """
         self.a = np.zeros((self.N_SURF,self.n_mode))
         self.update()
         
     def surface(self, cuDoubleArray r, cuDoubleArray o, int surf_id=0):
+        """
+        Computes the Zernike surface in polar coordinates
+
+        Parameters
+        ----------
+        r : cuDoubleArray
+            The normalized radius
+        o : cuDoubleArray
+            The azimuth
+        surf_id : int, optionnal
+            The surface index; default: 0
+
+        Returns
+        -------
+        S : cuDoubleArray
+            The Zernike surface
+        """
         S = cuDoubleArray(shape=r.shape, dev_malloc = True)
         self._c_zernikeS.surface(S._c_gpu.dev_data, 
                                  r._c_gpu.dev_data, o._c_gpu.dev_data, 
@@ -853,6 +941,23 @@ cdef class ZernikeS:
         return S
 
     def surface_derivatives(self, cuDoubleArray r, cuDoubleArray o):
+        """
+        Computes the Zernike surface x and y derivatives in polar coordinates
+
+        Parameters
+        ----------
+        r : cuDoubleArray
+            The normalized radius
+        o : cuDoubleArray
+            The azimuth
+
+        Returns
+        -------
+        dSdx : cuDoubleArray
+            The Zernike surface x derivative
+        dSdy : cuDoubleArray
+            The Zernike surface y derivative
+        """
         dSdx = cuDoubleArray(shape=r.shape, dev_malloc = True)
         dSdy = cuDoubleArray(shape=r.shape, dev_malloc = True)
         self._c_zernikeS.surface_derivatives(dSdx._c_gpu.dev_data, dSdy._c_gpu.dev_data, 
@@ -860,6 +965,9 @@ cdef class ZernikeS:
         return dSdx,dSdy
 
     def projection(self, cuFloatArray phase, cuDoubleArray r, cuDoubleArray o):
+        """
+        IN PROGRESS...
+        """
         self._c_zernikeS.projection(phase._c_gpu.dev_data, r._c_gpu.dev_data, o._c_gpu.dev_data, r.size)
 
 def Zernike_Surface(rtd r, rtd o, int max_n, np.ndarray a):
