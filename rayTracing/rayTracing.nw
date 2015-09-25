@@ -388,16 +388,20 @@ property piston_mask:
         vector *euler_angles
         rtd *R
 @ 
+<<class definitions>>=
+cdef class Coordinate_system:
+    cdef:
+        coordinate_system *_c_coordinate_system
+        double[:,::1] _origin_
+        double[:,::1] _euler_angles_
+        double[:,:,::1] _R_
+        int N
+@ 
 <<rayTracing.pyx>>=
 # coordinate_system
 cdef class Coordinate_system:
     """
     """
-    cdef coordinate_system *_c_coordinate_system
-    cdef double[:,::1] _origin_
-    cdef double[:,::1] _euler_angles_
-    cdef double[:,:,::1] _R_
-    cdef int N
 
     def __cinit__(self, int N=1):
         self.N = N
@@ -501,6 +505,211 @@ cdef class Aperture:
     def vignetting(self, Bundle rays):
         self._c_aperture.vignetting(rays._c_bundle)
 @
+\subsubsection{Zernike}
+\label{sec:zernike}
+
+<<rayTracing.pxd contents>>=
+    cdef cppclass zernikeS:
+          rtd *a
+          void setup(int , rtd *, vector , vector , int)
+          void cleanup()
+          void surface(rtd *, rtd *, rtd *, int , int)
+          void update(rtd *)
+          void surface_derivatives(rtd *, rtd *, 
+                                   rtd *, rtd *, int )
+          void projection(float *, rtd *, rtd *, int)
+
+    rtd zernike_surface(rtd , rtd , unsigned int , rtd *)
+
+@ 
+<<class definitions>>=
+from numpy cimport ndarray
+from utilities cimport cuDoubleArray
+cdef class ZernikeS:
+    cdef:
+        zernikeS *_c_zernikeS
+        public int max_n, n_mode, N_SURF
+        public ndarray a
+        double [:,::1] _a_
+@
+<<rayTracing.pyx>>=
+# Zernike surface
+cdef class ZernikeS:
+    """
+    A class to represent a surface as the weighted sum of Zernike polynomials
+
+    Parameters
+    ----------
+    max_n : int
+        The largest of the radial orders
+    a : ndarray, optionnal
+        The Zernike polynomial coefficients as a N_SURFxn_modes array; default to all 0
+    N_SURF : int, optionnal
+        The number of Zernike surfaces; default: 1
+    origin : list, optionnal
+        Origin of the coordinate system of the Zernike polynomials; default: [0,0,0]
+    euler_angles : list, optionnal
+        Euler angles of the coordinate system of the Zernike polynomials; default: [0,0,0]
+
+    Attributes
+    ----------
+    max_n : int
+        The largest of the radial orders
+    n_mode : int
+        The total number of Zernike modes
+    N_SURF : int
+        The number of Zernike surfaces
+    a : ndarray
+        The Zernike polynomial coefficients as a N_SURFxn_modes array
+
+    Examples
+    --------
+    >>> import ceo
+    >>> import numpy as np
+    >>> import matplotlib as plt
+
+    Lets define a Zernike surface made of the first 15 Zernike polynomials (4th radial order)
+
+    >>> Z = ceo.ZernikeS(4)
+
+    and setting it to be a pure focus mode:
+
+    >>> Z.a[3] = 1.0
+    >>> Z.update()
+
+    The surface is computed with
+
+    >>> npx = 512
+    >>> u = np.linspace(-1,1,npx)
+    >>> x,y = np.meshgrid(u,u, indexing='xy')
+    >>> r = np.hypot(x,y)
+    >>> o = np.arctan2(y,x)
+    >>> cuo = ceo.cuDoubleArray(host_data=o)
+    >>> cur = ceo.cuDoubleArray(host_data=r)
+    >>> S = Z.surface(cur,cuo)
+
+    and its derivative with
+
+    >>> (dSdx,dSdy) = Z.surface_derivatives(cur,cuo)
+    >>> fig, (ax1,ax2,ax3) = plt.subplots(ncols=3,sharey=True)
+    >>> fig.set_size_inches(20,4.5)
+    >>> h1 = ax1.imshow(S.host(),interpolation=None,origin='lower')
+    >>> plt.colorbar(h1,ax=ax1)
+    >>> h2 = ax2.imshow(dSdx.host(),interpolation=None,origin='lower')
+    >>> plt.colorbar(h2,ax=ax2)
+    >>> h3 = ax3.imshow(dSdy.host(),interpolation=None,origin='lower')
+    >>> plt.colorbar(h3,ax=ax3)
+    """
+
+    def __cinit__(self, int _max_n_, ndarray _a_=None,
+                  origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0],
+                  int N_SURF=1):
+        self._c_zernikeS = new zernikeS()
+        self.max_n = _max_n_
+        self.n_mode = (_max_n_+1)*(_max_n_+2)/2
+        self.N_SURF = N_SURF
+        if _a_ is None:
+            self.a = np.zeros((self.N_SURF,self.n_mode), dtype=np.float64)
+        else: 
+            self.a = _a_
+        cdef vector __origin
+        __origin.x = <float>origin[0]
+        __origin.y = <float>origin[1]
+        __origin.z = <float>origin[2]
+        cdef vector __euler_angles
+        __euler_angles.x = <float>euler_angles[0]
+        __euler_angles.y = <float>euler_angles[1]
+        __euler_angles.z = <float>euler_angles[2]
+        self._c_zernikeS.setup( self.max_n, <rtd *>self.a.data,
+                                __origin, __euler_angles,
+                                self.N_SURF) 
+
+    def __dealloc__(self):
+        self._c_zernikeS.cleanup();
+
+    def update(self):
+        """
+        Updates the Zernike surface based on the Zernike coefficients
+        """
+        self._c_zernikeS.update(<rtd *>self.a.data)
+
+    def reset(self):
+        """
+        Resets the Zernike coefficients to zero and update the Zernike surface
+        """
+        self.a = np.zeros((self.N_SURF,self.n_mode))
+        self.update()
+        
+    def surface(self, cuDoubleArray r, cuDoubleArray o, int surf_id=0):
+        """
+        Computes the Zernike surface in polar coordinates
+
+        Parameters
+        ----------
+        r : cuDoubleArray
+            The normalized radius
+        o : cuDoubleArray
+            The azimuth
+        surf_id : int, optionnal
+            The surface index; default: 0
+
+        Returns
+        -------
+        S : cuDoubleArray
+            The Zernike surface
+        """
+        S = cuDoubleArray(shape=r.shape, dev_malloc = True)
+        self._c_zernikeS.surface(S._c_gpu.dev_data, 
+                                 r._c_gpu.dev_data, o._c_gpu.dev_data, 
+                                 r._c_gpu.N, surf_id)
+        return S
+
+    def surface_derivatives(self, cuDoubleArray r, cuDoubleArray o):
+        """
+        Computes the Zernike surface x and y derivatives in polar coordinates
+
+        Parameters
+        ----------
+        r : cuDoubleArray
+            The normalized radius
+        o : cuDoubleArray
+            The azimuth
+
+        Returns
+        -------
+        dSdx : cuDoubleArray
+            The Zernike surface x derivative
+        dSdy : cuDoubleArray
+            The Zernike surface y derivative
+        """
+        dSdx = cuDoubleArray(shape=r.shape, dev_malloc = True)
+        dSdy = cuDoubleArray(shape=r.shape, dev_malloc = True)
+        self._c_zernikeS.surface_derivatives(dSdx._c_gpu.dev_data, dSdy._c_gpu.dev_data, 
+                                             r._c_gpu.dev_data, o._c_gpu.dev_data, r._c_gpu.N)
+        return dSdx,dSdy
+
+    def projection(self, cuFloatArray phase, cuDoubleArray r, cuDoubleArray o):
+        """
+        Projects the phase onto a set on Zernike polynomials
+
+        Parameters
+        ----------
+        phase : cuFloatArray
+            The wavefront phase
+        r : cuDoubleArray
+            The radius of the coordinates
+        o : cuDoubleArray
+            The azimuth of the coordinates
+        """
+        self._c_zernikeS.projection(phase._c_gpu.dev_data, 
+                                    r._c_gpu.dev_data, o._c_gpu.dev_data, r.size)
+        self._a_ = <double[:self.N_SURF,:self.n_mode]>self._c_zernikeS.a
+        self.a   = np.asarray(self._a_)
+
+def Zernike_Surface(rtd r, rtd o, int max_n, np.ndarray a):
+    return zernike_surface(r, o, max_n, <rtd *>a.data)
+
+@
 \subsubsection{GMT M1}
 \label{sec:gmt-m1-1}
 
@@ -530,12 +739,15 @@ void blocking(bundle *)
 void global_tiptilt(float , float )
 void edge_sensors(float *, float *, float *, int, int, int)
 @
+<<class definitions>>=
+cdef class GMT_M1:
+    cdef gmt_m1 *_c_gmt_m12
+    <<GMT M12 class properties>>    
+@
 <<rayTracing.pyx>>=
 # GMT M1
 cdef class GMT_M1:
     <<GMT M12 docstring>>
-    cdef gmt_m1 *_c_gmt_m12
-    <<GMT M12 class properties>>    
 
     def __cinit__(self, float D, int D_px, int radial_order=0, int N_SRC=1):
         self._c_gmt_m12 = new gmt_m1()
@@ -702,6 +914,35 @@ D_px : float
 radial_order : int, optionnal
     The radial order of the last Zernike polynomials, default to 0
 
+Attributes
+----------
+D_assembly : rtd
+    The mirror assembly diameter
+D_full : rtd
+    The segment full aperture diameter
+D_clear : rtd
+    The segment clear aperture diameter
+L : rtd
+    The distance from the optical axis to the center of the tilted peripheral segments
+conic_c : rtd
+    The inverse of the mirror radius of curvature
+conic_k : rtd
+    The conic parametert
+M_ID : int
+    The mirror ID #
+zernike : ZernikeS
+    The figure of the segments as Zernike surface object
+aperture_CS : Coordinate_system
+    The segment aperture coordinate system
+conic_CS : Coordinate_system
+    The segment conic coordinate system
+motion_CS : Coordinate_system
+    The segment motion coordinate system
+rigid_body_CS : Coordinate_system
+    The segment rigid body coordinate system
+TT_CS : Coordinate_system
+    The mirror global tip-tilt coordinate system
+
 Examples
 --------
 >>> import ceo
@@ -788,191 +1029,6 @@ cdef class GMT_M2:
             The y axis angle
         """
         self._c_gmt_m12.coma_neutral(tip, tilt);
-@
-\subsubsection{Zernike}
-\label{sec:zernike}
-
-<<rayTracing.pxd contents>>=
-    cdef cppclass zernikeS:
-          void setup(int , rtd *, vector , vector , int)
-          void cleanup()
-          void surface(rtd *, rtd *, rtd *, int , int)
-          void update(rtd *)
-          void surface_derivatives(rtd *, rtd *, 
-                                   rtd *, rtd *, int )
-          void projection(float *, rtd *, rtd *, int)
-
-    rtd zernike_surface(rtd , rtd , unsigned int , rtd *)
-
-@ 
-<<rayTracing.pyx>>=
-# Zernike surface
-cdef class ZernikeS:
-    """
-    A class to represent a surface as the weighted sum of Zernike polynomials
-
-    Parameters
-    ----------
-    max_n : int
-        The largest of the radial orders
-    a : ndarray, optionnal
-        The Zernike polynomial coefficients as a N_SURFxn_modes array; default to all 0
-    N_SURF : int, optionnal
-        The number of Zernike surfaces; default: 1
-    origin : list, optionnal
-        Origin of the coordinate system of the Zernike polynomials; default: [0,0,0]
-    euler_angles : list, optionnal
-        Euler angles of the coordinate system of the Zernike polynomials; default: [0,0,0]
-
-    Attributes
-    ----------
-    max_n : int
-        The largest of the radial orders
-    n_mode : int
-        The total number of Zernike modes
-    N_SURF : int
-        The number of Zernike surfaces
-    a : ndarray
-        The Zernike polynomial coefficients as a N_SURFxn_modes array
-
-    Examples
-    --------
-    >>> import ceo
-    >>> import numpy as np
-    >>> import matplotlib as plt
-
-    Lets define a Zernike surface made of the first 15 Zernike polynomials (4th radial order)
-
-    >>> Z = ceo.ZernikeS(4)
-
-    and setting it to be a pure focus mode:
-
-    >>> Z.a[3] = 1.0
-    >>> Z.update()
-
-    The surface is computed with
-
-    >>> npx = 512
-    >>> u = np.linspace(-1,1,npx)
-    >>> x,y = np.meshgrid(u,u, indexing='xy')
-    >>> r = np.hypot(x,y)
-    >>> o = np.arctan2(y,x)
-    >>> cuo = ceo.cuDoubleArray(host_data=o)
-    >>> cur = ceo.cuDoubleArray(host_data=r)
-    >>> S = Z.surface(cur,cuo)
-
-    and its derivative with
-
-    >>> (dSdx,dSdy) = Z.surface_derivatives(cur,cuo)
-    >>> fig, (ax1,ax2,ax3) = plt.subplots(ncols=3,sharey=True)
-    >>> fig.set_size_inches(20,4.5)
-    >>> h1 = ax1.imshow(S.host(),interpolation=None,origin='lower')
-    >>> plt.colorbar(h1,ax=ax1)
-    >>> h2 = ax2.imshow(dSdx.host(),interpolation=None,origin='lower')
-    >>> plt.colorbar(h2,ax=ax2)
-    >>> h3 = ax3.imshow(dSdy.host(),interpolation=None,origin='lower')
-    >>> plt.colorbar(h3,ax=ax3)
-    """
-    cdef zernikeS *_c_zernikeS
-    cdef public int max_n, n_mode, N_SURF
-    cdef public np.ndarray a
-
-    def __cinit__(self, int _max_n_, np.ndarray _a_=None,
-                  origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0],
-                  int N_SURF=1):
-        self._c_zernikeS = new zernikeS()
-        self.max_n = _max_n_
-        self.n_mode = (_max_n_+1)*(_max_n_+2)/2
-        self.N_SURF = N_SURF
-        if _a_ is None:
-            self.a = np.zeros((self.N_SURF,self.n_mode))
-        else: 
-            self.a = _a_
-        cdef vector __origin
-        __origin.x = <float>origin[0]
-        __origin.y = <float>origin[1]
-        __origin.z = <float>origin[2]
-        cdef vector __euler_angles
-        __euler_angles.x = <float>euler_angles[0]
-        __euler_angles.y = <float>euler_angles[1]
-        __euler_angles.z = <float>euler_angles[2]
-        self._c_zernikeS.setup( self.max_n, <rtd *>self.a.data,
-                                __origin, __euler_angles,
-                                self.N_SURF) 
-
-    def __dealloc__(self):
-        self._c_zernikeS.cleanup();
-
-    def update(self):
-        """
-        Updates the Zernike surface based on the Zernike coefficients
-        """
-        self._c_zernikeS.update(<rtd *>self.a.data)
-
-    def reset(self):
-        """
-        Resets the Zernike coefficients to zero and update the Zernike surface
-        """
-        self.a = np.zeros((self.N_SURF,self.n_mode))
-        self.update()
-        
-    def surface(self, cuDoubleArray r, cuDoubleArray o, int surf_id=0):
-        """
-        Computes the Zernike surface in polar coordinates
-
-        Parameters
-        ----------
-        r : cuDoubleArray
-            The normalized radius
-        o : cuDoubleArray
-            The azimuth
-        surf_id : int, optionnal
-            The surface index; default: 0
-
-        Returns
-        -------
-        S : cuDoubleArray
-            The Zernike surface
-        """
-        S = cuDoubleArray(shape=r.shape, dev_malloc = True)
-        self._c_zernikeS.surface(S._c_gpu.dev_data, 
-                                 r._c_gpu.dev_data, o._c_gpu.dev_data, 
-                                 r._c_gpu.N, surf_id)
-        return S
-
-    def surface_derivatives(self, cuDoubleArray r, cuDoubleArray o):
-        """
-        Computes the Zernike surface x and y derivatives in polar coordinates
-
-        Parameters
-        ----------
-        r : cuDoubleArray
-            The normalized radius
-        o : cuDoubleArray
-            The azimuth
-
-        Returns
-        -------
-        dSdx : cuDoubleArray
-            The Zernike surface x derivative
-        dSdy : cuDoubleArray
-            The Zernike surface y derivative
-        """
-        dSdx = cuDoubleArray(shape=r.shape, dev_malloc = True)
-        dSdy = cuDoubleArray(shape=r.shape, dev_malloc = True)
-        self._c_zernikeS.surface_derivatives(dSdx._c_gpu.dev_data, dSdy._c_gpu.dev_data, 
-                                             r._c_gpu.dev_data, o._c_gpu.dev_data, r._c_gpu.N)
-        return dSdx,dSdy
-
-    def projection(self, cuFloatArray phase, cuDoubleArray r, cuDoubleArray o):
-        """
-        IN PROGRESS...
-        """
-        self._c_zernikeS.projection(phase._c_gpu.dev_data, r._c_gpu.dev_data, o._c_gpu.dev_data, r.size)
-
-def Zernike_Surface(rtd r, rtd o, int max_n, np.ndarray a):
-    return zernike_surface(r, o, max_n, <rtd *>a.data)
-
 @ 
 \section{Custom types}
 \label{sec:custom-types}
@@ -3033,6 +3089,8 @@ void zernikeS::projection(float *d__phase, rtd *d__r, rtd *d__o, const int N)
   for (k=0;k<n_mode;k++)
     projection_kern LLL gridDim, blockDim RRR (d__a, d__phase, d__r, d__o, N, max_n, d__ap, k);
   HANDLE_ERROR( cudaFree( d__ap) );
+  HANDLE_ERROR( cudaMemcpy( a, d__a, 
+			    sizeof(rtd)*n_mode, cudaMemcpyDeviceToHost ) );
 }
 @ where
 <<zernike projection kernel>>=
