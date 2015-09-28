@@ -16,8 +16,8 @@ optics_throughtput = 1
 entrance_pupil_size_meter = N_LENSLET*lenslet_pitch_meter
 M1_zernike_radial_order = 4
 M1_init = {"global tip-tilt [arcsec]": 0.0014*ceo.constants.DEG2RAD*ceo.constants.RAD2ARCSEC,
-    "Rx [arcsec]": 0.,
-    "Ry [arcsec]": 0.,
+    "Rx [arcsec]": 0.2,
+    "Ry [arcsec]": 0.2,
     "bending modes [micron]": 0.01}
 M2_init = {"Tx [micron]": 400, 
     "Ty [micron]": 400,
