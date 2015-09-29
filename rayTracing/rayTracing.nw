@@ -308,15 +308,21 @@ def get_optical_path_difference(self,
                                                delta_y, N_y)
     return opd
 
-def ee80(self):
+def ee80(self,spaxel="circle"):
     """
     Computes the size of the geometric EE80 square 
+
+    Parameters
+    ----------
+    spaxel : char, optionnal
+        The spaxel geometry, square or circle; default: circle
 
     Returns
     -------
     float
         The size of the geometric EE80 square in radian
     """
+    assert(spaxel=="circle" or spaxel=="square","spaxel is either a circle or a square!")
     V = self.vignetting.host().flatten()==1
     xyz = self.coordinates.host()
     x = np.abs( xyz[V,0] )
@@ -324,7 +330,14 @@ def ee80(self):
     def ensquared(hd):
         idx = np.logical_and(x<=hd , y<=hd)
         return float(idx.sum())/V.sum()
-    f = lambda x: ensquared(x)-0.8
+    def encircled(hd):
+	r = np.hypot(x,y)
+        idx = r<=hd
+        return float(idx.sum())/V.sum()
+    if spaxel=="circle":
+        f = lambda x: encircled(x)-0.8
+    else:
+        f = lambda x: ensquared(x)-0.8
     b = np.maximum(x.max(),y.max())
     return 2*brentq(f,0,b)*(ARCSEC2RAD/1e-3)
 

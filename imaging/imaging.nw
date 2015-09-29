@@ -103,6 +103,7 @@ from source cimport source
 cdef extern from "imaging.h":
     cdef cppclass imaging:
         int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_PX_CAMERA, N_SOURCE
+        float photoelectron_gain
         float *d__frame
         void setup(int , int , int , int , int, int)
         void cleanup()
@@ -179,7 +180,13 @@ cdef class Imaging:
         self._c_imaging.readout(exposureTime,readOutNoiseRms)
 
     def reset(self):
-        self._c_imaging.reset();
+        self._c_imaging.reset()
+
+    property photoelectron_gain:
+        def __get__(self):
+            return self._c_imaging.photoelectron_gain
+        def __set__(self,float value):
+            self._c_imaging.photoelectron_gain = value
 @
 
 \section{Parameters}
@@ -199,6 +206,7 @@ if [[zenith]] is negative, the device is align with the guide star,
 if it is positive or null then the guide star is displaced in the image plane according to their relative position,
 \item the pixel scale [[pixel_scale]],
 \item a flag setting the pointing of the imaging device either absolute or relative to the direction of the light source [[absolute_pointing]],
+\item the optics and detector photon to electron gain [[photoelectron_gain]],
 \end{itemize}
 
 <<parameters>>=
@@ -206,7 +214,7 @@ int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_LENSLET,
   N_SOURCE, N_PX_IMAGE, N_PX_CAMERA, N_FRAME, BIN_IMAGE;
 cufftHandle plan;
 float2 *d__wave_PUPIL;
-float  *d__frame, zenith, azimuth, theta_x, theta_y, pixel_scale;
+float  *d__frame, zenith, azimuth, theta_x, theta_y, pixel_scale, photoelectron_gain;
 char absolute_pointing;
 curandState *devStates;
 @
@@ -285,6 +293,7 @@ N_FRAME     = 0;
 zenith = -1.0;
 pixel_scale = 0.0;
 absolute_pointing = 0;
+photoelectron_gain = 1.0;
 fprintf(stdout,"@(CEO)>imaging: Device memory allocation\n");
 int N_DFT_bytes = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
 cudaMalloc( (void**)&d__wave_PUPIL , sizeof(float2) * N_DFT_bytes);
@@ -468,7 +477,8 @@ __global__ void wave2intensity(float2 *wave_PUPIL, const int N, float intensity_
 The intensity is normalized with respect to the brightness of the source:
 <<intensity normalization>>=
 float intensity_norm;
-intensity_norm = src->n_photon()*src->wavefront.M->area/src->wavefront.M->nnz;
+intensity_norm = photoelectron_gain*src->n_photon()*
+  src->wavefront.M->area/src->wavefront.M->nnz;
 //fprintf(stdout,"wavefront M:\n . area: %f\n . nnz: %f\n",src->wavefront.M->area,src->wavefront.M->nnz);
 @
 Dynamically allocated variables are freed with the cleanup routine:
