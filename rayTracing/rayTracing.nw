@@ -2312,7 +2312,7 @@ The conic surface is defined with
  \label{eq:4}
   F(x,y,z) = z - {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} } = 0.
 \end{equation}
-
+The conic expression is computed with
 <<conic equations>>=
 __host__ __device__ inline rtd conic_equation(vector *v, vector *v0, const rtd k, const rtd c)
 {
@@ -2328,23 +2328,13 @@ __host__ __device__ inline rtd conic_equation(vector *v, vector *v0, const rtd k
   }
 }
 @ 
+and the surface equation with
 <<conic equations>>=
-__device__ inline rtd conic_surface(vector *v, vector *v0, const rtd k, const rtd c,
-				    const int max_n, rtd *a, const rtd R)
+__device__ inline rtd  conic_surface(vector *v, vector *v0, const rtd k, const rtd c)
 {
-  rtd zern_surf;
-    zern_surf = zernike_surface(v->mag(R), v->angle(), max_n, a);
-  if (c==0)
-    return v->z - v0->z - zern_surf;
-  else {    
-    rtd rho2;
-    rho2 = c*v->rho2(v0->x,v0->y);
-    if (k==0)
-      return v->z - rho2*0.5 - v0->z - zern_surf;
-    else
-      return v->z - rho2/( 1 + sqrt(1 - k*c*rho2) ) - v0->z - zern_surf;
-  }
+  return v->z - v0->z - conic_equation(v, v0, k, c);
 }
+@
 @ 
 The partial derivative of the conic equation are written
 \begin{itemize}
@@ -2354,21 +2344,17 @@ The partial derivative of the conic equation are written
   \end{equation}
 <<conic equations>>=
  __device__ inline rtd partial_x_conic_surface(vector *v, vector *v0, 
-					       const rtd k, const rtd c,
-					       const int max_n, rtd *cx,
-					       const rtd R)
+					       const rtd k, const rtd c)
 {
-  rtd px_zern_surf;
-  px_zern_surf = zernike_surface(v->mag(R), v->angle(), max_n-1, cx);
   if (c==0)
-    return -px_zern_surf;
+    return 0.0;
   else    
     if (k==0)
-      return -(v->x - v0->x)*c - px_zern_surf;
+      return -(v->x - v0->x)*c;
     else {
       rtd rho2;
       rho2 = c*v->rho2(v0->x,v0->y);
-      return -(v->x - v0->x)*c*rsqrt(1 - k*c*rho2) - px_zern_surf;
+      return -(v->x - v0->x)*c*rsqrt(1 - k*c*rho2);
     }
 }
 @
@@ -2378,21 +2364,17 @@ The partial derivative of the conic equation are written
   \end{equation}
 <<conic equations>>=
 __device__ inline rtd partial_y_conic_surface(vector *v, vector *v0, 
-					      const rtd k, const rtd c,
-					      const int max_n, rtd *cy,
-					      const rtd R)
+					      const rtd k, const rtd c)
 {
-  rtd py_zern_surf;
-  py_zern_surf = zernike_surface(v->mag(R), v->angle(), max_n-1, cy);
   if (c==0)
-    return -py_zern_surf;
+    return 0.0;
   else    
     if (k==0)
-      return -(v->y - v0->y)*c - py_zern_surf;
+      return -(v->y - v0->y)*c;
     else {
       rtd rho2;
       rho2 = c*v->rho2(v0->x,v0->y);
-      return -(v->y - v0->y)*c*rsqrt(1 - k*c*rho2) - py_zern_surf;
+      return -(v->y - v0->y)*c*rsqrt(1 - k*c*rho2);
     }
 }
 @
@@ -2402,6 +2384,62 @@ __device__ inline rtd partial_y_conic_surface(vector *v, vector *v0,
   \end{equation}
 <<conic equations>>=
 __device__ inline rtd partial_z_conic_surface(void)
+{
+  return 1.0;
+}
+@
+\end{itemize}
+
+The generic expression for aspheric surface is given by
+\begin{equation}
+  \label{eq:69}
+  F(x,y,z) = z - {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} } - \sum_{i=1}^N a_i Z_i(\rho,\theta) = 0.  
+\end{equation}
+<<conic equations>>=
+__device__ inline rtd aspheric_surface(vector *v, vector *v0, 
+                                       const rtd k, const rtd c,
+				       const int max_n, rtd *a, const rtd R)
+{
+  return conic_surface(v, v0, k, c) - 
+         zernike_surface(v->mag(R), v->angle(), max_n, a);
+}
+@ 
+The partial derivative of the aspheric equation are written
+\begin{itemize}
+\item
+  \begin{equation}
+    { \partial F(x,y,z) \over \partial x } = -x {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
+  \end{equation}
+<<conic equations>>=
+__device__ inline rtd partial_x_aspheric_surface(vector *v, vector *v0, 
+					       const rtd k, const rtd c,
+					       const int max_n, rtd *cx,
+					       const rtd R)
+{
+  return partial_x_conic_surface(v, v0,	k, c) - 
+         zernike_surface(v->mag(R), v->angle(), max_n-1, cx);
+}
+@
+\item
+  \begin{equation}
+    { \partial F(x,y,z) \over \partial y } = -y {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
+  \end{equation}
+<<conic equations>>=
+__device__ inline rtd partial_y_aspheric_surface(vector *v, vector *v0, 
+					      const rtd k, const rtd c,
+					      const int max_n, rtd *cy,
+					      const rtd R)
+{
+  return partial_y_conic_surface(v, v0,	k, c) - 
+         zernike_surface(v->mag(R), v->angle(), max_n-1, cy);  
+}
+@
+\item
+  \begin{equation}
+    { \partial F(x,y,z) \over \partial z } = 1
+  \end{equation}
+<<conic equations>>=
+__device__ inline rtd partial_z_aspheric_surface(void)
 {
   return 1.0;
 }
@@ -2873,7 +2911,7 @@ __host__ __device__ rtd zernike_surface(rtd r, rtd o, int max_n, rtd *a)
   int n, m, mH, a_idx,j;
   rtd R, R2, R4, A, S_n, S, 
     H1, H2, H3, sm, cm, s2, c2, s ,c, sqrt2;
-  if ( (r>1.0) || (max_n<0) )
+  if (max_n<0)//( (r>1.0) || (max_n<0) )
     S = 0.0;
   else {
     R = 1.0;
@@ -3115,9 +3153,12 @@ __global__ void projection_kern(rtd *a, float *phase, rtd *r, rtd *o, const int 
   num = denom = 0.0;
   ap[mode] = 1.0;
   for (i=0; i<N; i++) {
-    z = zernike_surface(r[i], o[i], max_n, ap);
-    num   += phase[i]*z;
-    denom += z*z;
+    if (phase[i]!=0) 
+      {
+	z = zernike_surface(r[i], o[i], max_n, ap);
+	num   += phase[i]*z;
+	denom += z*z;
+      }
   }
   a[mode]  = num/denom;
   ap[mode] = 0.0;
@@ -4475,7 +4516,7 @@ __global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY,
   rtd rho2;
   rtd x, y, z, x1, y1, s0, k, l, m;
   vector xyz, klm, xyz_GS, klm_GS;
-  char chief=0;
+
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = threadIdx.y;
   //  iCoordSys = blockIdx.y;
@@ -4577,7 +4618,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
   rtd s1, S, K, L ,M, dSds;
   rtd G2, a;
   vector d__origin, xyz, klm, xyz_GS, klm_GS;
-  char chief=0;
+
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = threadIdx.y;
   //  iCoordSys = blockIdx.y;
@@ -4626,7 +4667,6 @@ __global__ void m1_trace_chief_kernel(char *mask, ray *d__ray, int N_RAY,
   rtd s1, S, K, L ,M, dSds;
   rtd G2, a;
   vector d__origin, xyz, klm, xyz_GS, klm_GS;
-  char chief=1;
 
   iSource = blockIdx.z;
   ij = iSource*N_RAY;
@@ -4635,9 +4675,13 @@ __global__ void m1_trace_chief_kernel(char *mask, ray *d__ray, int N_RAY,
 
   d__origin = d__conic_self_origin[iCoordSys];
 
-  <<from global CS to motion CS>>
+  <<from global CS to rigid body CS>>
 
-  <<from motion CS to conic intersection and back to global CS>>
+  <<from motion CS to conic CS>>
+  <<GMT intersection with conic>>
+  <<reflection from the surface>>
+  <<from conic CS to motion CS>>
+  <<from rigid body CS to global CS>>
 
 }
 @ The following is a test routine to validate the sequence of transformation in the ray tracing kernel:
@@ -4686,22 +4730,24 @@ void gmt_m1::test_ray_tracing(void)
     
 }
 @ 
-The transformation of the coordinates and directions of the rays is performed in 3 steps, (i) the rays are transformed into the CS of the segment, (ii) the segments are perturbed
+The transformation of the coordinates and directions of the rays is performed in 3 steps, 
 <<from global CS to motion CS>>=
+<<from global CS to rigid body CS>>
+<<from rigid body CS to motion CS>>
+@ (i) the rays are transformed into the CS of the segment,
+<<from global CS to rigid body CS>>=
 // RIGID BODY >>> 
 forward_transform(&xyz_GS, &(d__ray[ij].coordinates),
 		  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
 forward_transform_centered(&klm_GS, &(d__ray[ij].directions),
 			   d__rigid_body_R+iCoordSys*9);
-
- if (chief==0)
-   {
+@ (ii) the segments are perturbed
+<<from rigid body CS to motion CS>>=
 // MOTION >>>  
 forward_transform(&xyz_GS, &xyz_GS,
 		  d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
 forward_transform_centered(&klm_GS, &klm_GS,
 			    d__motion_R+iCoordSys*9);
-   }
 @  and (iii) the rays are transformed into the CS of the aperture:
 <<from motion CS to aperture intersection>>=
 // APERTURE >>>
@@ -4728,35 +4774,44 @@ forward_transform_centered(&klm, &klm_GS,
 @
 The intersection with and reflection from the surface is done with
 <<from motion CS to conic intersection and back to global CS>>=
-  // CONIC >>>
-  backward_transform_centered(&xyz, &xyz_GS,
-			      d__conic_R+iCoordSys*9);
- backward_transform_centered(&klm, &klm_GS,
-			     d__conic_R+iCoordSys*9);
+<<from motion CS to conic CS>>
+<<GMT intersection with aspheric>>
+<<reflection from the surface>>
+<<from conic CS to motion CS>>
+<<from motion CS to rigid body CS>>
+<<from rigid body CS to global CS>>
+@ 
+<<from motion CS to conic CS>>=
+// CONIC >>>
+backward_transform_centered(&xyz, &xyz_GS,
+			    d__conic_R+iCoordSys*9);
+backward_transform_centered(&klm, &klm_GS,
+			    d__conic_R+iCoordSys*9);
+@ 
+<<reflection from the surface>>=
+G2 = K*K + L*L + M*M;
+a  = k*K + l*L + m*M;
 
- <<GMT intersection with conic>>
-
- G2 = K*K + L*L + M*M;
- a  = k*K + l*L + m*M;
-
- a *= -2.0/G2;
- klm.x += a*K;
- klm.y += a*L;
- klm.z += a*M;
-
+a *= -2.0/G2;
+klm.x += a*K;
+klm.y += a*L;
+klm.z += a*M;
+@ 
+<<from conic CS to motion CS>>=
  // CONIC <<<
  forward_transform_centered(&xyz_GS, &xyz,
 			    d__conic_R+iCoordSys*9);
  forward_transform_centered(&klm_GS, &klm,
 			    d__conic_R+iCoordSys*9);
- if (chief==0)
-   {
+@ 
+<<from motion CS to rigid body CS>>=
  // MOTION <<<
  backward_transform(&xyz_GS, &xyz_GS,
 		    d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
  backward_transform_centered(&klm_GS, &klm_GS,
 			     d__motion_R+iCoordSys*9);
-   }
+@ 
+<<from rigid body CS to global CS>>=
  // RIGID_BODY <<<
  backward_transform(&(d__ray[ij].coordinates), &xyz_GS,
 		    d__rigid_body_R+iCoordSys*9,
@@ -4789,6 +4844,50 @@ x1 = x + k*s0;
 y1 = y + l*s0;
 @ 
 The intersection with the plane $z=0$ in the conic coordinate transformed is computed with  
+<<GMT intersection with aspheric>>=
+k  = klm.x;
+l  = klm.y;
+m  = klm.z;
+if (m==0) { return; }
+s0 = -xyz.z/m;
+x1 = xyz.x + k*s0;
+y1 = xyz.y + l*s0;
+d__ray[ij].optical_path_length = s0;
+s0 = s1 = 0;
+for (j=0; j<SNELL_N_ITERATION; j++)
+{
+  xyz.x = x1 + k*s0;
+  xyz.y = y1 + l*s0;
+  xyz.z = m*s0;
+  <<aspheric surface>>
+  <<aspheric surface derivatives>>
+  dSds = K*k + L*l + M*m;
+  if (dSds==0) { break; }
+  s1 = s0 - S/dSds;
+  if (abs(s1-s0)<TOL)
+    {
+      xyz.x = x1 + k*s1;
+      xyz.y = y1 + l*s1;
+      xyz.z = m*s1;
+      <<aspheric surface derivatives>>
+      d__ray[ij].optical_path_length += s1;
+      d__ray[ij].n_iteration = j;
+      break;
+    }
+  s0 = s1;
+}
+@ 
+<<aspheric surface>>=
+S = aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n, 
+                     d__a + iCoordSys*n_mode, R);
+@
+<<aspheric surface derivatives>>=
+K = partial_x_aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n, 
+                               d__cx + iCoordSys*b_n_mode, R);
+L = partial_y_aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n, 
+                               d__cy + iCoordSys*b_n_mode, R);
+M = partial_z_aspheric_surface();
+@
 <<GMT intersection with conic>>=
 k  = klm.x;
 l  = klm.y;
@@ -4804,13 +4903,8 @@ for (j=0; j<SNELL_N_ITERATION; j++)
   xyz.x = x1 + k*s0;
   xyz.y = y1 + l*s0;
   xyz.z = m*s0;
-  S = conic_surface(&xyz, &d__origin, Fk, Fc, max_n, 
-		    d__a + iCoordSys*n_mode, R);
-  K = partial_x_conic_surface(&xyz, &d__origin, Fk, Fc, max_n, 
-			      d__cx + iCoordSys*b_n_mode, R);
-  L = partial_y_conic_surface(&xyz, &d__origin, Fk, Fc, max_n, 
-			      d__cy + iCoordSys*b_n_mode, R);
-  M = partial_z_conic_surface();
+  <<conic surface>>
+  <<conic surface derivatives>>
   dSds = K*k + L*l + M*m;
   if (dSds==0) { break; }
   s1 = s0 - S/dSds;
@@ -4819,21 +4913,22 @@ for (j=0; j<SNELL_N_ITERATION; j++)
       xyz.x = x1 + k*s1;
       xyz.y = y1 + l*s1;
       xyz.z = m*s1;
-      K    = 
-	partial_x_conic_surface(&xyz, &d__origin, Fk, Fc, max_n, 
-				d__cx + iCoordSys*b_n_mode, R);
-      L    =
-	partial_y_conic_surface(&xyz, &d__origin, Fk, Fc, max_n, 
-				d__cy + iCoordSys*b_n_mode, R);
-      M    = partial_z_conic_surface();
+      <<conic surface derivatives>>
       d__ray[ij].optical_path_length += s1;
       d__ray[ij].n_iteration = j;
       break;
     }
   s0 = s1;
 }
+@ 
+<<conic surface>>=
+S = conic_surface(&xyz, &d__origin, Fk, Fc);
 @
-
+<<conic surface derivatives>>=
+K = partial_x_conic_surface(&xyz, &d__origin, Fk, Fc);
+L = partial_y_conic_surface(&xyz, &d__origin, Fk, Fc);
+M = partial_z_conic_surface();
+@
 \subsection{Mirror location tracker}
 \label{sec:mirr-locat-track}
 
