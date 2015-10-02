@@ -263,11 +263,11 @@ u
                 sys.stdout.write("\n")
             if mode=="zernike":
                 n_mode = self.M1.zernike.n_mode
-                D = np.zeros((wfs.valid_lenslet.nnz*2,(n_mode-3)*7))
+                D = np.zeros((wfs.valid_lenslet.nnz*2,(n_mode-1)*7))
                 idx = 0;
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
-                    for kMode in range(3,n_mode):
+                    for kMode in range(1,n_mode):
                         sys.stdout.write("%d "%(kMode+1))
                         D[:,idx] = pushpull( M1_zernike_update )
                         idx += 1
@@ -374,11 +374,11 @@ u
                 sys.stdout.write("\n")
             if mode=="zernike":
                 n_mode = self.M1.zernike.n_mode
-                D = np.zeros((wfs.valid_lenslet.nnz*2,(n_mode-3)*7))
+                D = np.zeros((wfs.valid_lenslet.nnz*2,(n_mode-1)*7))
                 idx = 0;
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
-                    for kMode in range(3,n_mode):
+                    for kMode in range(1,n_mode):
                         sys.stdout.write("%d "%(kMode+1))
                         D[:,idx] = pushpull( M2_zernike_update )
                         idx += 1
