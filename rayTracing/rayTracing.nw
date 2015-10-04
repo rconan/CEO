@@ -327,19 +327,24 @@ def ee80(self,spaxel="circle"):
     xyz = self.coordinates.host()
     x = np.abs( xyz[V,0] )
     y = np.abs( xyz[V,1] )
+    r = np.hypot(x,y)
     def ensquared(hd):
         idx = np.logical_and(x<=hd , y<=hd)
         return float(idx.sum())/V.sum()
     def encircled(hd):
-	r = np.hypot(x,y)
         idx = r<=hd
         return float(idx.sum())/V.sum()
     if spaxel=="circle":
         f = lambda x: encircled(x)-0.8
+	b = r.max()
     else:
         f = lambda x: ensquared(x)-0.8
-    b = np.maximum(x.max(),y.max())
-    return 2*brentq(f,0,b)*(ARCSEC2RAD/1e-3)
+	b = np.maximum(x.max(),y.max())
+    try:
+        return 2*brentq(f,0,b)*(ARCSEC2RAD/1e-3)
+    except ValueError:
+        return np.float('inf')
+
 
 property N_BUNDLE:
     def __get__(self):
@@ -402,6 +407,8 @@ property piston_mask:
         rtd *R
 @ 
 <<class definitions>>=
+cdef class Coordinates:
+    cdef double[:,::1] data
 cdef class Coordinate_system:
     cdef:
         coordinate_system *_c_coordinate_system
@@ -409,8 +416,15 @@ cdef class Coordinate_system:
         double[:,::1] _euler_angles_
         double[:,:,::1] _R_
         int N
+        Coordinates O
 @ 
 <<rayTracing.pyx>>=
+# 
+cdef class Coordinates:
+    def __cinit__(self,tuple shape):
+        self.data =  np.zeros(shape, dtype=np.float64)
+    def __getitem__(self,index):
+        print index
 # coordinate_system
 cdef class Coordinate_system:
     """
@@ -420,7 +434,8 @@ cdef class Coordinate_system:
         self.N = N
         self._c_coordinate_system = new coordinate_system()
         self._origin_       = np.empty((N,3), dtype=np.float64)
-        self._euler_angles_ = np.empty((N,3), dtype=np.float64)        
+        self._euler_angles_ = np.empty((N,3), dtype=np.float64)      
+        self.O = Coordinates((self.N,3))
 
     property origin:
         def __get__(self):
@@ -2885,7 +2900,7 @@ void zernikeS::surface(rtd *d__S, rtd *d__r, rtd *d__o, const int N)
 <<zernikeS functions>>=
 void zernikeS::surface(rtd *d__S, rtd *d__r, rtd *d__o, const int N, int surf_id)
 {
-  fprintf(stdout,"a offset = %d\n",surf_id*n_mode);
+  //fprintf(stdout,"a offset = %d\n",surf_id*n_mode);
     dim3 blockDim(N_THREAD,N_THREAD);
     dim3 gridDim(N/N_THREAD2+1,1);
     surface_kern LLL gridDim, blockDim RRR (d__S, d__r, d__o, N, max_n, d__a + surf_id*n_mode);
