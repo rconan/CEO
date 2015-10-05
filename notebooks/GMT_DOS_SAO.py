@@ -10,7 +10,7 @@ pixel_size_arcsec = 0.132
 N_PX_LENLSET = 18
 lenslet_flux_threshold = 0.8
 read_out_noise = 0
-optics_throughtput = 1
+optics_throughtput = 0.25
 
 # GMT
 entrance_pupil_size_meter = N_LENSLET*lenslet_pitch_meter
