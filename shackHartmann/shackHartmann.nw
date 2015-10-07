@@ -95,21 +95,17 @@ from utilities cimport cuFloatArray, MaskAbstract
 from imaging cimport Imaging
 from centroiding cimport Centroiding
 cdef class ShackHartmann:
-    cdef shackHartmann *_c_shackHartmann
-    cdef public int N_SIDE_LENSLET, N_PX_LENSLET, DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_GS, N_PX_FRAME
-    cdef public MaskAbstract valid_lenslet
-    cdef public MaskAbstract valid_actuator
-    cdef public cuFloatArray frame
-    cdef public cuFloatArray c
-    cdef public cuFloatArray c0
-    cdef public cuFloatArray flux
-    cdef public Imaging optics_relay
-    cdef public Centroiding data_proc
-    cdef cuFloatArray _valid_slopes_ 
+    cdef:
+        shackHartmann *_c_shackHartmann
+        readonly int N_SIDE_LENSLET, N_PX_LENSLET, DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_GS, N_PX_FRAME
+        readonly MaskAbstract valid_lenslet, valid_actuator
+        readonly cuFloatArray c0
+        readonly Imaging optics_relay
+        readonly Centroiding data_proc
+        cuFloatArray _valid_slopes_ 
 @ 
 <<shackHartmann.pyx>>=
-import math
-from libc cimport math
+from libc.math cimport M_PI
 from utilities cimport cuFloatArray, MaskAbstract
 from source cimport Source
 cdef class ShackHartmann:
@@ -235,17 +231,8 @@ cdef class ShackHartmann:
 	self.valid_actuator.f = cuFloatArray(shape=(self._c_shackHartmann.N_ACTUATOR*self.N_GS,1))
         self.valid_actuator.f._c_gpu.dev_data = self.valid_actuator._c_mask.f
 
-        self.frame = cuFloatArray(shape=(self.N_GS*self.N_PX_FRAME,self.N_PX_FRAME))
-        self.frame._c_gpu.dev_data = self._c_shackHartmann.optics_relay.d__frame
-
-	self.c = cuFloatArray(shape=(self.N_GS,(self.N_SIDE_LENSLET**2)*2))
-	self.c._c_gpu.dev_data = self._c_shackHartmann.data_proc.d__c
-
 	self.c0 = cuFloatArray(shape=(self.N_GS,(self.N_SIDE_LENSLET**2)*2))
 	self.c0._c_gpu.dev_data = self._c_shackHartmann.d__c0
-
-        self.flux = cuFloatArray(shape=(self.N_GS*self.N_SIDE_LENSLET,self.N_SIDE_LENSLET))
-        self.flux._c_gpu.dev_data = self._c_shackHartmann.data_proc.d__mass
 
     def __dealloc__(self):
         self._c_shackHartmann.cleanup()
@@ -360,14 +347,19 @@ cdef class ShackHartmann:
 
     property pixel_scale_arcsec:
         def __get__(self):
-            return self._c_shackHartmann.pixel_scale*180*3600/math.pi 
-
-    property photoelectron_gain:
+            return self._c_shackHartmann.pixel_scale*180*3600/M_PI
+    
+    property frame:
         def __get__(self):
-            return self._c_shackHartmann.optics_relay.photoelectron_gain
-        def __set__(self,float value):
-            self._c_shackHartmann.optics_relay.photoelectron_gain = value
+            return self.optics_relay.frame
 
+    property flux:
+        def __get__(self):
+            return self.data_proc.flux
+
+    property c:
+        def __get__(self):
+            return self.data_proc.c
 @ 
 
 \section{Parameters}

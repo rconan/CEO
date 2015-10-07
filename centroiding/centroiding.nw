@@ -82,12 +82,11 @@ cdef extern from "centroiding.h":
 <<class definitions>>=
 from utilities cimport cuFloatArray
 cdef class Centroiding:
-    cdef centroiding *_c_centroiding
-    cdef public int N_SIDE_LENSLET
-    cdef public int N_SOURCE
-    cdef public cuFloatArray flux
-    cdef public cuFloatArray c
-    cdef char isPtr
+    cdef:
+        centroiding *_c_centroiding
+        readonly int N_SIDE_LENSLET, N_SOURCE
+        readonly cuFloatArray flux, c
+        char isPtr
 @ 
 <<centroiding.pyx>>=
 from utilities cimport cuFloatArray, MaskAbstract
@@ -132,7 +131,7 @@ cdef class Centroiding:
         self.flux = cuFloatArray(shape=(self.N_SOURCE*self.N_SIDE_LENSLET,
                                         self.N_SIDE_LENSLET))
         self.flux._c_gpu.dev_data = self._c_centroiding.d__mass
-        self.c = cuFloatArray(shape=2*self.N_SOURCE*self.N_SIDE_LENSLET**2)
+        self.c = cuFloatArray(shape=(self.N_SOURCE,(self.N_SIDE_LENSLET**2)*2))
         self.c._c_gpu.dev_data = self._c_centroiding.d__c
 
     def __dealloc__(self):
