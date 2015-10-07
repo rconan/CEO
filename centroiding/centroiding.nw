@@ -85,13 +85,9 @@ cdef class Centroiding:
     cdef centroiding *_c_centroiding
     cdef public int N_SIDE_LENSLET
     cdef public int N_SOURCE
+    cdef public cuFloatArray flux
     cdef public cuFloatArray c
     cdef char isPtr
-cdef class _Centroiding_:
-    cdef centroiding *_c_centroiding
-    cdef public int N_SIDE_LENSLET
-    cdef public int N_SOURCE
-    cdef public cuFloatArray c
 @ 
 <<centroiding.pyx>>=
 from utilities cimport cuFloatArray, MaskAbstract
@@ -133,6 +129,9 @@ cdef class Centroiding:
             self.isPtr = 1
             self.N_SOURCE = wfs.N_GS
             self._c_centroiding = &(wfs._c_shackHartmann.data_proc)
+        self.flux = cuFloatArray(shape=(self.N_SOURCE*self.N_SIDE_LENSLET,
+                                        self.N_SIDE_LENSLET))
+        self.flux._c_gpu.dev_data = self._c_centroiding.d__mass
         self.c = cuFloatArray(shape=2*self.N_SOURCE*self.N_SIDE_LENSLET**2)
         self.c._c_gpu.dev_data = self._c_centroiding.d__c
 
@@ -142,14 +141,6 @@ cdef class Centroiding:
 
     def fried_geometry(self,MaskAbstract dm, MaskAbstract pupil, int n, float threshold):
         self._c_centroiding.fried_geometry(dm._c_mask, pupil._c_mask, n, threshold)
-cdef class _Centroiding_:
-    def __cinit__(self, ShackHartmann wfs):
-	self._c_centroiding = new centroiding()
-        self.N_SIDE_LENSLET = wfs.N_SIDE_LENSLET
-        self.N_SOURCE = wfs.N_GS
-        self._c_centroiding = &(wfs._c_shackHartmann.data_proc)
-        self.c = cuFloatArray(shape=2*self.N_SOURCE*self.N_SIDE_LENSLET**2)
-        self.c._c_gpu.dev_data = self._c_centroiding.d__c
 @
 \section{Parameters}
 \label{sec:prms}
