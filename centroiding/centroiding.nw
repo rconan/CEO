@@ -86,9 +86,16 @@ cdef class Centroiding:
     cdef public int N_SIDE_LENSLET
     cdef public int N_SOURCE
     cdef public cuFloatArray c
+    cdef char isPtr
+cdef class _Centroiding_:
+    cdef centroiding *_c_centroiding
+    cdef public int N_SIDE_LENSLET
+    cdef public int N_SOURCE
+    cdef public cuFloatArray c
 @ 
 <<centroiding.pyx>>=
 from utilities cimport cuFloatArray, MaskAbstract
+from shackHartmann cimport ShackHartmann
 cdef class Centroiding:
     """ 
     Create a centroiding container
@@ -114,19 +121,35 @@ cdef class Centroiding:
     cuFloatArray: class acting as the interface between GPU host and device
     """
 
-    def __cinit__(self, int N_SIDE_LENSLET, N_SOURCE=1):
+    def __cinit__(self, int N_SIDE_LENSLET, int N_SOURCE=1, 
+                  ShackHartmann wfs=None):
 	self._c_centroiding = new centroiding()
         self.N_SIDE_LENSLET = N_SIDE_LENSLET
-        self.N_SOURCE = N_SOURCE
-        self._c_centroiding.setup(self.N_SIDE_LENSLET,self.N_SOURCE)    
+        if wfs is None:
+            self.isPtr = 0
+            self.N_SOURCE = N_SOURCE
+            self._c_centroiding.setup(self.N_SIDE_LENSLET,self.N_SOURCE)    
+        else:
+            self.isPtr = 1
+            self.N_SOURCE = wfs.N_GS
+            self._c_centroiding = &(wfs._c_shackHartmann.data_proc)
         self.c = cuFloatArray(shape=2*self.N_SOURCE*self.N_SIDE_LENSLET**2)
         self.c._c_gpu.dev_data = self._c_centroiding.d__c
 
     def __dealloc__(self):
-        self._c_centroiding.cleanup()
+        if not self.isPtr:
+            self._c_centroiding.cleanup()
 
     def fried_geometry(self,MaskAbstract dm, MaskAbstract pupil, int n, float threshold):
         self._c_centroiding.fried_geometry(dm._c_mask, pupil._c_mask, n, threshold)
+cdef class _Centroiding_:
+    def __cinit__(self, ShackHartmann wfs):
+	self._c_centroiding = new centroiding()
+        self.N_SIDE_LENSLET = wfs.N_SIDE_LENSLET
+        self.N_SOURCE = wfs.N_GS
+        self._c_centroiding = &(wfs._c_shackHartmann.data_proc)
+        self.c = cuFloatArray(shape=2*self.N_SOURCE*self.N_SIDE_LENSLET**2)
+        self.c._c_gpu.dev_data = self._c_centroiding.d__c
 @
 \section{Parameters}
 \label{sec:prms}

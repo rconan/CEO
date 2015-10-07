@@ -120,9 +120,14 @@ from utilities cimport cuFloatArray
 cdef class Imaging:
     cdef imaging *_c_imaging
     cdef public cuFloatArray frame
+    cdef char isPtr
+cdef class _Imaging_:
+    cdef imaging *_c_imaging
+    cdef public cuFloatArray frame
 @ 
 <<imaging.pyx>>=
 from source cimport Source
+from shackHartmann cimport ShackHartmann
 cdef class Imaging:
     """ 
     Creates an imaging object.
@@ -155,38 +160,59 @@ cdef class Imaging:
     """
 
     def __cinit__(self, int N_SIDE_LENSLET, int N_PX_PUPIL, 
-		  DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, N_SOURCE=1):
+		  DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, 
+		  N_SOURCE=1, ShackHartmann wfs=None):
 	self._c_imaging = new imaging()
-        if N_PX_IMAGE is None:
-            N_PX_IMAGE = N_PX_PUPIL
-	self._c_imaging.setup(N_PX_PUPIL, N_SIDE_LENSLET, DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_SOURCE)    
+        if wfs is None:
+            self.isPtr = 0
+            if N_PX_IMAGE is None:
+                N_PX_IMAGE = N_PX_PUPIL
+            self._c_imaging.setup(N_PX_PUPIL, N_SIDE_LENSLET, 
+                                  DFT_osf, N_PX_IMAGE, 
+                                  BIN_IMAGE, N_SOURCE)    
+        else:
+            self.isPtr = 1
+            self._c_imaging = &(wfs._c_shackHartmann.optics_relay)
         self.frame = cuFloatArray(shape=(self._c_imaging.N_SOURCE*self._c_imaging.N_PX_CAMERA,
 				    self._c_imaging.N_PX_CAMERA))
         self.frame._c_gpu.dev_data = self._c_imaging.d__frame
 
     def __dealloc__(self):
-        self._c_imaging.cleanup()
+        if not self.isPtr:
+            self._c_imaging.cleanup()
 
-    def propagate(self, Source src):
-        self._c_imaging.propagate(src._c_source)
+    <<imaging class methods>>
+cdef class _Imaging_:
+    def __cinit__(self, ShackHartmann wfs):
+	self._c_imaging = new imaging()
+        self._c_imaging = &(wfs._c_shackHartmann.optics_relay)
+        self.frame = cuFloatArray(shape=(self._c_imaging.N_SOURCE*self._c_imaging.N_PX_CAMERA,
+				    self._c_imaging.N_PX_CAMERA))
+        self.frame._c_gpu.dev_data = self._c_imaging.d__frame
+            
+    <<imaging class methods>>
+@ 
+<<imaging class methods>>=
+def propagate(self, Source src):
+    self._c_imaging.propagate(src._c_source)
 
-    def propagateThroughFieldStop(self, Source src, float field_stop_diam):
-        self._c_imaging.propagateThroughFieldStop(src._c_source, field_stop_diam)
+def propagateThroughFieldStop(self, Source src, float field_stop_diam):
+    self._c_imaging.propagateThroughFieldStop(src._c_source, field_stop_diam)
 
-    def propagateThroughPyramid(self, Source src):
-        self._c_imaging.propagateThroughPyramid(src._c_source)
+def propagateThroughPyramid(self, Source src):
+    self._c_imaging.propagateThroughPyramid(src._c_source)
 
-    def readOut(self,float exposureTime, float readOutNoiseRms):
-        self._c_imaging.readout(exposureTime,readOutNoiseRms)
+def readOut(self,float exposureTime, float readOutNoiseRms):
+    self._c_imaging.readout(exposureTime,readOutNoiseRms)
 
-    def reset(self):
-        self._c_imaging.reset()
+def reset(self):
+    self._c_imaging.reset()
 
-    property photoelectron_gain:
-        def __get__(self):
-            return self._c_imaging.photoelectron_gain
-        def __set__(self,float value):
-            self._c_imaging.photoelectron_gain = value
+property photoelectron_gain:
+    def __get__(self):
+        return self._c_imaging.photoelectron_gain
+    def __set__(self,float value):
+        self._c_imaging.photoelectron_gain = value
 @
 
 \section{Parameters}
@@ -874,9 +900,19 @@ __global__ void noisify(curandState *state, float *frame, const int n_frame,
        localState = state[id];
        frame[id] *= exposureTime;
        lambda = frame[id];
-       frame[id] = (lambda<30) ? 
-	 curand_poisson_knuth( &localState, lambda) : 
-	 curand_poisson_atkinson( &localState, lambda);
+       //       frame[id] = (float) curand_poisson(&localState, (double) lambda);
+         /*
+       if (lambda>0) {
+	 frame[id] = (lambda<30) ? 
+	   curand_poisson_knuth( &localState, lambda) : 
+	   curand_poisson_atkinson( &localState, lambda);
+       }
+*/
+       frame[id] = (lambda<64) ? 
+	 curand_poisson_knuth( &localState, lambda) :
+	 (lambda<4000) ?
+	 (float) curand_poisson_gammainc( &localState, lambda) :
+	 curand_normal(&localState)*sqrt(lambda) + lambda;
        frame[id] += (readOutNoiseRms>0) ? 
 	 curand_normal(&localState)*readOutNoiseRms : 0;
        state[id] = localState;
@@ -911,7 +947,7 @@ __device__ float curand_poisson_knuth(curandState *state, float lambda)
       k++;
       p *= curand_uniform(state);
   }while (p > 1.0);
-  return (float) k-1;
+ return (float) k-1;
 }
 @ 
 The execution speed of D. Knuth algorithm is proportional to $\lambda$.

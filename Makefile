@@ -46,7 +46,7 @@ ipythonserver:
 	env PYTHONPATH="$(CEOPATH)/python" ipython notebook --profile=nbserver
 
 ipython:
-	env PYTHONPATH="$(CEOPATH)/python" ipython #notebook
+	env PYTHONPATH="$(CEOPATH)/python" ipython notebook
 
 touch: 
 	find . -name \*.nw -exec touch {} \;

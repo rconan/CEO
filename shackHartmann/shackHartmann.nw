@@ -91,8 +91,9 @@ cdef extern from "shackHartmann.h":
 <<class definitions>>
 @ 
 <<class definitions>>=
-from utilities cimport cuFloatArray
-from utilities cimport MaskAbstract
+from utilities cimport cuFloatArray, MaskAbstract
+from imaging cimport Imaging
+from centroiding cimport Centroiding
 cdef class ShackHartmann:
     cdef shackHartmann *_c_shackHartmann
     cdef public int N_SIDE_LENSLET, N_PX_LENSLET, DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_GS, N_PX_FRAME
@@ -102,6 +103,8 @@ cdef class ShackHartmann:
     cdef public cuFloatArray c
     cdef public cuFloatArray c0
     cdef public cuFloatArray flux
+    cdef public Imaging optics_relay
+    cdef public Centroiding data_proc
     cdef cuFloatArray _valid_slopes_ 
 @ 
 <<shackHartmann.pyx>>=
@@ -218,6 +221,9 @@ cdef class ShackHartmann:
         self.N_PX_FRAME     = self.N_PX_IMAGE*self.N_SIDE_LENSLET/self.BIN_IMAGE
         self._c_shackHartmann.setup(N_SIDE_LENSLET, N_PX_LENSLET, d, 
                                     DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_GS)    
+
+        #self.optics_relay = Imaging(N_SIDE_LENSLET,self)
+        self.data_proc = Centroiding(N_SIDE_LENSLET,wfs=self)
 
         self.valid_lenslet = MaskAbstract(self._c_shackHartmann.N_LENSLET*self.N_GS)
         self.valid_lenslet._c_mask = &(self._c_shackHartmann.valid_lenslet)
