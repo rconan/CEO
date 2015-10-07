@@ -78,7 +78,7 @@ cdef extern from "shackHartmann.h":
         float *d__c0
         mask valid_lenslet
         mask valid_actuator
-        imaging optics_relay
+        imaging camera
         centroiding data_proc
         void setup(int , int, float , int , int , int, int)
         void cleanup()
@@ -97,10 +97,10 @@ from centroiding cimport Centroiding
 cdef class ShackHartmann:
     cdef:
         shackHartmann *_c_shackHartmann
-        readonly int N_SIDE_LENSLET, N_PX_LENSLET, DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_GS, N_PX_FRAME
+        readonly int N_GS
         readonly MaskAbstract valid_lenslet, valid_actuator
         readonly cuFloatArray c0
-        readonly Imaging optics_relay
+        readonly Imaging camera
         readonly Centroiding data_proc
         cuFloatArray _valid_slopes_ 
 @ 
@@ -208,17 +208,13 @@ cdef class ShackHartmann:
         self._c_shackHartmann = new shackHartmann()
         if N_PX_IMAGE is None:
             N_PX_IMAGE = N_PX_LENSLET;
-        self.N_SIDE_LENSLET = N_SIDE_LENSLET
-        self.N_PX_LENSLET   = N_PX_LENSLET
-        self.DFT_osf        = DFT_osf
-        self.N_PX_IMAGE     = N_PX_IMAGE
-        self.BIN_IMAGE      = BIN_IMAGE
         self.N_GS           = N_GS
-        self.N_PX_FRAME     = self.N_PX_IMAGE*self.N_SIDE_LENSLET/self.BIN_IMAGE
         self._c_shackHartmann.setup(N_SIDE_LENSLET, N_PX_LENSLET, d, 
                                     DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_GS)    
 
-        self.optics_relay = Imaging(0,0,wfs=self)
+        self.camera = Imaging(N_SIDE_LENSLET, N_PX_LENSLET,
+                              DFT_osf=DFT_osf,N_PX_IMAGE=N_PX_IMAGE,
+                              BIN_IMAGE=BIN_IMAGE,N_SOURCE=N_GS,wfs=self)
         self.data_proc = Centroiding(N_SIDE_LENSLET,wfs=self)
 
         self.valid_lenslet = MaskAbstract(self._c_shackHartmann.N_LENSLET*self.N_GS)
@@ -303,13 +299,13 @@ cdef class ShackHartmann:
         readoutNoiseRms : float
             The rms of the detector read-out noise
         """
-        self._c_shackHartmann.optics_relay.readout(exposureTime,readOutNoiseRms)
+        self._c_shackHartmann.camera.readout(exposureTime,readOutNoiseRms)
 
     def reset(self):
         """
         Resets the WFS detector frame to 0
         """
-        self._c_shackHartmann.optics_relay.reset()
+        self._c_shackHartmann.camera.reset()
 
     def pointing(self,float zen, float azim):
         """
@@ -322,7 +318,31 @@ cdef class ShackHartmann:
         azim : float
             The azimuth angle [rd]
         """
-        self._c_shackHartmann.optics_relay.set_pointing_direction(zen, azim)
+        self._c_shackHartmann.camera.set_pointing_direction(zen, azim)
+        
+    property N_SIDE_LENSLET:
+        def __get__(self):
+            return self.camera.N_SIDE_LENSLET
+        
+    property N_PX_LENSLET:
+        def __get__(self):
+            return self.camera.N_PX_LENSLET
+        
+    property DFT_osf:
+        def __get__(self):
+            return self.camera.DFT_osf
+        
+    property N_PX_IMAGE:
+        def __get__(self):
+            return self.camera.N_PX_IMAGE
+        
+    property BIN_IMAGE:
+        def __get__(self):
+            return self.camera.BIN_IMAGE
+        
+    property N_PX_FRAME:
+        def __get__(self):
+            return self.camera.N_PX_FRAME
 
     property valid_slopes:
         def __get__(self):
@@ -351,7 +371,7 @@ cdef class ShackHartmann:
     
     property frame:
         def __get__(self):
-            return self.optics_relay.frame
+            return self.camera.frame
 
     property flux:
         def __get__(self):
@@ -390,7 +410,7 @@ mask valid_lenslet;
 mask valid_actuator;
 @ \item the imager which combines a lenslet array with a camera:
 <<parameters>>=
-imaging optics_relay;
+imaging camera;
 @ \item the data processing algorithm:
 <<parameters>>=
 centroiding data_proc;
@@ -443,7 +463,7 @@ void shackHartmann::setup(int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
   d__cy0 = d__c0 + N_LENSLET;
   valid_lenslet.setup(N_LENSLET*N_WFS);//,(N_SIDE_LENSLET-1)*d);
   valid_actuator.setup(N_ACTUATOR*N_WFS);//,N_SIDE_LENSLET*d);
-  optics_relay.setup(N_PX_LENSLET, N_SIDE_LENSLET, DFT_osf,
+  camera.setup(N_PX_LENSLET, N_SIDE_LENSLET, DFT_osf,
 		     N_PX_IMAGE,  BIN_IMAGE, N_GS);
   data_proc.setup(N_SIDE_LENSLET, N_GS);
   <<lenslet mask pointer>>
@@ -465,7 +485,7 @@ void shackHartmann::cleanup(void)
   fprintf(stdout," |-");
   valid_actuator.cleanup();
   fprintf(stdout," |-");
-  optics_relay.cleanup();
+  camera.cleanup();
   fprintf(stdout," |-");
   data_proc.cleanup();
 }
@@ -481,18 +501,18 @@ void shackHartmann::calibrate(source *src, float threshold) {
   <<WFS calibration reference slopes>>
   <<WFS calibration valid lenslet>>
   data_proc.MASK_SET = 1;
-  optics_relay.reset();
+  camera.reset();
 }
 @
 The wavefront sensor need first to be calibrated with a reference calibration source.
 <<WFS calibration source propagation>>=
-optics_relay.pixel_scale = src->wavelength()/(lenslet_pitch*DFT_osf);
-pixel_scale = optics_relay.pixel_scale*optics_relay.BIN_IMAGE*slopes_gain;
-optics_relay.propagate(src);
+camera.pixel_scale = src->wavelength()/(lenslet_pitch*DFT_osf);
+pixel_scale = camera.pixel_scale*camera.BIN_IMAGE*slopes_gain;
+camera.propagate(src);
 @ 
 The slopes derived from the calibration wavefront will be set a the reference slopes.
 <<WFS calibration reference slopes>>=
-data_proc.get_data(optics_relay.d__frame,optics_relay.N_PX_CAMERA);
+data_proc.get_data(camera.d__frame,camera.N_PX_CAMERA);
 HANDLE_ERROR( cudaMemcpy( d__c0, data_proc.d__c, N_SLOPE*sizeof(float), 
 			  cudaMemcpyDeviceToDevice ) ); 
 HANDLE_ERROR( cudaMemset( data_proc.d__c, 0, sizeof(float)*N_SLOPE ) ); 
@@ -514,7 +534,7 @@ idx--;
 @
 The masks are computed with the [[set_valid_lenslet]] kernel:
 <<WFS calibration valid lenslet>>=
-int NL = optics_relay.N_SIDE_LENSLET;
+int NL = camera.N_SIDE_LENSLET;
 dim3 blockDim(16,16);
 dim3 gridDim(NL/16+1,NL/16+1,N_WFS); // The 3rd argument sets the WFS which intensity is used for calibration
 set_valid_lenslet LLL gridDim,blockDim RRR (valid_lenslet.m, valid_actuator.m, 
@@ -571,15 +591,15 @@ The guide star [[gs]] is propagated through the lenslet array to the detector:
 <<wavefront propagation>>=
 void shackHartmann::propagate(source *gs) {
     /* printf("slopes gain:%.2E\n",slopes_gain); */
-  optics_relay.pixel_scale = gs->wavelength()/(lenslet_pitch*DFT_osf);
+  camera.pixel_scale = gs->wavelength()/(lenslet_pitch*DFT_osf);
   /* printf("pixel scale:%.2E\n",pixel_scale); */
-  pixel_scale = optics_relay.pixel_scale*optics_relay.BIN_IMAGE*slopes_gain;
-  optics_relay.propagate(gs);
+  pixel_scale = camera.pixel_scale*camera.BIN_IMAGE*slopes_gain;
+  camera.propagate(gs);
 }
 @ and the resulting frame is processed to extract the centroids
 <<wavefront centroiding>>=
 void shackHartmann::process(void) {
-  data_proc.get_data(optics_relay.d__frame,optics_relay.N_PX_CAMERA,
+  data_proc.get_data(camera.d__frame,camera.N_PX_CAMERA,
 		     d__cx0,d__cy0,pixel_scale,
 		     valid_lenslet.m);
 }
@@ -588,11 +608,11 @@ Noiseless propagation and centroiding can be performed with a single call to:
 <<wavefront processing>>=
 void shackHartmann::analyze(source *gs) {
     /* printf("slopes gain:%.2E\n",slopes_gain); */
-  optics_relay.pixel_scale = gs->wavelength()/(lenslet_pitch*DFT_osf);
+  camera.pixel_scale = gs->wavelength()/(lenslet_pitch*DFT_osf);
   /* printf("pixel scale:%.2E\n",pixel_scale); */
-  pixel_scale = optics_relay.pixel_scale*optics_relay.BIN_IMAGE*slopes_gain;
-  optics_relay.propagate(gs);
-  data_proc.get_data(optics_relay.d__frame,optics_relay.N_PX_CAMERA,
+  pixel_scale = camera.pixel_scale*camera.BIN_IMAGE*slopes_gain;
+  camera.propagate(gs);
+  data_proc.get_data(camera.d__frame,camera.N_PX_CAMERA,
 		     d__cx0,d__cy0,pixel_scale,
 		     valid_lenslet.m);
 }
@@ -600,7 +620,7 @@ void shackHartmann::analyze(source *gs) {
 A pointer to the detector frame is obtained with
 <<get detector frame>>=
 float* shackHartmann::get_frame_dev_ptr(void) {
-  return optics_relay.d__frame;     
+  return camera.d__frame;     
 }
 @ 
 The slopes in the valid lenslet are extracted with
@@ -673,7 +693,7 @@ gs.wavefront.masked();
 wfs.analyze(&gs);
 gs.wavefront.show_amplitude("Shack-Hartmann/pupil");
 gs.wavefront.show_phase("Shack-Hartmann/wavefront");
-wfs.optics_relay.show_frame("Shack-Hartmann/frame");
+wfs.camera.show_frame("Shack-Hartmann/frame");
 wfs.data_proc.show_centroids("Shack-Hartmann/centroids");
 wfs.data_proc.show_flux("Shack-Hartmann/flux");
 
