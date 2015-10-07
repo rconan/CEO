@@ -25,7 +25,7 @@ gs    = ceo.Source(AGWS_photometric_band,
                    rays_box_sampling=nPx,rays_origin=[0.0,0.0,25])
 wfs = ceo.ShackHartmann(N_LENSLET, N_PX_LENLSET, lenslet_pitch_meter, 
                         N_PX_IMAGE=2*N_PX_LENLSET,BIN_IMAGE=2,N_GS=N_GS)
-wfs.photoelectron_gain = optics_throughtput
+wfs.camera.photoelectron_gain = optics_throughtput
 gmt = ceo.GMT_MX(entrance_pupil_size_meter,nPx,M1_radial_order=M1_zernike_radial_order)
 
 
@@ -123,17 +123,21 @@ D2tt7 = data['D2tt7']
 D1gtt_2 = data['D1gtt_2']
 D2xyz_2 = data['D2xyz_2']
 D1z_2 = data['D1z_2']
-D1stt_2 = data['D1stt_2']
+#D1stt_2 = data['D1stt_2']
 zmodes = [4,5]
 zmodes.extend(range(6,10))
 nZernCoefs = len(zmodes)
 
-
+zmode_rm = np.arange(4) + 2
+zmode_rm = np.ravel(np.tile(zmode_rm,(7,1)) + np.reshape(np.arange(0,7*nZernCoefs,nZernCoefs),(-1,1)))
+D1z_2 = np.delete(D1z_2,zmode_rm,1)
+zmodes = [4,5]
+nZernCoefs = len(zmodes)
 # ## Resetting
 
 # In[11]:
 nBatch  = 25
-mags    = range(15)
+mags    = range(0,21,2)
 n_mags  = len(mags)
 wfe_rms_batch = np.zeros((n_mags,nBatch))
 g_ee80_batch = np.zeros((n_mags,nBatch))
@@ -400,4 +404,6 @@ for kBatch in range(nBatch):
         print " . Geometric EE80: %.2f"%g_ee80_batch[id_mags,kBatch]
         id_mags += 1
 
-np.savez("batch0",wfe_rms_batch=wfe_rms_batch,g_ee80_batch=g_ee80_batch,d_ee80_batch=d_ee80_batch)
+np.savez("batch0_570arcsec_mag20_z56",
+         mags=mags,wfe_rms_batch=wfe_rms_batch,
+         g_ee80_batch=g_ee80_batch,d_ee80_batch=d_ee80_batch)

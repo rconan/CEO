@@ -32,5 +32,5 @@ detector_resolution = 81
 nyquist_oversampling_factor = 2
 
 closed_loop = True
-g1 = 1
-g2 = 1
+g1 = 0.5
+g2 = 1.0
