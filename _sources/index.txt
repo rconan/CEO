@@ -69,6 +69,16 @@ ShackHartmann
 rayTracing
 ----------
 
+Coordinates
+~~~~~~~~~~~
+.. autoclass:: Coordinates
+    :members:
+
+Coordinate_system
+~~~~~~~~~~~~~~~~~
+.. autoclass:: Coordinate_system
+    :members:
+
 Bundle
 ~~~~~~
 .. autoclass:: Bundle
