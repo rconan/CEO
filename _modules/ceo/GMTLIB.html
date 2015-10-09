@@ -1,0 +1,782 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    
+    <title>ceo.GMTLIB &mdash; CEO 1.0 documentation</title>
+    
+    <link rel="stylesheet" href="../../_static/nature.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    
+    <script type="text/javascript">
+      var DOCUMENTATION_OPTIONS = {
+        URL_ROOT:    '../../',
+        VERSION:     '1.0',
+        COLLAPSE_INDEX: false,
+        FILE_SUFFIX: '.html',
+        HAS_SOURCE:  true
+      };
+    </script>
+    <script type="text/javascript" src="../../_static/jquery.js"></script>
+    <script type="text/javascript" src="../../_static/underscore.js"></script>
+    <script type="text/javascript" src="../../_static/doctools.js"></script>
+    <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+    <link rel="top" title="CEO 1.0 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
+  </head>
+  <body role="document">
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             accesskey="I">index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">CEO 1.0 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <h1>Source code for ceo.GMTLIB</h1><div class="highlight"><pre>
+<span class="kn">import</span> <span class="nn">sys</span>
+<span class="kn">import</span> <span class="nn">math</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="kn">as</span> <span class="nn">np</span>
+<span class="kn">from</span> <span class="nn">scipy.optimize</span> <span class="kn">import</span> <span class="n">brenth</span>
+<span class="kn">from</span> <span class="nn">ceo</span> <span class="kn">import</span> <span class="n">Source</span><span class="p">,</span> <span class="n">GMT_M1</span><span class="p">,</span> <span class="n">GMT_M2</span><span class="p">,</span> <span class="n">ShackHartmann</span>
+
+<div class="viewcode-block" id="GMT_MX"><a class="viewcode-back" href="../../index.html#ceo.GMT_MX">[docs]</a><span class="k">class</span> <span class="nc">GMT_MX</span><span class="p">:</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A class container from GMT_M1 and GMT_M2 classes</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    D : float</span>
+<span class="sd">        The size of the pupil plane in meter</span>
+<span class="sd">    D_px : int</span>
+<span class="sd">        The size of the pupil plane in pixel</span>
+<span class="sd">    M1_radial_order : int, optionnal</span>
+<span class="sd">        The largest radial order of the Zernike polynomials on M1 segments, default to 0</span>
+<span class="sd">    M2_radial_order : int, optionnal</span>
+<span class="sd">        The largest radial order of the Zernike polynomials on M2 segments, default to 0</span>
+
+<span class="sd">    Attributes</span>
+<span class="sd">    ----------</span>
+<span class="sd">    D : float</span>
+<span class="sd">        The size of the pupil plane in meter</span>
+<span class="sd">    D_px : int</span>
+<span class="sd">        The size of the pupil plane in pixel</span>
+<span class="sd">    M1 : GMT_M1</span>
+<span class="sd">        The GMT M1 CEO class</span>
+<span class="sd">    M2 : GMT_M2</span>
+<span class="sd">        The GMT M2 CEO class</span>
+<span class="sd">    sphere_radius : float</span>
+<span class="sd">        The curvature radius of the ray tracing reference sphere</span>
+
+<span class="sd">    See also</span>
+<span class="sd">    --------</span>
+<span class="sd">    GMT_M1 : the class for GMT M1 model</span>
+<span class="sd">    GMT_M2 : the class for GMT M2 model</span>
+<span class="sd">    Source : a class for astronomical sources</span>
+<span class="sd">    cuFloatArray : an interface class between GPU host and device data for floats</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; import ceo</span>
+
+<span class="sd">    The mandatory parameters are the size of the pupil plane in meter or in pixel</span>
+
+<span class="sd">    &gt;&gt;&gt; gmt = ceo.GMT_MX(25.5,256)</span>
+
+<span class="sd">    If more that one source (lets say 3) is going to be propagated through the telescope:</span>
+
+<span class="sd">    &gt;&gt;&gt; gmt = ceo.GMT_MX(25.5,256, N_SRC=3)</span>
+
+<span class="sd">    A combination of Zernike polynomials can be applied to M1 and M2 segments by specifying the largest radial order on each mirror</span>
+
+<span class="sd">    &gt;&gt;&gt; gmt = ceo.GMT_MX(25.5,256, M1_radial_order=8, M2_radial_order=14)</span>
+
+<span class="sd">    A source is propagated (geometrically) through the telescope with the following procedure:</span>
+<span class="sd">u</span>
+<span class="sd">    &gt;&gt;&gt; src = ceo.Source(&quot;R&quot;,rays_box_size=25.5,rays_box_sampling=256,rays_origin=[0.0,0.0,25])</span>
+<span class="sd">    &gt;&gt;&gt; gmt.propagate(src)</span>
+
+<span class="sd">    and the wavefront phase is retrieved either as a 2D map cuFloatArray object with</span>
+
+<span class="sd">    &gt;&gt;&gt; gpu_ps2d = src.phase()</span>
+
+<span class="sd">    or as a 1D vector with </span>
+
+<span class="sd">    &gt;&gt;&gt; gpu_ps1d = src.wavefront.phase()</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">D_px</span><span class="p">,</span> <span class="n">M1_radial_order</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">M2_radial_order</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">D</span> <span class="o">=</span> <span class="n">D</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">D_px</span> <span class="o">=</span> <span class="n">D_px</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">M1</span> <span class="o">=</span> <span class="n">GMT_M1</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">D_px</span><span class="p">,</span> <span class="n">radial_order</span><span class="o">=</span><span class="n">M1_radial_order</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">M2</span> <span class="o">=</span> <span class="n">GMT_M2</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">D_px</span><span class="p">,</span> <span class="n">radial_order</span><span class="o">=</span><span class="n">M2_radial_order</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">focal_plane_distance</span> <span class="o">=</span> <span class="o">-</span><span class="mf">5.830</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">focal_plane_radius</span>   <span class="o">=</span>  <span class="mf">2.197173</span>
+
+<div class="viewcode-block" id="GMT_MX.propagate"><a class="viewcode-back" href="../../index.html#ceo.GMT_MX.propagate">[docs]</a>    <span class="k">def</span> <span class="nf">propagate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">src</span><span class="p">,</span><span class="n">where_to</span><span class="o">=</span><span class="s">&quot;exit pupil&quot;</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Propagate the Source object to the pupil plane conjugated to M1</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        src : Source</span>
+<span class="sd">            The Source object</span>
+<span class="sd">        where_to: char, optionnal</span>
+<span class="sd">            Either &quot;exit pupil&quot; or &quot;focal plane&quot;; default: &quot;exit pupil&quot;</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="c">#src.reset()</span>
+        <span class="n">src</span><span class="o">.</span><span class="n">stop</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="p">)</span>
+        <span class="n">src</span><span class="o">.</span><span class="n">trace</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="p">)</span>
+        <span class="n">src</span><span class="o">.</span><span class="n">trace</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="p">)</span>
+<span class="c">#        src.sphere_distance</span>
+<span class="c">#        src.rays.to_sphere(self.sphere_radius,sphere_distance = src.sphere_distance)</span>
+        <span class="k">if</span> <span class="n">where_to</span><span class="o">==</span><span class="s">&quot;exit pupil&quot;</span><span class="p">:</span>
+            <span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">to_sphere</span><span class="p">(</span><span class="n">focal_plane_distance</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">focal_plane_distance</span><span class="p">,</span>
+                               <span class="n">focal_plane_radius</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">focal_plane_radius</span><span class="p">)</span>
+            <span class="n">src</span><span class="o">.</span><span class="n">opd2phase</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">where_to</span><span class="o">==</span><span class="s">&quot;focal plane&quot;</span><span class="p">:</span>
+            <span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">to_z_plane</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">focal_plane_distance</span><span class="p">)</span>
+</div>
+<div class="viewcode-block" id="GMT_MX.reset"><a class="viewcode-back" href="../../index.html#ceo.GMT_MX.reset">[docs]</a>    <span class="k">def</span> <span class="nf">reset</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Reset M1 and M2 mirror segments to their original locations and shapes</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">zernike</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">zernike</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+</div>
+<div class="viewcode-block" id="GMT_MX.calibrate"><a class="viewcode-back" href="../../index.html#ceo.GMT_MX.calibrate">[docs]</a>    <span class="k">def</span> <span class="nf">calibrate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">wfs</span><span class="p">,</span><span class="n">gs</span><span class="p">,</span><span class="n">mirror</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">mode</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">stroke</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">segment</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">agws</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">recmat</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Calibrate the different degrees of freedom of the  mirrors </span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        wfs : ShackHartmann</span>
+<span class="sd">            The wavefront sensor</span>
+<span class="sd">        gs : Source</span>
+<span class="sd">            The guide star</span>
+<span class="sd">        mirror : string</span>
+<span class="sd">            The mirror label: eiher &quot;M1&quot; or &quot;M2&quot;</span>
+<span class="sd">        mode : string</span>
+<span class="sd">            The degrees of freedom label</span>
+<span class="sd">            for M1: &quot;global tip-tilt&quot;, &quot;zernike&quot;, &quot;Txyz&quot;, &quot;segment tip-tilt&quot;</span>
+<span class="sd">            for M2: &quot;global tip-tilt&quot;, &quot;pointing neutral&quot;, &quot;coma neutral&quot;, &quot;zernike&quot;, &quot;Txyz&quot;, &quot;Rxyz&quot;, &quot;segment tip-tilt&quot;, &quot;TT7 segment tip-tilt&quot;</span>
+<span class="sd">        stroke : float</span>
+<span class="sd">            The amplitude of the motion</span>
+<span class="sd">	segment : string</span>
+<span class="sd">	    Idealized Segment Piston measurement type: &quot;full&quot; or &quot;edge&quot; (see SegmentPistonSensor documentation).</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">def</span> <span class="nf">pushpull</span><span class="p">(</span><span class="n">action</span><span class="p">):</span>
+            <span class="k">def</span> <span class="nf">get_slopes</span><span class="p">(</span><span class="n">stroke_sign</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+                <span class="n">action</span><span class="p">(</span><span class="n">stroke_sign</span><span class="o">*</span><span class="n">stroke</span><span class="p">)</span>
+                <span class="n">gs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">propagate</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span>
+                <span class="n">wfs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+                <span class="n">wfs</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span>
+                <span class="k">return</span> <span class="n">wfs</span><span class="o">.</span><span class="n">valid_slopes</span><span class="o">.</span><span class="n">host</span><span class="p">()</span>
+            <span class="n">s_push</span> <span class="o">=</span> <span class="n">get_slopes</span><span class="p">(</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">s_pull</span> <span class="o">=</span> <span class="n">get_slopes</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="k">return</span> <span class="mf">0.5</span><span class="o">*</span><span class="p">(</span><span class="n">s_push</span><span class="o">-</span><span class="n">s_pull</span><span class="p">)</span><span class="o">/</span><span class="n">stroke</span>
+
+        <span class="k">def</span> <span class="nf">TT7_pushpull</span><span class="p">(</span><span class="n">action</span><span class="p">):</span>
+            <span class="k">def</span> <span class="nf">get_slopes</span><span class="p">(</span><span class="n">stroke_sign</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+                <span class="n">action</span><span class="p">(</span><span class="n">stroke_sign</span><span class="o">*</span><span class="n">stroke</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">propagate</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span>
+                <span class="n">wfs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+                <span class="n">wfs</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span>
+                <span class="k">return</span> <span class="n">wfs</span><span class="o">.</span><span class="n">c7</span>
+            <span class="n">s_push</span> <span class="o">=</span> <span class="n">get_slopes</span><span class="p">(</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">s_pull</span> <span class="o">=</span> <span class="n">get_slopes</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="k">return</span> <span class="mf">0.5</span><span class="o">*</span><span class="p">(</span><span class="n">s_push</span><span class="o">-</span><span class="n">s_pull</span><span class="p">)</span><span class="o">/</span><span class="n">stroke</span>
+
+        <span class="k">def</span> <span class="nf">SPS_pushpull</span><span class="p">(</span><span class="n">action</span><span class="p">):</span>
+            <span class="k">def</span> <span class="nf">get_slopes</span><span class="p">(</span><span class="n">stroke_sign</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+                <span class="n">action</span><span class="p">(</span><span class="n">stroke_sign</span><span class="o">*</span><span class="n">stroke</span><span class="p">)</span>
+                <span class="n">gs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">propagate</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span>
+                <span class="k">return</span> <span class="n">wfs</span><span class="o">.</span><span class="n">piston</span><span class="p">(</span><span class="n">gs</span><span class="p">,</span> <span class="n">segment</span><span class="o">=</span><span class="n">segment</span><span class="p">)</span><span class="o">.</span><span class="n">ravel</span><span class="p">()</span>
+            <span class="n">s_push</span> <span class="o">=</span> <span class="n">get_slopes</span><span class="p">(</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">s_pull</span> <span class="o">=</span> <span class="n">get_slopes</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="k">return</span> <span class="mf">0.5</span><span class="o">*</span><span class="p">(</span><span class="n">s_push</span><span class="o">-</span><span class="n">s_pull</span><span class="p">)</span><span class="o">/</span><span class="n">stroke</span>
+
+        <span class="k">def</span> <span class="nf">STS_pushpull</span><span class="p">(</span><span class="n">action</span><span class="p">):</span>
+            <span class="k">def</span> <span class="nf">get_slopes</span><span class="p">(</span><span class="n">stroke_sign</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+                <span class="n">action</span><span class="p">(</span><span class="n">stroke_sign</span><span class="o">*</span><span class="n">stroke</span><span class="p">)</span>
+                <span class="n">gs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">propagate</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span>
+                <span class="k">return</span> <span class="n">wfs</span><span class="o">.</span><span class="n">tiptilt</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span><span class="o">.</span><span class="n">ravel</span><span class="p">()</span>
+            <span class="n">s_push</span> <span class="o">=</span> <span class="n">get_slopes</span><span class="p">(</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">s_pull</span> <span class="o">=</span> <span class="n">get_slopes</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="k">return</span> <span class="mf">0.5</span><span class="o">*</span><span class="p">(</span><span class="n">s_push</span><span class="o">-</span><span class="n">s_pull</span><span class="p">)</span><span class="o">/</span><span class="n">stroke</span>
+
+        <span class="k">def</span> <span class="nf">FDSP_pushpull</span><span class="p">(</span><span class="n">action</span><span class="p">):</span>
+	    <span class="k">def</span> <span class="nf">close_M2_segTT_loop</span><span class="p">():</span>
+		<span class="n">niter</span> <span class="o">=</span> <span class="mi">7</span> 
+		<span class="n">myTTest1</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">14</span><span class="p">)</span>
+		<span class="k">for</span> <span class="n">ii</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">niter</span><span class="p">):</span>
+        	    <span class="n">gs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+		    <span class="bp">self</span><span class="o">.</span><span class="n">propagate</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span>
+        	    <span class="n">agws</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+        	    <span class="n">agws</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span>
+        	    <span class="n">slopevec</span> <span class="o">=</span> <span class="n">agws</span><span class="o">.</span><span class="n">valid_slopes</span><span class="o">.</span><span class="n">host</span><span class="p">()</span><span class="o">.</span><span class="n">ravel</span><span class="p">()</span>
+        	    <span class="n">myTTest1</span> <span class="o">+=</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">recmat</span><span class="p">,</span> <span class="n">slopevec</span><span class="p">)</span>
+        	    <span class="n">myTTest</span> <span class="o">=</span> <span class="n">myTTest1</span><span class="o">.</span><span class="n">reshape</span><span class="p">((</span><span class="mi">7</span><span class="p">,</span><span class="mi">2</span><span class="p">))</span>
+        	    <span class="k">for</span> <span class="n">idx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">7</span><span class="p">):</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">euler_angles</span><span class="o">=</span>
+				<span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="o">-</span><span class="n">myTTest</span><span class="p">[</span><span class="n">idx</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="o">-</span><span class="n">myTTest</span><span class="p">[</span><span class="n">idx</span><span class="p">,</span><span class="mi">1</span><span class="p">],</span><span class="mi">0</span><span class="p">]),</span> <span class="n">idx</span><span class="o">=</span><span class="n">idx</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span>
+            <span class="k">def</span> <span class="nf">get_slopes</span><span class="p">(</span><span class="n">stroke_sign</span><span class="p">):</span>
+		<span class="bp">self</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+                <span class="n">action</span><span class="p">(</span><span class="n">stroke_sign</span><span class="o">*</span><span class="n">stroke</span><span class="p">)</span>
+                <span class="n">close_M2_segTT_loop</span><span class="p">()</span>
+		<span class="n">gs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">propagate</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span>
+                <span class="k">return</span> <span class="n">wfs</span><span class="o">.</span><span class="n">piston</span><span class="p">(</span><span class="n">gs</span><span class="p">,</span> <span class="n">segment</span><span class="o">=</span><span class="n">segment</span><span class="p">)</span><span class="o">.</span><span class="n">ravel</span><span class="p">()</span>
+            <span class="n">s_push</span> <span class="o">=</span> <span class="n">get_slopes</span><span class="p">(</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">s_pull</span> <span class="o">=</span> <span class="n">get_slopes</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="k">return</span> <span class="mf">0.5</span><span class="o">*</span><span class="p">(</span><span class="n">s_push</span><span class="o">-</span><span class="n">s_pull</span><span class="p">)</span><span class="o">/</span><span class="n">stroke</span>
+
+        <span class="k">def</span> <span class="nf">M1_zernike_update</span><span class="p">(</span><span class="n">_stroke_</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">zernike</span><span class="o">.</span><span class="n">a</span><span class="p">[</span><span class="n">kSeg</span><span class="p">,</span><span class="n">kMode</span><span class="p">]</span> <span class="o">=</span> <span class="n">_stroke_</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">zernike</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+
+        <span class="k">def</span> <span class="nf">M2_zernike_update</span><span class="p">(</span><span class="n">_stroke_</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">zernike</span><span class="o">.</span><span class="n">a</span><span class="p">[</span><span class="n">kSeg</span><span class="p">,</span><span class="n">kMode</span><span class="p">]</span> <span class="o">=</span> <span class="n">_stroke_</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">zernike</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
+
+        <span class="k">if</span> <span class="n">mirror</span><span class="o">==</span><span class="s">&quot;M1&quot;</span><span class="p">:</span>
+            <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;___ M1 ___</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;global tip-tilt&quot;</span><span class="p">:</span>
+                <span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">wfs</span><span class="o">.</span><span class="n">valid_lenslet</span><span class="o">.</span><span class="n">nnz</span><span class="o">*</span><span class="mi">2</span><span class="p">,</span><span class="mi">2</span><span class="p">))</span>
+                <span class="n">D</span><span class="p">[:,</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">global_tiptilt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">)</span> <span class="p">)</span>
+                <span class="n">D</span><span class="p">[:,</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">global_tiptilt</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">)</span> <span class="p">)</span>
+            <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;Txyz&quot;</span><span class="p">:</span>
+                <span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">wfs</span><span class="o">.</span><span class="n">valid_lenslet</span><span class="o">.</span><span class="n">nnz</span><span class="o">*</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span><span class="o">*</span><span class="mi">7</span><span class="p">))</span>
+                <span class="n">idx</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="n">Tx</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">Ty</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">Tz</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;Segment #:&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">kSeg</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">8</span><span class="p">):</span>
+                    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%d</span><span class="s"> &quot;</span><span class="o">%</span><span class="n">kSeg</span><span class="p">)</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Tx</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Ty</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Tz</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;Rxyz&quot;</span><span class="p">:</span>
+                <span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">wfs</span><span class="o">.</span><span class="n">valid_lenslet</span><span class="o">.</span><span class="n">nnz</span><span class="o">*</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span><span class="o">*</span><span class="mi">7</span><span class="p">))</span>
+                <span class="n">idx</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="n">Rx</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">Ry</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">Rz</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;Segment #:&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">kSeg</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">8</span><span class="p">):</span>
+                    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%d</span><span class="s"> &quot;</span><span class="o">%</span><span class="n">kSeg</span><span class="p">)</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Rx</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Ry</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Rz</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;segment tip-tilt&quot;</span><span class="p">:</span>
+                <span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">wfs</span><span class="o">.</span><span class="n">valid_lenslet</span><span class="o">.</span><span class="n">nnz</span><span class="o">*</span><span class="mi">2</span><span class="p">,</span><span class="mi">2</span><span class="o">*</span><span class="mi">7</span><span class="p">))</span>
+                <span class="n">idx</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="n">Rx</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">Ry</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;Segment #:&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">kSeg</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">8</span><span class="p">):</span>
+                    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%d</span><span class="s"> &quot;</span><span class="o">%</span><span class="n">kSeg</span><span class="p">)</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Rx</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Ry</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;zernike&quot;</span><span class="p">:</span>
+                <span class="n">n_mode</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">zernike</span><span class="o">.</span><span class="n">n_mode</span>
+                <span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">wfs</span><span class="o">.</span><span class="n">valid_lenslet</span><span class="o">.</span><span class="n">nnz</span><span class="o">*</span><span class="mi">2</span><span class="p">,(</span><span class="n">n_mode</span><span class="o">-</span><span class="mi">3</span><span class="p">)</span><span class="o">*</span><span class="mi">7</span><span class="p">))</span>
+                <span class="n">idx</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+                <span class="k">for</span> <span class="n">kSeg</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">7</span><span class="p">):</span>
+                    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;Segment #</span><span class="si">%d</span><span class="s">: &quot;</span><span class="o">%</span><span class="n">kSeg</span><span class="p">)</span>
+                    <span class="k">for</span> <span class="n">kMode</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="n">n_mode</span><span class="p">):</span>
+                        <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%d</span><span class="s"> &quot;</span><span class="o">%</span><span class="p">(</span><span class="n">kMode</span><span class="o">+</span><span class="mi">1</span><span class="p">))</span>
+                        <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">M1_zernike_update</span> <span class="p">)</span>
+                        <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+	    <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;segment piston&quot;</span><span class="p">:</span>
+		<span class="k">if</span> <span class="n">segment</span><span class="o">==</span><span class="s">&quot;edge&quot;</span><span class="p">:</span>
+		    <span class="n">n_meas</span> <span class="o">=</span> <span class="mi">12</span>
+		<span class="k">elif</span> <span class="n">segment</span><span class="o">==</span><span class="s">&quot;full&quot;</span><span class="p">:</span>
+		    <span class="n">n_meas</span> <span class="o">=</span> <span class="mi">7</span>
+		<span class="k">else</span> <span class="p">:</span> 
+		    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;paramenter &#39;segment&#39; must be set to either &#39;full&#39; or &#39;edge&#39;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+		<span class="n">n_mode</span> <span class="o">=</span> <span class="mi">6</span>
+		<span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_meas</span><span class="o">*</span><span class="n">gs</span><span class="o">.</span><span class="n">N_SRC</span><span class="p">,</span><span class="n">n_mode</span><span class="p">))</span>
+		<span class="n">idx</span> <span class="o">=</span> <span class="mi">0</span>	
+                <span class="n">Tz</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;Segment #:&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">kSeg</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">7</span><span class="p">):</span>
+                    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%d</span><span class="s"> &quot;</span><span class="o">%</span><span class="n">kSeg</span><span class="p">)</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">SPS_pushpull</span><span class="p">(</span> <span class="n">Tz</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="k">if</span> <span class="n">segment</span><span class="o">==</span><span class="s">&quot;full&quot;</span><span class="p">:</span>
+		    <span class="n">D</span> <span class="o">=</span> <span class="n">D</span><span class="p">[</span><span class="mi">0</span><span class="p">:</span><span class="mi">6</span><span class="p">,:]</span>
+		<span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+	    <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;FDSP&quot;</span><span class="p">:</span>	
+		<span class="k">if</span> <span class="n">segment</span><span class="o">==</span><span class="s">&quot;edge&quot;</span><span class="p">:</span>
+		    <span class="n">n_meas</span> <span class="o">=</span> <span class="mi">12</span>
+		<span class="k">elif</span> <span class="n">segment</span><span class="o">==</span><span class="s">&quot;full&quot;</span><span class="p">:</span>
+		    <span class="n">n_meas</span> <span class="o">=</span> <span class="mi">7</span>
+		<span class="k">else</span> <span class="p">:</span> 
+		    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;paramenter &#39;segment&#39; must be set to either &#39;full&#39; or &#39;edge&#39;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+		<span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_meas</span><span class="o">*</span><span class="n">gs</span><span class="o">.</span><span class="n">N_SRC</span><span class="p">,</span><span class="mi">2</span><span class="o">*</span><span class="mi">6</span><span class="p">))</span>
+                <span class="n">idx</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="n">Rx</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">Ry</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;Segment #:&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">kSeg</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">7</span><span class="p">):</span>
+                    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%d</span><span class="s"> &quot;</span><span class="o">%</span><span class="n">kSeg</span><span class="p">)</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">FDSP_pushpull</span><span class="p">(</span> <span class="n">Rx</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">FDSP_pushpull</span><span class="p">(</span> <span class="n">Ry</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="k">if</span> <span class="n">segment</span><span class="o">==</span><span class="s">&quot;full&quot;</span><span class="p">:</span>
+		    <span class="n">D</span> <span class="o">=</span> <span class="n">D</span><span class="p">[</span><span class="mi">0</span><span class="p">:</span><span class="mi">6</span><span class="p">,:]</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">mirror</span><span class="o">==</span><span class="s">&quot;M2&quot;</span><span class="p">:</span>
+            <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;___ M2 ___</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;global tip-tilt&quot;</span><span class="p">:</span>
+                <span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">wfs</span><span class="o">.</span><span class="n">valid_lenslet</span><span class="o">.</span><span class="n">nnz</span><span class="o">*</span><span class="mi">2</span><span class="p">,</span><span class="mi">2</span><span class="p">))</span>
+                <span class="n">D</span><span class="p">[:,</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">global_tiptilt</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">)</span> <span class="p">)</span>
+                <span class="n">D</span><span class="p">[:,</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">global_tiptilt</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">)</span> <span class="p">)</span>
+            <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;pointing neutral&quot;</span><span class="p">:</span>
+                <span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">wfs</span><span class="o">.</span><span class="n">valid_lenslet</span><span class="o">.</span><span class="n">nnz</span><span class="o">*</span><span class="mi">2</span><span class="p">,</span><span class="mi">2</span><span class="p">))</span>
+                <span class="n">D</span><span class="p">[:,</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">pointing_neutral</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">)</span> <span class="p">)</span>
+                <span class="n">D</span><span class="p">[:,</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">pointing_neutral</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">)</span> <span class="p">)</span>
+            <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;coma neutral&quot;</span><span class="p">:</span>
+                <span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">wfs</span><span class="o">.</span><span class="n">valid_lenslet</span><span class="o">.</span><span class="n">nnz</span><span class="o">*</span><span class="mi">2</span><span class="p">,</span><span class="mi">2</span><span class="p">))</span>
+                <span class="n">D</span><span class="p">[:,</span><span class="mi">0</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">coma_neutral</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">)</span> <span class="p">)</span>
+                <span class="n">D</span><span class="p">[:,</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">coma_neutral</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">)</span> <span class="p">)</span>                
+            <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;Txyz&quot;</span><span class="p">:</span>
+                <span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">wfs</span><span class="o">.</span><span class="n">valid_lenslet</span><span class="o">.</span><span class="n">nnz</span><span class="o">*</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span><span class="o">*</span><span class="mi">7</span><span class="p">))</span>
+                <span class="n">idx</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="n">Tx</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">Ty</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">Tz</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;Segment #:&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">kSeg</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">8</span><span class="p">):</span>
+                    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%d</span><span class="s"> &quot;</span><span class="o">%</span><span class="n">kSeg</span><span class="p">)</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Tx</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Ty</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Tz</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;Rxyz&quot;</span><span class="p">:</span>
+                <span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">wfs</span><span class="o">.</span><span class="n">valid_lenslet</span><span class="o">.</span><span class="n">nnz</span><span class="o">*</span><span class="mi">2</span><span class="p">,</span><span class="mi">3</span><span class="o">*</span><span class="mi">7</span><span class="p">))</span>
+                <span class="n">idx</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="n">Rx</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">Ry</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">Rz</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;Segment #:&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">kSeg</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">8</span><span class="p">):</span>
+                    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%d</span><span class="s"> &quot;</span><span class="o">%</span><span class="n">kSeg</span><span class="p">)</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Rx</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Ry</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Rz</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;segment tip-tilt&quot;</span><span class="p">:</span>
+                <span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">wfs</span><span class="o">.</span><span class="n">valid_lenslet</span><span class="o">.</span><span class="n">nnz</span><span class="o">*</span><span class="mi">2</span><span class="p">,</span><span class="mi">2</span><span class="o">*</span><span class="mi">7</span><span class="p">))</span>
+                <span class="n">idx</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="n">Rx</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">Ry</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;Segment #:&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">kSeg</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">8</span><span class="p">):</span>
+                    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%d</span><span class="s"> &quot;</span><span class="o">%</span><span class="n">kSeg</span><span class="p">)</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Rx</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">Ry</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;zernike&quot;</span><span class="p">:</span>
+                <span class="n">n_mode</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">zernike</span><span class="o">.</span><span class="n">n_mode</span>
+                <span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">wfs</span><span class="o">.</span><span class="n">valid_lenslet</span><span class="o">.</span><span class="n">nnz</span><span class="o">*</span><span class="mi">2</span><span class="p">,(</span><span class="n">n_mode</span><span class="o">-</span><span class="mi">3</span><span class="p">)</span><span class="o">*</span><span class="mi">7</span><span class="p">))</span>
+                <span class="n">idx</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+                <span class="k">for</span> <span class="n">kSeg</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">7</span><span class="p">):</span>
+                    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;Segment #</span><span class="si">%d</span><span class="s">: &quot;</span><span class="o">%</span><span class="n">kSeg</span><span class="p">)</span>
+                    <span class="k">for</span> <span class="n">kMode</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span><span class="n">n_mode</span><span class="p">):</span>
+                        <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%d</span><span class="s"> &quot;</span><span class="o">%</span><span class="p">(</span><span class="n">kMode</span><span class="o">+</span><span class="mi">1</span><span class="p">))</span>
+                        <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">pushpull</span><span class="p">(</span> <span class="n">M2_zernike_update</span> <span class="p">)</span>
+                        <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;TT7 segment tip-tilt&quot;</span><span class="p">:</span>
+                <span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">14</span><span class="p">,</span><span class="mi">14</span><span class="p">))</span>
+                <span class="n">idx</span> <span class="o">=</span> <span class="mi">0</span>
+                <span class="n">Rx</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">Ry</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;Segment #:&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">kSeg</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">8</span><span class="p">):</span>
+                    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%d</span><span class="s"> &quot;</span><span class="o">%</span><span class="n">kSeg</span><span class="p">)</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">TT7_pushpull</span><span class="p">(</span> <span class="n">Rx</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">TT7_pushpull</span><span class="p">(</span> <span class="n">Ry</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+	    <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;segment piston&quot;</span><span class="p">:</span>
+		<span class="k">if</span> <span class="n">segment</span><span class="o">==</span><span class="s">&quot;edge&quot;</span><span class="p">:</span>
+		    <span class="n">n_meas</span> <span class="o">=</span> <span class="mi">12</span>
+		<span class="k">elif</span> <span class="n">segment</span><span class="o">==</span><span class="s">&quot;full&quot;</span><span class="p">:</span>
+		    <span class="n">n_meas</span> <span class="o">=</span> <span class="mi">7</span>
+		<span class="k">else</span> <span class="p">:</span> 
+		    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;paramenter &#39;segment&#39; must be set to either &#39;full&#39; or &#39;edge&#39;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+		<span class="n">n_mode</span> <span class="o">=</span> <span class="mi">6</span>
+		<span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_meas</span><span class="o">*</span><span class="n">gs</span><span class="o">.</span><span class="n">N_SRC</span><span class="p">,</span><span class="n">n_mode</span><span class="p">))</span>
+		<span class="n">idx</span> <span class="o">=</span> <span class="mi">0</span>	
+                <span class="n">Tz</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;Segment #:&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">kSeg</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">7</span><span class="p">):</span>
+                    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%d</span><span class="s"> &quot;</span><span class="o">%</span><span class="n">kSeg</span><span class="p">)</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">SPS_pushpull</span><span class="p">(</span> <span class="n">Tz</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="k">if</span> <span class="n">segment</span><span class="o">==</span><span class="s">&quot;full&quot;</span><span class="p">:</span>
+		    <span class="n">D</span> <span class="o">=</span> <span class="n">D</span><span class="p">[</span><span class="mi">0</span><span class="p">:</span><span class="mi">6</span><span class="p">,:]</span>
+		<span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+	    <span class="k">if</span> <span class="n">mode</span><span class="o">==</span><span class="s">&quot;geometric segment tip-tilt&quot;</span><span class="p">:</span>
+                <span class="n">n_meas</span> <span class="o">=</span> <span class="mi">14</span>
+		<span class="n">D</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">n_meas</span><span class="o">*</span><span class="n">gs</span><span class="o">.</span><span class="n">N_SRC</span><span class="p">,</span><span class="mi">14</span><span class="p">))</span>
+		<span class="n">idx</span> <span class="o">=</span> <span class="mi">0</span>	
+                <span class="n">Rx</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">Ry</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">x</span> <span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="n">x</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">kSeg</span><span class="p">)</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;Segment #:&quot;</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">kSeg</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">8</span><span class="p">):</span>
+                    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="si">%d</span><span class="s"> &quot;</span><span class="o">%</span><span class="n">kSeg</span><span class="p">)</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">STS_pushpull</span><span class="p">(</span> <span class="n">Rx</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="n">D</span><span class="p">[:,</span><span class="n">idx</span><span class="p">]</span> <span class="o">=</span> <span class="n">STS_pushpull</span><span class="p">(</span> <span class="n">Ry</span> <span class="p">)</span>
+                    <span class="n">idx</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+        <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s">&quot;------------</span><span class="se">\n</span><span class="s">&quot;</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">D</span>
+</div></div>
+<span class="k">class</span> <span class="nc">TT7</span><span class="p">(</span><span class="n">ShackHartmann</span><span class="p">):</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">N_SIDE_LENSLET</span><span class="p">,</span> <span class="n">N_PX_LENSLET</span><span class="p">,</span> <span class="n">d</span><span class="p">,</span>
+	          <span class="n">DFT_osf</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">N_PX_IMAGE</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">BIN_IMAGE</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">N_GS</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+        <span class="n">ShackHartmann</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">N_SIDE_LENSLET</span><span class="p">,</span> <span class="n">N_PX_LENSLET</span><span class="p">,</span> <span class="n">d</span><span class="p">,</span>
+                                <span class="n">DFT_osf</span><span class="o">=</span><span class="n">DFT_osf</span><span class="p">,</span> 
+                                <span class="n">N_PX_IMAGE</span><span class="o">=</span><span class="n">N_PX_IMAGE</span><span class="p">,</span> 
+                                <span class="n">BIN_IMAGE</span><span class="o">=</span><span class="n">BIN_IMAGE</span><span class="p">,</span> 
+                                <span class="n">N_GS</span><span class="o">=</span><span class="n">N_GS</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">calibrate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">gs</span><span class="p">,</span> <span class="n">gmt</span><span class="p">,</span> 
+                  <span class="n">stroke_pixel</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> 
+                  <span class="n">slopes_threshold</span><span class="o">=</span><span class="mf">0.95</span><span class="p">):</span>
+
+        <span class="n">gs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+        <span class="n">gmt</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+        <span class="n">ShackHartmann</span><span class="o">.</span><span class="n">reset</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+
+        <span class="n">gmt</span><span class="o">.</span><span class="n">propagate</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span>
+        <span class="n">flux_threshold</span> <span class="o">=</span> <span class="mf">0.95</span>
+        <span class="n">ShackHartmann</span><span class="o">.</span><span class="n">calibrate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">gs</span><span class="p">,</span> <span class="n">flux_threshold</span><span class="p">)</span>
+
+        <span class="n">nvl</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_valid_lenslet</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">M</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">nvl</span><span class="p">,</span><span class="mi">7</span><span class="p">))</span>
+        <span class="n">mas2rad</span> <span class="o">=</span> <span class="mf">1e-3</span><span class="o">*</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="o">/</span><span class="mi">180</span><span class="o">/</span><span class="mi">3600</span>
+        <span class="n">px_scale</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">pixel_scale</span>
+        <span class="k">print</span> <span class="s">&quot;TT7 pixel scale: </span><span class="si">%.2f</span><span class="s">mas&quot;</span><span class="o">%</span><span class="p">(</span><span class="n">px_scale</span><span class="o">/</span><span class="n">mas2rad</span><span class="p">)</span>
+        <span class="n">stroke</span> <span class="o">=</span> <span class="n">stroke_pixel</span><span class="o">*</span><span class="n">px_scale</span>
+        <span class="n">slopes_cut</span> <span class="o">=</span> <span class="n">stroke_pixel</span><span class="o">**</span><span class="mi">2</span><span class="o">*</span><span class="mi">2</span><span class="o">*</span><span class="n">slopes_threshold</span>
+
+        <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="mi">8</span><span class="p">):</span>
+            <span class="n">gs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+            <span class="n">gmt</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+            <span class="n">ShackHartmann</span><span class="o">.</span><span class="n">reset</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+            <span class="n">gmt</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">euler_angles</span><span class="o">=</span><span class="p">[</span><span class="n">stroke</span><span class="p">,</span><span class="n">stroke</span><span class="p">,</span><span class="mf">0.0</span><span class="p">],</span><span class="n">idx</span><span class="o">=</span><span class="n">k</span><span class="p">)</span>
+            <span class="n">gmt</span><span class="o">.</span><span class="n">propagate</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span>
+            <span class="n">ShackHartmann</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">gs</span><span class="p">)</span>
+            <span class="n">c</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">valid_slopes</span><span class="o">.</span><span class="n">host</span><span class="p">()</span><span class="o">.</span><span class="n">flatten</span><span class="p">()</span><span class="o">/</span><span class="n">px_scale</span>
+            <span class="n">rho2_c</span> <span class="o">=</span> <span class="n">c</span><span class="p">[:</span><span class="n">nvl</span><span class="p">]</span><span class="o">**</span><span class="mi">2</span> <span class="o">+</span> <span class="n">c</span><span class="p">[</span><span class="n">nvl</span><span class="p">:]</span><span class="o">**</span><span class="mi">2</span>
+            <span class="n">slopes_cut</span> <span class="o">=</span> <span class="n">rho2_c</span><span class="o">.</span><span class="n">max</span><span class="p">()</span><span class="o">*</span><span class="n">slopes_threshold</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">M</span><span class="p">[:,</span><span class="n">k</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">rho2_c</span><span class="o">&gt;</span><span class="n">slopes_cut</span><span class="p">,</span><span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float</span><span class="p">)</span>
+
+        <span class="n">gs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+        <span class="n">gmt</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+        <span class="n">ShackHartmann</span><span class="o">.</span><span class="n">reset</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">analyze</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">gs</span><span class="p">):</span>
+        <span class="n">ShackHartmann</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">gs</span><span class="p">)</span>
+        <span class="n">nvl</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">n_valid_lenslet</span>
+        <span class="n">c</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">valid_slopes</span><span class="o">.</span><span class="n">host</span><span class="p">()</span>
+        <span class="n">w</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">M</span><span class="p">,</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">c7</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">((</span><span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">c</span><span class="p">[</span><span class="mi">0</span><span class="p">,:</span><span class="n">nvl</span><span class="p">],</span><span class="bp">self</span><span class="o">.</span><span class="n">M</span><span class="p">)</span><span class="o">/</span><span class="n">w</span><span class="p">,</span>
+                                  <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">c</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="n">nvl</span><span class="p">:],</span><span class="bp">self</span><span class="o">.</span><span class="n">M</span><span class="p">)</span><span class="o">/</span><span class="n">w</span><span class="p">))</span>
+
+<div class="viewcode-block" id="SegmentPistonSensor"><a class="viewcode-back" href="../../index.html#ceo.SegmentPistonSensor">[docs]</a><span class="k">class</span> <span class="nc">SegmentPistonSensor</span><span class="p">:</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A class for the GMT segment piston sensor</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    gmt : GMT_MX</span>
+<span class="sd">        The GMT object</span>
+<span class="sd">    src : Source</span>
+<span class="sd">        The Source object used for piston sensing</span>
+<span class="sd">    W : float, optionnal</span>
+<span class="sd">        The width of the lenslet; default: 1.5m</span>
+<span class="sd">    L : float, optionnal</span>
+<span class="sd">        The length of the lenslet; default: 1.5m </span>
+
+<span class="sd">    Attributes</span>
+<span class="sd">    ----------</span>
+<span class="sd">    P : numpy ndarray</span>
+<span class="sd">        M1 segment mask as a 7 columns array</span>
+<span class="sd">    rc : float</span>
+<span class="sd">        The radius of the circle where are centered the first 6 lenslets</span>
+<span class="sd">    rp : float</span>
+<span class="sd">        The radius of the circle where are centered the last 6 lenslets</span>
+<span class="sd">    W : float</span>
+<span class="sd">        The width of the lenslet</span>
+<span class="sd">    L : float</span>
+<span class="sd">        The length of the lenslet</span>
+<span class="sd">    M : numpy ndarray</span>
+<span class="sd">        The mask corresponding to the 12 lenslet array as a 12 columns array</span>
+
+<span class="sd">    See also</span>
+<span class="sd">    --------</span>
+<span class="sd">    GMT_MX : a class for GMT M1 and M2 mirrors</span>
+<span class="sd">    Source : a class for astronomical sources</span>
+
+<span class="sd">    Examples</span>
+<span class="sd">    --------</span>
+<span class="sd">    &gt;&gt;&gt; import ceo</span>
+<span class="sd">    &gt;&gt;&gt; nPx = 256</span>
+<span class="sd">    &gt;&gt;&gt; D = 25.5</span>
+<span class="sd">    &gt;&gt;&gt; src = ceo.Source(&quot;R&quot;,rays_box_size=D,rays_box_sampling=nPx,rays_origin=[0.0,0.0,25])</span>
+<span class="sd">    &gt;&gt;&gt; gmt = ceo.GMT_MX(D,nPx)</span>
+<span class="sd">    &gt;&gt;&gt; SPS = ceo.SegmentPistonSensor(gmt,src)</span>
+<span class="sd">    &gt;&gt;&gt; src.reset()</span>
+<span class="sd">    &gt;&gt;&gt; gmt.propagate(src)</span>
+
+<span class="sd">    The piston per M1 segment is obtained with</span>
+
+<span class="sd">    &gt;&gt;&gt; SPS.piston(src,segment=&#39;full&#39;)</span>
+
+<span class="sd">    The 12 differential pistons are given by</span>
+
+<span class="sd">    &gt;&gt;&gt; SPS.piston(src,segment=&#39;edge&#39;)</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">gmt</span><span class="p">,</span> <span class="n">src</span><span class="p">,</span> <span class="n">W</span><span class="o">=</span><span class="mf">1.5</span><span class="p">,</span> <span class="n">L</span><span class="o">=</span><span class="mf">1.5</span><span class="p">):</span>
+        <span class="k">def</span> <span class="nf">ROT</span><span class="p">(</span><span class="n">o</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span> <span class="p">[</span> <span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">o</span><span class="p">),</span> <span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">o</span><span class="p">)],</span> <span class="p">[</span><span class="o">-</span><span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">o</span><span class="p">),</span><span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">o</span><span class="p">)]</span> <span class="p">])</span>
+        <span class="n">n</span> <span class="o">=</span> <span class="n">gmt</span><span class="o">.</span><span class="n">D_px</span>
+        <span class="n">R</span> <span class="o">=</span> <span class="n">gmt</span><span class="o">.</span><span class="n">D</span><span class="o">/</span><span class="mi">2</span>
+        <span class="n">u</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linspace</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="n">n</span><span class="p">)</span><span class="o">*</span><span class="n">R</span>
+        <span class="n">x</span><span class="p">,</span><span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">meshgrid</span><span class="p">(</span><span class="n">u</span><span class="p">,</span><span class="n">u</span><span class="p">)</span>
+        <span class="n">xy</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span> <span class="p">[</span> <span class="n">x</span><span class="o">.</span><span class="n">flatten</span><span class="p">(),</span> <span class="n">y</span><span class="o">.</span><span class="n">flatten</span><span class="p">()]</span> <span class="p">)</span>        
+        <span class="bp">self</span><span class="o">.</span><span class="n">rc</span> <span class="o">=</span> <span class="mf">4.387</span>
+        <span class="n">xy_rc</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([[</span><span class="mi">0</span><span class="p">],[</span><span class="bp">self</span><span class="o">.</span><span class="n">rc</span><span class="p">]])</span>
+        <span class="c">#print xy_rc</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">rp</span> <span class="o">=</span> <span class="mf">7.543</span>
+        <span class="n">xy_rp</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([[</span><span class="bp">self</span><span class="o">.</span><span class="n">rp</span><span class="p">],[</span><span class="mi">0</span><span class="p">]])</span>
+        <span class="c">#print xy_rp</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W</span> <span class="o">=</span> <span class="mf">1.5</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">L</span> <span class="o">=</span> <span class="mf">1.5</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">M</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">k_SRC</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">N_SRC</span><span class="p">):</span>
+            <span class="n">xySrc</span> <span class="o">=</span> <span class="mf">82.5</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span> <span class="p">[[</span><span class="n">src</span><span class="o">.</span><span class="n">zenith</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">]</span><span class="o">*</span><span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">azimuth</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">])],</span>
+                                    <span class="p">[</span><span class="n">src</span><span class="o">.</span><span class="n">zenith</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">]</span><span class="o">*</span><span class="n">math</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">azimuth</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">])]]</span> <span class="p">)</span>
+            <span class="c">#print xySrc        </span>
+            <span class="n">_M_</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">6</span><span class="p">):</span>
+                <span class="n">theta</span> <span class="o">=</span> <span class="o">-</span><span class="n">k</span><span class="o">*</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="o">/</span><span class="mi">3</span>
+                <span class="c">#print ROT(theta)</span>
+                <span class="n">xyp</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">ROT</span><span class="p">(</span><span class="n">theta</span><span class="p">),</span><span class="n">xy</span><span class="p">)</span> <span class="o">-</span> <span class="n">xy_rc</span> <span class="o">-</span> <span class="n">xySrc</span>
+                <span class="n">_M_</span><span class="o">.</span><span class="n">append</span><span class="p">(</span> <span class="n">np</span><span class="o">.</span><span class="n">logical_and</span><span class="p">(</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">xyp</span><span class="p">[</span><span class="mi">0</span><span class="p">,:])</span><span class="o">&lt;</span><span class="bp">self</span><span class="o">.</span><span class="n">L</span><span class="o">/</span><span class="mi">2</span><span class="p">,</span>  <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">xyp</span><span class="p">[</span><span class="mi">1</span><span class="p">,:])</span><span class="o">&lt;</span><span class="bp">self</span><span class="o">.</span><span class="n">W</span><span class="o">/</span><span class="mi">2</span> <span class="p">)</span> <span class="p">)</span>
+            <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">6</span><span class="p">):</span>
+                <span class="n">theta</span> <span class="o">=</span> <span class="p">(</span><span class="mi">1</span><span class="o">-</span><span class="n">k</span><span class="p">)</span><span class="o">*</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="o">/</span><span class="mi">3</span>
+                <span class="c">#print ROT(theta)</span>
+                <span class="n">xyp</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">ROT</span><span class="p">(</span><span class="n">theta</span><span class="p">),</span><span class="n">xy</span><span class="p">)</span> <span class="o">-</span> <span class="n">xy_rp</span> <span class="o">-</span> <span class="n">xySrc</span>
+                <span class="n">_M_</span><span class="o">.</span><span class="n">append</span><span class="p">(</span> <span class="n">np</span><span class="o">.</span><span class="n">logical_and</span><span class="p">(</span> <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">xyp</span><span class="p">[</span><span class="mi">0</span><span class="p">,:])</span><span class="o">&lt;</span><span class="bp">self</span><span class="o">.</span><span class="n">L</span><span class="o">/</span><span class="mi">2</span><span class="p">,</span>  <span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">xyp</span><span class="p">[</span><span class="mi">1</span><span class="p">,:])</span><span class="o">&lt;</span><span class="bp">self</span><span class="o">.</span><span class="n">W</span><span class="o">/</span><span class="mi">2</span> <span class="p">)</span> <span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">M</span><span class="o">.</span><span class="n">append</span><span class="p">(</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span> <span class="n">_M_</span> <span class="p">)</span> <span class="p">)</span>
+        <span class="c">#print self.M.shape</span>
+
+<div class="viewcode-block" id="SegmentPistonSensor.piston"><a class="viewcode-back" href="../../index.html#ceo.SegmentPistonSensor.piston">[docs]</a>    <span class="k">def</span> <span class="nf">piston</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">src</span><span class="p">,</span> <span class="n">segment</span><span class="o">=</span><span class="s">&quot;full&quot;</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Return either M1 segment piston or M1 differential piston</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        src : Source</span>
+<span class="sd">            The piston sensing guide star object</span>
+<span class="sd">        segment : string, optionnal</span>
+<span class="sd">            &quot;full&quot; for piston on the entire segments or &quot;edge&quot; for the differential piston between segment; default: &quot;full&quot;</span>
+
+<span class="sd">        Return</span>
+<span class="sd">        ------</span>
+<span class="sd">        p : numpy ndarray</span>
+<span class="sd">            A 6 element piston vector for segment=&quot;full&quot; or a 12 element differential piston vector for segment=&quot;edge&quot;</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        
+        <span class="k">assert</span> <span class="n">segment</span><span class="o">==</span><span class="s">&quot;full&quot;</span> <span class="ow">or</span> <span class="n">segment</span><span class="o">==</span><span class="s">&quot;edge&quot;</span><span class="p">,</span> <span class="s">&quot;segment parameter is either &quot;&quot;full&quot;&quot; or &quot;&quot;edge&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="n">segment</span><span class="o">==</span><span class="s">&quot;full&quot;</span><span class="p">:</span>
+            <span class="n">p</span> <span class="o">=</span> <span class="n">src</span><span class="o">.</span><span class="n">piston</span><span class="p">(</span><span class="n">where</span><span class="o">=</span><span class="s">&#39;segments&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">segment</span><span class="o">==</span><span class="s">&quot;edge&quot;</span><span class="p">:</span>
+            <span class="n">W</span> <span class="o">=</span> <span class="n">src</span><span class="o">.</span><span class="n">wavefront</span><span class="o">.</span><span class="n">phase</span><span class="o">.</span><span class="n">host</span><span class="p">()</span>
+            <span class="n">p</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">src</span><span class="o">.</span><span class="n">N_SRC</span><span class="p">,</span><span class="mi">12</span><span class="p">))</span>
+            <span class="k">for</span> <span class="n">k_SRC</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">N_SRC</span><span class="p">):</span>
+                <span class="n">_P_</span> <span class="o">=</span> <span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">piston_mask</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">]</span>
+                <span class="n">_M_</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">M</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">]</span>
+                <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">6</span><span class="p">):</span>
+                    <span class="c">#print k,(k+1)%6</span>
+                    <span class="n">p</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">,</span><span class="mi">2</span><span class="o">*</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span> <span class="n">W</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">,:]</span><span class="o">*</span><span class="n">_P_</span><span class="p">[</span><span class="n">k</span><span class="p">,:]</span><span class="o">*</span><span class="n">_M_</span><span class="p">[</span><span class="n">k</span><span class="p">,:]</span> <span class="p">)</span><span class="o">/</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span> <span class="n">_P_</span><span class="p">[</span><span class="n">k</span><span class="p">,:]</span><span class="o">*</span><span class="n">_M_</span><span class="p">[</span><span class="n">k</span><span class="p">,:]</span> <span class="p">)</span> <span class="o">-</span> \
+                             <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span> <span class="n">W</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">,:]</span><span class="o">*</span><span class="n">_P_</span><span class="p">[</span><span class="mi">6</span><span class="p">,:]</span><span class="o">*</span><span class="n">_M_</span><span class="p">[</span><span class="n">k</span><span class="p">,:]</span> <span class="p">)</span><span class="o">/</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span> <span class="n">_P_</span><span class="p">[</span><span class="mi">6</span><span class="p">,:]</span><span class="o">*</span><span class="n">_M_</span><span class="p">[</span><span class="n">k</span><span class="p">,:]</span> <span class="p">)</span>
+                    <span class="n">p</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">,</span><span class="mi">2</span><span class="o">*</span><span class="n">k</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span> <span class="n">W</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">,:]</span><span class="o">*</span><span class="n">_P_</span><span class="p">[</span><span class="n">k</span><span class="p">,:]</span><span class="o">*</span><span class="n">_M_</span><span class="p">[</span><span class="n">k</span><span class="o">+</span><span class="mi">6</span><span class="p">,:]</span> <span class="p">)</span><span class="o">/</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span> <span class="n">_P_</span><span class="p">[</span><span class="n">k</span><span class="p">,:]</span><span class="o">*</span><span class="n">_M_</span><span class="p">[</span><span class="n">k</span><span class="o">+</span><span class="mi">6</span><span class="p">,:]</span> <span class="p">)</span> <span class="o">-</span> \
+                               <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span> <span class="n">W</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">,:]</span><span class="o">*</span><span class="n">_P_</span><span class="p">[(</span><span class="n">k</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="o">%</span><span class="mi">6</span><span class="p">,:]</span><span class="o">*</span><span class="n">_M_</span><span class="p">[</span><span class="n">k</span><span class="o">+</span><span class="mi">6</span><span class="p">,:]</span> <span class="p">)</span><span class="o">/</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span> <span class="n">_P_</span><span class="p">[(</span><span class="n">k</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="o">%</span><span class="mi">6</span><span class="p">,:]</span><span class="o">*</span><span class="n">_M_</span><span class="p">[</span><span class="n">k</span><span class="o">+</span><span class="mi">6</span><span class="p">,:]</span> <span class="p">)</span>
+        <span class="k">return</span> <span class="n">p</span>
+</div></div>
+<span class="k">class</span> <span class="nc">SegmentTipTiltSensor</span><span class="p">:</span>
+    <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    A class for the GMT segment tip-tilt geometric sensor</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="k">pass</span>
+
+    <span class="k">def</span> <span class="nf">tiptilt</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">src</span><span class="p">):</span>
+        <span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Return the tip and tilt of the wavefront on each segment</span>
+
+<span class="sd">        Parameters</span>
+<span class="sd">        ----------</span>
+<span class="sd">        src : Source</span>
+<span class="sd">            The piston sensing guide star object</span>
+
+<span class="sd">        Return</span>
+<span class="sd">        ------</span>
+<span class="sd">        tt : numpy ndarray</span>
+<span class="sd">            A 14 element array</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">P</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">rollaxis</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span> <span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">piston_mask</span> <span class="p">),</span><span class="mi">0</span><span class="p">,</span><span class="mi">3</span><span class="p">)</span>
+        <span class="n">u</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">n</span><span class="p">)</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">m</span><span class="p">)</span>
+        <span class="n">x</span><span class="p">,</span><span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">meshgrid</span><span class="p">(</span><span class="n">u</span><span class="p">,</span><span class="n">v</span><span class="p">)</span>
+        <span class="n">x</span> <span class="o">=</span> <span class="n">x</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">y</span> <span class="o">=</span> <span class="n">y</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">xc</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">x</span><span class="o">*</span><span class="n">P</span><span class="p">,</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">/</span><span class="n">P</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">yc</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">y</span><span class="o">*</span><span class="n">P</span><span class="p">,</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">/</span><span class="n">P</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">Z2</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span> <span class="o">-</span> <span class="n">xc</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">7</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="n">src</span><span class="o">.</span><span class="n">N_SRC</span><span class="p">))</span><span class="o">*</span><span class="n">P</span>
+        <span class="n">Z3</span> <span class="o">=</span> <span class="p">(</span><span class="n">y</span> <span class="o">-</span> <span class="n">yc</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="mi">7</span><span class="p">,</span><span class="mi">1</span><span class="p">,</span><span class="n">src</span><span class="o">.</span><span class="n">N_SRC</span><span class="p">))</span><span class="o">*</span><span class="n">P</span>
+        <span class="n">W</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">rollaxis</span><span class="p">(</span> <span class="n">src</span><span class="o">.</span><span class="n">wavefront</span><span class="o">.</span><span class="n">phase</span><span class="o">.</span><span class="n">host</span><span class="p">(</span><span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span><span class="n">src</span><span class="o">.</span><span class="n">N_SRC</span><span class="p">,</span><span class="n">src</span><span class="o">.</span><span class="n">n</span><span class="o">*</span><span class="n">src</span><span class="o">.</span><span class="n">m</span><span class="p">)),</span> <span class="mi">1</span><span class="p">,</span> <span class="mi">3</span><span class="p">)</span>
+        <span class="n">a23</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">14</span><span class="p">,</span><span class="n">src</span><span class="o">.</span><span class="n">N_SRC</span><span class="p">))</span>
+        <span class="n">a23</span><span class="p">[:</span><span class="mi">7</span><span class="p">,:]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">W</span><span class="o">*</span><span class="n">Z2</span><span class="p">,</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">/</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">Z2</span><span class="o">*</span><span class="n">Z2</span><span class="p">,</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="n">a23</span><span class="p">[</span><span class="mi">7</span><span class="p">:,:]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">W</span><span class="o">*</span><span class="n">Z3</span><span class="p">,</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span><span class="o">/</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">Z3</span><span class="o">*</span><span class="n">Z3</span><span class="p">,</span><span class="n">axis</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">a23</span>
+
+<span class="k">class</span> <span class="nc">EdgeSensors</span><span class="p">:</span>
+
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mirror</span><span class="p">):</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">M</span> <span class="o">=</span> <span class="n">mirror</span>
+        
+        <span class="k">def</span> <span class="nf">conic</span><span class="p">(</span><span class="n">r</span><span class="p">):</span>
+            <span class="n">c</span> <span class="o">=</span> <span class="n">mirror</span><span class="o">.</span><span class="n">conic_c</span>
+            <span class="n">k</span> <span class="o">=</span> <span class="n">mirror</span><span class="o">.</span><span class="n">conic_k</span>
+            <span class="k">return</span> <span class="n">c</span><span class="o">*</span><span class="n">r</span><span class="o">*</span><span class="n">r</span><span class="o">/</span><span class="p">(</span><span class="mi">1</span><span class="o">+</span><span class="n">np</span><span class="o">.</span><span class="n">sqrt</span><span class="p">(</span><span class="mi">1</span><span class="o">-</span><span class="n">k</span><span class="o">*</span><span class="p">(</span><span class="n">c</span><span class="o">*</span><span class="n">r</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span><span class="p">))</span>
+
+        <span class="k">def</span> <span class="nf">fun</span><span class="p">(</span><span class="n">x</span><span class="p">):</span>
+            <span class="n">L</span> <span class="o">=</span> <span class="n">mirror</span><span class="o">.</span><span class="n">D_assembly</span><span class="o">/</span><span class="mi">2</span>
+            <span class="n">q</span> <span class="o">=</span> <span class="n">mirror</span><span class="o">.</span><span class="n">D_full</span><span class="o">**</span><span class="mi">2</span> <span class="o">-</span> <span class="p">(</span><span class="n">L</span><span class="o">-</span><span class="n">x</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span> <span class="o">-</span> <span class="p">(</span><span class="n">conic</span><span class="p">(</span><span class="n">L</span><span class="p">)</span><span class="o">-</span><span class="n">conic</span><span class="p">(</span><span class="n">x</span><span class="p">))</span><span class="o">**</span><span class="mi">2</span>
+            <span class="k">return</span> <span class="n">q</span>
+    
+        <span class="n">p</span> <span class="o">=</span> <span class="n">mirror</span><span class="o">.</span><span class="n">M_ID</span> <span class="o">-</span> <span class="mi">1</span>
+        <span class="k">print</span> <span class="n">p</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">rho0</span> <span class="o">=</span> <span class="n">brenth</span><span class="p">(</span><span class="n">fun</span><span class="p">,</span><span class="n">mirror</span><span class="o">.</span><span class="n">D_clear</span><span class="o">/</span><span class="mi">2</span><span class="p">,</span><span class="mi">1</span><span class="o">+</span><span class="n">mirror</span><span class="o">.</span><span class="n">D_clear</span><span class="o">/</span><span class="mi">2</span><span class="p">)</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">6</span><span class="p">)</span>
+        <span class="n">o</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="o">*</span><span class="p">(</span> <span class="n">p</span> <span class="o">+</span> <span class="p">(</span><span class="o">-</span><span class="mf">2.0</span><span class="o">*</span><span class="n">k</span><span class="o">-</span><span class="mf">3.0</span><span class="p">)</span><span class="o">/</span><span class="mf">6.0</span> <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">x0</span> <span class="o">=</span> <span class="p">(</span><span class="n">mirror</span><span class="o">.</span><span class="n">L</span><span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">rho0</span><span class="p">)</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">o</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">y0</span> <span class="o">=</span> <span class="p">(</span><span class="n">mirror</span><span class="o">.</span><span class="n">L</span><span class="o">-</span><span class="bp">self</span><span class="o">.</span><span class="n">rho0</span><span class="p">)</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">o</span><span class="p">)</span>
+        <span class="n">R</span> <span class="o">=</span> <span class="n">mirror</span><span class="o">.</span><span class="n">D_full</span><span class="o">/</span><span class="mi">2</span>
+        <span class="n">o</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="o">*</span><span class="p">(</span> <span class="n">p</span> <span class="o">+</span> <span class="p">(</span><span class="o">-</span><span class="mf">2.0</span><span class="o">*</span><span class="n">k</span><span class="o">-</span><span class="mf">1.0</span><span class="p">)</span><span class="o">/</span><span class="mf">6.0</span> <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">x1</span> <span class="o">=</span> <span class="n">R</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">o</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">y1</span> <span class="o">=</span> <span class="n">R</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">o</span><span class="p">)</span>
+        <span class="n">o</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="o">*</span><span class="p">(</span> <span class="n">p</span> <span class="o">+</span> <span class="p">(</span><span class="mf">7.0</span><span class="o">-</span><span class="mf">2.0</span><span class="o">*</span><span class="n">k</span><span class="p">)</span><span class="o">/</span><span class="mf">6.0</span> <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">x2</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">roll</span><span class="p">(</span> <span class="n">R</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">o</span><span class="p">)</span> <span class="p">,</span> <span class="o">-</span><span class="mi">1</span> <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">y2</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">roll</span><span class="p">(</span> <span class="n">R</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">sin</span><span class="p">(</span><span class="n">o</span><span class="p">)</span> <span class="p">,</span> <span class="o">-</span><span class="mi">1</span> <span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">z</span>  <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="mi">6</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">read</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+        <span class="n">u0</span><span class="p">,</span><span class="n">v0</span><span class="p">,</span><span class="n">w0</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">M</span><span class="o">.</span><span class="n">edge_sensors</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">x0</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">y0</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">z</span><span class="p">)</span>
+        <span class="n">u1</span><span class="p">,</span><span class="n">v1</span><span class="p">,</span><span class="n">w1</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">M</span><span class="o">.</span><span class="n">edge_sensors</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">x1</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">y1</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">z</span><span class="p">,</span><span class="n">edgeSensorId</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>
+        <span class="n">u2</span><span class="p">,</span><span class="n">v2</span><span class="p">,</span><span class="n">w2</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">M</span><span class="o">.</span><span class="n">edge_sensors</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">x2</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">y2</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">z</span><span class="p">,</span><span class="n">segId0</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="n">edgeSensorId</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">((</span><span class="n">v0</span><span class="p">,</span><span class="n">v1</span><span class="o">-</span><span class="n">v2</span><span class="p">)),</span><span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">((</span><span class="n">w0</span><span class="p">,</span><span class="n">w1</span><span class="o">-</span><span class="n">w2</span><span class="p">))</span>
+</pre></div>
+
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<div id="searchbox" style="display: none" role="search">
+  <h3>Quick search</h3>
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
+      <input type="hidden" name="check_keywords" value="yes" />
+      <input type="hidden" name="area" value="default" />
+    </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
+</div>
+<script type="text/javascript">$('#searchbox').show(0);</script>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="related navigation">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../../genindex.html" title="General Index"
+             >index</a></li>
+        <li class="right" >
+          <a href="../../py-modindex.html" title="Python Module Index"
+             >modules</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../../index.html">CEO 1.0 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+        &copy; Copyright 2015, R. Conan.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 1.3.1.
+    </div>
+  </body>
+</html>
