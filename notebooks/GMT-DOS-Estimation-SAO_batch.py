@@ -117,7 +117,7 @@ a230 = sts.tiptilt(gs)
 # In[10]:
 
 import scipy.io as io
-data = io.loadmat('GMT-DOS-Estimation-SAO.mat')
+data = io.loadmat('GMT-DOS-Estimation-SAO_onAxis.mat')
 D2tt = data['D2tt']
 D2tt7 = data['D2tt7']
 D1gtt_2 = data['D1gtt_2']
@@ -254,8 +254,8 @@ for kBatch in range(nBatch):
         gmt.M1.zernike.update()
         com2 = np.array( com20 )
 
-        M1_O_GT = gmt.M1.motion_CS.origin
-        M1_A_GT = gmt.M1.motion_CS.euler_angles
+        M1_O_GT = gmt.M1.motion_CS.origin[:]
+        M1_A_GT = gmt.M1.motion_CS.euler_angles[:]
         M1_A_GT[:,:2] += M1_STT
         for k in range(7):
             gmt.M1.update(origin=[M1_O_GT[k,0],M1_O_GT[k,1],M1_O_GT[k,2]],
@@ -355,8 +355,8 @@ for kBatch in range(nBatch):
 
             com1_est = np.dot(M12,wfs.valid_slopes.host().T)
             gmt.M1.global_tiptilt(com1_est[0],com1_est[1])
-            _M1_O_GT_ = gmt.M1.motion_CS.origin
-            _M1_A_GT_ = gmt.M1.motion_CS.euler_angles
+            _M1_O_GT_ = gmt.M1.motion_CS.origin[:]
+            _M1_A_GT_ = gmt.M1.motion_CS.euler_angles[:]
 
         #    M1_gtt = M1_gtt - g1*com1_est[:2]
             M1_O_GT = M1_O_GT - g1*_M1_O_GT_
@@ -404,6 +404,6 @@ for kBatch in range(nBatch):
         print " . Geometric EE80: %.2f"%g_ee80_batch[id_mags,kBatch]
         id_mags += 1
 
-np.savez("batch0_570arcsec_mag20_z56",
+np.savez("batch0_onAxis",
          mags=mags,wfe_rms_batch=wfe_rms_batch,
          g_ee80_batch=g_ee80_batch,d_ee80_batch=d_ee80_batch)

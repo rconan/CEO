@@ -405,58 +405,102 @@ property piston_mask:
         vector *origin
         vector *euler_angles
         rtd *R
+        char *tag
+        void update()
 @ 
 <<class definitions>>=
 cdef class Coordinates:
-    cdef double[:,::1] data
+    cdef:
+        double[:,::1] data
+        vector *v
 cdef class Coordinate_system:
     cdef:
         coordinate_system *_c_coordinate_system
-        double[:,::1] _origin_
-        double[:,::1] _euler_angles_
         double[:,:,::1] _R_
         int N
-        public Coordinates O
+        public Coordinates origin, euler_angles
+        public bytes tag
+    cdef void init(Coordinate_system, coordinate_system *)
 @ 
 <<rayTracing.pyx>>=
-# 
+# Coordinates
 cdef class Coordinates:
+    """
+    An interface between an array of coordinate vectors and an array of coordinates
+
+    Examples
+    --------
+    >>> import ceo
+    >>> gmt = ceo.GMT_MX(25.5,256, M1_radial_order=8, M2_radial_order=14)
+
+    The origin of M1 segment in the motion coordinate system is a Coordinates object
+
+    >>> print gmt.M1.motion_CS.origin
+
+    to retrieve the origin values:
+
+    >>> print gmt.M1.motion_CS.origin[:]
+
+    Segment 1 is moved along the y-axis of 1mm:
+
+    >>> gmt.M1.motion_CS.origin[0,1] = 1e-3
+
+    All the segments are resetted to their nominal position with
+
+    gmt.M1.motion_CS.origin[:] = 0
+    """
     def __cinit__(self,tuple shape):
         self.data =  np.zeros(shape, dtype=np.float64)
+
     def __getitem__(self,index):
-        print index
+        cdef int k
+        for k in range(7):
+            self.data[k,0] = self.v[k].x
+            self.data[k,1] = self.v[k].y
+            self.data[k,2] = self.v[k].z
+        return np.array( self.data.__getitem__(index) )
+
     def __setitem__(self,index,value):
-        print index
-        print value
+        self.data.__setitem__(index,value)
+        cdef int k
+        for k in range(self.data.shape[0]):
+            self.v[k].x = self.data[k,0]
+            self.v[k].y = self.data[k,1]
+            self.v[k].z = self.data[k,2]
 # coordinate_system
 cdef class Coordinate_system:
     """
+    A class for the coordinate system origins and euler angles
+
+    Attributes
+    ----------
+    N : int
+        The number of coordinate systems
+    origin : Coordinates
+        The origin of the coordinate system(s)
+    euler_angles : Coordinates
+        The euler angles of the coordinates system(s)
+    R : ndarray
+        The rotation natrix of the coordinate systems as a [N,3,3] array
     """
 
     def __cinit__(self, int N=1):
         self.N = N
         self._c_coordinate_system = new coordinate_system()
-        self._origin_       = np.empty((N,3), dtype=np.float64)
-        self._euler_angles_ = np.empty((N,3), dtype=np.float64)      
-        self.O = Coordinates((self.N,3))
+        self.origin = Coordinates((self.N,3))
+        self.euler_angles = Coordinates((self.N,3))
 
-    property origin:
-        def __get__(self):
-            cdef int k
-            for k in range(self.N):
-                self._origin_[k,0] = self._c_coordinate_system.origin[k].x
-                self._origin_[k,1] = self._c_coordinate_system.origin[k].y
-                self._origin_[k,2] = self._c_coordinate_system.origin[k].z
-            return np.array(self._origin_)
+    cdef void init(self, coordinate_system *cs):
+        self._c_coordinate_system = cs
+        self.origin.v = cs.origin
+        self.euler_angles.v = cs.euler_angles
+        self.tag = cs.tag
 
-    property euler_angles:
-        def __get__(self):
-            cdef int k
-            for k in range(self.N):
-                self._euler_angles_[k,0] = self._c_coordinate_system.euler_angles[k].x
-                self._euler_angles_[k,1] = self._c_coordinate_system.euler_angles[k].y
-                self._euler_angles_[k,2] = self._c_coordinate_system.euler_angles[k].z
-            return np.array(self._euler_angles_)
+    def update(self):
+        """
+        Updates the coordinate systems on the device
+        """
+        self._c_coordinate_system.update()
 
     property R:
         def __get__(self):
@@ -804,16 +848,19 @@ cdef class GMT_M1:
 <<GMT M12 constructor>>=
 self.zernike = ZernikeS(radial_order,N_SURF=7)
 self._c_gmt_m12.setup(D, D_px, <zernikeS *> self.zernike._c_zernikeS, 0)
-self.aperture_CS = Coordinate_system(7)
-self.aperture_CS._c_coordinate_system = &(self._c_gmt_m12.aperture_CS)
-self.conic_CS = Coordinate_system(7)
-self.conic_CS._c_coordinate_system = &(self._c_gmt_m12.conic_CS)
-self.motion_CS = Coordinate_system(7)
-self.motion_CS._c_coordinate_system = &(self._c_gmt_m12.motion_CS)
+
+self.aperture_CS   = Coordinate_system(7)
+self.conic_CS      = Coordinate_system(7)
+self.motion_CS     = Coordinate_system(7)
 self.rigid_body_CS = Coordinate_system(7)
-self.rigid_body_CS._c_coordinate_system = &(self._c_gmt_m12.rigid_body_CS)
-self.TT_CS = Coordinate_system(1)
-self.TT_CS._c_coordinate_system = &(self._c_gmt_m12.TT_CS)
+self.TT_CS         = Coordinate_system(1)
+
+self.aperture_CS.init(   &(self._c_gmt_m12.aperture_CS)   )
+self.conic_CS.init(      &(self._c_gmt_m12.conic_CS)      )
+self.motion_CS.init(     &(self._c_gmt_m12.motion_CS)     )
+self.rigid_body_CS.init( &(self._c_gmt_m12.rigid_body_CS) )
+self.TT_CS.init(         &(self._c_gmt_m12.TT_CS)         )
+
 @ 
 <<GMT M12 methods>>=
 def __dealloc__(self):
@@ -849,7 +896,7 @@ def blocking(self, Bundle rays):
     """
     self._c_gmt_m12.blocking(rays._c_bundle)
 
-def update(self, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0], int idx=0):
+def update(self, list origin=[0.0,0.0,0.0], list euler_angles=[0.0,0.0,0.0], int idx=0):
     """
     Updates the position of the mirror segments
 
@@ -877,7 +924,8 @@ def reset(self):
     """
     Reset the segments to their original prescription
     """
-    self._c_gmt_m12.reset()
+    self.motion_CS.origin[:] = 0.0
+    self.motion_CS.euler_angles[:] = 0.0
 
 def global_tiptilt(self, float tip, float tilt):
     """
@@ -2081,7 +2129,7 @@ char tag[32];
 @ 
 They are gathered in a new coordinate system data type
 <<coordinate system data type>>=
-typedef struct {
+struct coordinate_system{
   <<coordinate system data>>
   void setup(void);
   void setup(vector _origin_, vector _euler_angles_);
@@ -2089,8 +2137,9 @@ typedef struct {
   void setup(vector *_origin_, vector *_euler_angles_, int _N_, char *_tag_);
   void cleanup(void);
   void info(void);
+  void update(void);
   void update(vector _origin_, vector _euler_angles_,int idx);
-} coordinate_system;
+};
 @ 
 
 \subsection{Setup \& Cleanup}
@@ -2253,6 +2302,19 @@ void coordinate_system::cleanup(void)
 @ 
 The coordinate system is updated with
 <<coordinate system functions>>=
+void coordinate_system::update(void)
+{
+  int k, idx;
+  rtd ca, sa, cb, sb, cg, sg;
+  for (k=0; k<N; k++)
+    {
+      idx = k;
+      <<rotation matrix definition>>
+    }
+  <<CS from host to device>>
+}
+@ or with the origin [[_origin_]] and euler angles [[_euler_angles_]] vectors of a single segment identified with its index [[idx]]
+<<coordinate system functions>>=
 void coordinate_system::update(vector _origin_, vector _euler_angles_,int idx)
 {
   int n_byte = sizeof(vector);
@@ -2261,8 +2323,6 @@ void coordinate_system::update(vector _origin_, vector _euler_angles_,int idx)
   rtd ca, sa, cb, sb, cg, sg;
   <<rotation matrix definition>>
   <<CS from host to device>>
-  /* for (int k=0;k<9*N;k++) */
-  /*   *(float_R+k) = (float) R[k]; */
 }
 @ 
 \subsection{Input/Output}
