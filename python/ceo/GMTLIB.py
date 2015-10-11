@@ -561,18 +561,17 @@ class SegmentPistonSensor:
         self.M = []
         for k_SRC in range(src.N_SRC):
             xySrc = 82.5*np.array( [[src.zenith[k_SRC]*math.cos(src.azimuth[k_SRC])],
-                                    [src.zenith[k_SRC]*math.sin(src.azimuth[k_SRC])]] )
-            #print xySrc        
+                                      [src.zenith[k_SRC]*math.sin(src.azimuth[k_SRC])]] )
             _M_ = []
             for k in range(6):
                 theta = -k*math.pi/3
                 #print ROT(theta)
-                xyp = np.dot(ROT(theta),xy) - xy_rc - xySrc
+                xyp = np.dot(ROT(theta),xy) - xy_rc - np.dot(ROT(theta),xySrc)
                 _M_.append( np.logical_and( np.abs(xyp[0,:])<self.L/2,  np.abs(xyp[1,:])<self.W/2 ) )
             for k in range(6):
                 theta = (1-k)*math.pi/3
                 #print ROT(theta)
-                xyp = np.dot(ROT(theta),xy) - xy_rp - xySrc
+                xyp = np.dot(ROT(theta),xy) - xy_rp - np.dot(ROT(theta),xySrc)
                 _M_.append( np.logical_and( np.abs(xyp[0,:])<self.L/2,  np.abs(xyp[1,:])<self.W/2 ) )
             self.M.append( np.array( _M_ ) )
         #print self.M.shape
