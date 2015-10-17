@@ -22,9 +22,10 @@ azimuth_angle = np.arange(N_GS)*360.0/N_GS # in degrees
 gs    = ceo.Source(AGWS_photometric_band,
                    zenith=zenith_angle,azimuth=azimuth_angle*math.pi/180,
                    rays_box_size=entrance_pupil_size_meter,
-                   rays_box_sampling=nPx,rays_origin=[0.0,0.0,25])
+                   rays_box_sampling=nPx,rays_origin=[0.0,0.0,25],
+                   fwhm = 10.6)
 wfs = ceo.ShackHartmann(N_LENSLET, N_PX_LENLSET, lenslet_pitch_meter, 
-                        N_PX_IMAGE=2*N_PX_LENLSET,BIN_IMAGE=2,N_GS=N_GS)
+                        N_PX_IMAGE=40,BIN_IMAGE=4,N_GS=N_GS)
 wfs.camera.photoelectron_gain = optics_throughtput
 gmt = ceo.GMT_MX(entrance_pupil_size_meter,nPx,M1_radial_order=M1_zernike_radial_order)
 
@@ -117,7 +118,7 @@ a230 = sts.tiptilt(gs)
 # In[10]:
 
 import scipy.io as io
-data = io.loadmat('GMT-DOS-Estimation-SAO_onAxis.mat')
+data = io.loadmat('GMT-DOS-Estimation-SAO_new_sampling.mat')
 D2tt = data['D2tt']
 D2tt7 = data['D2tt7']
 D1gtt_2 = data['D1gtt_2']
@@ -128,10 +129,10 @@ zmodes = [4,5]
 zmodes.extend(range(6,10))
 nZernCoefs = len(zmodes)
 
-zmode_rm = np.arange(4) + 2
+zmode_rm = np.arange(2) + 2
 zmode_rm = np.ravel(np.tile(zmode_rm,(7,1)) + np.reshape(np.arange(0,7*nZernCoefs,nZernCoefs),(-1,1)))
 D1z_2 = np.delete(D1z_2,zmode_rm,1)
-zmodes = [4,5]
+zmodes = [3,4,5,8,9]
 nZernCoefs = len(zmodes)
 # ## Resetting
 
@@ -257,12 +258,9 @@ for kBatch in range(nBatch):
         M1_O_GT = gmt.M1.motion_CS.origin[:]
         M1_A_GT = gmt.M1.motion_CS.euler_angles[:]
         M1_A_GT[:,:2] += M1_STT
-        for k in range(7):
-            gmt.M1.update(origin=[M1_O_GT[k,0],M1_O_GT[k,1],M1_O_GT[k,2]],
-                          euler_angles=[M1_A_GT[k,0],M1_A_GT[k,1],M1_A_GT[k,2]],idx=k+1)
-            gmt.M2.update(origin=[com2xyz0[3*k],com2xyz0[3*k+1],com2xyz0[3*k+2]],
-                          euler_angles=[ com2[2*k], com2[2*k+1], 0],idx=k+1)
-
+        gmt.M2.motion_CS.origin[:] = com2xyz0.reshape(7,-1)
+        gmt.M2.motion_CS.euler_angles[:,:2] = com2.reshape(7,-1)
+        gmt.M2.motion_CS.update()
 
         # In[23]:
 
@@ -322,28 +320,36 @@ for kBatch in range(nBatch):
             gs.reset()
             gmt.propagate(gs)
             com2 -= np.dot(M2tt7,np.ravel(sts.tiptilt(gs) - a230)).reshape(-1,1)
+            gmt.M2.motion_CS.euler_angles[:,:2] = com2.reshape(7,-1)
+            gmt.M2.motion_CS.update()    
 
             for k2Step in range(5):
                 gs.reset()
                 gmt.propagate(gs)
                 wfs.reset()
-                #wfs.analyze(gs)
-                wfs.propagate(gs)
-                wfs.readOut(30,ron)
-                wfs.process()
+                wfs.analyze(gs)
+                #wfs.propagate(gs)
+                #wfs.readOut(30,ron)
+                #wfs.process()
                 com2 -= np.dot(M2,wfs.valid_slopes.host().T)
-                for k in range(7):
-                    gmt.M2.update(origin=[com2xyz[3*k],com2xyz[3*k+1],com2xyz[3*k+2]],
-                                  euler_angles=[ com2[2*k], com2[2*k+1], 0],idx=k+1)
+                gmt.M2.motion_CS.origin[:] = com2xyz.reshape(7,-1)
+                gmt.M2.motion_CS.euler_angles[:,:2] = com2.reshape(7,-1)
+                gmt.M2.motion_CS.update()    
 
             src.reset()
             gmt.propagate(src)
+            imgr.reset()
+            imgr.propagate(src)
+            psf = imgr.frame.host()
 
             wfe = src.phase.host(units='nm')
             idx += 1
             idx = idx%(n1Step+1)
             wfe_rms[idx] = 1e9*src.wavefront.rms()
 
+            src.reset()
+            gmt.propagate(src,where_to="focal plane")
+            g_ee80 = src.rays.ee80('square')*ceo.constants.RAD2MAS
 
             gs.reset()
             gmt.propagate(gs)
@@ -372,38 +378,23 @@ for kBatch in range(nBatch):
             #M1_stt = M1_stt - g1*com1_est[2:16].reshape(7,-1)
             #M1_A_GT[:,:2] += M1_stt
 
-            for k in range(7):
-                gmt.M1.update(origin=[M1_O_GT[k,0],M1_O_GT[k,1],M1_O_GT[k,2]],
-                          euler_angles=[M1_A_GT[k,0],M1_A_GT[k,1],M1_A_GT[k,2]],idx=k+1)
-                gmt.M2.update(origin=[com2xyz[3*k],com2xyz[3*k+1],com2xyz[3*k+2]],
-                             euler_angles=[ com2[2*k], com2[2*k+1], 0],idx=k+1)
+            gmt.M1.motion_CS.origin[:] = M1_O_GT
+            gmt.M1.motion_CS.euler_angles[:] = M1_A_GT
+            gmt.M2.motion_CS.origin[:] = com2xyz.reshape(7,-1)
+            gmt.M2.motion_CS.euler_angles[:,:2] = com2.reshape(7,-1)
+            gmt.M1.motion_CS.update()
+            gmt.M2.motion_CS.update()
 
-            src.reset()
-            gmt.propagate(src)
-            imgr.reset()
-            imgr.propagate(src)
-            wfe = src.phase.host(units='nm')
-            idx += 1
-            idx = idx%(n1Step+1)
-            wfe_rms[idx] = 1e9*src.wavefront.rms()
-
-
-            psf = imgr.frame.host()
-            src.reset()
-            gmt.propagate(src,where_to="focal plane")
-
-
-            c = wfs.c.host(shape=(2*N_GS*N_LENSLET,N_LENSLET),units='mas').T
-
+ 
 
         wfe_rms_batch[id_mags,kBatch] = wfe_rms[idx]
-        g_ee80_batch[id_mags,kBatch]  = src.rays.ee80('square')*ceo.constants.RAD2MAS
+        g_ee80_batch[id_mags,kBatch]  = g_ee80
         d_ee80_batch[id_mags,kBatch]  = ee80(psf,px_scale)
         #    time.sleep(3)
         print " . Final WFE rms: %6.2fnm"%wfe_rms_batch[id_mags,kBatch]
         print " . Geometric EE80: %.2f"%g_ee80_batch[id_mags,kBatch]
         id_mags += 1
 
-np.savez("batch0_onAxis",
+np.savez("batch0_new_sampling",
          mags=mags,wfe_rms_batch=wfe_rms_batch,
          g_ee80_batch=g_ee80_batch,d_ee80_batch=d_ee80_batch)

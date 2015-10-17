@@ -407,6 +407,8 @@ property piston_mask:
         rtd *R
         char *tag
         void update()
+    cdef void backward_transform(vector *, vector *, rtd *, vector *)
+    cdef void backward_transform_centered(vector *, vector *, rtd *)
 @ 
 <<class definitions>>=
 cdef class Coordinates:
@@ -454,7 +456,7 @@ cdef class Coordinates:
 
     def __getitem__(self,index):
         cdef int k
-        for k in range(7):
+        for k in range(self.data.shape[0]):
             self.data[k,0] = self.v[k].x
             self.data[k,1] = self.v[k].y
             self.data[k,2] = self.v[k].z
@@ -501,6 +503,18 @@ cdef class Coordinate_system:
         Updates the coordinate systems on the device
         """
         self._c_coordinate_system.update()
+
+    def transform_to(self, Coordinates origin, Coordinates euler_angles):
+        cdef int k
+        cdef rtd *R
+        cdef vector *O, *v
+        for k in range(self.N):
+            R = self._c_coordinate_system.R + k*9
+            O = <vector *>&(self.origin.v[k])
+            v = origin.v
+            //backward_transform(v, O, R, O)
+            v = euler_angles.v
+            //backward_transform_centered(v, O, R)
 
     property R:
         def __get__(self):
