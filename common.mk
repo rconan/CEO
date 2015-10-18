@@ -1,9 +1,10 @@
-CEOPATH	        = $(HOME)/Dropbox/CEO
+CEOPATH 	= $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 CUDAPATH	= /usr/local/cuda
 PYTHONPATH      = $(HOME)/anaconda
 CEOPYPATH	= $(CEOPATH)/python/ceo
 NVCC          	= $(CUDAPATH)/bin/nvcc
 CUDALIBPATH   	= $(CUDAPATH)/lib64
+CUDAINCPATH   	= $(CUDAPATH)/include
 MATLABINCS	= -I/priv/monarcas1/rconan/MATLAB/R2013a/extern/include \
 	-I/export/monarcas1/rconan/MATLAB/R2013a/toolbox/distcomp/gpu/extern/include
 CUDALIBS	= cusparse cufft cublas cudart cuda
@@ -14,8 +15,10 @@ CPIF	    	= $(NOWEBPATH)/bin/cpif
 TEXTOPDF  	= pdflatex
 NVCCFLAGS	= -arch=sm_30 -lineinfo --compiler-options=-ansi,-D_GNU_SOURCE,-fwrapv,-fPIC,-fno-omit-frame-pointer,-pthread,-fno-strict-aliasing -O3
 LIBS 		= -L$(CEOPATH)/lib $(CUDALIBPATH:%=-L%) -lceo -lcurl -ljsmn $(CUDALIBS:%=-l%)
-INCS		= -I. -I$(CEOPATH)/include -I/usr/local/cuda/include/ -I$(PYTHONPATH)/include #$(MATLABINCS)
+INCS		= -I. -I$(CEOPATH)/include $(CUDAINCPATH:%=-I%) -I$(PYTHONPATH)/include #$(MATLABINCS)
 SHELL		= /bin/bash
+
+#-include $(CEOPATH)/user.mk
 
 texsrc = $(nwsrc:%.nw=%.tex)
 header = $(nwsrc:%.nw=%.h)
