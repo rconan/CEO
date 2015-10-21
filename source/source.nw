@@ -88,6 +88,7 @@ struct source {
 <<complex amplitude setup II>>
 <<complex amplitude cleanup>>
 <<resetting the wavefront>>
+<<resetting the phase>>
 <<resetting the wavefront to new wavefront>>
 <<adding wavefront phase>>
 <<masking wavefront amplitude I>>
@@ -143,6 +144,7 @@ cdef extern from "source.h":
         float *phase
         float *amplitude
         void reset()
+        void reset_phase()
         void masked(mask *)
         void masked()
         void add_phase(float , float *)
@@ -261,6 +263,9 @@ cdef class Complex_amplitude:
         self._c_complex_amplitude.reset()
         if phase is not None:
             self._c_complex_amplitude.add_phase(1,phase._c_gpu.dev_data)
+
+    def reset_phase(self):
+        self._c_complex_amplitude.reset_phase()
 
 cdef class Source:
     """ 
@@ -583,6 +588,7 @@ struct complex_amplitude {
   void setup(int n_pixel, int n_src);
   void cleanup(void);
   void reset(void);
+  void reset_phase(void);
   void reset(complex_amplitude wavefront_prime);
   void add_phase(float alpha, float *phase_prime);
   void masked(void);
@@ -1028,12 +1034,20 @@ void complex_amplitude::reset(void)
   /* if (M!=NULL) */
   /*   apply_mask LLL gridDim,blockDim RRR (amplitude, phase, M->m, N_PX);   */
 }
-@  masked following resets the wavefront phase to the phase of the new wavefront:
+@  
+The following resets the wavefront phase to the phase of the new wavefront:
 <<resetting the wavefront to new wavefront>>=
 void complex_amplitude::reset(complex_amplitude wavefront_prime)
 {
   reset();
   add_phase(1, wavefront_prime.phase);
+}
+@ 
+The wavefront phase is reset to 0 with
+<<resetting the phase>>=
+void complex_amplitude::reset_phase(void)
+{
+HANDLE_ERROR( cudaMemset( phase, 0, sizeof(float)*N_PX ) );
 }
 
 @ 

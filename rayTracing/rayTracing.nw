@@ -411,6 +411,10 @@ property piston_mask:
     cdef void backward_transform_centered(vector *, vector *, rtd *)
 @ 
 <<class definitions>>=
+cimport numpy as np
+cdef class Quaternion:
+    cdef:
+        public np.ndarray w, x, y, z
 cdef class Coordinates:
     cdef:
         double[:,::1] data
@@ -425,6 +429,23 @@ cdef class Coordinate_system:
     cdef void init(Coordinate_system, coordinate_system *)
 @ 
 <<rayTracing.pyx>>=
+# Quaternion
+cdef class Quaternion:
+    def __cinit__(self, np.ndarray euler_angles = None):
+        self.from_euler_angles(euler_angles)
+        
+    def from_euler_angles(self, np.ndarray euler_angles):
+        ca = np.cos(euler_angles[:,0]*0.5)
+        sa = np.sin(euler_angles[:,0]*0.5)
+        cb = np.cos(euler_angles[:,1]*0.5)
+        sb = np.sin(euler_angles[:,1]*0.5)
+        cc = np.cos(euler_angles[:,2]*0.5)
+        sc = np.sin(euler_angles[:,2]*0.5)
+        self.w = ca*cb*cc - sa*sb*sc 
+        self.x = ca*sb*sc + sa*cb*cc
+        self.y = ca*sb*cc - sa*cb*sc
+        self.z = ca*cb*sc + sa*sb*cc
+        
 # Coordinates
 cdef class Coordinates:
     """
@@ -512,9 +533,9 @@ cdef class Coordinate_system:
             R = self._c_coordinate_system.R + k*9
             O = <vector *>&(self.origin.v[k])
             v = origin.v
-            //backward_transform(v, O, R, O)
+            #backward_transform(v, O, R, O)
             v = euler_angles.v
-            //backward_transform_centered(v, O, R)
+            #backward_transform_centered(v, O, R)
 
     property R:
         def __get__(self):

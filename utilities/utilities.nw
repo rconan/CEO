@@ -157,6 +157,7 @@ int round_up_to_nhp2(int n) {
 <<fill ones>>
 <<fill ones (char)>>
 <<fill ones filtered>>
+<<fill ones altered>>
 <<non zeros index>>
 <<statistics functions>>
 <<mask functions>>
@@ -1050,6 +1051,7 @@ struct mask {
   void setup_GMT(int n, float S);
   void set_filter(void);
   void set_filter_quiet(void);
+  void alter(float *filter);
   void cleanup(void);
 };
 @ 
@@ -1181,7 +1183,7 @@ void mask::set_filter(void) {
   CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
   fprintf(stdout,"@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
 
-  nnz_idx LLL 1,1 RRR (idx, m, nel);
+  //nnz_idx LLL 1,1 RRR (idx, m, nel);
 }
 void mask::set_filter_quiet(void) {
   dim3 blockDim(256);
@@ -1219,7 +1221,33 @@ __global__ void nnz_idx(int *idx, const char* mask, int n_data)
       idx[k++] = i;
 }
 @
+\item the mask can be altered by passing an array of 1 and 0 that is multiplied by the existing mask
+<<mask functions>>=
+void mask::alter(float *filter)
+{
+  dim3 blockDim(256);
+  dim3 gridDim(nel/256+1);
+  fill_ones_altered LLL gridDim,blockDim RRR (f, m, nel, filter);
+
+  CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
+  fprintf(stdout,"@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
+}
+@  with the kernels
+<<fill ones altered>>=
+__global__ void fill_ones_altered(float *ones, char* mask, int n_data, float *filter) 
+{
+  int i;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i<n_data) {
+    ones[i] *= filter[i];
+    mask[i] = (ones[i]>0) ? 1 : 0;
+  }
+}
+@
 \end{itemize}
+
+\subsubsection{Python}
+\label{sec:python-1}
 
 The python wrapper is 
 <<utilities.pxd>>=
@@ -1234,6 +1262,7 @@ The python wrapper is
                    float , int)
         void setup_circular(int, float)
         void setup_GMT(int, float)
+        void alter(float *)
         void cleanup()
 @ 
 <<class definitions>>=
@@ -1266,6 +1295,9 @@ cdef class MaskAbstract:
 	self._c_mask = new mask()
 	self.f = cuFloatArray(shape=(self.n,1))
         self.f._c_gpu.dev_data = self._c_mask.f
+
+    def alter(self, cuFloatArray filter):
+        self._c_mask.alter(filter._c_gpu.dev_data)
 
     property nnz:
         def __get__(self):
