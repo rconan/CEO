@@ -407,14 +407,12 @@ property piston_mask:
         rtd *R
         char *tag
         void update()
-    cdef void backward_transform(vector *, vector *, rtd *, vector *)
-    cdef void backward_transform_centered(vector *, vector *, rtd *)
 @ 
 <<class definitions>>=
 cimport numpy as np
 cdef class Quaternion:
     cdef:
-        public np.ndarray w, x, y, z
+        public np.ndarray qw, qx, qy, qz
 cdef class Coordinates:
     cdef:
         double[:,::1] data
@@ -431,20 +429,126 @@ cdef class Coordinate_system:
 <<rayTracing.pyx>>=
 # Quaternion
 cdef class Quaternion:
-    def __cinit__(self, np.ndarray euler_angles = None):
-        self.from_euler_angles(euler_angles)
+    def __cinit__(self, qw=np.array(0.0,ndmin=1), 
+                  qx=np.array(0.0,ndmin=1), 
+                  qy=np.array(0.0,ndmin=1), 
+                  qz=np.array(0.0,ndmin=1),
+                  np.ndarray origins = None,
+                  np.ndarray euler_angles = None):
+        self.qw = np.array(qw)
+        self.qx = np.array(qx)
+        self.qy = np.array(qy)
+        self.qz = np.array(qz)
+        if origins is not None:
+            self.from_origins(origins)
+        if euler_angles is not None:
+            self.from_euler_angles(euler_angles)
         
     def from_euler_angles(self, np.ndarray euler_angles):
+        if euler_angles.ndim==1:
+            euler_angles = euler_angles[None,:]
         ca = np.cos(euler_angles[:,0]*0.5)
         sa = np.sin(euler_angles[:,0]*0.5)
         cb = np.cos(euler_angles[:,1]*0.5)
         sb = np.sin(euler_angles[:,1]*0.5)
         cc = np.cos(euler_angles[:,2]*0.5)
         sc = np.sin(euler_angles[:,2]*0.5)
-        self.w = ca*cb*cc - sa*sb*sc 
-        self.x = ca*sb*sc + sa*cb*cc
-        self.y = ca*sb*cc - sa*cb*sc
-        self.z = ca*cb*sc + sa*sb*cc
+        self.qw = ca*cb*cc + sa*sb*sc 
+        self.qx = sa*cb*cc - ca*sb*sc
+        self.qy = ca*sb*cc + sa*cb*sc
+        self.qz = ca*cb*sc - sa*sb*cc
+        
+    def from_origins(self, np.ndarray origins):
+        if origins.ndim==1:
+            origins = origins[None,:]
+        self.qx = origins[:,0]
+        self.qy = origins[:,1]
+        self.qz = origins[:,2]
+        self.qw = np.zeros_like(self.qx)
+
+    def norm(self):
+        red = self.qw**2 + self.qx**2 + self.qy**2 + self.qz**2
+        return np.sqrt(red)
+
+    def conj(self):
+        Q = Quaternion(self.qw,-self.qx,-self.qy,-self.qz)
+        return Q
+
+    def __add__(x,y):
+        if isinstance(x,Quaternion) and isinstance(y,Quaternion):
+            Q1 = <Quaternion>x
+            Q2 = <Quaternion>y
+            return Quaternion(Q1.qw+Q2.qw,Q1.qx+Q2.qx,Q1.qy+Q2.qy,Q1.qz+Q2.qz)
+        else:
+            return NotImplemented
+
+    def __sub__(x,y):
+        if isinstance(x,Quaternion) and isinstance(y,Quaternion):
+            Q1 = <Quaternion>x
+            Q2 = <Quaternion>y
+            return Quaternion(Q1.qw-Q2.qw,Q1.qx-Q2.qx,Q1.qy-Q2.qy,Q1.qz-Q2.qz)
+        else:
+            return NotImplemented
+
+    def __mul__(x,y):
+        if isinstance(x,Quaternion) and isinstance(y,Quaternion):
+            Q1 = <Quaternion>x
+            Q2 = <Quaternion>y
+            a1 = Q1.qw
+            b1 = Q1.qx
+            c1 = Q1.qy
+            d1 = Q1.qz
+            a2 = Q2.qw
+            b2 = Q2.qx
+            c2 = Q2.qy
+            d2 = Q2.qz
+            return Quaternion(
+                a1*a2-b1*b2-c1*c2-d1*d2,
+                a1*b2+b1*a2+c1*d2-d1*c2,
+                a1*c2-b1*d2+c1*a2+d1*b2,
+                a1*d2+b1*c2-c1*b2+d1*a2)
+        else:
+            return NotImplemented
+
+    def to_euler_angles(self):
+        q0 = self.qw
+        q1 = self.qx
+        q2 = self.qy
+        q3 = self.qz
+        a = np.arctan2(2.0*(q0*q1+q2*q3),1-2.0*(q1*q1+q2*q2))
+        b = np.arcsin(2.0*(q0*q2-q3*q1))
+        c = np.arctan2(2.0*(q0*q3+q1*q2),1-2.0*(q2*q2+q3*q3))
+        return np.concatenate((a[:,None],b[:,None],c[:,None]),axis=1)
+
+    def __getitem__(self,index):
+        wxyz = np.zeros((self.qw.size,4))
+        wxyz[:,0] = self.qw
+        wxyz[:,1] = self.qx
+        wxyz[:,2] = self.qy
+        wxyz[:,3] = self.qz
+        return wxyz.__getitem__(index)
+
+    def __setitem__(self,index,value):
+        wxyz = np.zeros((self.qw.size,4))
+        wxyz[:,0] = self.qw
+        wxyz[:,1] = self.qx
+        wxyz[:,2] = self.qy
+        wxyz[:,3] = self.qz
+        wxyz[index] = value
+        self.qw = wxyz[:,0]
+        self.qx = wxyz[:,1]
+        self.qy = wxyz[:,2]
+        self.qz = wxyz[:,3]
+
+    def __repr__(self):
+        return [self.qw,self.qx,self.qy,self.qz].__repr__()
+
+    def __str__(self):
+        return "@(CEO)>Quaternion:" + \
+            "\nqw:" + np.array_str(self.qw,precision=3,suppress_small=True) + \
+            "\nqx:" + np.array_str(self.qx,precision=3,suppress_small=True) + \
+            "\nqy:" + np.array_str(self.qy,precision=3,suppress_small=True) + \
+            "\nqz:" + np.array_str(self.qz,precision=3,suppress_small=True)
         
 # Coordinates
 cdef class Coordinates:
@@ -490,6 +594,20 @@ cdef class Coordinates:
             self.v[k].x = self.data[k,0]
             self.v[k].y = self.data[k,1]
             self.v[k].z = self.data[k,2]
+
+    def __repr__(self):
+        data = np.array(self.data)
+        return data.__repr__()
+
+    def __str__(self):
+        max_abs_data = np.max(np.abs(self.data))
+        if  max_abs_data!=0:
+            exp = -np.floor(np.log10(max_abs_data))
+        else:
+            exp = 0
+        s = np.array_str(np.asarray(self.data)*(10**exp),precision=2,suppress_small=True)
+        return "@(CEO)>Coordinates:\nX,Y,Z coordinates in meter: 10^%dX\n"%exp + s
+
 # coordinate_system
 cdef class Coordinate_system:
     """
@@ -524,18 +642,6 @@ cdef class Coordinate_system:
         Updates the coordinate systems on the device
         """
         self._c_coordinate_system.update()
-
-    def transform_to(self, Coordinates origin, Coordinates euler_angles):
-        cdef int k
-        cdef rtd *R
-        cdef vector *O, *v
-        for k in range(self.N):
-            R = self._c_coordinate_system.R + k*9
-            O = <vector *>&(self.origin.v[k])
-            v = origin.v
-            #backward_transform(v, O, R, O)
-            v = euler_angles.v
-            #backward_transform_centered(v, O, R)
 
     property R:
         def __get__(self):

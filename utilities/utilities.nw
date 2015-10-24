@@ -122,6 +122,7 @@ void dev2host( float *host_data, float *dev_data, int N);
 void host2dev( float **dev_data, float *host_data, int N);
 void freedev( float **dev_data );
 
+<<template gpu data structure>>
 <<gpu data structure>>
 <<gpu int data structure>>
 <<gpu double data structure>>
@@ -1527,6 +1528,33 @@ void freedev( float **dev_data ) {
     HANDLE_ERROR( cudaFree( *dev_data) );
 }
 @ 
+<<template gpu data structure>>=
+template<typename T> 
+struct gpu_t {
+  T *dev_data, *host_data;
+  int N, nb;
+  stats S;
+  void setup(void) {
+    nb = sizeof(T);
+  }
+  void dev_malloc(void) {
+    HANDLE_ERROR( cudaMalloc( (void**)&dev_data, N*nb) );
+  }
+  void free_dev(void) {
+    HANDLE_ERROR( cudaFree( dev_data ) );
+  }
+  void dev2host(void) {
+    HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
+			      N*nb, cudaMemcpyDeviceToHost ) ) ;
+    HANDLE_ERROR( cudaDeviceSynchronize() ); 
+  }
+  void host2dev(void) {
+    HANDLE_ERROR( cudaMemcpy( dev_data, host_data, 
+			      N*nb, cudaMemcpyHostToDevice ) ) ;
+    HANDLE_ERROR( cudaDeviceSynchronize() );
+  }
+};
+@ 
 <<gpu data structure>>=
 struct gpu {
   float *dev_data, *host_data;
@@ -1632,6 +1660,11 @@ void gpu_double::host2dev(void) {
 The cu$<$Type$>$Array class is a cython class that is a container for CUDA variables:
 <<utilities.pxd>>=
 cdef extern from "utilities.h":
+    cdef cppclass gpu_t[T]:
+        T *dev_data
+        T *host_data
+        int N
+        <<cu gpu common>>
     cdef cppclass gpu:
         float *dev_data
         float *host_data
@@ -1656,16 +1689,86 @@ void dev2host()
 void host2dev()
 @ 
 <<class definitions>>=
-# cuFloatArray
+# cuArray
 from operator import mul
 from numpy cimport ndarray
-cdef class cuFloatArray:
-    cdef gpu *_c_gpu
+cdef class cuArray:
+    cdef gpu_t[float] *_c_gpu
     cdef public int size
     cdef public shape
     cdef dev_malloc
     cdef public ndarray host_data
     cdef units
+@ 
+<<utilities.pyx>>=
+cdef class cuArray:
+    """
+    A class to interact with a cuda float array
+
+    <<cu array class doc>>
+    """
+
+    def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
+        self._c_gpu = new gpu_t[float]()
+        self._c_gpu.setup();
+        self.dev_malloc = dev_malloc
+        if shape is not None:
+            self.shape = shape
+            self.size = np.prod(shape)
+            self._c_gpu.N = self.size
+        if self.dev_malloc:
+            self._c_gpu.N = self.size
+            self._c_gpu.dev_malloc()           
+        if host_data is not None:
+            self.host_data = np.array( host_data , dtype=np.float32 , order='C')
+            self.shape = host_data.shape
+            self.size = np.prod(self.shape)
+            self._c_gpu.N = self.size
+            if not self.dev_malloc:
+                self._c_gpu.dev_malloc()
+            self._c_gpu.host_data = <float *>self.host_data.data;
+            self._c_gpu.host2dev()
+            self.dev_malloc = True    
+	self.units = {'micron': 1e6, 'nm': 1e9, 'arcsec': 180*3600/math.pi,
+                      'mas': 1e3*180*3600/math.pi}
+
+    def __dealloc__(self):
+         if self.dev_malloc:
+            self._c_gpu.free_dev()
+
+    def host(self,units=None,zm=False,mask=None,shape=None):
+        <<cu array method doc>>
+        if self.shape==(0,0) or self.shape is None:
+            raise ValueError("Data must have a size greater than zero!!")
+        if shape is not None:
+            #assert reduce(mul,shape,1)==reduce(mul,self.shape,1), "Total size of array must be unchanged!"
+            self.shape = shape
+        self.host_data = np.zeros(self.shape,order='c',dtype=np.float32)
+        self._c_gpu.host_data = <float *>self.host_data.data;
+        self._c_gpu.dev2host()
+        if zm:
+            if mask is None:
+                self.host_data -= self.host_data.mean()
+            else:
+                mask = np.reshape(mask,self.shape)
+                mean_host_data = np.sum(self.host_data*mask)/np.sum(mask)
+                self.host_data = mask*(self.host_data-mean_host_data)
+        if units is not None:
+            self.host_data = self.host_data*self.units[units]
+        return self.host_data
+@ 
+<<class definitions>>=
+# cuFloatArray
+from operator import mul
+from numpy cimport ndarray
+cdef class cuFloatArray:
+    cdef gpu_t[float] *_c_gpu
+    cdef public int size
+    cdef public shape
+    cdef dev_malloc
+    cdef public ndarray host_data
+    cdef units
+@ 
 <<utilities.pyx>>=
 cdef class cuFloatArray:
     """
@@ -1675,7 +1778,7 @@ cdef class cuFloatArray:
     """
 
     def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
-        self._c_gpu = new gpu()
+        self._c_gpu = new gpu_t[float]()
         self._c_gpu.setup();
         self.dev_malloc = dev_malloc
         if shape is not None:
@@ -1769,7 +1872,7 @@ numpy array : a copy of the device data on the host
 <<class definitions>>=
 # cuIntArray
 cdef class cuIntArray:
-    cdef gpu_int *_c_gpu
+    cdef gpu_t[int] *_c_gpu
     cdef public int size
     cdef public shape
     cdef dev_malloc
@@ -1784,7 +1887,7 @@ cdef class cuIntArray:
     """
 
     def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
-        self._c_gpu = new gpu_int()
+        self._c_gpu = new gpu_t[int]()
         self._c_gpu.setup();
         self.dev_malloc = dev_malloc
         if shape is not None:
@@ -1834,7 +1937,7 @@ cdef class cuIntArray:
 <<class definitions>>=
 # cuDoubleArray
 cdef class cuDoubleArray:
-    cdef gpu_double *_c_gpu
+    cdef gpu_t[double] *_c_gpu
     cdef public int size
     cdef public shape
     cdef dev_malloc
@@ -1849,7 +1952,7 @@ cdef class cuDoubleArray:
     """
 
     def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
-        self._c_gpu = new gpu_double()
+        self._c_gpu = new gpu_t[double]()
         self._c_gpu.setup();
         self.dev_malloc = dev_malloc
         if shape is not None:
