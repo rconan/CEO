@@ -136,7 +136,7 @@ struct source {
 
 <<source.pxd>>=
 from utilities cimport mask
-from rayTracing cimport bundle, gmt_m1, gmt_m2, vector, rtd
+from rayTracing cimport bundle, gmt_m1, gmt_m2, vector, rtd, aperture, conic
 cdef extern from "source.h":
     cdef cppclass complex_amplitude:
         int N
@@ -168,12 +168,11 @@ cdef extern from "source.h":
         void info()
         float n_photon()
         float wavelength()
-<<class definitions>>
 @
 <<class definitions>>= 
 from numpy cimport ndarray
 from utilities cimport cuFloatArray, MaskAbstract
-from rayTracing cimport Bundle
+from rayTracing cimport Bundle, Aperture, Conic
 cdef class Complex_amplitude:
     cdef complex_amplitude *_c_complex_amplitude
     cdef public cuFloatArray phase
@@ -541,13 +540,15 @@ cdef class Source:
 \label{sec:ray-tracing-routines-1}
 
 <<source.pxd (opt-out)>>=
-    void transform_to_S(source *, conic *)
-    void transform_to_S(source *, aperture *)
-    void transform_to_R(source *, conic *)
-    void transform_to_R(source *, aperture *)
-    void intersect(source *, conic *)
-    void reflect(source *)
-    void thin_lens(source *)
+    cdef void transform_to_S(source *, conic *)
+    cdef void transform_to_S(source *, aperture *)
+    cdef void transform_to_R(source *, conic *)
+    cdef void transform_to_R(source *, aperture *)
+    cdef void intersect(source *, conic *)
+    cdef void reflect(source *)
+    cdef void thin_lens(source *)
+<<source.pxd>>=
+<<class definitions>>
 @ 
 <<source.pyx (opt-out)>>=
 # ray tracing
@@ -1082,16 +1083,18 @@ M = M_in;
 @ with
 <<masking wavefront common>>=
 dim3 blockDim(16,1);
-dim3 gridDim(N_PX/16+1);
-apply_mask LLL gridDim,blockDim RRR (amplitude, phase, M->m, N_PX);  
+dim3 gridDim(M->nel/16+1,N_PX/M->nel);
+apply_mask LLL gridDim,blockDim RRR (amplitude, phase, N_PX, M->m, M->nel);  
 @ and with the kernel:
 <<apply mask>>=
-__global__ void apply_mask(float* amplitude, float* phase, const char *pupil_mask, const int N) {
-  int id;
-  id = blockIdx.x * blockDim.x + threadIdx.x;
-  if ( (id<N) && (pupil_mask[id]==0) ) {
-    amplitude[id] = 0.0;
-    phase[id]     = 0.0;
+__global__ void apply_mask(float* amplitude, float* phase, const int N, 
+                           const char *pupil_mask, const int M) {
+  int i,j;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if ( (i<M) && (pupil_mask[i]==0) ) {
+    j = i + M*blockIdx.y;
+    amplitude[j] = 0.0;
+    phase[j]     = 0.0;
   }
 }
 @
