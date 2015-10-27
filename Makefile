@@ -40,7 +40,7 @@ test:
 	make -C test all
 
 ripython:
-	env PYTHONPATH="$(CEOPATH)python" ipython notebook --no-browser
+	env PYTHONPATH="$(CEOPATH)/python" jupyter notebook --no-browser
 
 ipythonserver:
 	env PYTHONPATH="$(CEOPATH)/python" ipython notebook --profile=nbserver
