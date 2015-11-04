@@ -1,0 +1,189 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+@
+\section{The files}
+\label{sec:files}
+
+\subsection{Header}
+\label{sec:header}
+
+<<segmentPistonSensor.h>>=
+#ifndef __SEGMENTPISTONSENSOR_H__
+#define __SEGMENTPISTONSENSOR_H__
+
+#ifndef __SOURCE_H__
+#include "source.h"
+#endif
+
+#ifndef __RAYTRACING_H__
+#include "rayTracing.h"
+#endif 
+
+struct segmentPistonSensor {
+
+  <<parameters>>
+  void setup(gmt_m1 *M1, source *gs);
+  void cleanup(void);
+};
+
+#endif // __SEGMENTPISTONSENSOR_H__
+@ 
+\subsection{Source}
+\label{sec:source}
+
+<<segmentPistonSensor.cu>>=
+#include "segmentPistonSensor.h"
+
+<<setup>>
+<<cleanup>>
+@
+\subsection{Python}
+\label{sec:python}
+
+<<segmentPistonSensor.pxd>>=
+from rayTracing cimport gmt_m1, GMT_M1
+from source cimport source, Source
+from utilities cimport mask, MaskAbstract
+cdef extern from "segmentPistonSensor.h":
+    cdef cppclass segmentPistonSensor:
+        mask *lenslet
+        void setup(gmt_m1 *, source *)
+        void cleanup()
+<<class definition>>
+@ 
+<<class definition>>=
+cdef class SegmentPistonSensor:
+    cdef:
+        segmentPistonSensor *_c_segmentPistonSensor
+        readonly list M
+@ 
+<<segmentPistonSensor.pyx>>=
+cdef class SegmentPistonSensor:
+    def __cinit__(self,GMT_M1 M1, Source gs):
+        cdef:
+            int k
+            mask *_m_
+            MaskAbstract _M_
+        self._c_segmentPistonSensor = new segmentPistonSensor()
+        self._c_segmentPistonSensor.setup(M1._c_gmt_m12,gs._c_source)
+        self.M = []
+        for k in range(12):
+            _m_ = &(self._c_segmentPistonSensor.lenslet[k])
+            _M_ = MaskAbstract(_m_.nel)
+            _M_._c_mask = _m_;
+            _M_.f._c_gpu.dev_data = _M_._c_mask.f
+            self.M.append( _M_ )
+
+    def __dealloc__(self):
+        self._c_segmentPistonSensor.cleanup()
+@ 
+
+\section{The model}
+\label{sec:model}
+
+The segment piston sensor consists in 12 lenslets across the segment gaps as show in the figure below
+\begin{tikzpicture}
+  \foreach \x in {1,...,6} {
+    \coordinate (O) at (150-\x*60:11mm);
+    \fill[blue!20,draw=black,thin,rotate=60-\x*60] ($(O)-(3mm,3mm)$) rectangle ($(O)+(3mm,3mm)$);
+    \coordinate (O) at (120-\x*60:19mm);
+    \fill[blue!20,draw=black,thin,rotate=30-\x*60] ($(O)-(3mm,3mm)$) rectangle ($(O)+(3mm,3mm)$);
+  }
+  \coordinate (O) at (0,0);
+  \draw (O) circle [radius=10mm] node {7};
+  \foreach \x in {1,...,6} {
+    \coordinate (O) at (150-\x*60:22mm);
+    \draw (O) circle [radius=10mm] node {\x};
+  }
+  \draw[dotted] circle[radius=11mm];
+  \draw[dotted] circle[radius=19mm];
+\end{tikzpicture}
+
+Projected onto M1, the inner and outer six lenslets are centered on circles of radius $ri=4.387$m and $ro=7.543$m, respectively.
+The lenslet size is $L=1.5$m.
+The lenslets are conjugated to an height of 82.5m above M1, hence shifting the lenslet location according to the guide star locations.
+
+\section{Parameters}
+\label{sec:parameters}
+
+The parameters for the segment piston sensor models are:
+\begin{itemize}
+\item the inner and outer radius of the lenslet locations:
+<<parameters>>=
+float ri, ro;
+@
+\item the conjugation height of the lenslet in meter:
+<<parameters>>=
+float lenslet_height;
+@
+\item the size of the lenslet in meter:
+<<parameters>>=
+float lenslet_size;
+@ 
+\item the 12 lenslet masks:
+<<parameters>>=
+mask *lenslet;
+@ 
+\end{itemize}
+
+\section{Functions}
+\label{sec:functions}
+
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
+<<setup>>=
+void segmentPistonSensor::setup(gmt_m1 *M1, source *gs)
+{
+  int k_GS, k_LA, n, i_0, j_0, i_s, j_s, nPxLenslet, k;
+  float x0, y0, xs, ys, theta, m2px, R;
+  lenslet_size = 1.5;
+  ri = (M1->D_full+0.357)*0.5 ;
+  ro = M1->L*sqrt(3)*0.5;
+  m2px = M1->D_px/M1->D;
+  R = M1->D*0.5;
+  lenslet = (mask *)malloc(sizeof(mask)*12*gs->N_SRC);
+  n = ceil(lenslet_size*m2px);
+  fprintf(stdout,"n=%d\n",n);
+  nPxLenslet = 4*n;
+  k = 0;
+  for (k_GS=0;k_GS<gs->N_SRC;k_GS++) {
+    x0 = lenslet_height*gs[k_GS].zenith*cos(gs[k_GS].azimuth);
+    y0 = lenslet_height*gs[k_GS].zenith*sin(gs[k_GS].azimuth);
+    i_0 = (int) rint((x0)*m2px);
+    j_0 = (int) rint((y0)*m2px);
+    fprintf(stdout,"x0=%f ; y0=%f\n",x0,y0);
+    xs = ri;
+    ys = 0.0;
+    i_s = (int) rint((R+xs)*m2px);
+    j_s = (int) rint((R+ys)*m2px);
+    fprintf(stdout,"i_0=%d;j_0=%d;i_s=%d;j_s=%d\n",i_0,j_0,i_s,j_s);
+    for (k_LA=0;k_LA<6;k_LA++) {
+      theta = -k_LA*PI/3.0;
+      lenslet[k++].setup(n,lenslet_size,i_0,j_0,theta,i_s,j_s,M1->D_px);
+    }
+    xs = ro;
+    ys = 0.0;
+    i_s = (int) rint((R+xs)*m2px);
+    j_s = (int) rint((R+ys)*m2px);
+    fprintf(stdout,"i_0=%d;j_0=%d;i_s=%d;j_s=%d\n",i_0,j_0,i_s,j_s);
+    for (k_LA=0;k_LA<6;k_LA++) {
+      theta = (1-k_LA)*PI/3.0;
+      lenslet[k++].setup(n,lenslet_size,i_0,j_0,theta,i_s,j_s,M1->D_px);
+    }
+  }
+}
+@ 
+<<cleanup>>=
+void segmentPistonSensor::cleanup(void)
+{
+  fprintf(stdout,"@(CEO)>segmentPistonSensor: freeing memory!\n");
+  free( lenslet );
+}
+@
+
+\subsection{Input/Output}
+\label{sec:inputoutput}
+
+\section{Tests}
+\label{sec:tests}
+

@@ -8,4 +8,5 @@ from shackHartmann import ShackHartmann
 from LMMSE import Lmmse, LmmseSH
 from rayTracing import Bundle, ZernikeS, GMT_M1, GMT_M2, Coordinates, Quaternion
 from aaStats import AaStats, PaStats
-from GMTLIB import GMT_MX, TT7, SegmentPistonSensor, SegmentTipTiltSensor, EdgeSensors
+from GMTLIB import GMT_MX, TT7, IdealSegmentPistonSensor, SegmentTipTiltSensor, EdgeSensors
+from segmentPistonSensor import SegmentPistonSensor
