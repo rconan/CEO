@@ -45,7 +45,7 @@ from source cimport source, Source
 from utilities cimport mask, MaskAbstract
 cdef extern from "segmentPistonSensor.h":
     cdef cppclass segmentPistonSensor:
-        mask *lenslet
+        mask pupil_mask
         void setup(gmt_m1 *, source *)
         void cleanup()
 <<class definition>>
@@ -54,24 +54,22 @@ cdef extern from "segmentPistonSensor.h":
 cdef class SegmentPistonSensor:
     cdef:
         segmentPistonSensor *_c_segmentPistonSensor
-        readonly list M
+        readonly MaskAbstract M
 @ 
 <<segmentPistonSensor.pyx>>=
 cdef class SegmentPistonSensor:
     def __cinit__(self,GMT_M1 M1, Source gs):
         cdef:
-            int k
             mask *_m_
             MaskAbstract _M_
         self._c_segmentPistonSensor = new segmentPistonSensor()
         self._c_segmentPistonSensor.setup(M1._c_gmt_m12,gs._c_source)
-        self.M = []
-        for k in range(12):
-            _m_ = &(self._c_segmentPistonSensor.lenslet[k])
-            _M_ = MaskAbstract(_m_.nel)
-            _M_._c_mask = _m_;
-            _M_.f._c_gpu.dev_data = _M_._c_mask.f
-            self.M.append( _M_ )
+        
+        _m_ = &(self._c_segmentPistonSensor.pupil_mask)
+        _M_ = MaskAbstract(_m_.nel)
+        _M_._c_mask = _m_;
+        _M_.f._c_gpu.dev_data = _M_._c_mask.f
+        self.M = _M_
 
     def __dealloc__(self):
         self._c_segmentPistonSensor.cleanup()
@@ -82,25 +80,65 @@ cdef class SegmentPistonSensor:
 
 The segment piston sensor consists in 12 lenslets across the segment gaps as show in the figure below
 \begin{tikzpicture}
-  \foreach \x in {1,...,6} {
-    \coordinate (O) at (150-\x*60:11mm);
-    \fill[blue!20,draw=black,thin,rotate=60-\x*60] ($(O)-(3mm,3mm)$) rectangle ($(O)+(3mm,3mm)$);
-    \coordinate (O) at (120-\x*60:19mm);
-    \fill[blue!20,draw=black,thin,rotate=30-\x*60] ($(O)-(3mm,3mm)$) rectangle ($(O)+(3mm,3mm)$);
-  }
   \coordinate (O) at (0,0);
-  \draw (O) circle [radius=10mm] node {7};
+  \fill[black!10] (O) circle [radius=10mm] node {7};
   \foreach \x in {1,...,6} {
     \coordinate (O) at (150-\x*60:22mm);
-    \draw (O) circle [radius=10mm] node {\x};
+     \fill[black!10] (O) circle [radius=10mm] node {\x};
+  }
+  \foreach \x in {1,...,6} {
+    \coordinate (O) at (150-\x*60:11mm);
+    \fill[blue!30,fill opacity=0.5,draw=black,very thin,rotate=60-\x*60] ($(O)-(2mm,2mm)$) rectangle ($(O)+(2mm,2mm)$);
+    \coordinate (O) at (120-\x*60:19mm);
+    \fill[green!30,fill opacity=0.5,draw=black,thin,rotate=30-\x*60] ($(O)-(2mm,2mm)$) rectangle ($(O)+(2mm,2mm)$);
   }
   \draw[dotted] circle[radius=11mm];
   \draw[dotted] circle[radius=19mm];
 \end{tikzpicture}
 
-Projected onto M1, the inner and outer six lenslets are centered on circles of radius $ri=4.387$m and $ro=7.543$m, respectively.
+Projected onto M1, the inner six (blue) and outer six (green) lenslets are centered on circles of radius $ri=4.387$m and $ro=7.543$m, respectively.
 The lenslet size is $L=1.5$m.
 The lenslets are conjugated to an height of 82.5m above M1, hence shifting the lenslet location according to the guide star locations.
+
+Each lenslet is cropped out of the pupil plane and embedded into a zero--padded array twice the size of the lenslet.
+The 12 resulting arrays are arranged into a $4\times 4$ square zero--padded block array as if each block is a new lenslet twice the size of the original lenslet.
+There are as many of these block arrays as there are guide stars.
+
+\newcommand{\croppedLenslet}[5]{
+  \coordinate (O) at (#3:#4mm);
+  \begin{scope}[shift={($(#1mm,#2mm)-(O)$)}]
+    \coordinate (O) at (#3:#4mm);
+    \clip ($(O)-(4mm,4mm)$) rectangle ($(O)+(4mm,4mm)$);
+    \coordinate (O) at (0,0);
+    \fill[black!10] (O) circle [radius=10mm] node {7};
+    \foreach \x in {1,...,6} {
+      \coordinate (O) at (150-\x*60:22mm);
+      \fill[black!10] (O) circle [radius=10mm] node {\x};
+    }
+    \coordinate (O) at (#3:#4mm);
+    \fill[#5!30,fill opacity=0.5,draw=black,very thin,rotate=#3-90] ($(O)-(2mm,2mm)$) rectangle ($(O)+(2mm,2mm)$);  
+  \end{scope}
+}
+
+\begin{tikzpicture}
+  \croppedLenslet{-12}{12}{90}{11}{blue}
+  \croppedLenslet{-4}{12}{30}{11}{blue}
+  \croppedLenslet{4}{12}{-30}{11}{blue}
+  \croppedLenslet{12}{12}{-90}{11}{blue}
+
+  \croppedLenslet{-12}{4}{-150}{11}{blue}
+  \croppedLenslet{-4}{4}{-210}{11}{blue}
+
+  \croppedLenslet{4}{4}{120}{19}{green}
+  \croppedLenslet{12}{4}{60}{19}{green}
+
+  \croppedLenslet{-12}{-4}{0}{19}{green}
+  \croppedLenslet{-4}{-4}{-60}{19}{green}
+  \croppedLenslet{4}{-4}{-120}{19}{green}
+  \croppedLenslet{12}{-4}{-180}{19}{green}
+
+  \draw[step=8mm] (-16mm,-16mm) grid (16mm,16mm);
+\end{tikzpicture}
 
 \section{Parameters}
 \label{sec:parameters}
@@ -119,9 +157,13 @@ float lenslet_height;
 <<parameters>>=
 float lenslet_size;
 @ 
-\item the 12 lenslet masks:
+\item the mask of the concatenated and cropped 12 lenslets:
 <<parameters>>=
-mask *lenslet;
+mask lenslet;
+@
+\item the pupil mask:
+<<parameters>>=
+mask pupil_mask;
 @ 
 \end{itemize}
 
@@ -136,21 +178,29 @@ void segmentPistonSensor::setup(gmt_m1 *M1, source *gs)
 {
   int k_GS, k_LA, n, i_0, j_0, i_s, j_s, k;
   float x0, y0, xs, ys, theta, m2px, R;
-  lenslet_size = 1.5;
+
+  lenslet_size  = 1.5;
+  lenslet_height = 82.5;
   ri = (M1->D_full+0.357)*0.5 ;
   ro = M1->L*sqrt(3)*0.5;
   m2px = M1->D_px/M1->D;
-  R = M1->D*0.5;
-  lenslet = (mask *)malloc(sizeof(mask)*12*gs->N_SRC);
+  R    = M1->D*0.5;
+
+  pupil_mask.setup(M1->D_px*M1->D_px*gs->N_SRC);
+  HANDLE_ERROR( cudaMemset(  pupil_mask.m, 0, pupil_mask.nel*sizeof(char) ) );
+
+  //lenslet = (mask *)malloc(sizeof(mask)*12*gs->N_SRC);
+  mask M;
   n = ceil(lenslet_size*m2px);
   fprintf(stdout,"n=%d\n",n);
   k = 0;
   for (k_GS=0;k_GS<gs->N_SRC;k_GS++) {
+    fprintf(stdout,"zenith=%e\n",gs[k_GS].zenith);
     x0 = lenslet_height*gs[k_GS].zenith*cos(gs[k_GS].azimuth);
     y0 = lenslet_height*gs[k_GS].zenith*sin(gs[k_GS].azimuth);
     i_0 = (int) floor((x0)*m2px);
     j_0 = (int) floor((y0)*m2px);
-    fprintf(stdout,"x0=%f ; y0=%f\n",x0,y0);
+    fprintf(stdout,"x0=%e ; y0=%e\n",x0,y0);
     xs = ri;
     ys = 0.0;
     i_s = (int) floor((R+xs)*m2px);
@@ -158,7 +208,9 @@ void segmentPistonSensor::setup(gmt_m1 *M1, source *gs)
     fprintf(stdout,"i_0=%d;j_0=%d;i_s=%d;j_s=%d\n",i_0,j_0,i_s,j_s);
     for (k_LA=0;k_LA<6;k_LA++) {
       theta = -k_LA*PI/3.0;
-      lenslet[k++].setup(n,lenslet_size,i_0,j_0,theta,i_s,j_s,M1->D_px);
+      M.setup(n,lenslet_size,i_0,j_0,theta,i_s,j_s,M1->D_px);
+      pupil_mask.add(&M);
+      M.cleanup();
     }
     xs = ro;
     ys = 0.0;
@@ -167,16 +219,18 @@ void segmentPistonSensor::setup(gmt_m1 *M1, source *gs)
     fprintf(stdout,"i_0=%d;j_0=%d;i_s=%d;j_s=%d\n",i_0,j_0,i_s,j_s);
     for (k_LA=0;k_LA<6;k_LA++) {
       theta = (0.5-k_LA)*PI/3;
-      lenslet[k++].setup(n,lenslet_size,i_0,j_0,theta,i_s,j_s,M1->D_px);
+      M.setup(n,lenslet_size,i_0,j_0,theta,i_s,j_s,M1->D_px);
+      pupil_mask.add(&M);
+      M.cleanup();
     }
-  }
+  } // sources
 }
 @ 
 <<cleanup>>=
 void segmentPistonSensor::cleanup(void)
 {
   fprintf(stdout,"@(CEO)>segmentPistonSensor: freeing memory!\n");
-  free( lenslet );
+  //free( lenslet );
 }
 @
 

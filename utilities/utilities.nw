@@ -1,4 +1,4 @@
-% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+-*- mode: Noweb; noweb-code-mode: c-mode -*-
 
 \section{The files}
 
@@ -159,7 +159,7 @@ int round_up_to_nhp2(int n) {
 <<fill ones (char)>>
 <<fill ones filtered>>
 <<fill ones altered>>
-<<non zeros index>>
+<<add mask kernel>>
 <<statistics functions>>
 <<mask functions>>
 <<circular pupil>>
@@ -1049,6 +1049,7 @@ struct mask {
   void set_filter(void);
   void set_filter_quiet(void);
   void alter(float *filter);
+  void add(mask *other);
   void cleanup(void);
 };
 @ 
@@ -1073,7 +1074,6 @@ HANDLE_ERROR( cudaMalloc((void**)&m, sizeof(char)*nel ) );
 HANDLE_ERROR( cudaMalloc((void**)&f, sizeof(float)*nel ) );
 HANDLE_ERROR( cudaMemset( m, 0, sizeof(char)*nel) );
 HANDLE_ERROR( cudaMemset( f, 0, sizeof(float)*nel) );
-HANDLE_ERROR( cudaMalloc((void**)&idx, sizeof(int)*nel ) );
 cublasCreate(&handle);
 @ \item with a square mask of [[n]] pixel across and [[L]] meter width:
 <<mask functions>>=
@@ -1179,15 +1179,12 @@ void mask::set_filter(void) {
 
   CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
   fprintf(stdout,"@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
-
-  //nnz_idx LLL 1,1 RRR (idx, m, nel);
 }
 void mask::set_filter_quiet(void) {
   dim3 blockDim(256);
   dim3 gridDim(nel/256+1);
   fill_ones_filtered LLL gridDim,blockDim RRR (f, m, nel);
   CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
-  //  nnz_idx LLL 1,1 RRR (idx, m, nel); time comsuming!!!
 }
 @ \item [[cleanup]]
 <<mask functions>>=
@@ -1196,7 +1193,6 @@ void mask::cleanup(void) {
   cublasDestroy(handle);
   HANDLE_ERROR( cudaFree( m ) );
   HANDLE_ERROR( cudaFree( f ) );
-  HANDLE_ERROR( cudaFree( idx ) );
 }
 @  with the kernels
 <<fill ones filtered>>=
@@ -1206,16 +1202,6 @@ __global__ void fill_ones_filtered(float *ones, const char* mask, int n_data)
   i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i<n_data)
     ones[i] = (mask[i]) ? 1.0 : 0.0;
-}
-@ and
-<<non zeros index>>=
-__global__ void nnz_idx(int *idx, const char* mask, int n_data)
-{
-  int i, k;
-  k = 0;
-  for (i=0;i<n_data;i++)
-    if (mask[i])
-      idx[k++] = i;
 }
 @
 \item the mask can be altered by passing an array of 1 and 0 that is multiplied by the existing mask
@@ -1229,7 +1215,7 @@ void mask::alter(float *filter)
   CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
   fprintf(stdout,"@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
 }
-@  with the kernels
+@  with the kernel
 <<fill ones altered>>=
 __global__ void fill_ones_altered(float *ones, char* mask, int n_data, float *filter) 
 {
@@ -1241,6 +1227,26 @@ __global__ void fill_ones_altered(float *ones, char* mask, int n_data, float *fi
   }
 }
 @
+\item masks can be added together with
+<<mask functions>>=
+void mask::add(mask *other)
+{
+  dim3 blockDim(256);
+  dim3 gridDim(nel/256+1);
+  add_kernel LLL gridDim,blockDim RRR (m, other->m, nel);  
+  set_filter();
+}
+@ with the kernel
+<<add mask kernel>>=
+__global__ void add_kernel(char *mask, char *other_mask, int n_data)
+{
+  int i;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if ( (i<n_data) && (other_mask[i]) ) {
+    mask[i] = other_mask[i];
+  }
+}
+@ 
 \end{itemize}
 
 \subsubsection{Python}
