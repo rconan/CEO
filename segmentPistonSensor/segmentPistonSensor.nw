@@ -23,6 +23,7 @@ struct segmentPistonSensor {
   <<parameters>>
   void setup(gmt_m1 *M1, source *gs);
   void cleanup(void);
+  void propagate(source *src);
 };
 
 #endif // __SEGMENTPISTONSENSOR_H__
@@ -33,28 +34,36 @@ struct segmentPistonSensor {
 <<segmentPistonSensor.cu>>=
 #include "segmentPistonSensor.h"
 
+<<mask trimming kernel>>
+<<lenslet trimming kernel>>
+
 <<setup>>
 <<cleanup>>
+<<propagation>>
 @
 \subsection{Python}
 \label{sec:python}
 
 <<segmentPistonSensor.pxd>>=
 from rayTracing cimport gmt_m1, GMT_M1
-from source cimport source, Source
+from source cimport complex_amplitude, Complex_amplitude, source, Source
 from utilities cimport mask, MaskAbstract
 cdef extern from "segmentPistonSensor.h":
     cdef cppclass segmentPistonSensor:
         mask pupil_mask
+        mask masklet
+        complex_amplitude lenslet
         void setup(gmt_m1 *, source *)
         void cleanup()
+        void propagate(source *)
 <<class definition>>
 @ 
 <<class definition>>=
 cdef class SegmentPistonSensor:
     cdef:
         segmentPistonSensor *_c_segmentPistonSensor
-        readonly MaskAbstract M
+        readonly MaskAbstract M, L
+        readonly Complex_amplitude W
 @ 
 <<segmentPistonSensor.pyx>>=
 cdef class SegmentPistonSensor:
@@ -71,8 +80,21 @@ cdef class SegmentPistonSensor:
         _M_.f._c_gpu.dev_data = _M_._c_mask.f
         self.M = _M_
 
+        _m_ = &(self._c_segmentPistonSensor.masklet)
+        _M_ = MaskAbstract(_m_.nel)
+        _M_._c_mask = _m_;
+        _M_.f._c_gpu.dev_data = _M_._c_mask.f
+        self.L = _M_
+
+        self.W = Complex_amplitude()
+        self.W._c_complex_amplitude = &(self._c_segmentPistonSensor.lenslet)
+        self.W.__alloc__()
+
     def __dealloc__(self):
         self._c_segmentPistonSensor.cleanup()
+
+    def propagate(self, Source gs):
+        self._c_segmentPistonSensor.propagate(gs._c_source)
 @ 
 
 \section{The model}
@@ -159,12 +181,33 @@ float lenslet_size;
 @ 
 \item the mask of the concatenated and cropped 12 lenslets:
 <<parameters>>=
-mask lenslet;
+mask masklet;
 @
 \item the pupil mask:
 <<parameters>>=
 mask pupil_mask;
-@ 
+@
+\item the re--ordered wavefront on the 12 lenslets:
+<<parameters>>=
+complex_amplitude lenslet;
+@
+\item the pixel size of one [[masklet]] and one [[lenslet]]:
+<<parameters>>=
+int N_PX_LENSLET, N_PX_LENSLET2;
+@
+\item the size in pixel of the [[masklet]] and [[lenslet]] arrays:
+<<parameters>>=
+int N_PX, N_PX2;
+@
+\item the number of [[masklet]] and [[lenslet]]:
+<<parameters>>=
+int N_LENSLET, N_LENSLET2;
+@
+\item some internal variables:
+<<parameters>>=
+int D_px, D_px2;
+float m2px, R;
+@
 \end{itemize}
 
 \section{Functions}
@@ -176,8 +219,9 @@ mask pupil_mask;
 <<setup>>=
 void segmentPistonSensor::setup(gmt_m1 *M1, source *gs)
 {
-  int k_GS, k_LA, n, i_0, j_0, i_s, j_s, k;
-  float x0, y0, xs, ys, theta, m2px, R;
+  int k_GS, k_LA, n, i_0, j_0, i_s, j_s, offset,
+    i_lenslet, j_lenslet, k_lenslet, i_pm, j_pm;
+  float x0, y0, xs, ys, theta, z, a, xc, yc, O;
 
   lenslet_size  = 1.5;
   lenslet_height = 82.5;
@@ -185,54 +229,221 @@ void segmentPistonSensor::setup(gmt_m1 *M1, source *gs)
   ro = M1->L*sqrt(3)*0.5;
   m2px = M1->D_px/M1->D;
   R    = M1->D*0.5;
+  O    = R - lenslet_size;
+  D_px2 = D_px = M1->D_px;
+  D_px2 *= D_px;
 
-  pupil_mask.setup(M1->D_px*M1->D_px*gs->N_SRC);
-  HANDLE_ERROR( cudaMemset(  pupil_mask.m, 0, pupil_mask.nel*sizeof(char) ) );
-
-  //lenslet = (mask *)malloc(sizeof(mask)*12*gs->N_SRC);
-  mask M;
   n = ceil(lenslet_size*m2px);
   fprintf(stdout,"n=%d\n",n);
-  k = 0;
+  N_PX_LENSLET2 =  N_PX_LENSLET = 2*n;
+  N_PX_LENSLET2 *= N_PX_LENSLET;
+
+  N_LENSLET2 =  N_LENSLET = 4;
+  N_LENSLET2 *= N_LENSLET;
+
+  N_PX2 =  N_PX = N_PX_LENSLET*N_LENSLET;
+  N_PX2 *= N_PX;
+
+  lenslet.setup(N_PX2, gs->N_SRC);
+
+  masklet.setup(N_PX2*gs->N_SRC);
+  HANDLE_ERROR( cudaMemset(  masklet.m, 0, masklet.nel*sizeof(char) ) );
+
+  pupil_mask.setup(D_px2*gs->N_SRC);
+  HANDLE_ERROR( cudaMemset(  pupil_mask.m, 0, pupil_mask.nel*sizeof(char) ) );
+
+  char *m;
+  HANDLE_ERROR( cudaMalloc((void**)&m, sizeof(char)*D_px2 ) );
+
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_PX_LENSLET/16+1,N_PX_LENSLET/16+1,gs->N_SRC);
+  dim3 gridDim0(M1->D_px/16+1,M1->D_px/16+1,gs->N_SRC);
+  
   for (k_GS=0;k_GS<gs->N_SRC;k_GS++) {
-    fprintf(stdout,"zenith=%e\n",gs[k_GS].zenith);
-    x0 = lenslet_height*gs[k_GS].zenith*cos(gs[k_GS].azimuth);
-    y0 = lenslet_height*gs[k_GS].zenith*sin(gs[k_GS].azimuth);
-    i_0 = (int) floor((x0)*m2px);
-    j_0 = (int) floor((y0)*m2px);
+
+    offset = k_GS*M1->D_px*M1->D_px;
+
+    HANDLE_ERROR( cudaMemcpy( &z, &(gs->dev_ptr[k_GS].zenith), 
+			    sizeof(float), cudaMemcpyDeviceToHost ) );
+    HANDLE_ERROR( cudaMemcpy( &a, &(gs->dev_ptr[k_GS].azimuth), 
+			    sizeof(float), cudaMemcpyDeviceToHost ) );
+    fprintf(stdout,"zenith=%e\n",z);
+    x0 = lenslet_height*z*cos(a);
+    y0 = lenslet_height*z*sin(a);
+    i_0 = (int) floor((y0)*m2px);
+    j_0 = (int) floor((x0)*m2px);
     fprintf(stdout,"x0=%e ; y0=%e\n",x0,y0);
     xs = ri;
     ys = 0.0;
     i_s = (int) floor((R+xs)*m2px);
     j_s = (int) floor((R+ys)*m2px);
+    k_lenslet = 0;
     fprintf(stdout,"i_0=%d;j_0=%d;i_s=%d;j_s=%d\n",i_0,j_0,i_s,j_s);
+
     for (k_LA=0;k_LA<6;k_LA++) {
       theta = -k_LA*PI/3.0;
-      M.setup(n,lenslet_size,i_0,j_0,theta,i_s,j_s,M1->D_px);
-      pupil_mask.add(&M);
-      M.cleanup();
+      rot_square_pupil LLL gridDim0,blockDim RRR (m,M1->D_px,n,i_0,j_0,theta,i_s,j_s);
+
+      j_lenslet = k_lenslet/4;
+      i_lenslet = k_lenslet++ - 4*j_lenslet;
+      fprintf(stdout,"lenslet: (%d,%d)\n",i_lenslet,j_lenslet);
+
+      xc = ri*cos(theta) + O - x0;
+      yc = ri*sin(theta) + O - y0;
+
+      i_pm = (int) floor(yc*m2px);
+      j_pm = (int) floor(xc*m2px);
+      fprintf(stdout,"bottom-left: (%d,%d)\n",i_pm,j_pm);
+      mask_trim LLL gridDim, blockDim RRR (masklet.m, N_PX_LENSLET,
+      				      i_lenslet,j_lenslet,
+      				      m, M1->D_px,
+      				      i_pm, j_pm);
+      pupil_mask.add(m,D_px2,offset);
     }
+
     xs = ro;
     ys = 0.0;
     i_s = (int) floor((R+xs)*m2px);
     j_s = (int) floor((R+ys)*m2px);
     fprintf(stdout,"i_0=%d;j_0=%d;i_s=%d;j_s=%d\n",i_0,j_0,i_s,j_s);
+
     for (k_LA=0;k_LA<6;k_LA++) {
       theta = (0.5-k_LA)*PI/3;
-      M.setup(n,lenslet_size,i_0,j_0,theta,i_s,j_s,M1->D_px);
-      pupil_mask.add(&M);
-      M.cleanup();
+      rot_square_pupil LLL gridDim0,blockDim RRR (m,M1->D_px,n,i_0,j_0,theta,i_s,j_s);
+
+      j_lenslet = k_lenslet/4;
+      i_lenslet = k_lenslet++ - 4*j_lenslet;
+      fprintf(stdout,"lenslet: (%d,%d)\n",i_lenslet,j_lenslet);
+
+      xc = ro*cos(theta) + O - x0;
+      yc = ro*sin(theta) + O - y0;
+
+      i_pm = (int) floor(yc*m2px);
+      j_pm = (int) floor(xc*m2px);
+      fprintf(stdout,"bottom-left: (%d,%d)\n",i_pm,j_pm);
+      mask_trim LLL gridDim, blockDim RRR (masklet.m, N_PX_LENSLET,
+      				      i_lenslet,j_lenslet,
+      				      m, M1->D_px,
+      				      i_pm, j_pm);
+      pupil_mask.add(m,D_px2,offset);
     }
   } // sources
+  pupil_mask.set_filter();
+  masklet.set_filter();
+  HANDLE_ERROR( cudaFree(m) );
 }
 @ 
+<<mask trimming kernel>>=
+__global__ void mask_trim(char *m_out, const int n_px_lenslet, 
+		     const int i_lenslet, const int j_lenslet,
+		     char *m_in, const int n_in, const int i_in, const int j_in)
+{
+  int i, j, k_out, k_in, iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  if ( (i<n_px_lenslet) && (j<n_px_lenslet) ) {
+    k_out = lenslet2array( i,  j,  n_px_lenslet,
+		           i_lenslet,  j_lenslet,  4,  iSource);
+    k_in = i + i_in;
+    k_in += (j + j_in + iSource*n_in)*n_in;
+    m_out[k_out] = m_in[k_in];
+  }
+}
+@ 
+The memory is freed with:
 <<cleanup>>=
 void segmentPistonSensor::cleanup(void)
 {
   fprintf(stdout,"@(CEO)>segmentPistonSensor: freeing memory!\n");
+  pupil_mask.cleanup();
+  masklet.cleanup();
   //free( lenslet );
 }
 @
+
+\subsection{Propagation}
+\label{sec:propagation}
+
+<<propagation>>=
+void segmentPistonSensor::propagate(source *gs)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_PX_LENSLET/16+1,N_PX_LENSLET/16+1,gs->N_SRC);
+  
+  lenslet_trim LLL gridDim, blockDim RRR (lenslet.phase, N_PX_LENSLET,
+					  gs->wavefront.phase, D_px,
+					  ri, ro, 
+					  lenslet_size, 
+					  lenslet_height, R,
+					  gs->dev_ptr, m2px);
+
+}
+@ 
+<<lenslet trimming kernel>>=
+__global__ void lenslet_trim(float *m_out, const int n_px_lenslet, 
+			     float *m_in, const int n_in, 
+			     const float ri, const float ro, 
+			     const float lenslet_size,
+			     const float lenslet_height,
+			     const float R,
+			     source *src,
+			     const float m2px)
+{
+  int i, j, k_out, k_in, iSource, k_LA,
+    i_lenslet, j_lenslet, k_lenslet, i_in, j_in;
+  float theta, xc, yc, x0, y0, O;
+
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  if ( (i<n_px_lenslet) && (j<n_px_lenslet) ) {
+
+    O = R - lenslet_size;
+    x0 = lenslet_height*src[iSource].zenith*cos(src[iSource].azimuth) - O;
+    y0 = lenslet_height*src[iSource].zenith*sin(src[iSource].azimuth) - O;
+    k_lenslet = 0;
+
+    for (k_LA=0;k_LA<6;k_LA++) {
+      theta = -k_LA*PI/3.0;
+
+      j_lenslet = k_lenslet/4;
+      i_lenslet = k_lenslet - 4*j_lenslet;
+
+      xc = ri*cos(theta) - x0;
+      yc = ri*sin(theta) - y0;
+
+      i_in = (int) floor(yc*m2px);
+      j_in = (int) floor(xc*m2px);
+
+      k_out = lenslet2array( i,  j,  n_px_lenslet,
+			     i_lenslet,  j_lenslet,  4,  iSource);
+      k_in = j + i_in;
+      k_in += (i + j_in + iSource*n_in)*n_in;
+      m_out[k_out] = m_in[k_in];
+
+      theta = (0.5-k_LA)*PI/3.0;
+
+      j_lenslet = (k_lenslet+6)/4;
+      i_lenslet = (k_lenslet+6) - 4*j_lenslet;
+
+      xc = ro*cos(theta) - x0;
+      yc = ro*sin(theta) - y0;
+
+      i_in = (int) floor(yc*m2px);
+      j_in = (int) floor(xc*m2px);
+
+      k_out = lenslet2array( i,  j,  n_px_lenslet,
+			     i_lenslet,  j_lenslet,  4,  iSource);
+      k_in = j + i_in;
+      k_in += (i + j_in + iSource*n_in)*n_in;
+      m_out[k_out] = m_in[k_in];
+
+      ++k_lenslet;
+    }
+  }
+}
+@ 
 
 \subsection{Input/Output}
 \label{sec:inputoutput}

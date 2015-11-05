@@ -25,6 +25,15 @@
 #define CUBLAS_VERBOSE 0
 #define RAND_SEED 2013
 
+static void Error( const char *errMsg,
+		   const char *file,
+		   int line ) {
+  fprintf(stderr,"\n\x1B[31m@(CEO)>ERROR: %s in %s at line %d\x1B[0m\n", 
+	  errMsg, file, line );
+  exit( EXIT_FAILURE );
+}
+#define ERROR( errMsg ) (Error( errMsg, __FILE__, __LINE__ ))
+
 static void HandleError( cudaError_t err,
                          const char *file,
                          int line ) {
@@ -1050,6 +1059,7 @@ struct mask {
   void set_filter_quiet(void);
   void alter(float *filter);
   void add(mask *other);
+  void add(mask *other, int offset);
   void cleanup(void);
 };
 @ 
@@ -1211,7 +1221,6 @@ void mask::alter(float *filter)
   dim3 blockDim(256);
   dim3 gridDim(nel/256+1);
   fill_ones_altered LLL gridDim,blockDim RRR (f, m, nel, filter);
-
   CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
   fprintf(stdout,"@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
 }
@@ -1227,13 +1236,15 @@ __global__ void fill_ones_altered(float *ones, char* mask, int n_data, float *fi
   }
 }
 @
-\item masks can be added together with
+\item masks can be added together with 
 <<mask functions>>=
 void mask::add(mask *other)
 {
+  if (other->nel>nel)
+    ERROR("Addition of masks failed because of size mismatch!");
   dim3 blockDim(256);
   dim3 gridDim(nel/256+1);
-  add_kernel LLL gridDim,blockDim RRR (m, other->m, nel);  
+  add_kernel LLL gridDim,blockDim RRR (m, other->m, other->nel);  
   set_filter();
 }
 @ with the kernel
@@ -1246,7 +1257,19 @@ __global__ void add_kernel(char *mask, char *other_mask, int n_data)
     mask[i] = other_mask[i];
   }
 }
-@ 
+@
+\item the mask addition can be done with an offset on the mask
+<<mask functions>>=
+void mask::add(mask *other, int offset)
+{
+  if (other->nel>nel-offset)
+    ERROR("Addition of masks failed because of size mismatch!");
+  dim3 blockDim(256);
+  dim3 gridDim(nel/256+1);
+  add_kernel LLL gridDim,blockDim RRR (m+offset, other->m, other->nel);  
+  set_filter();
+}
+@
 \end{itemize}
 
 \subsubsection{Python}
