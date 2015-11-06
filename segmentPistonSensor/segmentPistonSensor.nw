@@ -18,6 +18,10 @@
 #include "rayTracing.h"
 #endif 
 
+#ifndef __IMAGING_H__
+#include "imaging.h"
+#endif
+
 struct segmentPistonSensor {
 
   <<parameters>>
@@ -46,10 +50,12 @@ struct segmentPistonSensor {
 <<segmentPistonSensor.pxd>>=
 from rayTracing cimport gmt_m1, GMT_M1
 from source cimport complex_amplitude, Complex_amplitude, source, Source
+from imaging cimport imaging, Imaging
 cdef extern from "segmentPistonSensor.h":
     cdef cppclass segmentPistonSensor:
         int N_LENSLET, N_PX_LENSLET, N_PX
         complex_amplitude lenslet
+        imaging camera
         void setup(gmt_m1 *, int)
         void cleanup()
         void propagate(source *)
@@ -60,6 +66,7 @@ cdef class SegmentPistonSensor:
     cdef:
         segmentPistonSensor *_c_segmentPistonSensor
         readonly Complex_amplitude W
+        readonly Imaging camera
 @ 
 <<segmentPistonSensor.pyx>>=
 cdef class SegmentPistonSensor:
@@ -71,6 +78,9 @@ cdef class SegmentPistonSensor:
         self.W._c_complex_amplitude = &(self._c_segmentPistonSensor.lenslet)
         self.W.__alloc__((self._c_segmentPistonSensor.N_PX,
                           self._c_segmentPistonSensor.N_PX))
+        self.camera = Imaging(self._c_segmentPistonSensor.N_LENSLET,
+                              self._c_segmentPistonSensor.N_PX_LENSLET,
+                              sps=self)
 
     def __dealloc__(self):
         self._c_segmentPistonSensor.cleanup()
@@ -165,6 +175,10 @@ float lenslet_size;
 <<parameters>>=
 complex_amplitude lenslet;
 @
+\item the detector:
+<<parameters>>=
+imaging camera;
+@ 
 \item the pixel size of one [[lenslet]]:
 <<parameters>>=
 int N_PX_LENSLET, N_PX_LENSLET2;
@@ -212,6 +226,8 @@ void segmentPistonSensor::setup(gmt_m1 *M1, int N_SRC)
   N_PX2 *= N_PX;
 
   lenslet.setup(N_PX2, 1);
+  HANDLE_ERROR( cudaMemset( lenslet.amplitude, 0 , sizeof(float)*lenslet.N_PX) );
+  camera.setup(N_PX_LENSLET-1,N_LENSLET,2,2*N_PX_LENSLET,2,N_SRC);
 
 }
 @ 
@@ -221,6 +237,7 @@ void segmentPistonSensor::cleanup(void)
 {
   fprintf(stdout,"@(CEO)>segmentPistonSensor: freeing memory!\n");
   lenslet.cleanup();
+  camera.cleanup();
 }
 @
 
@@ -233,18 +250,33 @@ void segmentPistonSensor::propagate(source *gs)
   dim3 blockDim(16,16);
   dim3 gridDim(N_PX_LENSLET/16+1,N_PX_LENSLET/16+1,gs->N_SRC);
   
-  lenslet_trim LLL gridDim, blockDim RRR (lenslet.phase, N_PX_LENSLET,
-					  gs->wavefront.phase, D_px,
-					  ri, ro, N_LENSLET,
+  lenslet_trim LLL gridDim, blockDim RRR (lenslet.phase, 
+                                          lenslet.amplitude, 
+                                          N_PX_LENSLET,
+					  gs->wavefront.phase, 
+					  gs->wavefront.amplitude, 
+                                          D_px, ri, ro, N_LENSLET,
 					  lenslet_size, 
 					  lenslet_height, R,
 					  gs->dev_ptr, m2px);
 
+  source src;
+  src.setup(gs[0].photometric_band,0.0,0.0,INFINITY);
+  src.wavefront.N         = lenslet.N;
+  src.wavefront.N_PX      = lenslet.N_PX;
+  src.wavefront.amplitude = lenslet.amplitude;
+  src.wavefront.phase     = lenslet.phase;
+  src.wavefront.M         = lenslet.M;
+  camera.propagateNoOverlap(&src);
 }
 @ 
 <<lenslet trimming kernel>>=
-__global__ void lenslet_trim(float *m_out, const int n_px_lenslet, 
-			     float *m_in, const int n_in, 
+__global__ void lenslet_trim(float *piecewise_phase, 
+                             float *piecewise_amplitude, 
+                             const int n_px_lenslet, 
+			     float *pupil_phase, 
+			     float *pupil_amplitude, 
+                             const int n_in, 
 			     const float ri, const float ro,
 			     const int N_LENSLET,
 			     const float lenslet_size,
@@ -280,26 +312,10 @@ __global__ void lenslet_trim(float *m_out, const int n_px_lenslet,
       xc = ri*c + y0;
       yc = ri*s + x0;
 
-      i_in = (int) floor(yc*m2px);
-      j_in = (int) floor(xc*m2px);
-
-      k_out = lenslet2array( i,  j,  n_px_lenslet,
-			     i_lenslet,  j_lenslet,  N_LENSLET,  0);
-      k_in = j + i_in;
-      k_in += (i + j_in + iSource*n_in)*n_in;
-
-      h = lenslet_size*0.5;
-      x = 2*lenslet_size*(i - (n_px_lenslet-1)*0.5)/(n_px_lenslet-1);
-      y = 2*lenslet_size*(j - (n_px_lenslet-1)*0.5)/(n_px_lenslet-1);
-      xr = c*x + y*s;
-      yr = -s*x + y*c;
-      
-      pupil = ( ( (xr>=-h) && (xr<=h) ) && ( (yr>=-h) && (yr<=h) ) ) ? 1.0 : 0.0;
-
-      m_out[k_out] = pupil*m_in[k_in];
+      <<lenslet trimming kernel block>>
 
       theta = (k_LA-0.5)*PI/3.0;
-
+      
       j_lenslet = (k_lenslet+6)/N_LENSLET;
       i_lenslet = (k_lenslet+6) - N_LENSLET*j_lenslet;
 
@@ -307,28 +323,32 @@ __global__ void lenslet_trim(float *m_out, const int n_px_lenslet,
       xc = ro*c + y0;
       yc = ro*s + x0;
 
-      i_in = (int) floor(yc*m2px);
-      j_in = (int) floor(xc*m2px);
-
-      k_out = lenslet2array( i,  j,  n_px_lenslet,
-			     i_lenslet,  j_lenslet,  N_LENSLET,  0);
-      k_in = j + i_in;
-      k_in += (i + j_in + iSource*n_in)*n_in;
-
-      h = lenslet_size*0.5;
-      x = 2*lenslet_size*(i - (n_px_lenslet-1)*0.5)/(n_px_lenslet-1);
-      y = 2*lenslet_size*(j - (n_px_lenslet-1)*0.5)/(n_px_lenslet-1);
-      xr = c*x + y*s;
-      yr = -s*x + y*c;
-      
-      pupil = ( ( (xr>=-h) && (xr<=h) ) && ( (yr>=-h) && (yr<=h) ) ) ? 1.0 : 0.0;
-
-      m_out[k_out] = pupil*m_in[k_in];
+      <<lenslet trimming kernel block>>
 
       ++k_lenslet;
     }
   }
 }
+@  where
+<<lenslet trimming kernel block>>=
+i_in = (int) floor(yc*m2px);
+j_in = (int) floor(xc*m2px);
+
+k_out = lenslet2array( i,  j,  n_px_lenslet,
+  		     i_lenslet,  j_lenslet,  N_LENSLET,  0);
+k_in = j + i_in;
+k_in += (i + j_in + iSource*n_in)*n_in;
+
+h = lenslet_size*0.5;
+x = 2*lenslet_size*(i - (n_px_lenslet-1)*0.5)/(n_px_lenslet-1);
+y = 2*lenslet_size*(j - (n_px_lenslet-1)*0.5)/(n_px_lenslet-1);
+xr = c*x + y*s;
+yr = -s*x + y*c;
+
+pupil = ( ( (xr>=-h) && (xr<=h) ) && ( (yr>=-h) && (yr<=h) ) ) ? 1.0 : 0.0;
+
+piecewise_phase[k_out]     = pupil*pupil_phase[k_in];
+piecewise_amplitude[k_out] = pupil*pupil_amplitude[k_in];
 @ 
 
 \subsection{Input/Output}

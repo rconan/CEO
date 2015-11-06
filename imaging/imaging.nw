@@ -38,6 +38,7 @@ struct imaging {
   void reset(void);
    
   void propagate(source *src);
+  void propagateNoOverlap(source *src);
   void propagateThroughFieldStop(source *src, float field_stop_diam);
   void propagateThroughPyramid(source *src);
 
@@ -99,7 +100,10 @@ struct imaging {
 \label{sec:python}
 
 <<imaging.pxd>>=
-from source cimport source
+from source cimport source, Source
+from utilities cimport cuFloatArray
+from shackHartmann cimport ShackHartmann
+from segmentPistonSensor cimport SegmentPistonSensor
 cdef extern from "imaging.h":
     cdef cppclass imaging:
         int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_PX_CAMERA, N_SOURCE
@@ -116,17 +120,15 @@ cdef extern from "imaging.h":
 <<class definitions>>
 @ 
 <<class definitions>>=
-from utilities cimport cuFloatArray
 cdef class Imaging:
     cdef:
         imaging *_c_imaging
-        readonly int N_SIDE_LENSLET, N_PX_PUPIL, DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_SOURCE, N_PX_FRAME
+        readonly int N_SIDE_LENSLET, N_PX_PUPIL, DFT_osf, \
+                     N_PX_IMAGE, BIN_IMAGE, N_SOURCE, N_PX_FRAME
         readonly cuFloatArray frame
         char isPtr
 @ 
 <<imaging.pyx>>=
-from source cimport Source
-from shackHartmann cimport ShackHartmann
 cdef class Imaging:
     """ 
     Creates an imaging object.
@@ -173,7 +175,8 @@ cdef class Imaging:
 
     def __cinit__(self, int N_SIDE_LENSLET, int N_PX_PUPIL, 
 		  DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, 
-		  N_SOURCE=1, ShackHartmann wfs=None):
+		  N_SOURCE=1, ShackHartmann wfs=None,
+                  SegmentPistonSensor sps=None):
 	self._c_imaging = new imaging()
         if N_PX_IMAGE is None:
             N_PX_IMAGE = N_PX_PUPIL;
@@ -184,16 +187,19 @@ cdef class Imaging:
         self.BIN_IMAGE      = BIN_IMAGE
         self.N_PX_FRAME     = self.N_PX_IMAGE*self.N_SIDE_LENSLET/self.BIN_IMAGE
         self.N_SOURCE       = N_SOURCE
-        if wfs is None:
+        if wfs is not None:
+            self.isPtr = 1
+            self._c_imaging = &(wfs._c_shackHartmann.camera)
+        elif sps is not None: 
+            self.isPtr = 1
+            self._c_imaging = &(sps._c_segmentPistonSensor.camera)
+        else:
             self.isPtr = 0
             if N_PX_IMAGE is None:
                 N_PX_IMAGE = N_PX_PUPIL
             self._c_imaging.setup(N_PX_PUPIL, N_SIDE_LENSLET, 
                                   DFT_osf, N_PX_IMAGE, 
                                   BIN_IMAGE, N_SOURCE)    
-        else:
-            self.isPtr = 1
-            self._c_imaging = &(wfs._c_shackHartmann.camera)
         self.frame = cuFloatArray(shape=(self.N_SOURCE*self.N_PX_FRAME,
 				         self.N_PX_FRAME))
         self.frame._c_gpu.dev_data = self._c_imaging.d__frame
@@ -359,7 +365,7 @@ void imaging::set_pointing_direction(float zen, float azim) {
 \label{sec:propagation}
 
 As we are considering only the case of imaging sources at infinity, the wavefront propagation is performed with the Fraunhofer approximation meaning that the image in the focal plane is simply the Fourier transform of the complex amplitude in the pupil plane.
-The propagation is computing with a call to the [[propagate]] routine:
+The propagation is computing with a call to either the [[propagate]] routine:
 <<propagation>>=
 void imaging::propagate(source *src) {
   int M = N_PX_IMAGE/N_PX_CAMERA;
@@ -386,6 +392,38 @@ void imaging::propagate(source *src) {
 					      absolute_pointing,1);
   <<propagation (FFT, intensity and binning)>>
 }
+@ or, in the case of no overlapping lenslet, the [[propagateNoOverlap]] routine:
+<<propagation>>=
+void imaging::propagateNoOverlap(source *src) {
+  int M = N_PX_IMAGE/N_PX_CAMERA;
+  dim3 gridDim;
+  dim3 blockDim(16,16);
+  gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
+  complexAmplitudeNoOverlap LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
+					      src->wavefront.amplitude,
+					      src->wavefront.phase,
+                                              src->wavenumber(),
+					      N_PX_PUPIL, N_PX_IMAGE, M,
+					      N_SIDE_LENSLET, src->dev_ptr,
+                                              pixel_scale, theta_x, theta_y,
+					      absolute_pointing,1);
+<<imaging CUFFT execution>>
+/*
+<<intensity normalization>>
+*/
+int N, Nb;
+N = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
+Nb = (int) ceilf( sqrtf(N)/16.0 );
+gridDim  = dim3(Nb,Nb);
+wave2intensity LLL gridDim , blockDim RRR( d__wave_PUPIL, N, 1.0);
+gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
+                N_SOURCE);
+binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
+                                   src->dev_ptr, pixel_scale, theta_x, theta_y,
+				   absolute_pointing,
+                                   N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
+    ++N_FRAME;
+ }
 @ which sets the complex amplitude [[d__wave_PUPIL]] with the source wavefront amplitude and phase including the necessary zero padding for the DFT and the phasor to recenter the image.
 Then the DFT is applied in--place to the complex amplitude [[d__wave_PUPIL]].
 <<propagation (FFT, intensity and binning)>>=
@@ -757,33 +795,37 @@ __global__ void complexAmplitude(float2 *wave_PUPIL, int N_DFT,
   int i, j, iLenslet, jLenslet, ij_PUPIL, ij_DFT, iSource;
   float c ,s, phasor, dx, dy, dx_int, dy_int;
   dx = dy = 0.0;
+<<imaging complex amplitude (i)>>
+<<imaging complex amplitude (1 pixel overlap)>>
+<<imaging complex amplitude (ii)>>
+}
 @ The source index is given by the third coordinates of the thread block
-<<imaging complex amplitude>>=
+<<imaging complex amplitude (i)>>=
   // source index
   iSource = blockIdx.z;
 @ The  pixel coordinates ([[i]],[[j]]) in the lenslet ([[iLenslet]],[[jLenslet]]) is derived from the thread blocks:
-<<imaging complex amplitude>>=
+<<imaging complex amplitude (i)>>=
   //  wave pixel coordinate (N_DFTLxN_SIDE_LENSLET)^2
   if ( threads2lenslet(threadIdx, blockIdx, blockDim, 
 		       &i, &j, N_DFT, 
 		       &iLenslet, &jLenslet, N_SIDE_LENSLET) ) {
 @ The linear index of the vertically concatenated lenslet array is computed
-<<imaging complex amplitude>>=
+<<imaging complex amplitude (i)>>=
     ij_DFT = lenslet2row(i,j,N_DFT,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
     if ((i<N_PX_PUPIL) && (j<N_PX_PUPIL))
       {
 @ The linear index in the square lenslet array is computed
-<<imaging complex amplitude>>=
+<<imaging complex amplitude (1 pixel overlap)>>=
 ij_PUPIL = lenslet2array_overlap(i,j,N_PX_PUPIL,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
 @ The phase shift is applied on the wavefront
-<<imaging complex amplitude>>=
+<<imaging complex amplitude (ii)>>=
         phasor = (DFT_SHIFT==0) ? 0.0 : PI*(i+j)*(1-N_DFT + (N_PX_IMAGE & 1))/N_DFT;
         <<angular offset>>
 	phasor -= 2*PI*(i*dx+j*dy)/N_DFT;
         phasor += wavefront_phase[ij_PUPIL]*wavenumber;
         sincosf(phasor,&c,&s);
 @ The wavefront in the pupil plane is written in the complex amplitude array ready to be processed by CUFFT
-<<imaging complex amplitude>>=
+<<imaging complex amplitude (ii)>>=
   wave_PUPIL[ij_DFT].x = wave_PUPIL[ij_DFT].y = wavefront_amplitude[ij_PUPIL];
         wave_PUPIL[ij_DFT].x *= c;
         wave_PUPIL[ij_DFT].y *= s;
@@ -792,7 +834,29 @@ ij_PUPIL = lenslet2array_overlap(i,j,N_PX_PUPIL,iLenslet,jLenslet,N_SIDE_LENSLET
     if ((i<N_DFT) && (j<N_DFT))
       wave_PUPIL[ij_DFT].x = wave_PUPIL[ij_DFT].y = 0;
   }
+@ 
+The complex amplitude without overlap between the lenslets is computd with:
+<<imaging complex amplitude>>=
+__global__ void complexAmplitudeNoOverlap(float2 *wave_PUPIL, int N_DFT,
+                                 float *wavefront_amplitude,
+				 float *wavefront_phase,
+				 float wavenumber,
+				 int N_PX_PUPIL, int N_PX_IMAGE, int M,
+				 int N_SIDE_LENSLET, source *src,
+				 float pixel_scale,
+				 float theta_x, float theta_y,
+				 char absolute_pointing, char DFT_SHIFT)
+{
+  int i, j, iLenslet, jLenslet, ij_PUPIL, ij_DFT, iSource;
+  float c ,s, phasor, dx, dy, dx_int, dy_int;
+  dx = dy = 0.0;
+<<imaging complex amplitude (i)>>
+<<imaging complex amplitude (no pixel overlap)>>
+<<imaging complex amplitude (ii)>>
 }
+@ where
+<<imaging complex amplitude (no pixel overlap)>>=
+ij_PUPIL = lenslet2array(i,j,N_PX_PUPIL,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
 @
 \begin{figure}
   \centering
