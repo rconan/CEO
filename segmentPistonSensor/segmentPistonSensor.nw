@@ -21,7 +21,7 @@
 struct segmentPistonSensor {
 
   <<parameters>>
-  void setup(gmt_m1 *M1, source *gs);
+  void setup(gmt_m1 *M1, int N_SRC);
   void cleanup(void);
   void propagate(source *src);
 };
@@ -34,7 +34,6 @@ struct segmentPistonSensor {
 <<segmentPistonSensor.cu>>=
 #include "segmentPistonSensor.h"
 
-<<mask trimming kernel>>
 <<lenslet trimming kernel>>
 
 <<setup>>
@@ -47,13 +46,11 @@ struct segmentPistonSensor {
 <<segmentPistonSensor.pxd>>=
 from rayTracing cimport gmt_m1, GMT_M1
 from source cimport complex_amplitude, Complex_amplitude, source, Source
-from utilities cimport mask, MaskAbstract
 cdef extern from "segmentPistonSensor.h":
     cdef cppclass segmentPistonSensor:
-        mask pupil_mask
-        mask masklet
+        int N_LENSLET, N_PX_LENSLET, N_PX
         complex_amplitude lenslet
-        void setup(gmt_m1 *, source *)
+        void setup(gmt_m1 *, int)
         void cleanup()
         void propagate(source *)
 <<class definition>>
@@ -62,33 +59,18 @@ cdef extern from "segmentPistonSensor.h":
 cdef class SegmentPistonSensor:
     cdef:
         segmentPistonSensor *_c_segmentPistonSensor
-        readonly MaskAbstract M, L
         readonly Complex_amplitude W
 @ 
 <<segmentPistonSensor.pyx>>=
 cdef class SegmentPistonSensor:
     def __cinit__(self,GMT_M1 M1, Source gs):
-        cdef:
-            mask *_m_
-            MaskAbstract _M_
         self._c_segmentPistonSensor = new segmentPistonSensor()
-        self._c_segmentPistonSensor.setup(M1._c_gmt_m12,gs._c_source)
+        self._c_segmentPistonSensor.setup(M1._c_gmt_m12,gs._c_source.N_SRC)
         
-        _m_ = &(self._c_segmentPistonSensor.pupil_mask)
-        _M_ = MaskAbstract(_m_.nel)
-        _M_._c_mask = _m_;
-        _M_.f._c_gpu.dev_data = _M_._c_mask.f
-        self.M = _M_
-
-        _m_ = &(self._c_segmentPistonSensor.masklet)
-        _M_ = MaskAbstract(_m_.nel)
-        _M_._c_mask = _m_;
-        _M_.f._c_gpu.dev_data = _M_._c_mask.f
-        self.L = _M_
-
         self.W = Complex_amplitude()
         self.W._c_complex_amplitude = &(self._c_segmentPistonSensor.lenslet)
-        self.W.__alloc__()
+        self.W.__alloc__((self._c_segmentPistonSensor.N_PX,
+                          self._c_segmentPistonSensor.N_PX))
 
     def __dealloc__(self):
         self._c_segmentPistonSensor.cleanup()
@@ -178,24 +160,16 @@ float lenslet_height;
 \item the size of the lenslet in meter:
 <<parameters>>=
 float lenslet_size;
-@ 
-\item the mask of the concatenated and cropped 12 lenslets:
-<<parameters>>=
-mask masklet;
-@
-\item the pupil mask:
-<<parameters>>=
-mask pupil_mask;
 @
 \item the re--ordered wavefront on the 12 lenslets:
 <<parameters>>=
 complex_amplitude lenslet;
 @
-\item the pixel size of one [[masklet]] and one [[lenslet]]:
+\item the pixel size of one [[lenslet]]:
 <<parameters>>=
 int N_PX_LENSLET, N_PX_LENSLET2;
 @
-\item the size in pixel of the [[masklet]] and [[lenslet]] arrays:
+\item the size in pixel of the [[lenslet]] array:
 <<parameters>>=
 int N_PX, N_PX2;
 @
@@ -217,134 +191,28 @@ float m2px, R;
 \label{sec:setup--cleanup}
 
 <<setup>>=
-void segmentPistonSensor::setup(gmt_m1 *M1, source *gs)
+void segmentPistonSensor::setup(gmt_m1 *M1, int N_SRC)
 {
-  int k_GS, k_LA, n, i_0, j_0, i_s, j_s, offset,
-    i_lenslet, j_lenslet, k_lenslet, i_pm, j_pm;
-  float x0, y0, xs, ys, theta, z, a, xc, yc, O;
-
   lenslet_size  = 1.5;
   lenslet_height = 82.5;
   ri = (M1->D_full+0.357)*0.5 ;
   ro = M1->L*sqrt(3)*0.5;
   m2px = M1->D_px/M1->D;
   R    = M1->D*0.5;
-  O    = R - lenslet_size;
   D_px2 = D_px = M1->D_px;
   D_px2 *= D_px;
 
-  n = ceil(lenslet_size*m2px);
-  fprintf(stdout,"n=%d\n",n);
-  N_PX_LENSLET2 =  N_PX_LENSLET = 2*n;
+  N_PX_LENSLET2 =  N_PX_LENSLET = 2*ceil(lenslet_size*m2px);;
   N_PX_LENSLET2 *= N_PX_LENSLET;
 
-  N_LENSLET2 =  N_LENSLET = ceil(sqrt(12*gs->N_SRC));
+  N_LENSLET2 =  N_LENSLET = ceil(sqrt(12*N_SRC));
   N_LENSLET2 *= N_LENSLET;
-  fprintf(stdout,"N_LENSLET=%d\n",N_LENSLET);
 
   N_PX2 =  N_PX = N_PX_LENSLET*N_LENSLET;
   N_PX2 *= N_PX;
 
   lenslet.setup(N_PX2, 1);
 
-  masklet.setup(N_PX2*gs->N_SRC);
-  HANDLE_ERROR( cudaMemset(  masklet.m, 0, masklet.nel*sizeof(char) ) );
-
-  pupil_mask.setup(D_px2*gs->N_SRC);
-  HANDLE_ERROR( cudaMemset(  pupil_mask.m, 0, pupil_mask.nel*sizeof(char) ) );
-
-  char *m;
-  HANDLE_ERROR( cudaMalloc((void**)&m, sizeof(char)*D_px2 ) );
-
-  dim3 blockDim(16,16);
-  dim3 gridDim(N_PX_LENSLET/16+1,N_PX_LENSLET/16+1,gs->N_SRC);
-  dim3 gridDim0(M1->D_px/16+1,M1->D_px/16+1,gs->N_SRC);
-  
-  for (k_GS=0;k_GS<gs->N_SRC;k_GS++) {
-
-    offset = k_GS*M1->D_px*M1->D_px;
-
-    HANDLE_ERROR( cudaMemcpy( &z, &(gs->dev_ptr[k_GS].zenith), 
-			    sizeof(float), cudaMemcpyDeviceToHost ) );
-    HANDLE_ERROR( cudaMemcpy( &a, &(gs->dev_ptr[k_GS].azimuth), 
-			    sizeof(float), cudaMemcpyDeviceToHost ) );
-    x0 = lenslet_height*z*cos(a);
-    y0 = lenslet_height*z*sin(a);
-    i_0 = (int) floor((y0)*m2px);
-    j_0 = (int) floor((x0)*m2px);
-    fprintf(stdout,"x0=%e ; y0=%e\n",x0,y0);
-    xs = ri;
-    ys = 0.0;
-    i_s = (int) floor((R+xs)*m2px);
-    j_s = (int) floor((R+ys)*m2px);
-    k_lenslet = 0;
-    fprintf(stdout,"i_0=%d;j_0=%d;i_s=%d;j_s=%d\n",i_0,j_0,i_s,j_s);
-
-    for (k_LA=0;k_LA<6;k_LA++) {
-      theta = -k_LA*PI/3.0;
-      rot_square_pupil LLL gridDim0,blockDim RRR (m,M1->D_px,n,i_0,j_0,theta,i_s,j_s);
-
-      j_lenslet = k_lenslet/N_LENSLET;
-      i_lenslet = k_lenslet++ - N_LENSLET*j_lenslet;
-
-      xc = ri*cos(theta) + O - x0;
-      yc = ri*sin(theta) + O - y0;
-
-      i_pm = (int) floor(yc*m2px);
-      j_pm = (int) floor(xc*m2px);
-      mask_trim LLL gridDim, blockDim RRR (masklet.m, N_PX_LENSLET,
-					   i_lenslet,j_lenslet, N_LENSLET,
-					   m, M1->D_px,
-					   i_pm, j_pm);
-      pupil_mask.add(m,D_px2,offset);
-    }
-
-    xs = ro;
-    ys = 0.0;
-    i_s = (int) floor((R+xs)*m2px);
-    j_s = (int) floor((R+ys)*m2px);
-    fprintf(stdout,"i_0=%d;j_0=%d;i_s=%d;j_s=%d\n",i_0,j_0,i_s,j_s);
-
-    for (k_LA=0;k_LA<6;k_LA++) {
-      theta = (0.5-k_LA)*PI/3;
-      rot_square_pupil LLL gridDim0,blockDim RRR (m,M1->D_px,n,i_0,j_0,theta,i_s,j_s);
-
-      j_lenslet = k_lenslet/N_LENSLET;
-      i_lenslet = k_lenslet++ - N_LENSLET*j_lenslet;
-
-      xc = ro*cos(theta) + O - x0;
-      yc = ro*sin(theta) + O - y0;
-
-      i_pm = (int) floor(yc*m2px);
-      j_pm = (int) floor(xc*m2px);
-      mask_trim LLL gridDim, blockDim RRR (masklet.m, N_PX_LENSLET,
-					   i_lenslet,j_lenslet, N_LENSLET,
-					   m, M1->D_px,
-					   i_pm, j_pm);
-      pupil_mask.add(m,D_px2,offset);
-    }
-  } // sources
-  pupil_mask.set_filter();
-  masklet.set_filter();
-  HANDLE_ERROR( cudaFree(m) );
-}
-@ 
-<<mask trimming kernel>>=
-__global__ void mask_trim(char *m_out, const int n_px_lenslet, 
-			  const int i_lenslet, const int j_lenslet, const int N_LENSLET,
-			  char *m_in, const int n_in, const int i_in, const int j_in)
-{
-  int i, j, k_out, k_in, iSource;
-  i = blockIdx.x * blockDim.x + threadIdx.x;
-  j = blockIdx.y * blockDim.y + threadIdx.y;
-  iSource = blockIdx.z;
-  if ( (i<n_px_lenslet) && (j<n_px_lenslet) ) {
-    k_out = lenslet2array( i,  j,  n_px_lenslet,
-		           i_lenslet,  j_lenslet,  N_LENSLET,  iSource);
-    k_in = i + i_in;
-    k_in += (j + j_in + iSource*n_in)*n_in;
-    m_out[k_out] = m_in[k_in];
-  }
 }
 @ 
 The memory is freed with:
@@ -352,9 +220,7 @@ The memory is freed with:
 void segmentPistonSensor::cleanup(void)
 {
   fprintf(stdout,"@(CEO)>segmentPistonSensor: freeing memory!\n");
-  pupil_mask.cleanup();
-  masklet.cleanup();
-  //free( lenslet );
+  lenslet.cleanup();
 }
 @
 
