@@ -217,14 +217,22 @@ cdef class Complex_amplitude:
     --------
     Source: a class for astronomical sources
     """
-    def __cinit__(self,Source src):
+    def __cinit__(self,Source src=None):
         self._c_complex_amplitude = new complex_amplitude()
-        self._c_complex_amplitude = &(src._c_source.wavefront)
+        if src is not None:
+            self._c_complex_amplitude = &(src._c_source.wavefront)
+            self.__alloc__()
+        else:
+            print "@(CEO)>Complex_amplitude: I am empty:(!"
+
+    def __alloc__(self):
         self.phase = cuFloatArray(shape=(self._c_complex_amplitude.N,
-                                         self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N))
+                                         self._c_complex_amplitude.N_PX/\
+                                         self._c_complex_amplitude.N))
         self.phase._c_gpu.dev_data = self._c_complex_amplitude.phase
         self.amplitude = cuFloatArray(shape=(self._c_complex_amplitude.N,
-                                             self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N))
+                                             self._c_complex_amplitude.N_PX/\
+                                             self._c_complex_amplitude.N))
         self.amplitude._c_gpu.dev_data = self._c_complex_amplitude.amplitude
 
 

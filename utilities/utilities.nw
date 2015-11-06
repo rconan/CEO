@@ -1059,7 +1059,9 @@ struct mask {
   void set_filter_quiet(void);
   void alter(float *filter);
   void add(mask *other);
+  void add(char *other, int other_nel);
   void add(mask *other, int offset);
+  void add(char *other, int other_nel, int offset);
   void cleanup(void);
 };
 @ 
@@ -1243,8 +1245,17 @@ void mask::add(mask *other)
   if (other->nel>nel)
     ERROR("Addition of masks failed because of size mismatch!");
   dim3 blockDim(256);
-  dim3 gridDim(nel/256+1);
+  dim3 gridDim(other->nel/256+1);
   add_kernel LLL gridDim,blockDim RRR (m, other->m, other->nel);  
+  set_filter();
+}
+void mask::add(char *other, int other_nel)
+{
+  if (other_nel>nel)
+    ERROR("Addition of masks failed because of size mismatch!");
+  dim3 blockDim(256);
+  dim3 gridDim(other_nel/256+1);
+  add_kernel LLL gridDim,blockDim RRR (m, other, other_nel);  
   set_filter();
 }
 @ with the kernel
@@ -1265,8 +1276,17 @@ void mask::add(mask *other, int offset)
   if (other->nel>nel-offset)
     ERROR("Addition of masks failed because of size mismatch!");
   dim3 blockDim(256);
-  dim3 gridDim(nel/256+1);
+  dim3 gridDim(other->nel/256+1);
   add_kernel LLL gridDim,blockDim RRR (m+offset, other->m, other->nel);  
+  set_filter();
+}
+void mask::add(char *other, int other_nel, int offset)
+{
+  if (other_nel>nel-offset)
+    ERROR("Addition of masks failed because of size mismatch!");
+  dim3 blockDim(256);
+  dim3 gridDim(other_nel/256+1);
+  add_kernel LLL gridDim,blockDim RRR (m+offset, other, other_nel);  
   set_filter();
 }
 @
