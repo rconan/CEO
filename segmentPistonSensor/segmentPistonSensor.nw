@@ -25,7 +25,7 @@
 struct segmentPistonSensor {
 
   <<parameters>>
-  void setup(gmt_m1 *M1, int N_SRC);
+  void setup(gmt_m1 *M1, source *src, float dispersion);
   void cleanup(void);
   void propagate(source *src);
 };
@@ -53,10 +53,10 @@ from source cimport complex_amplitude, Complex_amplitude, source, Source
 from imaging cimport imaging, Imaging
 cdef extern from "segmentPistonSensor.h":
     cdef cppclass segmentPistonSensor:
-        int N_LENSLET, N_PX_LENSLET, N_PX
+        int N_LENSLET, N_PX_LENSLET, N_PX, N_PX_IMAGE
         complex_amplitude lenslet
         imaging camera
-        void setup(gmt_m1 *, int)
+        void setup(gmt_m1 *, source *, float)
         void cleanup()
         void propagate(source *)
 <<class definition>>
@@ -69,10 +69,13 @@ cdef class SegmentPistonSensor:
         readonly Imaging camera
 @ 
 <<segmentPistonSensor.pyx>>=
+from constants import ARCSEC2RAD
 cdef class SegmentPistonSensor:
-    def __cinit__(self,GMT_M1 M1, Source gs):
+    def __cinit__(self,GMT_M1 M1, Source gs, float dispersion=5):
         self._c_segmentPistonSensor = new segmentPistonSensor()
-        self._c_segmentPistonSensor.setup(M1._c_gmt_m12,gs._c_source.N_SRC)
+        self._c_segmentPistonSensor.setup(M1._c_gmt_m12,
+                                          gs._c_source,
+                                          dispersion*ARCSEC2RAD*1e6)
         
         self.W = Complex_amplitude()
         self.W._c_complex_amplitude = &(self._c_segmentPistonSensor.lenslet)
@@ -175,6 +178,18 @@ float lenslet_size;
 <<parameters>>=
 complex_amplitude lenslet;
 @
+\item the grism dispersion in radian per meter:
+<<parameters>>=
+float dispersion;
+@ 
+\item the number of spectral element:
+<<parameters>>=
+int N_LAMBDA;
+@
+\item the camera pixel scale:
+<<parameters>>=
+float pixel_scale;
+@ 
 \item the detector:
 <<parameters>>=
 imaging camera;
@@ -187,6 +202,10 @@ int N_PX_LENSLET, N_PX_LENSLET2;
 <<parameters>>=
 int N_PX, N_PX2;
 @
+\item the size of the imagelet:
+<<parameters>>=
+int N_PX_IMAGE;
+@ 
 \item the number of [[masklet]] and [[lenslet]]:
 <<parameters>>=
 int N_LENSLET, N_LENSLET2;
@@ -194,7 +213,7 @@ int N_LENSLET, N_LENSLET2;
 \item some internal variables:
 <<parameters>>=
 int D_px, D_px2;
-float m2px, R;
+float m2px, R, lambda0, spectral_bandwidth;
 @
 \end{itemize}
 
@@ -205,7 +224,7 @@ float m2px, R;
 \label{sec:setup--cleanup}
 
 <<setup>>=
-void segmentPistonSensor::setup(gmt_m1 *M1, int N_SRC)
+  void segmentPistonSensor::setup(gmt_m1 *M1, source *src, float _dispersion_)
 {
   lenslet_size  = 1.5;
   lenslet_height = 82.5;
@@ -215,19 +234,30 @@ void segmentPistonSensor::setup(gmt_m1 *M1, int N_SRC)
   R    = M1->D*0.5;
   D_px2 = D_px = M1->D_px;
   D_px2 *= D_px;
+  dispersion = _dispersion_;
 
   N_PX_LENSLET2 =  N_PX_LENSLET = 2*ceil(lenslet_size*m2px);;
   N_PX_LENSLET2 *= N_PX_LENSLET;
 
-  N_LENSLET2 =  N_LENSLET = ceil(sqrt(12*N_SRC));
+  N_LENSLET2 =  N_LENSLET = ceil(sqrt(12*src->N_SRC));
   N_LENSLET2 *= N_LENSLET;
 
   N_PX2 =  N_PX = N_PX_LENSLET*N_LENSLET;
   N_PX2 *= N_PX;
 
+  N_PX_IMAGE = 2*N_PX_LENSLET;
+
   lenslet.setup(N_PX2, 1);
   HANDLE_ERROR( cudaMemset( lenslet.amplitude, 0 , sizeof(float)*lenslet.N_PX) );
-  camera.setup(N_PX_LENSLET-1,N_LENSLET,2,2*N_PX_LENSLET,2,N_SRC);
+
+  spectral_bandwidth = src[0].spectral_bandwidth();
+  lambda0 = src[0].wavelength() - spectral_bandwidth*0.5;
+  fprintf(stdout,"lambda0 = %e\n",lambda0);
+  pixel_scale = lambda0*0.25/lenslet_size;
+  N_LAMBDA    = 2.0*dispersion*spectral_bandwidth/pixel_scale;
+  fprintf(stdout,"N_LAMBDA = %d\n",N_LAMBDA);
+
+  camera.setup(N_PX_LENSLET-1,N_LENSLET,2,N_PX_IMAGE,2,1);
 
 }
 @ 
@@ -247,6 +277,10 @@ void segmentPistonSensor::cleanup(void)
 <<propagation>>=
 void segmentPistonSensor::propagate(source *gs)
 {
+  int k, N_DFT;
+  float dx, dy;
+  imaging _camera_;
+  
   dim3 blockDim(16,16);
   dim3 gridDim(N_PX_LENSLET/16+1,N_PX_LENSLET/16+1,gs->N_SRC);
   
@@ -267,7 +301,20 @@ void segmentPistonSensor::propagate(source *gs)
   src.wavefront.amplitude = lenslet.amplitude;
   src.wavefront.phase     = lenslet.phase;
   src.wavefront.M         = lenslet.M;
-  camera.propagateNoOverlap(&src);
+  //  camera.propagateNoOverlap(&src);
+
+  for (k=0;k<N_LAMBDA;k++) {
+    N_DFT = (int) 2*N_PX_LENSLET*(1 + k*(spectral_bandwidth/lambda0)/(N_LAMBDA-1));
+    fprintf(stdout,"N_DFT = %d\n",N_DFT);
+    _camera_.setupSegmentPistonSensor(N_PX_LENSLET-1,N_LENSLET,N_DFT,N_PX_IMAGE,2,1);
+    _camera_.d__frame = camera.d__frame;
+    dx = spectral_bandwidth*( k - 0.5*(N_LAMBDA-1))/(N_LAMBDA-1);
+    dx *= (dispersion/pixel_scale);
+    fprintf(stdout,"dx=%g\n",dx);
+    _camera_.propagateNoOverlapSPS(&src, 0.0, dx);
+    cufftDestroy(_camera_.plan);
+    cudaFree( _camera_.d__wave_PUPIL );
+  }
 }
 @ 
 <<lenslet trimming kernel>>=

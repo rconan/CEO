@@ -30,6 +30,9 @@ struct imaging {
 	     int DFT_osf, int N_PX_IMAGE_, float CAMERA_osf, int __N_SOURCE);
   void setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
 	     int DFT_osf, int N_PX_IMAGE_, int BIN_IMAGE, int __N_SOURCE);
+  void setupSegmentPistonSensor(int __N_PX_PUPIL, int __N_SIDE_LENSLET, 
+				int _N_DFT_, int N_PX_IMAGE_, int _BIN_IMAGE_,
+				int __N_SOURCE);
 
   void cleanup(void);
 
@@ -39,6 +42,7 @@ struct imaging {
    
   void propagate(source *src);
   void propagateNoOverlap(source *src);
+  void propagateNoOverlapSPS(source *src, float dx, float dy);
   void propagateThroughFieldStop(source *src, float field_stop_diam);
   void propagateThroughPyramid(source *src);
 
@@ -75,6 +79,7 @@ struct imaging {
 <<setup II>>
 <<setup III>>
 <<setup IV>>
+<<setup segment piston sensor>>
 
 <<cleanup>>
 
@@ -316,19 +321,16 @@ void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
 		    int DFT_osf, int N_PX_IMAGE_, int _BIN_IMAGE_,
 		    int __N_SOURCE) {
   N_SOURCE    = __N_SOURCE;
-  <<setup common IV>>
+  BIN_IMAGE   = _BIN_IMAGE_;  
+  N_PX_PUPIL  = __N_PX_PUPIL+1;
+  N_DFT       = DFT_osf*N_PX_PUPIL;//round_up_to_nhp2(N_PX_PUPIL);
+  N_PX_IMAGE  = N_PX_IMAGE_;
+  N_PX_CAMERA = N_PX_IMAGE/BIN_IMAGE;
+  N_SIDE_LENSLET = __N_SIDE_LENSLET;
+  N_LENSLET   = N_SIDE_LENSLET*N_SIDE_LENSLET;
+  N_FRAME     = 0;
   <<setup common>>
 }
-<<setup common IV>>=
-BIN_IMAGE   = _BIN_IMAGE_;  
-N_PX_PUPIL  = __N_PX_PUPIL+1;
-printf("N_PX_PUPIL=%d\n",N_PX_PUPIL);
-N_DFT       = DFT_osf*N_PX_PUPIL;//round_up_to_nhp2(N_PX_PUPIL);
-N_PX_IMAGE  = N_PX_IMAGE_;
-N_PX_CAMERA = N_PX_IMAGE/BIN_IMAGE;
-N_SIDE_LENSLET = __N_SIDE_LENSLET;
-N_LENSLET   = N_SIDE_LENSLET*N_SIDE_LENSLET;
-N_FRAME     = 0;
 @ 
 <<setup common>>=
 zenith = -1.0;
@@ -350,6 +352,41 @@ dim3 blockDim(256);
 dim3 gridDim(n_data/256+1);
 setupRandomSequence_imaging LLL gridDim,blockDim RRR (devStates, n_data);
 info();
+@ 
+<<setup segment piston sensor>>=
+void imaging::setupSegmentPistonSensor(int __N_PX_PUPIL, int __N_SIDE_LENSLET, 
+                                       int _N_DFT_, int N_PX_IMAGE_, int _BIN_IMAGE_,
+                                       int __N_SOURCE) {
+  N_SOURCE    = __N_SOURCE;
+  BIN_IMAGE   = _BIN_IMAGE_;  
+  N_PX_PUPIL  = __N_PX_PUPIL+1;
+  N_DFT       = _N_DFT_;
+  N_PX_IMAGE  = N_PX_IMAGE_;
+  N_PX_CAMERA = N_PX_IMAGE/BIN_IMAGE;
+  N_SIDE_LENSLET = __N_SIDE_LENSLET;
+  N_LENSLET   = N_SIDE_LENSLET*N_SIDE_LENSLET;
+  N_FRAME     = 0;
+
+  zenith = -1.0;
+  pixel_scale = 0.0;
+  absolute_pointing = 0;
+  photoelectron_gain = 1.0;
+  fprintf(stdout,"@(CEO)>imaging: Device memory allocation\n");
+  int N_DFT_bytes = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
+  cudaMalloc( (void**)&d__wave_PUPIL , sizeof(float2) * N_DFT_bytes);
+  
+  int n_DFT[NRANK] = {N_DFT, N_DFT};
+  int iodist = N_DFT*N_DFT;
+  int BATCH = N_LENSLET*N_SOURCE;
+  /* Create a 2D FFT plan. */
+  HANDLE_ERROR_CUFFT( cufftPlanMany(&plan, NRANK, n_DFT,
+				    NULL, 1, iodist,
+				    NULL, 1, iodist,
+				    CUFFT_C2C,BATCH), 
+		      "Unable to create plan");
+  HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE),
+		      "Unable to set compatibility mode to native");
+}
 @ 
 The pointing direction is set with:
 <<pointing direction>>=
@@ -405,7 +442,39 @@ void imaging::propagateNoOverlap(source *src) {
                                               src->wavenumber(),
 					      N_PX_PUPIL, N_PX_IMAGE, M,
 					      N_SIDE_LENSLET, src->dev_ptr,
-                                              pixel_scale, theta_x, theta_y,
+                                              pixel_scale, theta_x,theta_y,
+					      absolute_pointing,1);
+<<imaging CUFFT execution>>
+/*
+<<intensity normalization>>
+*/
+int N, Nb;
+N = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
+Nb = (int) ceilf( sqrtf(N)/16.0 );
+gridDim  = dim3(Nb,Nb);
+wave2intensity LLL gridDim , blockDim RRR( d__wave_PUPIL, N, 1.0);
+gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
+                N_SOURCE);
+binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
+                                   src->dev_ptr, pixel_scale, theta_x, theta_y,
+				   absolute_pointing,
+                                   N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
+    ++N_FRAME;
+ }
+@ a special case is the dispersed segment piston sensor:
+<<propagation>>=
+void imaging::propagateNoOverlapSPS(source *src, float dx, float dy) {
+  int M = N_PX_IMAGE/N_PX_CAMERA;
+  dim3 gridDim;
+  dim3 blockDim(16,16);
+  gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
+  complexAmplitudeNoOverlapSPS LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
+					      src->wavefront.amplitude,
+					      src->wavefront.phase,
+                                              src->wavenumber(),
+					      N_PX_PUPIL, N_PX_IMAGE, M,
+					      N_SIDE_LENSLET, src->dev_ptr,
+                                              pixel_scale, dx, dy,
 					      absolute_pointing,1);
 <<imaging CUFFT execution>>
 /*
@@ -857,6 +926,43 @@ __global__ void complexAmplitudeNoOverlap(float2 *wave_PUPIL, int N_DFT,
 @ where
 <<imaging complex amplitude (no pixel overlap)>>=
 ij_PUPIL = lenslet2array(i,j,N_PX_PUPIL,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
+@ In the case of the segment piston sensor, the following modified routine is used instead
+<<imaging complex amplitude>>=
+__global__ void complexAmplitudeNoOverlapSPS(float2 *wave_PUPIL, int N_DFT,
+                                 float *wavefront_amplitude,
+				 float *wavefront_phase,
+				 float wavenumber,
+				 int N_PX_PUPIL, int N_PX_IMAGE, int M,
+				 int N_SIDE_LENSLET, source *src,
+				 float pixel_scale,
+				 float dx, float dy,
+				 char absolute_pointing, char DFT_SHIFT)
+{
+  int i, j, iLenslet, jLenslet, kLenslet,
+    ij_PUPIL, ij_DFT, iSource;
+  float c ,s, phasor, theta, ctheta, stheta;
+<<imaging complex amplitude (i)>>
+<<imaging complex amplitude (no pixel overlap)>>
+    kLenslet = jLenslet*N_SIDE_LENSLET + iLenslet;
+  //kLenslet = kLenslet%12;
+  if (kLenslet<6) 
+    theta = (3-kLenslet)*PI/3.0;//(kLenslet%6 - 0.5*(kLenslet/6))*PI/3.0; 
+  else
+    theta = (2-(kLenslet-6))*PI/3.0;//(kLenslet%6 - 0.5*(kLenslet/6))*PI/3.0; 
+  sincosf(theta,&ctheta,&stheta);
+   phasor = (DFT_SHIFT==0) ? 0.0 : PI*(i+j)*(1-N_DFT + (N_PX_IMAGE & 1))/N_DFT;
+   phasor -= 2*PI*dy*(i*ctheta+j*stheta)/N_DFT;
+  phasor += wavefront_phase[ij_PUPIL]*wavenumber;
+  sincosf(phasor,&c,&s);
+  wave_PUPIL[ij_DFT].x = wave_PUPIL[ij_DFT].y = wavefront_amplitude[ij_PUPIL];
+  wave_PUPIL[ij_DFT].x *= c;
+  wave_PUPIL[ij_DFT].y *= s;
+  return;
+}
+if ((i<N_DFT) && (j<N_DFT))
+  wave_PUPIL[ij_DFT].x = wave_PUPIL[ij_DFT].y = 0;
+}
+}
 @
 \begin{figure}
   \centering
