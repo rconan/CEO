@@ -73,6 +73,27 @@ cdef class SegmentPistonSensor:
 <<segmentPistonSensor.pyx>>=
 from constants import ARCSEC2RAD
 cdef class SegmentPistonSensor:
+    """
+    The segment piston sensor model
+
+    Parameters
+    ----------
+    M1 : GMT_M1
+        The GMT M1 model class
+    gs : Source
+        The guide star(s) of the segment piston sensor
+    dispersion: float, optionnal
+        The grism dispersion; default: 5arcsec/micron
+    field_of_view : float, optionnal
+        The segment piston sensor field-of-view; default: 3 arcsec
+
+    Attributes
+    ----------
+    W : Complex_amplitude, read-only
+        The piecewise wavefront on the 12 lenslets
+    camera : Imaging, read-only
+        The detector of the segment piston sensor
+    """
     def __cinit__(self,GMT_M1 M1, Source gs,
                   float dispersion=5,
                   float field_of_view=3):
@@ -95,6 +116,14 @@ cdef class SegmentPistonSensor:
         self._c_segmentPistonSensor.cleanup()
 
     def propagate(self, Source gs):
+        """
+        Propagates the guide star wavefront from the segment piston sensor pupil plane to the detector in the focal plane
+
+        Parameters
+        ----------
+        gs : Source
+            The segment piston sensor guide star(s)
+        """
         self._c_segmentPistonSensor.propagate(gs._c_source)
 @ 
 
@@ -238,7 +267,7 @@ float m2px, R, lambda0, spectral_bandwidth;
 \label{sec:setup--cleanup}
 
 <<setup>>=
-  void segmentPistonSensor::setup(gmt_m1 *M1, source *src, 
+void segmentPistonSensor::setup(gmt_m1 *M1, source *src, 
                                   float _dispersion_,
 				  float _field_of_view_)
 {
@@ -326,12 +355,10 @@ void segmentPistonSensor::propagate(source *gs)
 
   for (k=0;k<N_LAMBDA;k++) {
     N_DFT = (int) 2*N_PX_LENSLET*(1 + k*(spectral_bandwidth/lambda0)/(N_LAMBDA-1));
-    fprintf(stdout,"N_DFT = %d\n",N_DFT);
     _camera_.setupSegmentPistonSensor(N_PX_LENSLET-1,N_LENSLET,N_DFT,N_PX_IMAGE,2,1);
     _camera_.d__frame = camera.d__frame;
     d = spectral_bandwidth*( k - 0.5*(N_LAMBDA-1))/(N_LAMBDA-1);
     d *= (dispersion/pixel_scale);
-    fprintf(stdout,"d=%g\n",d);
     _camera_.propagateNoOverlapSPS(&src, d);
     cufftDestroy(_camera_.plan);
     cudaFree( _camera_.d__wave_PUPIL );

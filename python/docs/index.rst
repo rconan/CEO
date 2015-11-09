@@ -46,9 +46,9 @@ GMT_MX
 .. autoclass:: GMT_MX
     :members:
 
-SegmentPistonSensor
+IdealSegmentPistonSensor
 ~~~~~~~~~~~~~~~~~~~
-.. autoclass:: SegmentPistonSensor
+.. autoclass:: IdealSegmentPistonSensor
     :members:
 
 Imaging
@@ -98,6 +98,13 @@ GMT M2
 ~~~~~~
 .. autoclass:: GMT_M2
     :members:
+
+
+SegmentPistonSensor
+-------------------
+.. autoclass:: SegmentPistonSensor
+    :members:
+
 
 utilities
 ---------
