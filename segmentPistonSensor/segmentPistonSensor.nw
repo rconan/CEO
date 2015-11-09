@@ -304,11 +304,11 @@ void segmentPistonSensor::setup(gmt_m1 *M1, source *src,
   HANDLE_ERROR( cudaMemset( lenslet.amplitude, 0 , sizeof(float)*lenslet.N_PX) );
 
   spectral_bandwidth = src[0].spectral_bandwidth();
-  lambda0 = src[0].wavelength() - spectral_bandwidth*0.5;
+  lambda0            = src[0].wavelength() - spectral_bandwidth*0.5;
   pixel_scale = lambda0*0.25/lenslet_size;
-  N_PX_IMAGE = (int) ceil(field_of_view/pixel_scale);
+  N_PX_IMAGE  = (int) ceil(field_of_view/pixel_scale);
   N_PX_IMAGE += N_PX_IMAGE%2;
-  N_LAMBDA    = 2.0*dispersion*spectral_bandwidth/pixel_scale;
+  N_LAMBDA    = (int) 2*dispersion*spectral_bandwidth/pixel_scale;
 
   camera.setup(N_PX_LENSLET-1,N_LENSLET,2,N_PX_IMAGE,2,1);
 
@@ -352,7 +352,7 @@ void segmentPistonSensor::cleanup(void)
 void segmentPistonSensor::propagate(source *gs)
 {
   int k;
-  float d;
+  float d, wavenumber;
   dim3 blockDim(16,16);
   dim3 gridDim(N_PX_LENSLET/16+1,N_PX_LENSLET/16+1,gs->N_SRC);
   
@@ -366,13 +366,14 @@ void segmentPistonSensor::propagate(source *gs)
 					  lenslet_size, 
 					  lenslet_height, R,
 					  gs->dev_ptr, m2px);
-  lenslet_mask.set_filter();
+  lenslet_mask.set_filter_quiet();
 
   for (k=0;k<N_LAMBDA;k++) {
     camera_array[k].d__frame = camera.d__frame;
     d = spectral_bandwidth*( k - 0.5*(N_LAMBDA-1))/(N_LAMBDA-1);
+    wavenumber = 2*PI/(gs[0].wavelength() + d);
     d *= (dispersion/pixel_scale);
-    camera_array[k].propagateNoOverlapSPS(&lenslet_src, d);
+    camera_array[k].propagateNoOverlapSPS(&lenslet_src, d, wavenumber);
   }
 }
 @ 

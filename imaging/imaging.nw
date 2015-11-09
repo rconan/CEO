@@ -43,7 +43,7 @@ struct imaging {
    
   void propagate(source *src);
   void propagateNoOverlap(source *src);
-  void propagateNoOverlapSPS(source *src, float d);
+  void propagateNoOverlapSPS(source *src, float d, float wavenumber);
   void propagateThroughFieldStop(source *src, float field_stop_diam);
   void propagateThroughPyramid(source *src);
 
@@ -464,7 +464,7 @@ binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
  }
 @ a special case is the dispersed segment piston sensor:
 <<propagation>>=
-void imaging::propagateNoOverlapSPS(source *src, float d) {
+  void imaging::propagateNoOverlapSPS(source *src, float d, float wavenumber) {
   int M = N_PX_IMAGE/N_PX_CAMERA;
   dim3 gridDim;
   dim3 blockDim(16,16);
@@ -472,11 +472,10 @@ void imaging::propagateNoOverlapSPS(source *src, float d) {
   complexAmplitudeNoOverlapSPS LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
 					      src->wavefront.amplitude,
 					      src->wavefront.phase,
-                                              src->wavenumber(),
+                                              wavenumber,
 					      N_PX_PUPIL, N_PX_IMAGE, M,
 					      N_SIDE_LENSLET, src->dev_ptr,
-                                              pixel_scale, d,
-					      absolute_pointing,1);
+                                              d,1);
 <<imaging CUFFT execution>>
 /*
 <<intensity normalization>>
@@ -939,23 +938,22 @@ __global__ void complexAmplitudeNoOverlapSPS(float2 *wave_PUPIL, int N_DFT,
 				 float wavenumber,
 				 int N_PX_PUPIL, int N_PX_IMAGE, int M,
 				 int N_SIDE_LENSLET, source *src,
-				 float pixel_scale, float d,
-				 char absolute_pointing, char DFT_SHIFT)
+				 float d, char DFT_SHIFT)
 {
   int i, j, iLenslet, jLenslet, kLenslet,
     ij_PUPIL, ij_DFT, iSource;
   float c ,s, phasor, theta, ctheta, stheta;
-<<imaging complex amplitude (i)>>
-<<imaging complex amplitude (no pixel overlap)>>
-    kLenslet = jLenslet*N_SIDE_LENSLET + iLenslet;
+  <<imaging complex amplitude (i)>>
+  <<imaging complex amplitude (no pixel overlap)>>
+  kLenslet = jLenslet*N_SIDE_LENSLET + iLenslet;
   kLenslet = kLenslet%12;
   if (kLenslet<6) 
     theta = (3-kLenslet)*PI/3.0;
   else
     theta = (2-(kLenslet-6))*PI/3.0;
   sincosf(theta,&ctheta,&stheta);
-   phasor = (DFT_SHIFT==0) ? 0.0 : PI*(i+j)*(1-N_DFT + (N_PX_IMAGE & 1))/N_DFT;
-   phasor -= 2*PI*d*(i*ctheta+j*stheta)/N_DFT;
+  phasor = (DFT_SHIFT==0) ? 0.0 : PI*(i+j)*(1-N_DFT + (N_PX_IMAGE & 1))/N_DFT;
+  phasor -= 2*PI*d*(i*ctheta+j*stheta)/N_DFT;
   phasor += wavefront_phase[ij_PUPIL]*wavenumber;
   sincosf(phasor,&c,&s);
   wave_PUPIL[ij_DFT].x = wave_PUPIL[ij_DFT].y = wavefront_amplitude[ij_PUPIL];
