@@ -30,6 +30,7 @@ struct segmentPistonSensor {
 	     float field_of_view);
   void cleanup(void);
   void propagate(source *src);
+  void info(void);
 };
 
 #endif // __SEGMENTPISTONSENSOR_H__
@@ -44,6 +45,7 @@ struct segmentPistonSensor {
 
 <<setup>>
 <<cleanup>>
+<<info>>
 <<propagation>>
 @
 \subsection{Python}
@@ -297,16 +299,14 @@ void segmentPistonSensor::setup(gmt_m1 *M1, source *src,
 
   spectral_bandwidth = src[0].spectral_bandwidth();
   lambda0 = src[0].wavelength() - spectral_bandwidth*0.5;
-  fprintf(stdout,"lambda0 = %e\n",lambda0);
   pixel_scale = lambda0*0.25/lenslet_size;
   N_PX_IMAGE = (int) ceil(field_of_view/pixel_scale);
   N_PX_IMAGE += N_PX_IMAGE%2;
-  fprintf(stdout,"N_PX_IMAGE=%d\n",N_PX_IMAGE);
   N_LAMBDA    = 2.0*dispersion*spectral_bandwidth/pixel_scale;
-  fprintf(stdout,"N_LAMBDA = %d\n",N_LAMBDA);
 
   camera.setup(N_PX_LENSLET-1,N_LENSLET,2,N_PX_IMAGE,2,1);
 
+  info();
 }
 @ 
 The memory is freed with:
@@ -450,6 +450,22 @@ m[k_out]                   = (pupil==1) ? 1 : 0;
 
 \subsection{Input/Output}
 \label{sec:inputoutput}
+
+The main parameters are displayed with:
+<<info>>=
+void segmentPistonSensor::info(void)
+{
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>segmentPistonSensor:\x1B[;42m\n");
+  fprintf(stdout," . lenslet size and conjugation height: %3.1fm and %4.1fm\n",
+	  lenslet_size, lenslet_height);
+  fprintf(stdout," . center wavelength, spectral bandwidth and resolution: %6.3fmicron, %6.3fmicron, %d\n",
+	  (lambda0+spectral_bandwidth*0.5)*1e6,
+	  spectral_bandwidth*1e6, N_LAMBDA);
+  fprintf(stdout," . pixel scale       : %6.3farcsec\n",pixel_scale*2/ARCSEC(1));
+  fprintf(stdout," . field-of-view     : %6.3farcsec\n",N_PX_IMAGE*pixel_scale/ARCSEC(1));
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n"); 
+}
+@ 
 
 \section{Tests}
 \label{sec:tests}
