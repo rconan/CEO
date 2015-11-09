@@ -218,6 +218,10 @@ complex_amplitude lenslet;
 \item the wavefront mask:
 <<parameters>>=
 mask lenslet_mask;
+@
+\item the lenslet source containing the lenslet wavefront:
+<<parameters>>=
+source lenslet_src;
 @ 
 \item the grism dispersion in radian per meter:
 <<parameters>>=
@@ -238,6 +242,7 @@ float field_of_view;
 \item the detector:
 <<parameters>>=
 imaging camera;
+imaging *camera_array;
 @ 
 \item the pixel size of one [[lenslet]]:
 <<parameters>>=
@@ -295,6 +300,7 @@ void segmentPistonSensor::setup(gmt_m1 *M1, source *src,
 
   lenslet.setup(N_PX2, 1);
   lenslet_mask.setup(N_PX2);
+  lenslet.M = &lenslet_mask;
   HANDLE_ERROR( cudaMemset( lenslet.amplitude, 0 , sizeof(float)*lenslet.N_PX) );
 
   spectral_bandwidth = src[0].spectral_bandwidth();
@@ -305,6 +311,21 @@ void segmentPistonSensor::setup(gmt_m1 *M1, source *src,
   N_LAMBDA    = 2.0*dispersion*spectral_bandwidth/pixel_scale;
 
   camera.setup(N_PX_LENSLET-1,N_LENSLET,2,N_PX_IMAGE,2,1);
+
+  camera_array = (imaging *) malloc( sizeof(imaging)*N_LAMBDA) ;
+  int k, N_DFT;
+  fprintf(stdout,"@(CEO)>segmentPistonSensor: camera array setup!");
+  for (k=0;k<N_LAMBDA;k++) {
+    N_DFT = (int) 2*N_PX_LENSLET*(1 + k*(spectral_bandwidth/lambda0)/(N_LAMBDA-1));
+    camera_array[k].setupSegmentPistonSensor(N_PX_LENSLET-1,N_LENSLET,N_DFT,N_PX_IMAGE,2,1);
+  }
+
+  lenslet_src.setup(src[0].photometric_band,0.0,0.0,INFINITY);
+  lenslet_src.wavefront.N         = lenslet.N;
+  lenslet_src.wavefront.N_PX      = lenslet.N_PX;
+  lenslet_src.wavefront.amplitude = lenslet.amplitude;
+  lenslet_src.wavefront.phase     = lenslet.phase;
+  lenslet_src.wavefront.M         = lenslet.M;
 
   info();
 }
@@ -317,6 +338,10 @@ void segmentPistonSensor::cleanup(void)
   lenslet.cleanup();
   lenslet_mask.cleanup();
   camera.cleanup();
+  for (int k=0;k<N_LAMBDA;k++) {
+    camera_array[k].cleanupSegmentPistonSensor();
+  }
+  free( camera_array );
 }
 @
 
@@ -326,10 +351,8 @@ void segmentPistonSensor::cleanup(void)
 <<propagation>>=
 void segmentPistonSensor::propagate(source *gs)
 {
-  int k, N_DFT;
+  int k;
   float d;
-  imaging _camera_;
-  
   dim3 blockDim(16,16);
   dim3 gridDim(N_PX_LENSLET/16+1,N_PX_LENSLET/16+1,gs->N_SRC);
   
@@ -345,23 +368,11 @@ void segmentPistonSensor::propagate(source *gs)
 					  gs->dev_ptr, m2px);
   lenslet_mask.set_filter();
 
-  source src;
-  src.setup(gs[0].photometric_band,0.0,0.0,INFINITY);
-  src.wavefront.N         = lenslet.N;
-  src.wavefront.N_PX      = lenslet.N_PX;
-  src.wavefront.amplitude = lenslet.amplitude;
-  src.wavefront.phase     = lenslet.phase;
-  src.wavefront.M         = lenslet.M;
-
   for (k=0;k<N_LAMBDA;k++) {
-    N_DFT = (int) 2*N_PX_LENSLET*(1 + k*(spectral_bandwidth/lambda0)/(N_LAMBDA-1));
-    _camera_.setupSegmentPistonSensor(N_PX_LENSLET-1,N_LENSLET,N_DFT,N_PX_IMAGE,2,1);
-    _camera_.d__frame = camera.d__frame;
+    camera_array[k].d__frame = camera.d__frame;
     d = spectral_bandwidth*( k - 0.5*(N_LAMBDA-1))/(N_LAMBDA-1);
     d *= (dispersion/pixel_scale);
-    _camera_.propagateNoOverlapSPS(&src, d);
-    cufftDestroy(_camera_.plan);
-    cudaFree( _camera_.d__wave_PUPIL );
+    camera_array[k].propagateNoOverlapSPS(&lenslet_src, d);
   }
 }
 @ 
