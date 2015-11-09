@@ -84,9 +84,9 @@ cdef class SegmentPistonSensor:
         The GMT M1 model class
     gs : Source
         The guide star(s) of the segment piston sensor
-    dispersion: float, optionnal
+    dispersion: float, optional
         The grism dispersion; default: 5arcsec/micron
-    field_of_view : float, optionnal
+    field_of_view : float, optional
         The segment piston sensor field-of-view; default: 3 arcsec
 
     Attributes
@@ -95,6 +95,10 @@ cdef class SegmentPistonSensor:
         The piecewise wavefront on the 12 lenslets
     camera : Imaging, read-only
         The detector of the segment piston sensor
+
+    See also
+    --------
+    Imaging : the lenslet and detector class
     """
     def __cinit__(self,GMT_M1 M1, Source gs,
                   float dispersion=5,
@@ -367,6 +371,8 @@ void segmentPistonSensor::propagate(source *gs)
 					  lenslet_height, R,
 					  gs->dev_ptr, m2px);
   lenslet_mask.set_filter_quiet();
+  lenslet_mask.area = gs->N_SRC*lenslet_mask.nnz*
+    gs->wavefront.M->area/gs->wavefront.M->nnz;
 
   for (k=0;k<N_LAMBDA;k++) {
     camera_array[k].d__frame = camera.d__frame;
@@ -457,7 +463,7 @@ pupil = ( ( (xr>=-h) && (xr<=h) ) && ( (yr>=-h) && (yr<=h) ) ) ? 1.0 : 0.0;
 
 piecewise_phase[k_out]     = pupil*pupil_phase[k_in];
 piecewise_amplitude[k_out] = pupil*pupil_amplitude[k_in];
-m[k_out]                   = (pupil==1) ? 1 : 0;
+m[k_out]                   = (piecewise_amplitude[k_out]==1) ? 1 : 0;
 @ 
 
 \subsection{Input/Output}
