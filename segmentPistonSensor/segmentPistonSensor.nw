@@ -30,6 +30,7 @@ struct segmentPistonSensor {
 	     float field_of_view);
   void cleanup(void);
   void propagate(source *src);
+  void fft(void);
   void info(void);
 };
 
@@ -45,13 +46,15 @@ struct segmentPistonSensor {
 
 <<setup>>
 <<cleanup>>
-<<info>>
 <<propagation>>
+<<Fourier>>
+<<info>>
 @
 \subsection{Python}
 \label{sec:python}
 
 <<segmentPistonSensor.pxd>>=
+from utilities cimport cuFloatArray
 from rayTracing cimport gmt_m1, GMT_M1
 from source cimport complex_amplitude, Complex_amplitude, source, Source
 from imaging cimport imaging, Imaging
@@ -59,10 +62,11 @@ cdef extern from "segmentPistonSensor.h":
     cdef cppclass segmentPistonSensor:
         int N_LENSLET, N_PX_LENSLET, N_PX, N_PX_IMAGE
         complex_amplitude lenslet
-        imaging camera
+        imaging camera, FFT
         void setup(gmt_m1 *, source *, float, float)
         void cleanup()
         void propagate(source *)
+        void fft()
 <<class definition>>
 @ 
 <<class definition>>=
@@ -71,6 +75,7 @@ cdef class SegmentPistonSensor:
         segmentPistonSensor *_c_segmentPistonSensor
         readonly Complex_amplitude W
         readonly Imaging camera
+        readonly cuFloatArray fftlet
 @ 
 <<segmentPistonSensor.pyx>>=
 from constants import ARCSEC2RAD
@@ -117,6 +122,10 @@ cdef class SegmentPistonSensor:
                               self._c_segmentPistonSensor.N_PX_LENSLET,
                               N_PX_IMAGE = self._c_segmentPistonSensor.N_PX_IMAGE,
                               BIN_IMAGE = 2, sps=self)
+        cdef int n
+        n = self._c_segmentPistonSensor.FFT.N_SIDE_LENSLET*self._c_segmentPistonSensor.FFT.N_PX_CAMERA
+        self.fftlet = cuFloatArray(shape=(n,n))
+        self.fftlet._c_gpu.dev_data = self._c_segmentPistonSensor.FFT.d__frame
 
     def __dealloc__(self):
         self._c_segmentPistonSensor.cleanup()
@@ -131,6 +140,11 @@ cdef class SegmentPistonSensor:
             The segment piston sensor guide star(s)
         """
         self._c_segmentPistonSensor.propagate(gs._c_source)
+
+    def fft(self):
+        self._c_segmentPistonSensor.fft();
+        return self.fftlet
+    
 @ 
 
 \section{The model}
@@ -264,6 +278,13 @@ int N_PX_IMAGE;
 <<parameters>>=
 int N_LENSLET, N_LENSLET2;
 @
+\item the Fourier analyzer
+<<parameters>>=
+imaging FFT;
+source fft_src;
+float *fft_phase;
+mask fft_mask;
+@ 
 \item some internal variables:
 <<parameters>>=
 int D_px, D_px2;
@@ -315,6 +336,7 @@ void segmentPistonSensor::setup(gmt_m1 *M1, source *src,
   N_LAMBDA    = (int) 2*dispersion*spectral_bandwidth/pixel_scale;
 
   camera.setup(N_PX_LENSLET-1,N_LENSLET,2,N_PX_IMAGE,2,1);
+  FFT.setup(camera.N_PX_CAMERA-1,N_LENSLET,2,camera.N_PX_CAMERA*2,1,1);
 
   camera_array = (imaging *) malloc( sizeof(imaging)*N_LAMBDA) ;
   int k, N_DFT;
@@ -331,6 +353,19 @@ void segmentPistonSensor::setup(gmt_m1 *M1, source *src,
   lenslet_src.wavefront.phase     = lenslet.phase;
   lenslet_src.wavefront.M         = lenslet.M;
 
+  fft_src.setup("V",0.0,0.0,INFINITY);
+  fft_src.wavefront.N         = 1;
+  fft_src.wavefront.N_PX      = camera.N_PX_CAMERA*camera.N_SIDE_LENSLET;
+  fft_src.wavefront.N_PX     *= fft_src.wavefront.N_PX;
+  fft_src.wavefront.amplitude = camera.d__frame;
+
+  HANDLE_ERROR( cudaMalloc( (void**)&fft_phase, sizeof(float)*fft_src.wavefront.N_PX ) );
+  HANDLE_ERROR( cudaMemset( fft_phase, 0 , sizeof(float)*fft_src.wavefront.N_PX ) );
+  fft_src.wavefront.phase     = fft_phase;
+
+  fft_mask.setup(fft_src.wavefront.N_PX);
+  fft_src.wavefront.M         = &fft_mask;
+
   info();
 }
 @ 
@@ -346,6 +381,9 @@ void segmentPistonSensor::cleanup(void)
     camera_array[k].cleanupSegmentPistonSensor();
   }
   free( camera_array );
+  FFT.cleanup();
+  fft_mask.cleanup();
+  HANDLE_ERROR( cudaFree( fft_phase ) );
 }
 @
 
@@ -464,6 +502,17 @@ pupil = ( ( (xr>=-h) && (xr<=h) ) && ( (yr>=-h) && (yr<=h) ) ) ? 1.0 : 0.0;
 piecewise_phase[k_out]     = pupil*pupil_phase[k_in];
 piecewise_amplitude[k_out] = pupil*pupil_amplitude[k_in];
 m[k_out]                   = (piecewise_amplitude[k_out]==1) ? 1 : 0;
+@ 
+
+\subsection{Fourier analysis}
+\label{sec:fourier-analysis}
+
+<<Fourier>>=
+void segmentPistonSensor::fft(void)
+{
+  FFT.reset();
+  FFT.propagateNoOverlap( &fft_src );
+}
 @ 
 
 \subsection{Input/Output}
