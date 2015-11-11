@@ -1,4 +1,5 @@
 import constants
+import phaseStats
 from utilities import cuFloatArray, cuDoubleArray, cuIntArray, MaskAbstract, Mask, Telescope, GMT, StopWatch, wavefrontFiniteDifference
 from source import Complex_amplitude, Source
 from atmosphere import Atmosphere, GmtAtmosphere

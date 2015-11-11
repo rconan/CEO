@@ -1595,12 +1595,13 @@ struct gpu_t {
   void dev2host(void) {
     HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
 			      N*nb, cudaMemcpyDeviceToHost ) ) ;
-    HANDLE_ERROR( cudaDeviceSynchronize() ); 
   }
   void host2dev(void) {
     HANDLE_ERROR( cudaMemcpy( dev_data, host_data, 
 			      N*nb, cudaMemcpyHostToDevice ) ) ;
-    HANDLE_ERROR( cudaDeviceSynchronize() );
+  }
+  void reset(void) {
+    HANDLE_ERROR( cudaMemset( dev_data, 0, N*nb) );
   }
 };
 @ 
@@ -1622,6 +1623,7 @@ cdef extern from "utilities.h":
         void free_dev()
         void dev2host()
         void host2dev()
+        void reset()
 @ 
 <<class definitions>>=
 # cuFloatArray
@@ -1710,6 +1712,9 @@ def __dealloc__(self):
 
 def host(self,units=None,zm=False,mask=None,shape=None):
     <<cu array host>>
+
+def reset(self):
+    self._c_gpu.reset()
 @
 <<cu array host>>=
 <<cu array method doc>>
