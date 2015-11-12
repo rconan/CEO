@@ -27,7 +27,8 @@ struct segmentPistonSensor {
   <<parameters>>
   void setup(gmt_m1 *M1, source *src, 
 	     float dispersion,
-	     float field_of_view);
+	     float field_of_view,
+	     float _nyquist_factor_);
   void cleanup(void);
   void propagate(source *src);
   void fft(void);
@@ -63,7 +64,7 @@ cdef extern from "segmentPistonSensor.h":
         int N_LENSLET, N_PX_LENSLET, N_PX, N_PX_IMAGE
         complex_amplitude lenslet
         imaging camera, FFT
-        void setup(gmt_m1 *, source *, float, float)
+        void setup(gmt_m1 *, source *, float, float, float)
         void cleanup()
         void propagate(source *)
         void fft()
@@ -93,6 +94,8 @@ cdef class SegmentPistonSensor:
         The grism dispersion; default: 5arcsec/micron
     field_of_view : float, optional
         The segment piston sensor field-of-view; default: 3 arcsec
+    nyquist_factor : float, optional
+        The Nyquist sampling factor; default: 1, meaning Nyquist sampling
 
     Attributes
     ----------
@@ -108,13 +111,15 @@ cdef class SegmentPistonSensor:
     Imaging : the lenslet and detector class
     """
     def __cinit__(self,GMT_M1 M1, Source gs,
-                  float dispersion=5,
-                  float field_of_view=3):
+                  float dispersion=5.0,
+                  float field_of_view=3.0,
+                  float nyquist_factor=1.0):
         self._c_segmentPistonSensor = new segmentPistonSensor()
         self._c_segmentPistonSensor.setup(M1._c_gmt_m12,
                                           gs._c_source,
                                           dispersion*ARCSEC2RAD*1e6,
-                                          field_of_view*ARCSEC2RAD)
+                                          field_of_view*ARCSEC2RAD,
+                                          nyquist_factor)
         
         self.W = Complex_amplitude()
         self.W._c_complex_amplitude = &(self._c_segmentPistonSensor.lenslet)
@@ -262,6 +267,10 @@ float field_of_view;
 <<parameters>>=
 imaging camera;
 imaging *camera_array;
+@
+\item the Nyquist factor, a value of 1 meaning Nyquist sampling, higher value increases the resolution of the image; sampling is always defined for the shortest wavelength
+<<parameters>>=
+float nyquist_factor;
 @ 
 \item the pixel size of one [[lenslet]]:
 <<parameters>>=
@@ -301,25 +310,28 @@ float m2px, R, lambda0, spectral_bandwidth;
 
 <<setup>>=
 void segmentPistonSensor::setup(gmt_m1 *M1, source *src, 
-                                  float _dispersion_,
-				  float _field_of_view_)
+				float _dispersion_,
+				float _field_of_view_,
+				float _nyquist_factor_)
 {
+  int k, N_DFT, DFT_osf;
   <<setup content>>
   info();
 }
 @ 
-The lenslet size, height and location as well as the sensor spectral dispersion and field--of--view are set with
+The lenslet size, height and location as well as the sensor spectral dispersion, field--of--view and Nyquist factor are set with
 <<setup content>>=
 lenslet_size   = 1.5;
 lenslet_height = 82.5;
-ri = (M1->D_full+0.357)*0.5 ;
-ro = M1->L*sqrt(3)*0.5;
-m2px = M1->D_px/M1->D;
-R    = M1->D*0.5;
-D_px2 = D_px = M1->D_px;
-D_px2 *= D_px;
-dispersion   = _dispersion_;
-field_of_view = _field_of_view_;
+ri             = (M1->D_full+0.357)*0.5 ;
+ro             = M1->L*sqrt(3)*0.5;
+m2px           = M1->D_px/M1->D;
+R              = M1->D*0.5;
+D_px2          = D_px = M1->D_px;
+D_px2         *= D_px;
+dispersion     = _dispersion_;
+field_of_view  = _field_of_view_;
+nyquist_factor = _nyquist_factor_;
 @
 The guide stars wavefront are cropped on areas centered on the segment piston sensor lenslet and twice their size.
 <<setup content>>=
@@ -344,7 +356,8 @@ The spectral resolution is derived from the pixel scale at the shortest waveleng
 <<setup content>>=
 spectral_bandwidth = src[0].spectral_bandwidth();
 lambda0            = src[0].wavelength() - spectral_bandwidth*0.5;
-pixel_scale = lambda0*0.25/lenslet_size;
+DFT_osf            = (int) rint(2*nyquist_factor);
+pixel_scale = lambda0/(DFT_osf*2*lenslet_size);
 N_LAMBDA    = (int) 2*dispersion*spectral_bandwidth/pixel_scale;
 @ 
 The detector [[camera]] of the segment piston sensor is defined such as the image corresponding to the shortest wavelength is Nyquist sampled.
@@ -352,17 +365,16 @@ A shadow imaging object [[FFT]] is also created to perform the Fourier transform
 <<setup content>>=
 N_PX_IMAGE  = (int) ceil(field_of_view/pixel_scale);
 N_PX_IMAGE += N_PX_IMAGE%2;
-camera.setup(N_PX_LENSLET-1,N_LENSLET,2,N_PX_IMAGE,2,1);
+camera.setup(N_PX_LENSLET-1,N_LENSLET,DFT_osf,N_PX_IMAGE,2,1);
 FFT.setup(camera.N_PX_CAMERA-1,N_LENSLET,2,camera.N_PX_CAMERA*2,1,1);
 @
 An array of imaging object [[camera_array]] is used to compute an image at each wavelength.
 The image are co--added in the [[camera]] object.
 <<setup content>>=
 camera_array = (imaging *) malloc( sizeof(imaging)*N_LAMBDA) ;
-int k, N_DFT;
 fprintf(stdout,"@(CEO)>segmentPistonSensor: camera array setup!");
 for (k=0;k<N_LAMBDA;k++) {
-  N_DFT = (int) 2*N_PX_LENSLET*(1 + k*(spectral_bandwidth/lambda0)/(N_LAMBDA-1));
+  N_DFT = (int) DFT_osf*N_PX_LENSLET*(1 + k*(spectral_bandwidth/lambda0)/(N_LAMBDA-1));
   camera_array[k].setupSegmentPistonSensor(N_PX_LENSLET-1,N_LENSLET,N_DFT,N_PX_IMAGE,2,1);
 }
 @
@@ -419,34 +431,45 @@ void segmentPistonSensor::propagate(source *gs)
 {
   int k;
   float d, wavenumber;
-  dim3 blockDim(16,16);
-  dim3 gridDim(N_PX_LENSLET/16+1,N_PX_LENSLET/16+1,gs->N_SRC);
-  
-  lenslet_trim LLL gridDim, blockDim RRR (lenslet.phase, 
-                                          lenslet.amplitude, 
-					  lenslet_mask.m,
-                                          N_PX_LENSLET,
-					  gs->wavefront.phase, 
-					  gs->wavefront.amplitude, 
-                                          D_px, ri, ro, N_LENSLET,
-					  lenslet_size, 
-					  lenslet_height, R,
-					  gs->dev_ptr, m2px);
-  lenslet_mask.set_filter_quiet();
-  lenslet_mask.area = gs->N_SRC*lenslet_mask.nnz*
-    gs->wavefront.M->area/gs->wavefront.M->nnz;
 
-  lenslet_src.magnitude = gs[0].magnitude;
-
-  for (k=0;k<N_LAMBDA;k++) {
-    camera_array[k].d__frame = camera.d__frame;
-    d = spectral_bandwidth*( k - 0.5*(N_LAMBDA-1))/(N_LAMBDA-1);
-    wavenumber = 2*PI/(gs[0].wavelength() + d);
-    d *= (dispersion/pixel_scale);
-    camera_array[k].propagateNoOverlapSPS(&lenslet_src, d, wavenumber);
-  }
+  <<propagation content>>
 }
+@
+The propagation through the segment piston sensor is done in 2 steps.
+First, the incoming wavefront is cut into square pieces twice the size of the sensor lenslets and also centered on the lenslets.
+<<propagation content>>=
+dim3 blockDim(16,16);
+dim3 gridDim(N_PX_LENSLET/16+1,N_PX_LENSLET/16+1,gs->N_SRC);
+lenslet_trim LLL gridDim, blockDim RRR (lenslet.phase, 
+					lenslet.amplitude, 
+					lenslet_mask.m,
+					N_PX_LENSLET,
+					gs->wavefront.phase, 
+					gs->wavefront.amplitude, 
+					D_px, ri, ro, N_LENSLET,
+					lenslet_size, 
+					lenslet_height, R,
+					gs->dev_ptr, m2px);
+lenslet_mask.set_filter_quiet();
+lenslet_mask.area = gs->N_SRC*lenslet_mask.nnz*
+  gs->wavefront.M->area/gs->wavefront.M->nnz;
 @ 
+Second, the piecewise wavefront are propagated through the lenslets and to the focal plane on the detector, one wavelength at a time.
+<<propagation content>>= 
+lenslet_src.magnitude = gs[0].magnitude;
+for (k=0;k<N_LAMBDA;k++) {
+  camera_array[k].d__frame = camera.d__frame;
+  d = spectral_bandwidth*( k - 0.5*(N_LAMBDA-1))/(N_LAMBDA-1);
+  wavenumber = 2*PI/(gs[0].wavelength() + d);
+  d *= (dispersion/pixel_scale);
+  camera_array[k].propagateNoOverlapSPS(&lenslet_src, d, wavenumber);
+}
+@
+
+\subsubsection{Propagation kernel}
+\label{sec:propagation-kernel}
+
+
 <<lenslet trimming kernel>>=
 __global__ void lenslet_trim(float *piecewise_phase, 
                              float *piecewise_amplitude, 
@@ -474,40 +497,52 @@ __global__ void lenslet_trim(float *piecewise_phase,
   iSource = blockIdx.z;
   if ( (i<n_px_lenslet) && (j<n_px_lenslet) ) {
 
-    O = R - lenslet_size;
-    x0 = lenslet_height*src[iSource].zenith*cos(src[iSource].azimuth) + O;
-    y0 = lenslet_height*src[iSource].zenith*sin(src[iSource].azimuth) + O;
+    <<lenslet trimming kernel origin>>
 
     k_lenslet = 12*iSource;
 
     for (k_LA=0;k_LA<6;k_LA++) {
-      theta = k_LA*PI/3.0;
 
-      j_lenslet = k_lenslet/N_LENSLET;
-      i_lenslet = k_lenslet - N_LENSLET*j_lenslet;
-
-      sincosf(theta,&s,&c);
-      xc = ri*c + y0;
-      yc = ri*s + x0;
-
+      <<lenslet trimming kernel (inner)>>
       <<lenslet trimming kernel block>>
 
-      theta = (k_LA-0.5)*PI/3.0;
-      
-      j_lenslet = (k_lenslet+6)/N_LENSLET;
-      i_lenslet = (k_lenslet+6) - N_LENSLET*j_lenslet;
-
-      sincosf(theta,&s,&c);
-      xc = ro*c + y0;
-      yc = ro*s + x0;
-
+      <<lenslet trimming kernel (outer)>>
       <<lenslet trimming kernel block>>
 
       ++k_lenslet;
     }
   }
 }
-@  where
+@ 
+The cropped wavefront origin ([[x0]],[[y0]])  is set a the lower left corner in a coordinate system which origin is at the lower left corner of the telescope pupil array.
+The origin is also shifted according to the lenslet height and source direction.
+<<lenslet trimming kernel origin>>=
+O = R - lenslet_size;
+x0 = lenslet_height*src[iSource].zenith*cos(src[iSource].azimuth) + O;
+y0 = lenslet_height*src[iSource].zenith*sin(src[iSource].azimuth) + O;
+@
+The indices of the next lenslet is derived along with the bottom left coordinates ([[xc,yc]]) of the cropping area for both, the inner set of lensets
+@
+<<lenslet trimming kernel (inner)>>=
+theta = k_LA*PI/3.0;
+j_lenslet = k_lenslet/N_LENSLET;
+i_lenslet = k_lenslet - N_LENSLET*j_lenslet;
+sincosf(theta,&s,&c);
+xc = ri*c + y0;
+yc = ri*s + x0;
+@
+and the outer set of lenslets
+<<lenslet trimming kernel (outer)>>=
+theta = (k_LA-0.5)*PI/3.0;
+j_lenslet = (k_lenslet+6)/N_LENSLET;
+i_lenslet = (k_lenslet+6) - N_LENSLET*j_lenslet;
+sincosf(theta,&s,&c);
+xc = ro*c + y0;
+yc = ro*s + x0;
+
+@  
+The cropping is performed by computing the indices [[k_in]] of the cropped areas and affecting the cropped arrays to the corresponding lenslet wavefront areas with the indices [[k_out]].
+In addition, a pupil the size of the lenslet and properly aligned with the segment gaps is defined and applied to the cropped wavefronts.
 <<lenslet trimming kernel block>>=
 i_in = (int) floor(yc*m2px);
 j_in = (int) floor(xc*m2px);
