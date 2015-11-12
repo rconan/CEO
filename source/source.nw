@@ -170,25 +170,28 @@ cdef extern from "source.h":
         void info()
         float n_photon()
         float wavelength()
+        float spectral_bandwidth()
 @
 <<class definitions>>= 
 from numpy cimport ndarray
 from utilities cimport cuFloatArray, MaskAbstract
 from rayTracing cimport Bundle
 cdef class Complex_amplitude:
-    cdef complex_amplitude *_c_complex_amplitude
-    cdef public cuFloatArray phase
-    cdef public cuFloatArray amplitude
+    cdef:
+        complex_amplitude *_c_complex_amplitude
+        readonly cuFloatArray phase
+        readonly cuFloatArray amplitude
 cdef class Source:
-    cdef source *_c_source
-    cdef public int N_SRC
-    cdef public int n, m
-    cdef public int size
-    cdef public ndarray zenith, azimuth
-    cdef public float height
-    cdef public Bundle rays
-    cdef public Complex_amplitude wavefront
-    cdef public sphere_distance
+    cdef:
+        source *_c_source
+        readonly int N_SRC
+        readonly int n, m
+        readonly int size
+        readonly ndarray zenith, azimuth
+        readonly float height
+        readonly Bundle rays
+        readonly Complex_amplitude wavefront
+        readonly sphere_distance
 @
 <<source.pyx>>=
 import numpy as np
@@ -319,6 +322,8 @@ cdef class Source:
         wavefront phase
     wavelength : float, read only
         the wavelength of the source
+    spectral_bandwidth : float, read only
+        the spectral bandwidth associated to the source
     nPhoton : float, read only
         number of photon
     magnitude : float, write only
@@ -463,6 +468,10 @@ cdef class Source:
     property wavelength:
         def __get__(self):
             return self._c_source.wavelength()
+    
+    property spectral_bandwidth:
+        def __get__(self):
+            return self._c_source.spectral_bandwidth()
 
     property nPhoton:
         def __get__(self):
