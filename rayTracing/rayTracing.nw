@@ -398,7 +398,6 @@ property piston_mask:
         rtd *R
         char *tag
         void update()
-@ 
 <<class definitions>>=
 cimport numpy as np
 cdef class Quaternion:
@@ -416,7 +415,113 @@ cdef class Coordinate_system:
         public Coordinates origin, euler_angles
         public bytes tag
     cdef void init(Coordinate_system, coordinate_system *)
-@ 
+@
+<<rayTracing.pyx>>=
+# coordinate_system
+cdef class Coordinate_system:
+    """
+    A class for the coordinate system origins and euler angles
+
+    Attributes
+    ----------
+    N : int
+        The number of coordinate systems
+    origin : Coordinates
+        The origin of the coordinate system(s)
+    euler_angles : Coordinates
+        The euler angles of the coordinates system(s)
+    R : ndarray
+        The rotation natrix of the coordinate systems as a [N,3,3] array
+    """
+
+    def __cinit__(self, int N=1):
+        self.N = N
+        self._c_coordinate_system = new coordinate_system()
+        self.origin = Coordinates((self.N,3))
+        self.euler_angles = Coordinates((self.N,3))
+
+    cdef void init(self, coordinate_system *cs):
+        self._c_coordinate_system = cs
+        self.origin.v = cs.origin
+        self.euler_angles.v = cs.euler_angles
+        self.tag = cs.tag
+
+    def update(self):
+        """
+        Updates the coordinate systems on the device
+        """
+        self._c_coordinate_system.update()
+
+    property R:
+        def __get__(self):
+            self._R_ = <double[:self.N,:3,:3]>self._c_coordinate_system.R
+            return np.array(self._R_)
+@
+\paragraph{Coordinates}
+\label{sec:coordinates}
+
+<<rayTracing.pyx>>=
+# Coordinates
+cdef class Coordinates:
+    """
+    An interface between an array of coordinate vectors and an array of coordinates
+
+    Examples
+    --------
+    >>> import ceo
+    >>> gmt = ceo.GMT_MX(25.5,256, M1_radial_order=8, M2_radial_order=14)
+
+    The origin of M1 segment in the motion coordinate system is a Coordinates object
+
+    >>> print gmt.M1.motion_CS.origin
+
+    to retrieve the origin values:
+
+    >>> print gmt.M1.motion_CS.origin[:]
+
+    Segment 1 is moved along the y-axis of 1mm:
+
+    >>> gmt.M1.motion_CS.origin[0,1] = 1e-3
+
+    All the segments are resetted to their nominal position with
+
+    gmt.M1.motion_CS.origin[:] = 0
+    """
+    def __cinit__(self,tuple shape):
+        self.data =  np.zeros(shape, dtype=np.float64)
+
+    def __getitem__(self,index):
+        cdef int k
+        for k in range(self.data.shape[0]):
+            self.data[k,0] = self.v[k].x
+            self.data[k,1] = self.v[k].y
+            self.data[k,2] = self.v[k].z
+        return np.array( self.data.__getitem__(index) )
+
+    def __setitem__(self,index,value):
+        self.data.__setitem__(index,value)
+        cdef int k
+        for k in range(self.data.shape[0]):
+            self.v[k].x = self.data[k,0]
+            self.v[k].y = self.data[k,1]
+            self.v[k].z = self.data[k,2]
+
+    def __repr__(self):
+        data = np.array(self.data)
+        return data.__repr__()
+
+    def __str__(self):
+        max_abs_data = np.max(np.abs(self.data))
+        if  max_abs_data!=0:
+            exp = -np.floor(np.log10(max_abs_data))
+        else:
+            exp = 0
+        s = np.array_str(np.asarray(self.data)*(10**exp),precision=2,suppress_small=True)
+        return "@(CEO)>Coordinates:\nX,Y,Z coordinates in meter: 10^%dX\n"%exp + s
+@
+\paragraph{Quaternions}
+\label{sec:quaternions}
+
 <<rayTracing.pyx>>=
 # Quaternion
 cdef class Quaternion:
@@ -540,104 +645,6 @@ cdef class Quaternion:
             "\nqx:" + np.array_str(self.qx,precision=3,suppress_small=True) + \
             "\nqy:" + np.array_str(self.qy,precision=3,suppress_small=True) + \
             "\nqz:" + np.array_str(self.qz,precision=3,suppress_small=True)
-        
-# Coordinates
-cdef class Coordinates:
-    """
-    An interface between an array of coordinate vectors and an array of coordinates
-
-    Examples
-    --------
-    >>> import ceo
-    >>> gmt = ceo.GMT_MX(25.5,256, M1_radial_order=8, M2_radial_order=14)
-
-    The origin of M1 segment in the motion coordinate system is a Coordinates object
-
-    >>> print gmt.M1.motion_CS.origin
-
-    to retrieve the origin values:
-
-    >>> print gmt.M1.motion_CS.origin[:]
-
-    Segment 1 is moved along the y-axis of 1mm:
-
-    >>> gmt.M1.motion_CS.origin[0,1] = 1e-3
-
-    All the segments are resetted to their nominal position with
-
-    gmt.M1.motion_CS.origin[:] = 0
-    """
-    def __cinit__(self,tuple shape):
-        self.data =  np.zeros(shape, dtype=np.float64)
-
-    def __getitem__(self,index):
-        cdef int k
-        for k in range(self.data.shape[0]):
-            self.data[k,0] = self.v[k].x
-            self.data[k,1] = self.v[k].y
-            self.data[k,2] = self.v[k].z
-        return np.array( self.data.__getitem__(index) )
-
-    def __setitem__(self,index,value):
-        self.data.__setitem__(index,value)
-        cdef int k
-        for k in range(self.data.shape[0]):
-            self.v[k].x = self.data[k,0]
-            self.v[k].y = self.data[k,1]
-            self.v[k].z = self.data[k,2]
-
-    def __repr__(self):
-        data = np.array(self.data)
-        return data.__repr__()
-
-    def __str__(self):
-        max_abs_data = np.max(np.abs(self.data))
-        if  max_abs_data!=0:
-            exp = -np.floor(np.log10(max_abs_data))
-        else:
-            exp = 0
-        s = np.array_str(np.asarray(self.data)*(10**exp),precision=2,suppress_small=True)
-        return "@(CEO)>Coordinates:\nX,Y,Z coordinates in meter: 10^%dX\n"%exp + s
-
-# coordinate_system
-cdef class Coordinate_system:
-    """
-    A class for the coordinate system origins and euler angles
-
-    Attributes
-    ----------
-    N : int
-        The number of coordinate systems
-    origin : Coordinates
-        The origin of the coordinate system(s)
-    euler_angles : Coordinates
-        The euler angles of the coordinates system(s)
-    R : ndarray
-        The rotation natrix of the coordinate systems as a [N,3,3] array
-    """
-
-    def __cinit__(self, int N=1):
-        self.N = N
-        self._c_coordinate_system = new coordinate_system()
-        self.origin = Coordinates((self.N,3))
-        self.euler_angles = Coordinates((self.N,3))
-
-    cdef void init(self, coordinate_system *cs):
-        self._c_coordinate_system = cs
-        self.origin.v = cs.origin
-        self.euler_angles.v = cs.euler_angles
-        self.tag = cs.tag
-
-    def update(self):
-        """
-        Updates the coordinate systems on the device
-        """
-        self._c_coordinate_system.update()
-
-    property R:
-        def __get__(self):
-            self._R_ = <double[:self.N,:3,:3]>self._c_coordinate_system.R
-            return np.array(self._R_)
 @
 \subsubsection{Conic surface}
 \label{sec:surface-1}
@@ -1946,6 +1953,7 @@ struct coordinate_system{
   void setup(vector *_origin_, vector *_euler_angles_, int _N_, char *_tag_);
   void cleanup(void);
   void info(void);
+  void info_details(void);
   void update(void);
   void update(vector _origin_, vector _euler_angles_,int idx);
 };
@@ -2138,8 +2146,8 @@ void coordinate_system::update(vector _origin_, vector _euler_angles_,int idx)
 \label{sec:inputoutput}
 
 The main parameters of the coordinate systems are displayed with the [[info]] routine:
-<<coordinate system functions (opt out)>>=
-void coordinate_system::info(void)
+<<coordinate system functions>>=
+void coordinate_system::info_details(void)
 {
   fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   fprintf(stdout," ID (Tx          Ty        Tz)[m]  (Ox         Oy         Oz)[deg]\n");
