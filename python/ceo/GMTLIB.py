@@ -190,7 +190,7 @@ u
         	    myTTest1 += np.dot(recmat, slopevec)
         	    myTTest = myTTest1.reshape((7,2))
         	    for idx in range(7): self.M2.update(euler_angles=
-				np.array([-myTTest[idx,0],-myTTest[idx,1],0]), idx=idx+1)
+				[-myTTest[idx,0],-myTTest[idx,1],0], idx=idx+1)
             def get_slopes(stroke_sign):
 		self.reset()
                 action(stroke_sign*stroke)
@@ -529,7 +529,7 @@ class IdealSegmentPistonSensor:
     >>> D = 25.5
     >>> src = ceo.Source("R",rays_box_size=D,rays_box_sampling=nPx,rays_origin=[0.0,0.0,25])
     >>> gmt = ceo.GMT_MX(D,nPx)
-    >>> SPS = ceo.SegmentPistonSensor(gmt,src)
+    >>> SPS = ceo.IdealSegmentPistonSensor(gmt,src)
     >>> src.reset()
     >>> gmt.propagate(src)
 
@@ -556,8 +556,8 @@ class IdealSegmentPistonSensor:
         self.rp = 7.543
         xy_rp = np.array([[self.rp],[0]])
         #print xy_rp
-        self.W = 1.5
-        self.L = 1.5
+        self.W = W
+        self.L = L
         self.M = []
         for k_SRC in range(src.N_SRC):
             xySrc = 82.5*np.array( [[src.zenith[k_SRC]*math.cos(src.azimuth[k_SRC])],
