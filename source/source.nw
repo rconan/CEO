@@ -52,9 +52,6 @@ struct source {
 
   void reset_rays(void);
 
-  void trace(gmt_m1 *M1);
-  void trace(gmt_m2 *M2);
-  void stop(gmt_m2 *M2);
   void opd2phase(void);
    
   void info(void);
@@ -138,7 +135,7 @@ struct source {
 
 <<source.pxd>>=
 from utilities cimport mask
-from rayTracing cimport bundle, gmt_m1, gmt_m2, vector, rtd, aperture, conic
+from rayTracing cimport bundle, vector, rtd, aperture, conic
 cdef extern from "source.h":
     cdef cppclass complex_amplitude:
         int N
@@ -163,9 +160,6 @@ cdef extern from "source.h":
         void setup(char *,float *, float *, float , int , rtd, int, vector)
         void cleanup()
         void reset_rays()
-        void trace(gmt_m1 *)
-        void trace(gmt_m2 *)
-        void block(gmt_m2 *)
         void opd2phase()
         void info()
         float n_photon()
@@ -412,38 +406,6 @@ cdef class Source:
 
     def __dealloc__(self):
         self._c_source.cleanup()
-
-    def trace(self, optics):
-        """
-        Ray tracing to the optic device
-
-        Parameters
-        ----------
-        optics: GMT_M1 or GMT_M2
-            The GMT mirror M1 or M2 models 
-
-        See also
-        --------
-        GMT_M1 : the class for GMT M1 model
-        GMT_M2 : the class for GMT M2 model
-        """
-        optics.trace(self.rays)
-
-    def stop(self, optics):
-        """
-        Ray tracing to the optic device acting as a stop
-
-        Parameters
-        ----------
-        optics: GMT_M1 or GMT_M2
-            The GMT mirror M1 or M2 models 
-
-        See also
-        --------
-        GMT_M1 : the class for GMT M1 model
-        GMT_M2 : the class for GMT M2 model
-        """
-        optics.blocking(self.rays)
 
     def opd2phase(self):
         """
@@ -1694,21 +1656,6 @@ void thin_lens(source *src)
 \subsubsection{Trace}
 \label{sec:trace}
 
-Ray tracing through the GMT M1 and M2 mirrors are achieved with:
-<<ray tracing>>=
-void source::trace(gmt_m1 *M1)
-{
-  M1->trace(&rays);
-}
-void source::trace(gmt_m2 *M2)
-{
-  M2->trace(&rays);
-}
-void source::stop(gmt_m2 *M2)
-{
-  M2->blocking(&rays);
-}
-@ 
 The ray tracing data are transferred to the wavefront structure with
 <<ray tracing>>=
 void source::opd2phase(void)

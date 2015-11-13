@@ -1,4 +1,4 @@
 include ../common.mk
 
 all:
-	$(NVCC) -shared *.o -o libceo.so
+	$(NVCC) --lib *.o -o libceo.a
