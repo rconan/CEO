@@ -35,6 +35,7 @@ struct segmentPistonSensor {
 	     float _nyquist_factor_);
   void cleanup(void);
   void propagate(source *src);
+  void readout(float exposureTime, float readoutNoiseRms, float nBackgroundPhoton);
   void fft(void);
   void info(void);
 };
@@ -52,6 +53,7 @@ struct segmentPistonSensor {
 <<setup>>
 <<cleanup>>
 <<propagation>>
+<<read-out>>
 <<Fourier>>
 <<info>>
 @
@@ -71,6 +73,7 @@ cdef extern from "segmentPistonSensor.h":
         void setup(gmt_m1 *, source *, float, float, float)
         void cleanup()
         void propagate(source *)
+        void readout(float, float, float)
         void fft()
 <<class definition>>
 @ 
@@ -151,6 +154,9 @@ cdef class SegmentPistonSensor:
             The segment piston sensor guide star(s)
         """
         self._c_segmentPistonSensor.propagate(gs._c_source)
+     
+    def readOut(self, float exposureTime, float readOutNoiseRms, float backgroundMagnitude):
+        self._c_segmentPistonSensor.readout(exposureTime, readOutNoiseRms, backgroundMagnitude)
 
     def fft(self):
         self._c_segmentPistonSensor.fft();
@@ -298,7 +304,7 @@ imaging FFT;
 source fft_src;
 float *fft_phase;
 mask fft_mask;
-@ 
+@
 \item some internal variables:
 <<parameters>>=
 int D_px, D_px2;
@@ -435,7 +441,6 @@ void segmentPistonSensor::propagate(source *gs)
 {
   int k;
   float d, wavenumber;
-
   <<propagation content>>
 }
 @
@@ -567,6 +572,23 @@ pupil = ( ( (xr>=-h) && (xr<=h) ) && ( (yr>=-h) && (yr<=h) ) ) ? 1.0 : 0.0;
 piecewise_phase[k_out]     = pupil*pupil_phase[k_in];
 piecewise_amplitude[k_out] = pupil*pupil_amplitude[k_in];
 m[k_out]                   = (piecewise_amplitude[k_out]==1) ? 1 : 0;
+@
+\subsection{Read--out}
+\label{sec:read-out}
+
+<<read-out>>=
+void segmentPistonSensor::readout(float exposureTime, float readOutNoiseRms, float backgroundMagnitude)
+{
+  float p2, nBackgroundPhoton;
+  p2 = pixel_scale*camera.BIN_IMAGE/ARCSEC(1);
+  p2 *= p2;
+  lenslet_src.magnitude = backgroundMagnitude;
+  nBackgroundPhoton = p2*lenslet_src.n_photon();
+  nBackgroundPhoton *= lenslet_size/camera.N_PX_CAMERA;
+  nBackgroundPhoton *= camera.photoelectron_gain*lenslet_size*lenslet_size/camera.N_PX_CAMERA;
+  fprintf(stdout,"nBackgroundPhoton=%g\n",nBackgroundPhoton);
+  camera.readout(exposureTime, readOutNoiseRms, nBackgroundPhoton);
+}
 @ 
 
 \subsection{Fourier analysis}
@@ -578,7 +600,6 @@ void segmentPistonSensor::fft(void)
   FFT.propagateNoOverlap( &fft_src );
 }
 @ 
-
 \subsection{Input/Output}
 \label{sec:inputoutput}
 
@@ -592,7 +613,7 @@ void segmentPistonSensor::info(void)
   fprintf(stdout," . center wavelength, spectral bandwidth and resolution: %6.3fmicron, %6.3fmicron, %d\n",
 	  (lambda0+spectral_bandwidth*0.5)*1e6,
 	  spectral_bandwidth*1e6, N_LAMBDA);
-  fprintf(stdout," . pixel scale       : %6.3farcsec\n",pixel_scale*2/ARCSEC(1));
+  fprintf(stdout," . pixel scale       : %6.3farcsec\n",pixel_scale*camera.BIN_IMAGE/ARCSEC(1));
   fprintf(stdout," . field-of-view     : %6.3farcsec\n",N_PX_IMAGE*pixel_scale/ARCSEC(1));
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n"); 
 }
