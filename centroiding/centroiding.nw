@@ -1,5 +1,6 @@
 % -*- mode: Noweb; noweb-code-mode: python-mode -*-
 @
+\index{centroiding}
 \section{The files}
 
 \subsection{Header}
@@ -68,6 +69,7 @@ struct centroiding {
 \subsection{Python}
 \label{sec:python}
 
+\index{centroiding!python}
 <<centroiding.pxd>>=
 from utilities cimport mask
 cdef extern from "centroiding.h":
@@ -88,6 +90,7 @@ cdef class Centroiding:
         readonly cuFloatArray flux, c
         char isPtr
 @ 
+\index{centroiding!python!Centroiding}
 <<centroiding.pyx>>=
 from utilities cimport cuFloatArray, MaskAbstract
 from shackHartmann cimport ShackHartmann
@@ -146,6 +149,7 @@ cdef class Centroiding:
 \section{Parameters}
 \label{sec:prms}
 
+\index{centroiding!centroiding}
 The parameters are the centroid vector [[d__c]] with $2\times[[n_data]]$ elements.
 The first half contains the X axis centroids [[d__cx]] and the other half contains the Y axis centroids [[d__cy]].
 The lenslet intensity is stored in the vector [[d__mass]] of length [[n_data]].
@@ -162,6 +166,7 @@ int n_data, DEV_SHARED_MEM, DEV_MAX_THREADS;
 \label{sec:setup--cleanup}
 
 Parameters are allocated with the [[setup]] routines
+\index{centroiding!centroiding!setup}
 <<setup>>=
 void centroiding::setup(int _N_SIDE_LENSLET, int _N_SOURCE) {
   _N_SIDE_LENSLET_ = _N_SIDE_LENSLET;
@@ -176,6 +181,7 @@ void centroiding::setup(int _N_SIDE_LENSLET, int _N_SOURCE) {
   <<check shared memory>>
 }
 @ and de--allocated with the [[cleanup]] routine
+\index{centroiding!centroiding!cleanup}
 <<cleanup>>=
 void centroiding::cleanup(void) {
   fprintf(stdout,"@(CEO)>centroiding: freeing memory!\n");
@@ -199,6 +205,7 @@ DEV_MAX_THREADS = dev_prop.maxThreadsPerBlock;
 //printf("Maximum threads per block: %d\n",DEV_MAX_THREADS);
 @ 
 The valid lenslets mask is computed for a given pupil mask sampled with $N=[[N_SIDE_LENSLET]]\times n$ pixel across with $n$ the number of pixel per lenslet:
+\index{centroiding!centroiding!fried\_geometry}
 <<Fried geometry>>=
 void centroiding::fried_geometry(mask *dm, mask *pupil, int n, float threshold) {
     MASK_SET = fried_geometry_setup_vs_pupil(lenslet_mask, dm->m, 
@@ -213,6 +220,7 @@ void centroiding::fried_geometry(mask *dm, mask *pupil, int n, float threshold) 
 \label{sec:data-processing}
 
 The framelets are processed to retrieve centroids and flux
+\index{centroiding!centroiding!get\_data}
 <<data Ia>>=
 void centroiding::get_data(imaging *wfs) {
   int N_PX_CAMERA, N_PX_CAMERA_BYTE;
@@ -224,6 +232,8 @@ void centroiding::get_data(imaging *wfs) {
   N_PX_CAMERA_BYTE = sizeof(float)*N_PX_CAMERA*N_PX_CAMERA*3;
   <<shared memory requirement>>
 }
+@ 
+\index{centroiding!centroiding!get\_data}
 <<data Ib>>=
 void centroiding::get_data(float *frame, int N_PX_CAMERA) {
   int N_PX_CAMERA_BYTE = sizeof(float)*N_PX_CAMERA*N_PX_CAMERA*3;
@@ -232,11 +242,15 @@ void centroiding::get_data(float *frame, int N_PX_CAMERA) {
   units = 1.0;
   <<shared memory requirement>>
 }
+@ 
+\index{centroiding!centroiding!get\_data}
 <<data II>>=
 void centroiding::get_data(float *frame, int N_PX_CAMERA, float cx0, float cy0, float units) {
   int N_PX_CAMERA_BYTE = sizeof(float)*N_PX_CAMERA*N_PX_CAMERA*3;
   <<shared memory requirement>>
 }
+@ 
+\index{centroiding!centroiding!get\_data}
 <<data III>>=
 void centroiding::get_data(float *frame, int N_PX_CAMERA, 
 			   float *cx0, float *cy0, float units,

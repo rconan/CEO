@@ -1,5 +1,6 @@
 % -*- mode: Noweb; noweb-code-mode: c-mode -*-
 
+\index{rayTracing}
 The ray tracing method involves 4 steps \cite{}:
 \begin{enumerate}
 \item the ray coordinates are transformed into the coordinate system of the surface their interact with,
@@ -103,6 +104,8 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 \subsection{Python}
 \label{sec:python}
 
+\index{rayTracing!python}
+
 <<rayTracing.pxd>>=
 cdef extern from "rayTracing.h":
     ctypedef double rtd
@@ -125,6 +128,9 @@ from utilities cimport cuDoubleArray
 @
 \subsubsection{Ray bundle}
 \label{sec:ray-bundle-1}
+
+\index{rayTracing!python!Bundle}
+
 <<rayTracing.pxd contents>>=
     cdef cppclass bundle:
         int N_RAY, N_BUNDLE
@@ -391,6 +397,8 @@ property piston_mask:
 \subsubsection{Coordinate system}
 \label{sec:coordinate-system-1}
 
+\index{rayTracing!python!Coordinate\_system}
+
 <<rayTracing.pxd contents>>=
     cdef cppclass coordinate_system:
         vector *origin
@@ -460,6 +468,8 @@ cdef class Coordinate_system:
 \paragraph{Coordinates}
 \label{sec:coordinates}
 
+\index{rayTracing!python!Coordinates}
+
 <<rayTracing.pyx>>=
 # Coordinates
 cdef class Coordinates:
@@ -521,6 +531,8 @@ cdef class Coordinates:
 @
 \paragraph{Quaternions}
 \label{sec:quaternions}
+
+\index{rayTracing!python!Quaternions}
 
 <<rayTracing.pyx>>=
 # Quaternion
@@ -649,6 +661,8 @@ cdef class Quaternion:
 \subsubsection{Conic surface}
 \label{sec:surface-1}
 
+\index{rayTracing!python!Conic}
+
 <<rayTracing.pxd contents>>=
     cdef cppclass conic:
         coordinate_system ref_frame
@@ -686,6 +700,8 @@ cdef class Conic:
 \subsubsection{Aperture}
 \label{sec:aperture-1}
 
+\index{rayTracing!python!Aperture}
+
 <<rayTracing.pxd contents>>=
     cdef cppclass aperture:
         coordinate_system ref_frame
@@ -721,6 +737,8 @@ cdef class Aperture:
 @
 \subsubsection{Zernike}
 \label{sec:zernike}
+
+\index{rayTracing!python!ZernikeS}
 
 <<rayTracing.pxd contents>>=
     cdef cppclass zernikeS:
@@ -938,6 +956,8 @@ typedef double rtd;
 \subsection{Vector}
 \label{sec:vector}
 
+\index{rayTracing!vector}
+
 A new vector data type is defined 
 <<vector data type>>=
 struct vector{
@@ -985,6 +1005,8 @@ __host__ __device__ rtd vector::mag(rtd R) {
 \subsection{Ray}
 \label{sec:ray}
 
+\index{rayTracing!ray}
+
 A type for the rays is also defined:
 <<ray data type>>=
 typedef struct {
@@ -1020,6 +1042,8 @@ int n_iteration;
 @
 \section{Ray bundle}
 \label{sec:ray-bundle}
+
+\index{rayTracing!bundle}
 
 Collections of rays are gathered into bundles:
 <<ray bundle structure>>=
@@ -1097,6 +1121,7 @@ A ray bundle is specified with either the polar or cartesian coordinates of the 
 The direction cosine are derived from the coordinates of a source object.
 
 The polar coordinates are defined with the sampling of the radius [[N_RADIUS]] from 0 to [[RADIUS]] and with the sampling of the azimuth [[N_THETA]].
+\index{rayTracing!bundle!setup}
 <<ray bundle functions>>=
 void bundle::setup(rtd RADIUS, int _N_RADIUS_, 
 		   int _N_THETA_, vector origin, int N_SRC)
@@ -1192,6 +1217,7 @@ ray_coordinates LLL gridDim , blockDim RRR (d__chief_ray, 1, src->dev_ptr,
 
 @
 The cartesian coordinates are defined with the sampling of the square box length [[N_L]] from $-[[L]]$ to [[L]].
+\index{rayTracing!bundle!setup}
 <<ray bundle functions>>=
   void bundle::setup(rtd _L_, int _N_L_, vector origin, int N_SRC)
 {
@@ -1257,6 +1283,7 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
 }
 @
 Memory is freed with
+\index{rayTracing!bundle!cleanup}
 <<ray bundle functions>>=
 void bundle::cleanup(void) 
 {
@@ -1283,6 +1310,7 @@ The rays are propagated to the plane $z=[[z__plane]]$ with
   y &=& y + s l \\\nonumber
   z &=& [[z_plane]]
 \end{eqnarray}
+\index{rayTracing!bundle!to\_z\_plane}
 <<ray bundle functions>>= 
 void bundle::to_z_plane(rtd z_plane)
 {
@@ -1512,6 +1540,8 @@ __global__ void sphere_radius_kernel(rtd *radius, ray *d__ray, int N_RAY,
 \subsubsection{Spherical focal plane}
 \label{sec:spher-focal-plane}
 
+\index{rayTracing!bundle!to\_sphere}
+
 <<ray bundle functions>>= 
 void bundle::to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane)
 {
@@ -1556,6 +1586,7 @@ to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY,
 \label{sec:refer-sphere-orig}
 
 Given the origin and the radius of the reference sphere, the optical path difference is computed with
+\index{rayTracing!bundle!to\_sphere}
 <<ray bundle functions>>= 
 void bundle::to_sphere(vector sphere_origin)
 {
@@ -1595,6 +1626,7 @@ The coordinates, directions, optical path length and vignetting map are copied i
 <<gathering ray vignetting map kernel>>
 <<OPD nearest neighbor interpolation kernel>>
 @ 
+\index{rayTracing!bundle!get\_coordinates}
 <<gathering ray coordinates>>=
 void bundle::get_coordinates(double *d__coord)
 {
@@ -1604,6 +1636,7 @@ void bundle::get_coordinates(double *d__coord)
   get_coordinates_kernel LLL gridDim , blockDim RRR (d__coord, d__ray, N_RAY);
 }
 @ 
+\index{rayTracing!bundle!get\_chief\_coordinates}
 <<gathering ray coordinates>>=
 void bundle::get_chief_coordinates(double *d__coord)
 {
@@ -1631,6 +1664,7 @@ __global__ void get_coordinates_kernel(double *d__coord, ray *d__ray, int N_RAY)
   }
 }
 @ 
+\index{rayTracing!bundle!get\_directions}
 <<gathering ray directions>>=
 void bundle::get_directions(double *d__dir)
 {
@@ -1639,6 +1673,7 @@ void bundle::get_directions(double *d__dir)
   get_directions_kernel LLL gridDim , blockDim RRR (d__dir, d__ray, N_RAY);
 }
 @ 
+\index{rayTracing!bundle!get\_chief\_directions}
 <<gathering ray directions>>=
 void bundle::get_chief_directions(double *d__dir)
 {
@@ -1665,6 +1700,7 @@ __global__ void get_directions_kernel(double *d__dir, ray *d__ray, int N_RAY)
   }
 }
 @ 
+\index{rayTracing!bundle!get\_optical\_path\_length}
 <<gathering ray optical path length>>=
 void bundle::get_optical_path_length(double *d__opl)
 {
@@ -1673,6 +1709,7 @@ void bundle::get_optical_path_length(double *d__opl)
   get_optical_path_length_kernel LLL gridDim , blockDim RRR (d__opl, d__ray, N_RAY);
 }
 @ 
+\index{rayTracing!bundle!get\_chief\_optical\_path\_length}
 <<gathering ray optical path length>>=
 void bundle::get_chief_optical_path_length(double *d__opl)
 {
@@ -1696,6 +1733,7 @@ __global__ void get_optical_path_length_kernel(double *d__opl, ray *d__ray, int 
     }
 }
 @ 
+\index{rayTracing!bundle!get\_optical\_path\_difference}
 <<gathering ray optical path difference>>=
 void bundle::get_optical_path_difference(double *d__opd)
 {
@@ -1834,6 +1872,7 @@ __global__ void get_optical_path_difference_interp_kernel(double *d__opd,
     }
 }
 @ 
+\index{rayTracing!bundle!get\_vignetting}
 <<gathering ray vignetting map>>=
 void bundle::get_vignetting(double *d__v)
 {
@@ -1897,6 +1936,7 @@ __global__ void get_wavefront_kernel(float *amplitude, float *phase,
 \label{sec:resetting}
 
 The ray vignetting is reset with
+\index{rayTracing!bundle!reset}
 <<ray bundle functions (opt-out)>>= 
 void bundle::reset(source *src) 
 {
@@ -1923,6 +1963,7 @@ __global__ void reset_kernel(ray *d__ray, int N_RAY)
 \section{Coordinate system}
 \label{sec:coordinate-system}
 
+\index{rayTracing!coordinate\_system}
 The surface location and orientation with respect to the GCS is specified with a coordinate vector:
 <<coordinate system data>>=
 vector *origin;
@@ -1965,6 +2006,7 @@ struct coordinate_system{
 A coordinate system structure is initialized with
 \begin{itemize}
 \item a single origin and orientation,
+\index{rayTracing!coordinate\_system!setup}
 <<coordinate system functions>>=
 void coordinate_system::setup(vector _origin_, vector _euler_angles_)
 {
@@ -1982,6 +2024,7 @@ void coordinate_system::setup(vector _origin_, vector _euler_angles_)
 }
 @ 
 \item origin and orientation align to the main coordinate system,
+\index{rayTracing!coordinate\_system!setup}
 <<coordinate system functions>>=
 void coordinate_system::setup(void)
 {
@@ -2005,6 +2048,7 @@ void coordinate_system::setup(void)
 \item an array of [[N]] origins and orientations:
   \begin{itemize}
   \item without a tag:
+\index{rayTracing!coordinate\_system!setup}
 <<coordinate system functions>>=
 void coordinate_system::setup(vector *_origin_, vector *_euler_angles_, int _N_)
 {
@@ -2013,6 +2057,7 @@ void coordinate_system::setup(vector *_origin_, vector *_euler_angles_, int _N_)
 }
 @
 \item or with a tag:
+\index{rayTracing!coordinate\_system!setup}
 <<coordinate system functions>>=
 void coordinate_system::setup(vector *_origin_, vector *_euler_angles_, 
                               int _N_, char *_tag_)
@@ -2106,6 +2151,7 @@ HANDLE_ERROR( cudaMemcpy( d__R, R,
 HANDLE_ERROR( cudaMemcpy( d__origin, origin, 
 			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
 @ where the elements of $R$ are stored in the row major format.
+\index{rayTracing!coordinate\_system!cleanup}
 <<coordinate system functions>>=
 void coordinate_system::cleanup(void)
 {
@@ -2118,6 +2164,7 @@ void coordinate_system::cleanup(void)
 }
 @ 
 The coordinate system is updated with
+\index{rayTracing!coordinate\_system!update}
 <<coordinate system functions>>=
 void coordinate_system::update(void)
 {
@@ -2146,6 +2193,7 @@ void coordinate_system::update(vector _origin_, vector _euler_angles_,int idx)
 \label{sec:inputoutput}
 
 The main parameters of the coordinate systems are displayed with the [[info]] routine:
+\index{rayTracing!coordinate\_system!info\_details}
 <<coordinate system functions>>=
 void coordinate_system::info_details(void)
 {
@@ -2174,6 +2222,8 @@ void coordinate_system::info_details(void)
     }
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
 }
+@ 
+\index{rayTracing!coordinate\_system!info}
 <<coordinate system functions>>=
 void coordinate_system::info(void)
 {
@@ -2187,6 +2237,8 @@ void coordinate_system::info(void)
 
 \section{Conic surface}
 \label{sec:surface}
+
+\index{rayTracing!conic}
 
 A conic surface is represented with the [[conic]] structure:
 <<conic structure>>=
@@ -2217,6 +2269,7 @@ The conic surface is defined with
   F(x,y,z) = z - {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} } = 0.
 \end{equation}
 The conic expression is computed with
+\index{rayTracing!conic!conic\_equation}
 <<conic equations>>=
 __host__ __device__ inline rtd conic_equation(vector *v, vector *v0, const rtd k, const rtd c)
 {
@@ -2233,6 +2286,7 @@ __host__ __device__ inline rtd conic_equation(vector *v, vector *v0, const rtd k
 }
 @ 
 and the surface equation with
+\index{rayTracing!conic!conic\_surface}
 <<conic equations>>=
 __device__ inline rtd  conic_surface(vector *v, vector *v0, const rtd k, const rtd c)
 {
@@ -2246,6 +2300,7 @@ The partial derivative of the conic equation are written
   \begin{equation}
     { \partial F(x,y,z) \over \partial x } = -x {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
   \end{equation}
+\index{rayTracing!conic!partial\_x\_conic\_surface}
 <<conic equations>>=
  __device__ inline rtd partial_x_conic_surface(vector *v, vector *v0, 
 					       const rtd k, const rtd c)
@@ -2266,6 +2321,7 @@ The partial derivative of the conic equation are written
   \begin{equation}
     { \partial F(x,y,z) \over \partial y } = -y {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
   \end{equation}
+\index{rayTracing!conic!partial\_y\_conic\_surface}
 <<conic equations>>=
 __device__ inline rtd partial_y_conic_surface(vector *v, vector *v0, 
 					      const rtd k, const rtd c)
@@ -2286,6 +2342,7 @@ __device__ inline rtd partial_y_conic_surface(vector *v, vector *v0,
   \begin{equation}
     { \partial F(x,y,z) \over \partial z } = 1
   \end{equation}
+\index{rayTracing!conic!partial\_z\_conic\_surface}
 <<conic equations>>=
 __device__ inline rtd partial_z_conic_surface(void)
 {
@@ -2299,6 +2356,7 @@ The generic expression for aspheric surface is given by
   \label{eq:69}
   F(x,y,z) = z - {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} } - \sum_{i=1}^N a_i Z_i(\rho,\theta) = 0.  
 \end{equation}
+\index{rayTracing!conic!aspheric\_surface}
 <<conic equations>>=
 __device__ inline rtd aspheric_surface(vector *v, vector *v0, 
                                        const rtd k, const rtd c,
@@ -2314,6 +2372,7 @@ The partial derivative of the aspheric equation are written
   \begin{equation}
     { \partial F(x,y,z) \over \partial x } = -x {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
   \end{equation}
+\index{rayTracing!conic!partial\_x\_aspheric\_surface}
 <<conic equations>>=
 __device__ inline rtd partial_x_aspheric_surface(vector *v, vector *v0, 
 					       const rtd k, const rtd c,
@@ -2328,6 +2387,7 @@ __device__ inline rtd partial_x_aspheric_surface(vector *v, vector *v0,
   \begin{equation}
     { \partial F(x,y,z) \over \partial y } = -y {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
   \end{equation}
+\index{rayTracing!conic!partial\_y\_aspheric\_surface}
 <<conic equations>>=
 __device__ inline rtd partial_y_aspheric_surface(vector *v, vector *v0, 
 					      const rtd k, const rtd c,
@@ -2342,6 +2402,7 @@ __device__ inline rtd partial_y_aspheric_surface(vector *v, vector *v0,
   \begin{equation}
     { \partial F(x,y,z) \over \partial z } = 1
   \end{equation}
+\index{rayTracing!conic!partial\_z\_aspheric\_surface}
 <<conic equations>>=
 __device__ inline rtd partial_z_aspheric_surface(void)
 {
@@ -2354,6 +2415,7 @@ __device__ inline rtd partial_z_aspheric_surface(void)
 \label{sec:surf-setup--cleanup}
 
 A conic surface is initialized with the [[setup]] routine:
+\index{rayTracing!conic!setup}
 <<conic functions>>=
 void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_)
 {
@@ -2366,6 +2428,7 @@ void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_)
   <<conic allocation>>
 }
 @ or with a surface centered on [[origin]]
+\index{rayTracing!conic!setup}
 <<conic functions>>=
 void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, vector conic_origin)
 {
@@ -2379,6 +2442,7 @@ void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, vect
 }
 @
 A conic surface that sets in the GCS is simply defined with
+\index{rayTracing!conic!setup}
 <<conic functions>>=
 void conic::setup(rtd _c_, rtd _k_)
 {
@@ -2427,6 +2491,7 @@ void conic::setup_GMT_M1(void)
 }
 @
 Memory is freed with
+\index{rayTracing!conic!cleanup}
 <<conic functions>>=
 void conic::cleanup(void)
 {
@@ -2438,6 +2503,8 @@ void conic::cleanup(void)
 
 \section{Zernike surface}
 \label{sec:zernike-surface}
+
+\index{rayTracing!zernikeS}
 
 A Zernike surface is defined as the weighted sum of Zernike polynomials and it is represented with the [[zernikeS]] structure:
 <<zernikeS structure>>=
@@ -2534,6 +2601,7 @@ coordinate_system ref_frame;
 \label{sec:setup--cleanup-3}
 
 A [[zernikeS]] structure is initialized with the largest radial order in the surface and the series of Zernike coefficients for all the modes up to that radial order:
+\index{rayTracing!zernikeS!setup}
 <<zernikeS functions>>=
 void zernikeS::setup(int _max_n_, rtd *_a_)
 {
@@ -2553,6 +2621,7 @@ void zernikeS::setup(int _max_n_, rtd *_a_)
 }
 @ 
 The origin vector and Euler angles of the coordinate systems where the Zernike polynomials are defined can be passed as arguments:
+\index{rayTracing!zernikeS!setup}
 <<zernikeS functions>>=
 void zernikeS::setup(int _max_n_, rtd *_a_, vector _origin_, vector _euler_angles_)
 {
@@ -2572,6 +2641,7 @@ void zernikeS::setup(int _max_n_, rtd *_a_, vector _origin_, vector _euler_angle
 }
 @ 
 An array of [[N]] Zernike surface is created with
+\index{rayTracing!zernikeS!setup}
 <<zernikeS functions>>=
 void zernikeS::setup(int _max_n_, rtd *_a_, int _N_)
 {
@@ -2590,6 +2660,7 @@ void zernikeS::setup(int _max_n_, rtd *_a_, int _N_)
   <<zernikeS setup common>>
 }
 @ or with
+\index{rayTracing!zernikeS!setup}
 <<zernikeS functions>>=
 void zernikeS::setup(int _max_n_, rtd *_a_, 
 		     vector _origin_, vector _euler_angles_, int _N_)
@@ -2714,6 +2785,7 @@ by_col_ptr[jp] = ky;
   }
 @
 From the Zernike derivative coefficients, the coefficients of the Zernike surface derivative are computed:
+\index{rayTracing!zernikeS!surface\_derivative\_coefs}
 <<zernikeS functions>>=
 void zernikeS::surface_derivative_coefs(void) 
 {
@@ -2737,6 +2809,7 @@ void zernikeS::surface_derivative_coefs(void)
 }
 @ 
 The Zernike coefficients are updated with
+\index{rayTracing!zernikeS!update}
 <<zernikeS functions>>= 
 void zernikeS::update(rtd *_a_)
 {
@@ -2755,6 +2828,7 @@ void zernikeS::update(rtd *_a_)
 }
 @
 Memory is freed with:
+\index{rayTracing!zernikeS!cleanup}
 <<zernikeS functions>>=
 void zernikeS::cleanup(void)
 {
@@ -2778,6 +2852,7 @@ void zernikeS::cleanup(void)
 \subsection{Zernike surface equation}
 \label{sec:zern-surf-equat}
 
+\index{rayTracing!zernikeS!surface}
 <<zernikeS functions>>=
 void zernikeS::surface(rtd *d__S, rtd *d__r, rtd *d__o, const int N)
 {
@@ -2786,6 +2861,7 @@ void zernikeS::surface(rtd *d__S, rtd *d__r, rtd *d__o, const int N)
     surface_kern LLL gridDim, blockDim RRR (d__S, d__r, d__o, N, max_n, d__a);
 }
 @ 
+\index{rayTracing!zernikeS!surface}
 <<zernikeS functions>>=
 void zernikeS::surface(rtd *d__S, rtd *d__r, rtd *d__o, const int N, int surf_id)
 {
@@ -2809,6 +2885,7 @@ __global__ void surface_kern(rtd *S, rtd *r, rtd *o, const int N,
   }
 }
 @ where
+\index{rayTracing!zernikeS!zernike\_surface}
 <<zernike surface equation>>=
 __host__ __device__ rtd zernike_surface(rtd r, rtd o, int max_n, rtd *a)
 {
@@ -2971,6 +3048,7 @@ with
 \end{equation}
 
 The x and y derivatives of the Zernike surface are computed with
+\index{rayTracing!zernikeS!surface\_derivatives}
 <<zernikeS functions>>=
 void zernikeS::surface_derivatives(rtd *d__dSdx, rtd *d__dSdy, 
 				   rtd *d__r, rtd *d__o, const int N)
@@ -3031,6 +3109,7 @@ The projection $a_i$ of a wavefront phase $\varphi$ onto a Zernike polynomial is
   a_i = { \sum_k \varphi\left( \vec r_k \right) Z_i\left( \vec r_k \right) \over \sum_k \left| Z_i\left( \vec r_k \right) \right|^2 }
 \end{equation}
 @ 
+\index{rayTracing!zernikeS!projection}
 <<zernikeS functions>>=
 void zernikeS::projection(float *d__phase, rtd *d__r, rtd *d__o, const int N)
 {
@@ -3071,6 +3150,7 @@ __global__ void projection_kern(rtd *a, float *phase, rtd *r, rtd *o, const int 
 \section{Aperture}
 \label{sec:aperture}
 
+\index{rayTracing!aperture}
 An aperture is a bounded surface used to clip a bundle of ray to the aperture shape.
 <<aperture structure>>=
 struct aperture {
@@ -3106,6 +3186,7 @@ coordinate_system ref_frame;
 An aperture is initialized with:
 \begin{itemize}
 \item for a circular aperture,
+\index{rayTracing!aperture!setup}
 <<aperture functions>>=
 void aperture::setup(float _D_, int _D_px_, 
 		     vector _origin_, vector _euler_angles_) 
@@ -3118,6 +3199,7 @@ void aperture::setup(float _D_, int _D_px_,
   ref_frame.setup(_origin_, _euler_angles_);
 }
 @  \item for an annular aperture,
+\index{rayTracing!aperture!setup}
 <<aperture functions>>=
 void aperture::setup(float _D_, float _ri_, int _D_px_, 
 		     vector _origin_, vector _euler_angles_) 
@@ -3131,6 +3213,7 @@ void aperture::setup(float _D_, float _ri_, int _D_px_,
 }
 @
 \item for an aperture with [[N_segment]] circular segment of diameter [[D_seg]], each segment with a different coordinate system,
+\index{rayTracing!aperture!setup}
 <<aperture functions>>=
 void aperture::setup(float _D_, float _ri_, float _D_seg_, int _D_px_, 
 		     vector *_origin_, vector *_euler_angles_, int N_segment)
@@ -3147,6 +3230,7 @@ void aperture::setup(float _D_, float _ri_, float _D_seg_, int _D_px_,
 \end{itemize}
 
 The memory is freed with
+\index{rayTracing!aperture!cleanup}
 <<aperture functions>>=
 void aperture::cleanup(void)
 {
@@ -3156,6 +3240,7 @@ void aperture::cleanup(void)
 }
 @ 
 The vignetting of the rays are done with
+\index{rayTracing!aperture!vignetting}
 <<aperture functions>>=
 void aperture::vignetting(bundle *rays)
 {

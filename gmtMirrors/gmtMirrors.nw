@@ -1,5 +1,6 @@
 % -*- mode: Noweb; noweb-code-mode: c-mode -*-
 @
+\index{gmtMirrors}
 \section{The files}
 \label{sec:files}
 
@@ -42,6 +43,7 @@
 \subsection{Python}
 \label{sec:python}
 
+\index{gmtMirrors!python}
 <<gmtMirrors.pxd>>=
 from numpy cimport ndarray
 from utilities cimport cuFloatArray
@@ -52,8 +54,7 @@ cdef extern from "gmtMirrors.h":
 <<gmtMirrors.pxd contents>>
 <<class definitions>>
 @ 
-\subsubsection{GMT M1}
-\label{sec:gmt-m1-1}
+\index{gmtMirrors!python!GmtMirrors}
 
 <<gmtMirrors.pxd contents>>=
     cdef cppclass gmt_m1:
@@ -195,6 +196,10 @@ u
         self.M2.reset()
         self.M2.zernike.reset()
 @
+\subsubsection{GMT M1}
+\label{sec:gmt-m1-1}
+
+\index{gmtMirrors!python!GMT\_M1}
 <<class definitions>>=
 cdef class GMT_M1:
     cdef gmt_m1 *_c_gmt_m12
@@ -440,6 +445,7 @@ cdef:
 \subsubsection{GMT M2}
 \label{sec:gmt-m2-1}
 
+\index{gmtMirrors!python!GMT\_M2}
 <<gmtMirrors.pxd contents>>=
     cdef cppclass gmt_m2:
         <<python GMT M12 functions>>
@@ -488,6 +494,7 @@ cdef class GMT_M2:
 \section{GMT M1}
 \label{sec:gmt-m1}
 
+\index{gmtMirrors!gmt\_m1}
 A new structure to hold GMT M1 and M2 parameters and functions is defined.
 <<GMT M1 structure>>=
 struct gmt_m1 {
@@ -636,6 +643,7 @@ The center of the peripheral segments are evenly located on a circle of radius 8
 The peripheral segments also tilted inwards by 13.522 degrees.
 The [[GMT_M1]] structure is initialized with the size of the square array containing M1 in meter and pixel.
 The size must be 25.5m or more to contain M1 fully.
+\index{gmtMirrors!gmt\_m1!setup}
 <<GMT M1 functions>>=
 void gmt_m1::setup(float _D_, int _D_px_)
 {
@@ -645,6 +653,7 @@ void gmt_m1::setup(float _D_, int _D_px_)
   <<M1 surface density calibration>>
 }
 @ or
+\index{gmtMirrors!gmt\_m1!setup}
 <<GMT M1 functions>>=
 void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_)
 {
@@ -673,6 +682,7 @@ void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_)
  idx_offset = 0;
 @  
 If an array of sources is propagated through the telescope then
+\index{gmtMirrors!gmt\_m1!setup}
 <<GMT M1 functions>>=
 void gmt_m1::setup(float _D_, int _D_px_, int N_SRC)
 {
@@ -682,6 +692,7 @@ void gmt_m1::setup(float _D_, int _D_px_, int N_SRC)
   <<M1 surface density calibration>>
 }
 @ or
+\index{gmtMirrors!gmt\_m1!setup}
 <<GMT M1 functions>>=
 void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
 {
@@ -990,6 +1001,7 @@ and
   \theta &=& \pi{7-2k\over 6}.
 \end{eqnarray}
 
+\index{gmtMirrors!gmt\_m1!edge\_sensors}
 <<GMT M1 functions>>=
 void gmt_m1::edge_sensors(float *x, float *y, float *z, int N, int idx0, int idx_edge_sensor)
 {
@@ -1059,6 +1071,7 @@ __global__ void edge_sensors_kernel(float *x, float *y, float *z, const int N,
 
 
 Memory is freed with
+\index{gmtMirrors!gmt\_m1!cleanup}
 <<GMT M1 functions>>=
 void gmt_m1::cleanup(void)
 {
@@ -1082,6 +1095,7 @@ edge_sensors_CS.cleanup();
 HANDLE_ERROR( cudaFree( d__conic_origin ) );
 @
 The rigid body motion parameters are updated with:
+\index{gmtMirrors!gmt\_m1!update}
 <<GMT M1 functions>>=
 void gmt_m1::update(vector _origin_, vector _euler_angles_,int idx)
 {
@@ -1094,6 +1108,7 @@ motion_CS.update( _origin_, _euler_angles_, --idx);
 //motion_CS.info();
 @ 
 The rigid body motion are reset to 0 with:
+\index{gmtMirrors!gmt\_m1!reset}
 <<GMT M1 functions>>=
 void gmt_m1::reset(void)
 {
@@ -1114,6 +1129,7 @@ for (int k=0; k<N; k++)
 \label{sec:blocking}
 
 The rays blocking with M1 is computed with
+\index{gmtMirrors!gmt\_m1!blocking}
 <<GMT M1 functions>>=
 void gmt_m1::blocking(bundle *rays)
 {
@@ -1184,6 +1200,7 @@ __global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY,
 \label{sec:ray-tracing}
 
 The rays propagation through M1 is computed with
+\index{gmtMirrors!gmt\_m1!trace}
 <<GMT M1 functions>>=
 void gmt_m1::trace(bundle *rays)
 {
@@ -1577,6 +1594,7 @@ M = partial_z_conic_surface();
 
 The track function computes the location of a point of the mirror in the GCS for a given $(x,y)$ coordinate in the conic CS.
 
+\index{gmtMirrors!gmt\_m1!track}
 <<GMT M1 functions>>=
 void gmt_m1::track(float *x, float *y, float *z, int N, int idx)
 {
@@ -1742,7 +1760,8 @@ where $\vec O_R$ is the rotation point.
 	 r2d*motion_CS.euler_angles[k].y,
 	 r2d*motion_CS.euler_angles[k].z);
 */
-
+@ 
+\index{gmtMirrors!gmt\_m1!global\_tiptilt}
 <<GMT M1 functions>>=
 void gmt_m1::global_tiptilt(float tip, float tilt)
 {
@@ -1783,6 +1802,7 @@ for (k=0;k<N;k++)
 \section{GMT M2}
 \label{sec:gmt-m2}
 
+\index{gmtMirrors!gmt\_m2}
 A new structure to hold GMT M1 parameters and functions is defined.
 <<GMT M2 structure>>=
 struct gmt_m2 {
@@ -1795,6 +1815,7 @@ struct gmt_m2 {
 \subsection{Setup \& Cleanup}
 \label{sec:setup--cleanup-2}
 
+\index{gmtMirrors!gmt\_m2!setup}
 <<GMT M2 functions>>=
 void gmt_m2::setup(float _D_, int _D_px_)
 {
@@ -1819,6 +1840,7 @@ void gmt_m2::setup(float _D_, int _D_px_)
  idx_offset = 3;
 @  
 If an array of sources is propagated through the telescope then
+\index{gmtMirrors!gmt\_m2!setup}
 <<GMT M2 functions>>=
 void gmt_m2::setup(float _D_, int _D_px_, int N_SRC)
 {
@@ -1828,6 +1850,7 @@ void gmt_m2::setup(float _D_, int _D_px_, int N_SRC)
   <<GMT setup common>>
 }
 @ 
+\index{gmtMirrors!gmt\_m2!setup}
 <<GMT M2 functions>>=
 void gmt_m2::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
 {
@@ -1838,6 +1861,7 @@ void gmt_m2::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
 }
 @ 
 Memory is freed with
+\index{gmtMirrors!gmt\_m2!cleanup}
 <<GMT M2 functions>>=
 void gmt_m2::cleanup(void)
 {
@@ -1849,6 +1873,7 @@ void gmt_m2::cleanup(void)
 \label{sec:blocking-2}
 
 The rays blocking with M2 is computed with
+\index{gmtMirrors!gmt\_m2!blocking}
 <<GMT M2 functions>>=
 void gmt_m2::blocking(bundle *rays)
 {
@@ -1859,6 +1884,7 @@ void gmt_m2::blocking(bundle *rays)
 \label{sec:ray-tracing-2}
 
 The rays propagation through M1 is computed with
+\index{gmtMirrors!gmt\_m2!trace}
 <<GMT M2 functions>>=
 void gmt_m2::trace(bundle *rays)
 { 
@@ -1866,6 +1892,7 @@ void gmt_m2::trace(bundle *rays)
 }
 @
 The rigid body motion parameters are updated with:
+\index{gmtMirrors!gmt\_m2!update}
 <<GMT M2 functions>>=
 void gmt_m2::update(vector _origin_, vector _euler_angles_,int idx)
 {
@@ -1873,6 +1900,7 @@ void gmt_m2::update(vector _origin_, vector _euler_angles_,int idx)
 }
 @ 
 The rigid body motion are reset to 0 with:
+\index{gmtMirrors!gmt\_m2!reset}
 <<GMT M2 functions>>=
 void gmt_m2::reset(void)
 {
@@ -1882,6 +1910,7 @@ void gmt_m2::reset(void)
 \subsection{Edge sensors}
 \label{sec:edge-sensors-1}
 
+\index{gmtMirrors!gmt\_m2!edge\_sensors}
 <<GMT M2 functions>>=
 void gmt_m2::edge_sensors(float *x, float *y, float *z, int N, int idx0, int idx_edge_sensor)
 {
@@ -1894,6 +1923,7 @@ void gmt_m2::edge_sensors(float *x, float *y, float *z, int N, int idx0, int idx
 \subsection{Global tip--tilt}
 \label{sec:global-tip-tilt-1}
 
+\index{gmtMirrors!gmt\_m2!global\_tiptilt}
 <<GMT M2 functions>>=
 void gmt_m2::global_tiptilt(float tip, float tilt)
 {
@@ -1903,6 +1933,7 @@ void gmt_m2::global_tiptilt(float tip, float tilt)
 \subsubsection{Tip--tilt neutral}
 \label{sec:tip-tilt-neutral}
 
+\index{gmtMirrors!gmt\_m2!pointing\_neutral}
 <<GMT M2 functions>>=
 void gmt_m2::pointing_neutral(float tip, float tilt)
 {
@@ -1938,6 +1969,7 @@ void gmt_m2::pointing_neutral(float tip, float tilt)
 \subsubsection{Coma neutral}
 \label{sec:coma-neutral}
 
+\index{gmtMirrors!gmt\_m2!coma\_neutral}
 <<GMT M2 functions>>=
 void gmt_m2::coma_neutral(float tip, float tilt)
 {
