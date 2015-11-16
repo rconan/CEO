@@ -52,9 +52,9 @@
 <span class="kn">import</span> <span class="nn">math</span>
 <span class="kn">import</span> <span class="nn">numpy</span> <span class="kn">as</span> <span class="nn">np</span>
 <span class="kn">from</span> <span class="nn">scipy.optimize</span> <span class="kn">import</span> <span class="n">brenth</span>
-<span class="kn">from</span> <span class="nn">ceo</span> <span class="kn">import</span> <span class="n">Source</span><span class="p">,</span> <span class="n">GMT_M1</span><span class="p">,</span> <span class="n">GMT_M2</span><span class="p">,</span> <span class="n">ShackHartmann</span>
+<span class="kn">from</span> <span class="nn">ceo</span> <span class="kn">import</span> <span class="n">Source</span><span class="p">,</span> <span class="n">GMT_M1</span><span class="p">,</span> <span class="n">GMT_M2</span><span class="p">,</span> <span class="n">ShackHartmann</span><span class="p">,</span> <span class="n">GmtMirrors</span>
 
-<div class="viewcode-block" id="GMT_MX"><a class="viewcode-back" href="../../index.html#ceo.GMT_MX">[docs]</a><span class="k">class</span> <span class="nc">GMT_MX</span><span class="p">:</span>
+<div class="viewcode-block" id="GMT_MX"><a class="viewcode-back" href="../../index.html#ceo.GMT_MX">[docs]</a><span class="k">class</span> <span class="nc">GMT_MX</span><span class="p">(</span><span class="n">GmtMirrors</span><span class="p">):</span>
     <span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A class container from GMT_M1 and GMT_M2 classes</span>
 
@@ -119,46 +119,10 @@
 <span class="sd">    &gt;&gt;&gt; gpu_ps1d = src.wavefront.phase()</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">D_px</span><span class="p">,</span> <span class="n">M1_radial_order</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">M2_radial_order</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">D</span> <span class="o">=</span> <span class="n">D</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">D_px</span> <span class="o">=</span> <span class="n">D_px</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">M1</span> <span class="o">=</span> <span class="n">GMT_M1</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">D_px</span><span class="p">,</span> <span class="n">radial_order</span><span class="o">=</span><span class="n">M1_radial_order</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">M2</span> <span class="o">=</span> <span class="n">GMT_M2</span><span class="p">(</span><span class="n">D</span><span class="p">,</span> <span class="n">D_px</span><span class="p">,</span> <span class="n">radial_order</span><span class="o">=</span><span class="n">M2_radial_order</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">focal_plane_distance</span> <span class="o">=</span> <span class="o">-</span><span class="mf">5.830</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">focal_plane_radius</span>   <span class="o">=</span>  <span class="mf">2.197173</span>
+        <span class="n">GmtMirrors</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">D</span><span class="p">,</span><span class="n">D_px</span><span class="p">,</span>
+                            <span class="n">M1_radial_order</span><span class="o">=</span><span class="n">M1_radial_order</span><span class="p">,</span>
+                            <span class="n">M2_radial_order</span><span class="o">=</span><span class="n">M2_radial_order</span><span class="p">)</span>
 
-<div class="viewcode-block" id="GMT_MX.propagate"><a class="viewcode-back" href="../../index.html#ceo.GMT_MX.propagate">[docs]</a>    <span class="k">def</span> <span class="nf">propagate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">src</span><span class="p">,</span><span class="n">where_to</span><span class="o">=</span><span class="s">&quot;exit pupil&quot;</span><span class="p">):</span>
-        <span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Propagate the Source object to the pupil plane conjugated to M1</span>
-
-<span class="sd">        Parameters</span>
-<span class="sd">        ----------</span>
-<span class="sd">        src : Source</span>
-<span class="sd">            The Source object</span>
-<span class="sd">        where_to: char, optionnal</span>
-<span class="sd">            Either &quot;exit pupil&quot; or &quot;focal plane&quot;; default: &quot;exit pupil&quot;</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="c">#src.reset()</span>
-        <span class="n">src</span><span class="o">.</span><span class="n">stop</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="p">)</span>
-        <span class="n">src</span><span class="o">.</span><span class="n">trace</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="p">)</span>
-        <span class="n">src</span><span class="o">.</span><span class="n">trace</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="p">)</span>
-<span class="c">#        src.sphere_distance</span>
-<span class="c">#        src.rays.to_sphere(self.sphere_radius,sphere_distance = src.sphere_distance)</span>
-        <span class="k">if</span> <span class="n">where_to</span><span class="o">==</span><span class="s">&quot;exit pupil&quot;</span><span class="p">:</span>
-            <span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">to_sphere</span><span class="p">(</span><span class="n">focal_plane_distance</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">focal_plane_distance</span><span class="p">,</span>
-                               <span class="n">focal_plane_radius</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">focal_plane_radius</span><span class="p">)</span>
-            <span class="n">src</span><span class="o">.</span><span class="n">opd2phase</span><span class="p">()</span>
-        <span class="k">if</span> <span class="n">where_to</span><span class="o">==</span><span class="s">&quot;focal plane&quot;</span><span class="p">:</span>
-            <span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">to_z_plane</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">focal_plane_distance</span><span class="p">)</span>
-</div>
-<div class="viewcode-block" id="GMT_MX.reset"><a class="viewcode-back" href="../../index.html#ceo.GMT_MX.reset">[docs]</a>    <span class="k">def</span> <span class="nf">reset</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
-        <span class="sd">&quot;&quot;&quot;</span>
-<span class="sd">        Reset M1 and M2 mirror segments to their original locations and shapes</span>
-<span class="sd">        &quot;&quot;&quot;</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">zernike</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">zernike</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
-</div>
 <div class="viewcode-block" id="GMT_MX.calibrate"><a class="viewcode-back" href="../../index.html#ceo.GMT_MX.calibrate">[docs]</a>    <span class="k">def</span> <span class="nf">calibrate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">wfs</span><span class="p">,</span><span class="n">gs</span><span class="p">,</span><span class="n">mirror</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">mode</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">stroke</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">segment</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">agws</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">recmat</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
         <span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Calibrate the different degrees of freedom of the  mirrors </span>
@@ -240,7 +204,7 @@
         	    <span class="n">myTTest1</span> <span class="o">+=</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">recmat</span><span class="p">,</span> <span class="n">slopevec</span><span class="p">)</span>
         	    <span class="n">myTTest</span> <span class="o">=</span> <span class="n">myTTest1</span><span class="o">.</span><span class="n">reshape</span><span class="p">((</span><span class="mi">7</span><span class="p">,</span><span class="mi">2</span><span class="p">))</span>
         	    <span class="k">for</span> <span class="n">idx</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">7</span><span class="p">):</span> <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="n">euler_angles</span><span class="o">=</span>
-				<span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([</span><span class="o">-</span><span class="n">myTTest</span><span class="p">[</span><span class="n">idx</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="o">-</span><span class="n">myTTest</span><span class="p">[</span><span class="n">idx</span><span class="p">,</span><span class="mi">1</span><span class="p">],</span><span class="mi">0</span><span class="p">]),</span> <span class="n">idx</span><span class="o">=</span><span class="n">idx</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span>
+				<span class="p">[</span><span class="o">-</span><span class="n">myTTest</span><span class="p">[</span><span class="n">idx</span><span class="p">,</span><span class="mi">0</span><span class="p">],</span><span class="o">-</span><span class="n">myTTest</span><span class="p">[</span><span class="n">idx</span><span class="p">,</span><span class="mi">1</span><span class="p">],</span><span class="mi">0</span><span class="p">],</span> <span class="n">idx</span><span class="o">=</span><span class="n">idx</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span>
             <span class="k">def</span> <span class="nf">get_slopes</span><span class="p">(</span><span class="n">stroke_sign</span><span class="p">):</span>
 		<span class="bp">self</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
                 <span class="n">action</span><span class="p">(</span><span class="n">stroke_sign</span><span class="o">*</span><span class="n">stroke</span><span class="p">)</span>
@@ -579,7 +543,7 @@
 <span class="sd">    &gt;&gt;&gt; D = 25.5</span>
 <span class="sd">    &gt;&gt;&gt; src = ceo.Source(&quot;R&quot;,rays_box_size=D,rays_box_sampling=nPx,rays_origin=[0.0,0.0,25])</span>
 <span class="sd">    &gt;&gt;&gt; gmt = ceo.GMT_MX(D,nPx)</span>
-<span class="sd">    &gt;&gt;&gt; SPS = ceo.SegmentPistonSensor(gmt,src)</span>
+<span class="sd">    &gt;&gt;&gt; SPS = ceo.IdealSegmentPistonSensor(gmt,src)</span>
 <span class="sd">    &gt;&gt;&gt; src.reset()</span>
 <span class="sd">    &gt;&gt;&gt; gmt.propagate(src)</span>
 
@@ -606,8 +570,8 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">rp</span> <span class="o">=</span> <span class="mf">7.543</span>
         <span class="n">xy_rp</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">([[</span><span class="bp">self</span><span class="o">.</span><span class="n">rp</span><span class="p">],[</span><span class="mi">0</span><span class="p">]])</span>
         <span class="c">#print xy_rp</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">W</span> <span class="o">=</span> <span class="mf">1.5</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">L</span> <span class="o">=</span> <span class="mf">1.5</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">W</span> <span class="o">=</span> <span class="n">W</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">L</span> <span class="o">=</span> <span class="n">L</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">M</span> <span class="o">=</span> <span class="p">[]</span>
         <span class="k">for</span> <span class="n">k_SRC</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">N_SRC</span><span class="p">):</span>
             <span class="n">xySrc</span> <span class="o">=</span> <span class="mf">82.5</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span> <span class="p">[[</span><span class="n">src</span><span class="o">.</span><span class="n">zenith</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">]</span><span class="o">*</span><span class="n">math</span><span class="o">.</span><span class="n">cos</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">azimuth</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">])],</span>
