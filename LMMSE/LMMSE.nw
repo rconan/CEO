@@ -1,5 +1,6 @@
 % -*- mode: Noweb; noweb-code-mode: python-mode -*-
 @
+\index{LMMSE}
 \section{The files}
 
 \subsection{Header}
@@ -94,6 +95,7 @@ struct LMMSE {
 \subsection{Python}
 \label{sec:python}
 
+\index{LMMSE!python}
 <<LMMSE.pxd>>=
 from utilities cimport mask
 from atmosphere cimport atmosphere
@@ -125,6 +127,7 @@ cdef class LmmseSH:
     cdef int N_phase
     cdef int N_slope
 @ 
+\index{LMMSE!python!Lmmse}
 <<LMMSE.pyx>>=
 from utilities cimport MaskAbstract, cuFloatArray
 from atmosphere cimport AtmosphereAbstract
@@ -188,7 +191,9 @@ cdef class Lmmse:
             x = cuFloatArray(shape=(self.N_phase,self.N_phase))
             x._c_gpu.dev_data = self._c_LMMSE.d__phase_est
             return x
-
+@ 
+\index{LMMSE!python!LmmseSH}
+<<LMMSE.pyx>>=
 cdef class LmmseSH:
     """
     A class for LMMSE reconstructor
@@ -268,6 +273,7 @@ cdef class LmmseSH:
 \section{Parameters}
 \label{sec:parameters}
 
+\index{LMMSE!LMMSE}
 The parameters are defined in
 <<parameters>>=
 int *d__idx, PS_E_N_PX, N_guide_star, N_mmse_star, offset, N_SIDE_LENSLET_, NP, NS, osf;
@@ -520,6 +526,7 @@ where $H_i$ is the sparse bi--linear interpolation matrix.
 \label{sec:setup--cleanup}
 
 The setup method takes as parameters an atmosphere structure [[atm]], the source structure corresponding to the guide star [[guide_star]], the number of guide star [[_N_guide_star]], the source structure corresponding to the science star [[mmse_star]], the number of science star [[N_mmse_star]], the lenslet pitch [[sampling]], the linear side of the lenslet array [[N_SIDE_LENSLET_]] and the iterative solver name either "CG" or "MINRES":
+\index{LMMSE!LMMSE!setup}
 <<setup>>=
 void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
 		  float sampling, int _N_SIDE_LENSLET_, char *solver_id)
@@ -529,6 +536,7 @@ void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
   <<setup common>>
 }
 @ with a pupil:
+\index{LMMSE!LMMSE!setup}
 <<setup with pupil>>=
 void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
 		       float sampling, int _N_SIDE_LENSLET_,
@@ -539,6 +547,7 @@ osf = 1; // The wavefront over-sampling factor (1 means the same sampling that t
 <<setup common with pupil>>
 }
 @ with a pupil and the wavefront over--sampling factor:
+\index{LMMSE!LMMSE!setup}
 <<setup with pupil and osf>>=
 void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
 		       float sampling, int _N_SIDE_LENSLET_,
@@ -549,6 +558,7 @@ osf = wavefront_osf; // The wavefront over-sampling factor (1 means the same sam
 <<setup common with pupil>>
 }
 @ with a Shack--Hartmann:
+\index{LMMSE!LMMSE!setup}
 <<setup with shackHartmann>>=
 void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
 		       shackHartmann *wfs, char *solver_id)
@@ -561,6 +571,7 @@ osf = 1; // The wavefront over-sampling factor (1 means the same sampling that t
 <<setup common with pupil>>
 }
 @ with a Shack--Hartmann and oversampling the estimated wavefront:
+\index{LMMSE!LMMSE!setup}
 <<setup with shackHartmann and osf>>=
 void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
 		       shackHartmann *wfs, char *solver_id, 
@@ -669,6 +680,7 @@ aa.setup(N_SIDE_LENSLET_,atm,sampling,guide_star, N_guide_star);
 aaCov.setup(2*N_guide_star,2*N_guide_star,N_SIDE_LENSLET_,aa.d__cov);
 @
 Memory is freed with
+\index{LMMSE!LMMSE!cleanup}
 <<cleanup>>= 
 void LMMSE::cleanup(void)
 {
@@ -703,12 +715,14 @@ void LMMSE::cleanup(void)
 @
 \subsection{Wavefront estimation}
 
+\index{LMMSE!LMMSE!estimation}
 <<wavefront estimation>>=
 void LMMSE::estimation(const centroiding *cog)
 {
   <<wavefront estimation (common)>>
 }
 @ 
+\index{LMMSE!LMMSE!estimation}
 <<wavefront estimation (shackHartmann)>>=
 void LMMSE::estimation(shackHartmann *wfs)
 {
@@ -1021,6 +1035,7 @@ HANDLE_ERROR( cudaFree( d__phase_est_i ) );
 \label{sec:inputoutput}
 
 The next routine sets the phase estimate pointer to a device memory address:
+\index{LMMSE!LMMSE!set\_phase\_est\_ptr}
 <<phase estimate pointer>>=
 void LMMSE::set_phase_est_ptr(float *data_ptr)
 {
@@ -1031,7 +1046,7 @@ else
 }
 
 @ The phase estimate is written to a file with:
-<<phase estimate pointer>>=
+\index{LMMSE!LMMSE!toFile}
 <<phase estimate to file>>=
 void LMMSE::toFile(const char *filename){
   dev2file(filename,d__phase_est,NP*NP);
