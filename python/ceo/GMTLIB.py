@@ -2,9 +2,9 @@ import sys
 import math
 import numpy as np
 from scipy.optimize import brenth
-from ceo import Source, GMT_M1, GMT_M2, ShackHartmann
+from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GmtMirrors
 
-class GMT_MX:
+class GMT_MX(GmtMirrors):
     """
     A class container from GMT_M1 and GMT_M2 classes
 
@@ -69,45 +69,9 @@ u
     >>> gpu_ps1d = src.wavefront.phase()
     """
     def __init__(self, D, D_px, M1_radial_order=0, M2_radial_order=0):
-        self.D = D
-        self.D_px = D_px
-        self.M1 = GMT_M1(D, D_px, radial_order=M1_radial_order)
-        self.M2 = GMT_M2(D, D_px, radial_order=M2_radial_order)
-        self.focal_plane_distance = -5.830
-        self.focal_plane_radius   =  2.197173
-
-    def propagate(self,src,where_to="exit pupil"):
-        """
-        Propagate the Source object to the pupil plane conjugated to M1
-
-        Parameters
-        ----------
-        src : Source
-            The Source object
-        where_to: char, optionnal
-            Either "exit pupil" or "focal plane"; default: "exit pupil"
-        """
-        #src.reset()
-        src.stop(self.M2)
-        src.trace(self.M1)
-        src.trace(self.M2)
-#        src.sphere_distance
-#        src.rays.to_sphere(self.sphere_radius,sphere_distance = src.sphere_distance)
-        if where_to=="exit pupil":
-            src.rays.to_sphere(focal_plane_distance=self.focal_plane_distance,
-                               focal_plane_radius=self.focal_plane_radius)
-            src.opd2phase()
-        if where_to=="focal plane":
-            src.rays.to_z_plane(self.focal_plane_distance)
-
-    def reset(self):
-        """
-        Reset M1 and M2 mirror segments to their original locations and shapes
-        """
-        self.M1.reset()
-        self.M1.zernike.reset()
-        self.M2.reset()
-        self.M2.zernike.reset()
+        GmtMirrors.__init__(self,D,D_px,
+                            M1_radial_order=M1_radial_order,
+                            M2_radial_order=M2_radial_order)
 
     def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,agws=None,recmat=None):
         """
@@ -190,7 +154,7 @@ u
         	    myTTest1 += np.dot(recmat, slopevec)
         	    myTTest = myTTest1.reshape((7,2))
         	    for idx in range(7): self.M2.update(euler_angles=
-				np.array([-myTTest[idx,0],-myTTest[idx,1],0]), idx=idx+1)
+				[-myTTest[idx,0],-myTTest[idx,1],0], idx=idx+1)
             def get_slopes(stroke_sign):
 		self.reset()
                 action(stroke_sign*stroke)
@@ -487,7 +451,7 @@ class TT7(ShackHartmann):
         self.c7 = np.concatenate((np.dot(c[0,:nvl],self.M)/w,
                                   np.dot(c[0,nvl:],self.M)/w))
 
-class SegmentPistonSensor:
+class IdealSegmentPistonSensor:
     """
     A class for the GMT segment piston sensor
 
@@ -529,7 +493,7 @@ class SegmentPistonSensor:
     >>> D = 25.5
     >>> src = ceo.Source("R",rays_box_size=D,rays_box_sampling=nPx,rays_origin=[0.0,0.0,25])
     >>> gmt = ceo.GMT_MX(D,nPx)
-    >>> SPS = ceo.SegmentPistonSensor(gmt,src)
+    >>> SPS = ceo.IdealSegmentPistonSensor(gmt,src)
     >>> src.reset()
     >>> gmt.propagate(src)
 
@@ -556,8 +520,8 @@ class SegmentPistonSensor:
         self.rp = 7.543
         xy_rp = np.array([[self.rp],[0]])
         #print xy_rp
-        self.W = 1.5
-        self.L = 1.5
+        self.W = W
+        self.L = L
         self.M = []
         for k_SRC in range(src.N_SRC):
             xySrc = 82.5*np.array( [[src.zenith[k_SRC]*math.cos(src.azimuth[k_SRC])],

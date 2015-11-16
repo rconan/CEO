@@ -1,6 +1,7 @@
 % -*- mode: Noweb; noweb-code-mode: python-mode -*-
 @
 [[aaStats]] contains a structure and the routines to compute the covariance matrix of the angle--of--arrival.
+\index{aaStats}
 
 \section{The files}
 
@@ -112,9 +113,11 @@ struct paStats {
 \subsection{Python}
 \label{sec:python}
 
+\index{aaStats!python}
 <<aaStats.pxd>>=
-from atmosphere cimport atmosphere
-from source cimport source
+from utilities cimport cuFloatArray
+from atmosphere cimport atmosphere, AtmosphereAbstract
+from source cimport source, Source
 # aaStats
 cdef extern from "aaStats.h":
     cdef cppclass aaStats:
@@ -136,13 +139,13 @@ cdef extern from "aaStats.h":
 <<class definitions>>=
 cdef class AaStats:
     cdef aaStats *_c_aaStats
+    cdef cuFloatArray cov
 cdef class PaStats:
     cdef paStats *_c_paStats
+    cdef cuFloatArray cov
 @
+\index{aaStats!python!AaStats}
 <<aaStats.pyx>>=
-from utilities cimport cuFloatArray
-from atmosphere cimport AtmosphereAbstract
-from source cimport Source
 # aaStats
 cdef class AaStats:
     """
@@ -164,14 +167,13 @@ cdef class AaStats:
         self._c_aaStats = new aaStats()
         self._c_aaStats.setup(N_SIDE_LENSLET, atm._c_atmosphere, lenslet_pitch, 
                               src._c_source, src._c_source.N_SRC)
+        self.cov = cuFloatArray(shape=(self._c_aaStats.N_SRC2*4*self._c_aaStats.NU,self._c_aaStats.NU))
+        self.cov._c_gpu.dev_data = self._c_aaStats.d__cov
     def __dealloc__(self):
         self._c_aaStats.cleanup()
-
-    property cov:
-        def __get__(self):
-            x = cuFloatArray(shape=(self._c_aaStats.N_SRC2*4*self._c_aaStats.NU,self._c_aaStats.NU))
-            x._c_gpu.dev_data = self._c_aaStats.d__cov
-            return x
+@
+\index{aaStats!python!PaStats}
+<<aaStats.pyx>>=
 # paStats
 cdef class PaStats:
     """
@@ -185,17 +187,11 @@ cdef class PaStats:
         self._c_paStats.setup(M, N, osf, atm._c_atmosphere, lenslet_pitch,
                               phase_src._c_source, phase_src._c_source.N_SRC,
                               slopes_src._c_source, slopes_src._c_source.N_SRC )
+        self.cov = cuFloatArray(shape=(self._c_paStats.N_SRC2*2*self._c_paStats.NU2,1))
+        self.cov._c_gpu.dev_data = self._c_paStats.d__cov
 
     def __dealloc__(self):
         self._c_paStats.cleanup() 
-
-    property cov:
-        def __get__(self):
-            #print self._c_paStats.N_SRC2
-            #print self._c_paStats.NU2
-            x = cuFloatArray(shape=(self._c_paStats.N_SRC2*2*self._c_paStats.NU2,1))
-            x._c_gpu.dev_data = self._c_paStats.d__cov
-            return x
 @
 \section{The theory}
 
@@ -277,6 +273,7 @@ int *M_LAYER;
 \section{Angle--of--arrival covariance matrix functions}
 \label{sec:aa-functions}
 
+\index{aaStats!aaStats}
 The covariance matrix is computed for a square lenslet array of size $[[N]]\times[[N]]$ and of pitch [[sampling]].
 The covariance matrix depends on the atmosphere parameters and altitude profile.
 The covariance matrix is computed for a vector of [[N_SRC]] sources.
@@ -319,6 +316,7 @@ Finally the Toeplitz compressed version of the matrix $\Theta$ is written:
 \subsection{Setup \& Cleanup}
 \label{sec:setup--cleanup}
 
+\index{aaStats!aaStats!setup}
 <<aaStats setup>>=
 void aaStats::setup(int N_, const atmosphere *atm, float lenslet_pitch, 
 		    const source *src, int N_SRC)
@@ -594,6 +592,7 @@ __global__ void covariance_extraction(float *cov_out, int NC_out,
 }
 
 @ The memory is freed with the following routine: 
+\index{aaStats!aaStats!cleanup}
 <<aaStats cleanup>>=
 void aaStats::cleanup(void)
 {
@@ -616,6 +615,7 @@ free(cov);
 \label{sec:inputoutput}
 
 The main parameters of [[aaStats]] are displayed with the [[info]] routine:
+\index{aaStats!aaStats!info}
 <<aaStats info>>=
 void aaStats::info(int kappa, float d)
 {
@@ -631,6 +631,7 @@ fprintf(stdout," . covariance oversampling factor : %d\n",kappa);
 fprintf(stdout," . spectrum highest frequency     : %4.2E\n",(2.0/NF)*(kappa/(2*d)));
 
 @ The covariance can be written to a file with:
+\index{aaStats!aaStats!toFile}
 <<save aa covariance to file>>=
 void aaStats::toFile(char *filename)
 {
@@ -642,6 +643,7 @@ void aaStats::toFile(char *filename)
 \label{sec:miscellaneous}
 
 From the power spectrum, once can derive the variance:
+\index{aaStats!aaStats!variance}
 <<aaStats variance>>=
 float aaStats::variance(void) {
   float res;
@@ -654,6 +656,7 @@ float aaStats::variance(void) {
 \section{Phase and Angle--of--arrival covariance matrix functions}
 \label{sec:pa-functions}
 
+\index{aaStats!paStats}
 The covariance matrix is defined for a square lenslet array of size $N_L\times N_L$ and of pitch [[sampling]].
 %The covariance sampling is set with the over--sampling factor [[osf]]. 
 The covariance matrix depends on the atmosphere parameters and altitude profile.
@@ -696,6 +699,7 @@ Finally the Toeplitz compressed version of the matrix $\Xi$ is written:
 \subsection{Setup \& Cleanup}
 \label{sec:setup--cleanup-1}
 
+\index{aaStats!paStats!setup}
 <<paStats setup>>=
 void paStats::setup(int M_, int N_, int osf_, 
 		      const atmosphere *atm, float lenslet_pitch, 
@@ -1098,6 +1102,7 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
 }
 @ 
 The memory is freed with the following routine:
+\index{aaStats!paStats!cleanup}
 <<paStats cleanup>>=
 void paStats::cleanup(void)
 {
@@ -1110,6 +1115,7 @@ free(M_LAYER);
 \label{sec:inputoutput-1}
 
 The main parameters of [[paStats]] are displayed with the info routine: 
+\index{aaStats!paStats!info}
 <<paStats info>>=
 void paStats::info(int kappa, float d)
 {
@@ -1120,6 +1126,7 @@ void paStats::info(int kappa, float d)
 }
 @
 The [[paStats]] covariance can be written to a file with:
+\index{aaStats!paStats!toFile}
 <<save pa covariance to file>>=
 void paStats::toFile(char *filename)
 {

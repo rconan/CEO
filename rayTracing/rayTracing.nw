@@ -1,9 +1,10 @@
 % -*- mode: Noweb; noweb-code-mode: c-mode -*-
 
+\index{rayTracing}
 The ray tracing method involves 4 steps \cite{}:
 \begin{enumerate}
 \item the ray coordinates are transformed into the coordinate system of the surface their interact with,
-\item the intersection of the ray with the surface is found,
+\item he intersection of the ray with the surface is found,
 \item the directions of the ray after the surface is computed according to Snell''s law,
 \item the coordinates and directions of the ray is transformed back into its original coordinate systems
 \end{enumerate}
@@ -50,9 +51,7 @@ int zern_dy_coef(rtd *b,int j, int n, int m, int jp, int np, int mp);
 <<conic equations>>
 
 <<aperture structure>>
-
-<<GMT M1 structure>>
-<<GMT M2 structure>>
+__global__ void intersection(char *mask, ray *d__ray, int N_RAY);
 
 __host__ __device__  void forward_transform(vector *v_out, vector *v_in,
 				   rtd *d__R, vector *d__origin);
@@ -83,12 +82,7 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 <<bundle reset kernel>>
 <<zernike surface kernel>>
 <<zernike projection kernel>>
-<<GMT chief ray tracing kernel>>
-<<GMT ray tracing kernel>>
-<<GMT blocking kernel>>
-<<GMT aperture intersection>>
-<<GMT track kernel>>
-<<GMT edge sensors kernel>>
+<<aperture intersection>>
 
 <<ray bundle functions>>
 
@@ -105,12 +99,12 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 <<vignetting kernel>>
 <<aperture functions>>
 
-<<GMT M1 functions>>
-<<GMT M2 functions>>
 
 @ 
 \subsection{Python}
 \label{sec:python}
+
+\index{rayTracing!python}
 
 <<rayTracing.pxd>>=
 cdef extern from "rayTracing.h":
@@ -134,6 +128,9 @@ from utilities cimport cuDoubleArray
 @
 \subsubsection{Ray bundle}
 \label{sec:ray-bundle-1}
+
+\index{rayTracing!python!Bundle}
+
 <<rayTracing.pxd contents>>=
     cdef cppclass bundle:
         int N_RAY, N_BUNDLE
@@ -314,7 +311,7 @@ def ee80(self,spaxel="circle"):
 
     Parameters
     ----------
-    spaxel : char, optionnal
+    spaxel : char, optional
         The spaxel geometry, square or circle; default: circle
 
     Returns
@@ -400,6 +397,8 @@ property piston_mask:
 \subsubsection{Coordinate system}
 \label{sec:coordinate-system-1}
 
+\index{rayTracing!python!Coordinate\_system}
+
 <<rayTracing.pxd contents>>=
     cdef cppclass coordinate_system:
         vector *origin
@@ -407,7 +406,6 @@ property piston_mask:
         rtd *R
         char *tag
         void update()
-@ 
 <<class definitions>>=
 cimport numpy as np
 cdef class Quaternion:
@@ -425,7 +423,117 @@ cdef class Coordinate_system:
         public Coordinates origin, euler_angles
         public bytes tag
     cdef void init(Coordinate_system, coordinate_system *)
-@ 
+@
+<<rayTracing.pyx>>=
+# coordinate_system
+cdef class Coordinate_system:
+    """
+    A class for the coordinate system origins and euler angles
+
+    Attributes
+    ----------
+    N : int
+        The number of coordinate systems
+    origin : Coordinates
+        The origin of the coordinate system(s)
+    euler_angles : Coordinates
+        The euler angles of the coordinates system(s)
+    R : ndarray
+        The rotation natrix of the coordinate systems as a [N,3,3] array
+    """
+
+    def __cinit__(self, int N=1):
+        self.N = N
+        self._c_coordinate_system = new coordinate_system()
+        self.origin = Coordinates((self.N,3))
+        self.euler_angles = Coordinates((self.N,3))
+
+    cdef void init(self, coordinate_system *cs):
+        self._c_coordinate_system = cs
+        self.origin.v = cs.origin
+        self.euler_angles.v = cs.euler_angles
+        self.tag = cs.tag
+
+    def update(self):
+        """
+        Updates the coordinate systems on the device
+        """
+        self._c_coordinate_system.update()
+
+    property R:
+        def __get__(self):
+            self._R_ = <double[:self.N,:3,:3]>self._c_coordinate_system.R
+            return np.array(self._R_)
+@
+\paragraph{Coordinates}
+\label{sec:coordinates}
+
+\index{rayTracing!python!Coordinates}
+
+<<rayTracing.pyx>>=
+# Coordinates
+cdef class Coordinates:
+    """
+    An interface between an array of coordinate vectors and an array of coordinates
+
+    Examples
+    --------
+    >>> import ceo
+    >>> gmt = ceo.GMT_MX(25.5,256, M1_radial_order=8, M2_radial_order=14)
+
+    The origin of M1 segment in the motion coordinate system is a Coordinates object
+
+    >>> print gmt.M1.motion_CS.origin
+
+    to retrieve the origin values:
+
+    >>> print gmt.M1.motion_CS.origin[:]
+
+    Segment 1 is moved along the y-axis of 1mm:
+
+    >>> gmt.M1.motion_CS.origin[0,1] = 1e-3
+
+    All the segments are resetted to their nominal position with
+
+    gmt.M1.motion_CS.origin[:] = 0
+    """
+    def __cinit__(self,tuple shape):
+        self.data =  np.zeros(shape, dtype=np.float64)
+
+    def __getitem__(self,index):
+        cdef int k
+        for k in range(self.data.shape[0]):
+            self.data[k,0] = self.v[k].x
+            self.data[k,1] = self.v[k].y
+            self.data[k,2] = self.v[k].z
+        return np.array( self.data.__getitem__(index) )
+
+    def __setitem__(self,index,value):
+        self.data.__setitem__(index,np.array(value))
+        cdef int k
+        for k in range(self.data.shape[0]):
+            self.v[k].x = self.data[k,0]
+            self.v[k].y = self.data[k,1]
+            self.v[k].z = self.data[k,2]
+
+    def __repr__(self):
+        data = np.array(self.data)
+        return data.__repr__()
+
+    def __str__(self):
+        max_abs_data = np.max(np.abs(self.data))
+        if  max_abs_data!=0:
+            exp = -np.floor(np.log10(max_abs_data))
+        else:
+            exp = 0
+        s = np.array_str(np.asarray(self.data)*(10**exp),precision=2,suppress_small=True)
+        return "@(CEO)>Coordinates:\nX,Y,Z coordinates in meter: 10^%dX\n"%exp + s
+@
+\paragraph{Quaternions}
+\label{sec:quaternions}
+
+\index{rayTracing!python!Quaternions}
+
 <<rayTracing.pyx>>=
 # Quaternion
 cdef class Quaternion:
@@ -549,107 +657,11 @@ cdef class Quaternion:
             "\nqx:" + np.array_str(self.qx,precision=3,suppress_small=True) + \
             "\nqy:" + np.array_str(self.qy,precision=3,suppress_small=True) + \
             "\nqz:" + np.array_str(self.qz,precision=3,suppress_small=True)
-        
-# Coordinates
-cdef class Coordinates:
-    """
-    An interface between an array of coordinate vectors and an array of coordinates
-
-    Examples
-    --------
-    >>> import ceo
-    >>> gmt = ceo.GMT_MX(25.5,256, M1_radial_order=8, M2_radial_order=14)
-
-    The origin of M1 segment in the motion coordinate system is a Coordinates object
-
-    >>> print gmt.M1.motion_CS.origin
-
-    to retrieve the origin values:
-
-    >>> print gmt.M1.motion_CS.origin[:]
-
-    Segment 1 is moved along the y-axis of 1mm:
-
-    >>> gmt.M1.motion_CS.origin[0,1] = 1e-3
-
-    All the segments are resetted to their nominal position with
-
-    gmt.M1.motion_CS.origin[:] = 0
-    """
-    def __cinit__(self,tuple shape):
-        self.data =  np.zeros(shape, dtype=np.float64)
-
-    def __getitem__(self,index):
-        cdef int k
-        for k in range(self.data.shape[0]):
-            self.data[k,0] = self.v[k].x
-            self.data[k,1] = self.v[k].y
-            self.data[k,2] = self.v[k].z
-        return np.array( self.data.__getitem__(index) )
-
-    def __setitem__(self,index,value):
-        self.data.__setitem__(index,value)
-        cdef int k
-        for k in range(self.data.shape[0]):
-            self.v[k].x = self.data[k,0]
-            self.v[k].y = self.data[k,1]
-            self.v[k].z = self.data[k,2]
-
-    def __repr__(self):
-        data = np.array(self.data)
-        return data.__repr__()
-
-    def __str__(self):
-        max_abs_data = np.max(np.abs(self.data))
-        if  max_abs_data!=0:
-            exp = -np.floor(np.log10(max_abs_data))
-        else:
-            exp = 0
-        s = np.array_str(np.asarray(self.data)*(10**exp),precision=2,suppress_small=True)
-        return "@(CEO)>Coordinates:\nX,Y,Z coordinates in meter: 10^%dX\n"%exp + s
-
-# coordinate_system
-cdef class Coordinate_system:
-    """
-    A class for the coordinate system origins and euler angles
-
-    Attributes
-    ----------
-    N : int
-        The number of coordinate systems
-    origin : Coordinates
-        The origin of the coordinate system(s)
-    euler_angles : Coordinates
-        The euler angles of the coordinates system(s)
-    R : ndarray
-        The rotation natrix of the coordinate systems as a [N,3,3] array
-    """
-
-    def __cinit__(self, int N=1):
-        self.N = N
-        self._c_coordinate_system = new coordinate_system()
-        self.origin = Coordinates((self.N,3))
-        self.euler_angles = Coordinates((self.N,3))
-
-    cdef void init(self, coordinate_system *cs):
-        self._c_coordinate_system = cs
-        self.origin.v = cs.origin
-        self.euler_angles.v = cs.euler_angles
-        self.tag = cs.tag
-
-    def update(self):
-        """
-        Updates the coordinate systems on the device
-        """
-        self._c_coordinate_system.update()
-
-    property R:
-        def __get__(self):
-            self._R_ = <double[:self.N,:3,:3]>self._c_coordinate_system.R
-            return np.array(self._R_)
 @
 \subsubsection{Conic surface}
 \label{sec:surface-1}
+
+\index{rayTracing!python!Conic}
 
 <<rayTracing.pxd contents>>=
     cdef cppclass conic:
@@ -688,6 +700,8 @@ cdef class Conic:
 \subsubsection{Aperture}
 \label{sec:aperture-1}
 
+\index{rayTracing!python!Aperture}
+
 <<rayTracing.pxd contents>>=
     cdef cppclass aperture:
         coordinate_system ref_frame
@@ -724,6 +738,8 @@ cdef class Aperture:
 \subsubsection{Zernike}
 \label{sec:zernike}
 
+\index{rayTracing!python!ZernikeS}
+
 <<rayTracing.pxd contents>>=
     cdef cppclass zernikeS:
           rtd *a
@@ -758,13 +774,13 @@ cdef class ZernikeS:
     ----------
     max_n : int
         The largest of the radial orders
-    a : ndarray, optionnal
+    a : ndarray, optional
         The Zernike polynomial coefficients as a N_SURFxn_modes array; default to all 0
-    N_SURF : int, optionnal
+    N_SURF : int, optional
         The number of Zernike surfaces; default: 1
-    origin : list, optionnal
+    origin : list, optional
         Origin of the coordinate system of the Zernike polynomials; default: [0,0,0]
-    euler_angles : list, optionnal
+    euler_angles : list, optional
         Euler angles of the coordinate system of the Zernike polynomials; default: [0,0,0]
 
     Attributes
@@ -866,7 +882,7 @@ cdef class ZernikeS:
             The normalized radius
         o : cuDoubleArray
             The azimuth
-        surf_id : int, optionnal
+        surf_id : int, optional
             The surface index; default: 0
 
         Returns
@@ -926,330 +942,7 @@ def Zernike_Surface(rtd r, rtd o, int max_n, np.ndarray a):
     return zernike_surface(r, o, max_n, <rtd *>a.data)
 
 @
-\subsubsection{GMT M1}
-\label{sec:gmt-m1-1}
 
-<<rayTracing.pxd contents>>=
-    cdef cppclass gmt_m1:
-        void test_ray_tracing()
-        <<python GMT M12 functions>>
-        void track(float *, float *, float *, int, int)
-@  where
-<<python GMT M12 functions>>=
-int M_ID
-rtd D_assembly, D_full, D_clear, L, conic_c, conic_k
-coordinate_system aperture_CS
-coordinate_system conic_CS
-coordinate_system rigid_body_CS
-coordinate_system motion_CS
-coordinate_system TT_CS
-void setup(float , int )
-void setup(float , int , int)
-void setup(float , int, zernikeS *)
-void setup(float , int, zernikeS *, int)
-void cleanup()
-void update(vector , vector ,int )
-void reset()
-void trace(bundle *)
-void blocking(bundle *)
-void global_tiptilt(float , float )
-void edge_sensors(float *, float *, float *, int, int, int)
-@
-<<class definitions>>=
-cdef class GMT_M1:
-    cdef gmt_m1 *_c_gmt_m12
-    <<GMT M12 class properties>>    
-@
-<<rayTracing.pyx>>=
-# GMT M1
-cdef class GMT_M1:
-    <<GMT M12 docstring>>
-
-    def __cinit__(self, float D, int D_px, int radial_order=0, int N_SRC=1):
-        self._c_gmt_m12 = new gmt_m1()
-        <<GMT M12 constructor>>
-
-    <<GMT M12 methods>>
-
-    def test(self):
-        self._c_gmt_m12.test_ray_tracing();
-
-    def track(self, np.ndarray x, np.ndarray y, np.ndarray z, int segId):
-
-        cdef cuFloatArray gx, gy, gz
-        gx = cuFloatArray( host_data = x )
-        gy = cuFloatArray( host_data = y )
-        gz = cuFloatArray( host_data = z )
-        self._c_gmt_m12.track(gx._c_gpu.dev_data,
-                              gy._c_gpu.dev_data,
-                              gz._c_gpu.dev_data,
-                              x.size, segId)
-        return gx.host(), gy.host(), gz.host()
-@
-<<GMT M12 constructor>>=
-self.zernike = ZernikeS(radial_order,N_SURF=7)
-self._c_gmt_m12.setup(D, D_px, <zernikeS *> self.zernike._c_zernikeS, 0)
-
-self.aperture_CS   = Coordinate_system(7)
-self.conic_CS      = Coordinate_system(7)
-self.motion_CS     = Coordinate_system(7)
-self.rigid_body_CS = Coordinate_system(7)
-self.TT_CS         = Coordinate_system(1)
-
-self.aperture_CS.init(   &(self._c_gmt_m12.aperture_CS)   )
-self.conic_CS.init(      &(self._c_gmt_m12.conic_CS)      )
-self.motion_CS.init(     &(self._c_gmt_m12.motion_CS)     )
-self.rigid_body_CS.init( &(self._c_gmt_m12.rigid_body_CS) )
-self.TT_CS.init(         &(self._c_gmt_m12.TT_CS)         )
-
-@ 
-<<GMT M12 methods>>=
-def __dealloc__(self):
-    self._c_gmt_m12.cleanup()
-
-def trace(self, Bundle rays):
-    """
-    Ray tracing to the mirror
-
-    Parameters
-    ----------
-    rays : Bundle
-        A ray bundle used to propagate the light
-
-    See also
-    --------
-    Bundle: a class representing a bundle of light rays used for geometric propagation
-    """
-    self._c_gmt_m12.trace(rays._c_bundle)
-
-def blocking(self, Bundle rays):
-    """
-    Makes the mirror acting as a stop
-
-    Parameters
-    ----------
-    rays : Bundle
-        A ray bundle used to propagate the light
-
-    See also
-    --------
-    Bundle: a class representing a bundle of light rays used for geometric propagation
-    """
-    self._c_gmt_m12.blocking(rays._c_bundle)
-
-def update(self, list origin=[0.0,0.0,0.0], list euler_angles=[0.0,0.0,0.0], int idx=0):
-    """
-    Updates the position of the mirror segments
-
-    Parameters
-    ----------
-    origin : list of float, optionnal
-        The location of a segment center; default: [0,0,0]
-    euler_angles : list of float, optionnal
-        The tip, tilt and clock angles of a segment; default: [0,0,0]
-    idx : int
-        The segment index from 1 to 7
-    """
-    assert idx>0 and idx<8, "The segment index must be between 1 and 7!"
-    cdef vector __origin
-    __origin.x = <float>origin[0]
-    __origin.y = <float>origin[1]
-    __origin.z = <float>origin[2]
-    cdef vector __euler_angles
-    __euler_angles.x = <float>euler_angles[0]
-    __euler_angles.y = <float>euler_angles[1]
-    __euler_angles.z = <float>euler_angles[2]
-    self._c_gmt_m12.update(__origin, __euler_angles, idx)
-
-def reset(self):
-    """
-    Reset the segments to their original prescription
-    """
-    self.motion_CS.origin[:] = 0.0
-    self.motion_CS.euler_angles[:] = 0.0
-
-def global_tiptilt(self, float tip, float tilt):
-    """
-    Applies a global tip--tilt to M1
-
-    Parameters
-    ----------
-    tip : float
-        The x axis angle
-    tilt : float
-        The y axis angle
-    """
-    self._c_gmt_m12.global_tiptilt(tip, tilt);
-
-def edge_sensors(self, double[:] x, double[:] y, double[:] z, int segId0=0, int edgeSensorId=0):
-
-    cdef cuFloatArray gx, gy, gz
-    gx = cuFloatArray( host_data = x )
-    gy = cuFloatArray( host_data = y )
-    gz = cuFloatArray( host_data = z )
-    self._c_gmt_m12.edge_sensors(gx._c_gpu.dev_data,
-                          gy._c_gpu.dev_data,
-                          gz._c_gpu.dev_data,
-                          x.size, segId0, edgeSensorId)
-    return gx.host(), gy.host(), gz.host()
-
-property D_assembly:
-    def __get__(self):
-        return self._c_gmt_m12.D_assembly
-
-property D_full:
-    def __get__(self):
-        return self._c_gmt_m12.D_full
-
-property D_clear:
-    def __get__(self):
-        return self._c_gmt_m12.D_clear
-
-property L:
-    def __get__(self):
-        return self._c_gmt_m12.L
-
-property conic_c:
-    def __get__(self):
-        return self._c_gmt_m12.conic_c
-
-property conic_k:
-    def __get__(self):
-        return self._c_gmt_m12.conic_k
-
-property M_ID:
-    def __get__(self):
-        return self._c_gmt_m12.M_ID
-@ with
-<<GMT M12 docstring>>=
-"""
-A class to represent GMT M1 or M2 segmented mirror
-
-Parameters
-----------
-D : float
-    The size in meter of the pupil plane (must be equal or larger than the telescope diameter)
-D_px : float
-    The size in pxixel of the pupil plane
-radial_order : int, optionnal
-    The radial order of the last Zernike polynomials, default to 0
-
-Attributes
-----------
-D_assembly : rtd
-    The mirror assembly diameter
-D_full : rtd
-    The segment full aperture diameter
-D_clear : rtd
-    The segment clear aperture diameter
-L : rtd
-    The distance from the optical axis to the center of the tilted peripheral segments
-conic_c : rtd
-    The inverse of the mirror radius of curvature
-conic_k : rtd
-    The conic parametert
-M_ID : int
-    The mirror ID #
-zernike : ZernikeS
-    The figure of the segments as Zernike surface object
-aperture_CS : Coordinate_system
-    The segment aperture coordinate system
-conic_CS : Coordinate_system
-    The segment conic coordinate system
-motion_CS : Coordinate_system
-    The segment motion coordinate system
-rigid_body_CS : Coordinate_system
-    The segment rigid body coordinate system
-TT_CS : Coordinate_system
-    The mirror global tip-tilt coordinate system
-
-Examples
---------
->>> import ceo
->>> M1 = ceo.GMT_M1(25.5,101)
-
-With multiple sources:
-
->>> M2 = ceo.GMT_M2(25.5,101,N_SRC=4)
-
-With Zernike modes
-
->>> M1 = ceo.GMT_M1(25.5,101,radial_order=4)
-
-An M1 segment (#2) is displaced in x of 2 micron and tilted in y of 50mas with
-
->>> import math
->>> theta = 50e-3*math.pi/180/3600
->>> M1.update(origin=[2e-6,0,0],euler_angles=[0,theta,0],idx=2)
-
-A global tip-tilt of M1 is achieved with
-
->>> M1.global_tiptilt(theta,-theta)
-
-M2 pointing neutral and coma neutral tip-tilt are realized with
-
->>> M2.pointing_neutral(theta,-theta)
->>> M2.coma_neutral(theta,-theta)
-"""
-@ and with
-<<GMT M12 class properties>>=
-cdef:
-    public ZernikeS zernike
-    public Coordinate_system aperture_CS
-    public Coordinate_system conic_CS
-    public Coordinate_system rigid_body_CS
-    public Coordinate_system motion_CS
-    public Coordinate_system TT_CS
-@ 
-
-\subsubsection{GMT M2}
-\label{sec:gmt-m2-1}
-
-<<rayTracing.pxd contents>>=
-    cdef cppclass gmt_m2:
-        <<python GMT M12 functions>>
-        void pointing_neutral(float, float)
-        void coma_neutral(float, float)
-@
-<<rayTracing.pyx>>=
-# GMT M2
-cdef class GMT_M2:
-    <<GMT M12 docstring>>
-    cdef gmt_m2 *_c_gmt_m12
-    <<GMT M12 class properties>>    
-    
-    def __cinit__(self, float D, int D_px, radial_order=0, int N_SRC=1):
-        self._c_gmt_m12 = new gmt_m2()
-        <<GMT M12 constructor>>
-
-    <<GMT M12 methods>>
-
-    def pointing_neutral(self, float tip, float tilt):
-        """
-        Applies a pointing neutral global tip--tilt to M2
-
-        Parameters
-        ----------
-        tip : float
-            The x axis angle
-        tilt : float
-            The y axis angle
-        """
-        self._c_gmt_m12.pointing_neutral(tip, tilt);
-
-    def coma_neutral(self, float tip, float tilt):
-        """
-        Applies a coma neutral global tip--tilt to M2
-
-        Parameters
-        ----------
-        tip : float
-            The x axis angle
-        tilt : float
-            The y axis angle
-        """
-        self._c_gmt_m12.coma_neutral(tip, tilt);
-@ 
 \section{Custom types}
 \label{sec:custom-types}
 
@@ -1263,18 +956,20 @@ typedef double rtd;
 \subsection{Vector}
 \label{sec:vector}
 
+\index{rayTracing!vector}
+
 A new vector data type is defined 
 <<vector data type>>=
-typedef struct {
+struct vector{
   rtd x;
   rtd y;
   rtd z;
   __host__ __device__ rtd rho2(void);
-  __host__ __device__ rtd rho2(rtd x0, rtd y0);
+  __host__ __device__ rtd rho2_shift(rtd x0, rtd y0);
   __host__ __device__ rtd mag(void);
   __host__ __device__ rtd mag(rtd R);
   __host__ __device__ rtd angle(void);
-} vector;
+};
 @ that represents the 3 coordinates in space of the tip of vector.
 The square of the magnitude of a vector projected in the x,y--plane i.e. $[[x]]^2+[[y]]^2$ is computed with 
 <<vector functions>>=
@@ -1284,7 +979,7 @@ __host__ __device__ rtd vector::rho2(void) {
 @
 The square of the magnitude of a vector projected in the x,y--plane with respect to origin ([[x0]],[[y0]]) i.e. $[[x-x0]]^2+[[y-y0]]^2$ is computed with 
 <<vector functions>>=
-__host__ __device__ rtd vector::rho2(rtd x0, rtd y0) {
+__host__ __device__ rtd vector::rho2_shift(rtd x0, rtd y0) {
   rtd xp, yp;
   xp = x - x0;
   yp = y - y0;
@@ -1309,6 +1004,8 @@ __host__ __device__ rtd vector::mag(rtd R) {
 
 \subsection{Ray}
 \label{sec:ray}
+
+\index{rayTracing!ray}
 
 A type for the rays is also defined:
 <<ray data type>>=
@@ -1345,6 +1042,8 @@ int n_iteration;
 @
 \section{Ray bundle}
 \label{sec:ray-bundle}
+
+\index{rayTracing!bundle}
 
 Collections of rays are gathered into bundles:
 <<ray bundle structure>>=
@@ -1422,6 +1121,7 @@ A ray bundle is specified with either the polar or cartesian coordinates of the 
 The direction cosine are derived from the coordinates of a source object.
 
 The polar coordinates are defined with the sampling of the radius [[N_RADIUS]] from 0 to [[RADIUS]] and with the sampling of the azimuth [[N_THETA]].
+\index{rayTracing!bundle!setup}
 <<ray bundle functions>>=
 void bundle::setup(rtd RADIUS, int _N_RADIUS_, 
 		   int _N_THETA_, vector origin, int N_SRC)
@@ -1517,6 +1217,7 @@ ray_coordinates LLL gridDim , blockDim RRR (d__chief_ray, 1, src->dev_ptr,
 
 @
 The cartesian coordinates are defined with the sampling of the square box length [[N_L]] from $-[[L]]$ to [[L]].
+\index{rayTracing!bundle!setup}
 <<ray bundle functions>>=
   void bundle::setup(rtd _L_, int _N_L_, vector origin, int N_SRC)
 {
@@ -1582,6 +1283,7 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
 }
 @
 Memory is freed with
+\index{rayTracing!bundle!cleanup}
 <<ray bundle functions>>=
 void bundle::cleanup(void) 
 {
@@ -1608,6 +1310,7 @@ The rays are propagated to the plane $z=[[z__plane]]$ with
   y &=& y + s l \\\nonumber
   z &=& [[z_plane]]
 \end{eqnarray}
+\index{rayTracing!bundle!to\_z\_plane}
 <<ray bundle functions>>= 
 void bundle::to_z_plane(rtd z_plane)
 {
@@ -1837,6 +1540,8 @@ __global__ void sphere_radius_kernel(rtd *radius, ray *d__ray, int N_RAY,
 \subsubsection{Spherical focal plane}
 \label{sec:spher-focal-plane}
 
+\index{rayTracing!bundle!to\_sphere}
+
 <<ray bundle functions>>= 
 void bundle::to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane)
 {
@@ -1881,6 +1586,7 @@ to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY,
 \label{sec:refer-sphere-orig}
 
 Given the origin and the radius of the reference sphere, the optical path difference is computed with
+\index{rayTracing!bundle!to\_sphere}
 <<ray bundle functions>>= 
 void bundle::to_sphere(vector sphere_origin)
 {
@@ -1920,6 +1626,7 @@ The coordinates, directions, optical path length and vignetting map are copied i
 <<gathering ray vignetting map kernel>>
 <<OPD nearest neighbor interpolation kernel>>
 @ 
+\index{rayTracing!bundle!get\_coordinates}
 <<gathering ray coordinates>>=
 void bundle::get_coordinates(double *d__coord)
 {
@@ -1929,6 +1636,7 @@ void bundle::get_coordinates(double *d__coord)
   get_coordinates_kernel LLL gridDim , blockDim RRR (d__coord, d__ray, N_RAY);
 }
 @ 
+\index{rayTracing!bundle!get\_chief\_coordinates}
 <<gathering ray coordinates>>=
 void bundle::get_chief_coordinates(double *d__coord)
 {
@@ -1956,6 +1664,7 @@ __global__ void get_coordinates_kernel(double *d__coord, ray *d__ray, int N_RAY)
   }
 }
 @ 
+\index{rayTracing!bundle!get\_directions}
 <<gathering ray directions>>=
 void bundle::get_directions(double *d__dir)
 {
@@ -1964,6 +1673,7 @@ void bundle::get_directions(double *d__dir)
   get_directions_kernel LLL gridDim , blockDim RRR (d__dir, d__ray, N_RAY);
 }
 @ 
+\index{rayTracing!bundle!get\_chief\_directions}
 <<gathering ray directions>>=
 void bundle::get_chief_directions(double *d__dir)
 {
@@ -1990,6 +1700,7 @@ __global__ void get_directions_kernel(double *d__dir, ray *d__ray, int N_RAY)
   }
 }
 @ 
+\index{rayTracing!bundle!get\_optical\_path\_length}
 <<gathering ray optical path length>>=
 void bundle::get_optical_path_length(double *d__opl)
 {
@@ -1998,6 +1709,7 @@ void bundle::get_optical_path_length(double *d__opl)
   get_optical_path_length_kernel LLL gridDim , blockDim RRR (d__opl, d__ray, N_RAY);
 }
 @ 
+\index{rayTracing!bundle!get\_chief\_optical\_path\_length}
 <<gathering ray optical path length>>=
 void bundle::get_chief_optical_path_length(double *d__opl)
 {
@@ -2021,6 +1733,7 @@ __global__ void get_optical_path_length_kernel(double *d__opl, ray *d__ray, int 
     }
 }
 @ 
+\index{rayTracing!bundle!get\_optical\_path\_difference}
 <<gathering ray optical path difference>>=
 void bundle::get_optical_path_difference(double *d__opd)
 {
@@ -2159,6 +1872,7 @@ __global__ void get_optical_path_difference_interp_kernel(double *d__opd,
     }
 }
 @ 
+\index{rayTracing!bundle!get\_vignetting}
 <<gathering ray vignetting map>>=
 void bundle::get_vignetting(double *d__v)
 {
@@ -2222,6 +1936,7 @@ __global__ void get_wavefront_kernel(float *amplitude, float *phase,
 \label{sec:resetting}
 
 The ray vignetting is reset with
+\index{rayTracing!bundle!reset}
 <<ray bundle functions (opt-out)>>= 
 void bundle::reset(source *src) 
 {
@@ -2248,6 +1963,7 @@ __global__ void reset_kernel(ray *d__ray, int N_RAY)
 \section{Coordinate system}
 \label{sec:coordinate-system}
 
+\index{rayTracing!coordinate\_system}
 The surface location and orientation with respect to the GCS is specified with a coordinate vector:
 <<coordinate system data>>=
 vector *origin;
@@ -2278,6 +1994,7 @@ struct coordinate_system{
   void setup(vector *_origin_, vector *_euler_angles_, int _N_, char *_tag_);
   void cleanup(void);
   void info(void);
+  void info_details(void);
   void update(void);
   void update(vector _origin_, vector _euler_angles_,int idx);
 };
@@ -2289,6 +2006,7 @@ struct coordinate_system{
 A coordinate system structure is initialized with
 \begin{itemize}
 \item a single origin and orientation,
+\index{rayTracing!coordinate\_system!setup}
 <<coordinate system functions>>=
 void coordinate_system::setup(vector _origin_, vector _euler_angles_)
 {
@@ -2306,6 +2024,7 @@ void coordinate_system::setup(vector _origin_, vector _euler_angles_)
 }
 @ 
 \item origin and orientation align to the main coordinate system,
+\index{rayTracing!coordinate\_system!setup}
 <<coordinate system functions>>=
 void coordinate_system::setup(void)
 {
@@ -2329,6 +2048,7 @@ void coordinate_system::setup(void)
 \item an array of [[N]] origins and orientations:
   \begin{itemize}
   \item without a tag:
+\index{rayTracing!coordinate\_system!setup}
 <<coordinate system functions>>=
 void coordinate_system::setup(vector *_origin_, vector *_euler_angles_, int _N_)
 {
@@ -2337,6 +2057,7 @@ void coordinate_system::setup(vector *_origin_, vector *_euler_angles_, int _N_)
 }
 @
 \item or with a tag:
+\index{rayTracing!coordinate\_system!setup}
 <<coordinate system functions>>=
 void coordinate_system::setup(vector *_origin_, vector *_euler_angles_, 
                               int _N_, char *_tag_)
@@ -2430,6 +2151,7 @@ HANDLE_ERROR( cudaMemcpy( d__R, R,
 HANDLE_ERROR( cudaMemcpy( d__origin, origin, 
 			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
 @ where the elements of $R$ are stored in the row major format.
+\index{rayTracing!coordinate\_system!cleanup}
 <<coordinate system functions>>=
 void coordinate_system::cleanup(void)
 {
@@ -2442,6 +2164,7 @@ void coordinate_system::cleanup(void)
 }
 @ 
 The coordinate system is updated with
+\index{rayTracing!coordinate\_system!update}
 <<coordinate system functions>>=
 void coordinate_system::update(void)
 {
@@ -2470,8 +2193,9 @@ void coordinate_system::update(vector _origin_, vector _euler_angles_,int idx)
 \label{sec:inputoutput}
 
 The main parameters of the coordinate systems are displayed with the [[info]] routine:
+\index{rayTracing!coordinate\_system!info\_details}
 <<coordinate system functions>>=
-void coordinate_system::info(void)
+void coordinate_system::info_details(void)
 {
   fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   fprintf(stdout," ID (Tx          Ty        Tz)[m]  (Ox         Oy         Oz)[deg]\n");
@@ -2499,9 +2223,22 @@ void coordinate_system::info(void)
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
 }
 @ 
+\index{rayTracing!coordinate\_system!info}
+<<coordinate system functions>>=
+void coordinate_system::info(void)
+{
+/*
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  fprintf(stdout," %d coordinate systems\n",N);
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+*/
+}
+@ 
 
 \section{Conic surface}
 \label{sec:surface}
+
+\index{rayTracing!conic}
 
 A conic surface is represented with the [[conic]] structure:
 <<conic structure>>=
@@ -2532,6 +2269,7 @@ The conic surface is defined with
   F(x,y,z) = z - {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} } = 0.
 \end{equation}
 The conic expression is computed with
+\index{rayTracing!conic!conic\_equation}
 <<conic equations>>=
 __host__ __device__ inline rtd conic_equation(vector *v, vector *v0, const rtd k, const rtd c)
 {
@@ -2539,7 +2277,7 @@ __host__ __device__ inline rtd conic_equation(vector *v, vector *v0, const rtd k
     return 0.0;
   else {    
     rtd rho2;
-    rho2 = c*v->rho2(v0->x,v0->y);
+    rho2 = c*v->rho2_shift(v0->x,v0->y);
     if (k==0)
       return rho2*0.5;
     else
@@ -2548,6 +2286,7 @@ __host__ __device__ inline rtd conic_equation(vector *v, vector *v0, const rtd k
 }
 @ 
 and the surface equation with
+\index{rayTracing!conic!conic\_surface}
 <<conic equations>>=
 __device__ inline rtd  conic_surface(vector *v, vector *v0, const rtd k, const rtd c)
 {
@@ -2561,6 +2300,7 @@ The partial derivative of the conic equation are written
   \begin{equation}
     { \partial F(x,y,z) \over \partial x } = -x {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
   \end{equation}
+\index{rayTracing!conic!partial\_x\_conic\_surface}
 <<conic equations>>=
  __device__ inline rtd partial_x_conic_surface(vector *v, vector *v0, 
 					       const rtd k, const rtd c)
@@ -2572,7 +2312,7 @@ The partial derivative of the conic equation are written
       return -(v->x - v0->x)*c;
     else {
       rtd rho2;
-      rho2 = c*v->rho2(v0->x,v0->y);
+      rho2 = c*v->rho2_shift(v0->x,v0->y);
       return -(v->x - v0->x)*c*rsqrt(1 - k*c*rho2);
     }
 }
@@ -2581,6 +2321,7 @@ The partial derivative of the conic equation are written
   \begin{equation}
     { \partial F(x,y,z) \over \partial y } = -y {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
   \end{equation}
+\index{rayTracing!conic!partial\_y\_conic\_surface}
 <<conic equations>>=
 __device__ inline rtd partial_y_conic_surface(vector *v, vector *v0, 
 					      const rtd k, const rtd c)
@@ -2592,7 +2333,7 @@ __device__ inline rtd partial_y_conic_surface(vector *v, vector *v0,
       return -(v->y - v0->y)*c;
     else {
       rtd rho2;
-      rho2 = c*v->rho2(v0->x,v0->y);
+      rho2 = c*v->rho2_shift(v0->x,v0->y);
       return -(v->y - v0->y)*c*rsqrt(1 - k*c*rho2);
     }
 }
@@ -2601,6 +2342,7 @@ __device__ inline rtd partial_y_conic_surface(vector *v, vector *v0,
   \begin{equation}
     { \partial F(x,y,z) \over \partial z } = 1
   \end{equation}
+\index{rayTracing!conic!partial\_z\_conic\_surface}
 <<conic equations>>=
 __device__ inline rtd partial_z_conic_surface(void)
 {
@@ -2614,6 +2356,7 @@ The generic expression for aspheric surface is given by
   \label{eq:69}
   F(x,y,z) = z - {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} } - \sum_{i=1}^N a_i Z_i(\rho,\theta) = 0.  
 \end{equation}
+\index{rayTracing!conic!aspheric\_surface}
 <<conic equations>>=
 __device__ inline rtd aspheric_surface(vector *v, vector *v0, 
                                        const rtd k, const rtd c,
@@ -2629,6 +2372,7 @@ The partial derivative of the aspheric equation are written
   \begin{equation}
     { \partial F(x,y,z) \over \partial x } = -x {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
   \end{equation}
+\index{rayTracing!conic!partial\_x\_aspheric\_surface}
 <<conic equations>>=
 __device__ inline rtd partial_x_aspheric_surface(vector *v, vector *v0, 
 					       const rtd k, const rtd c,
@@ -2643,6 +2387,7 @@ __device__ inline rtd partial_x_aspheric_surface(vector *v, vector *v0,
   \begin{equation}
     { \partial F(x,y,z) \over \partial y } = -y {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
   \end{equation}
+\index{rayTracing!conic!partial\_y\_aspheric\_surface}
 <<conic equations>>=
 __device__ inline rtd partial_y_aspheric_surface(vector *v, vector *v0, 
 					      const rtd k, const rtd c,
@@ -2657,6 +2402,7 @@ __device__ inline rtd partial_y_aspheric_surface(vector *v, vector *v0,
   \begin{equation}
     { \partial F(x,y,z) \over \partial z } = 1
   \end{equation}
+\index{rayTracing!conic!partial\_z\_aspheric\_surface}
 <<conic equations>>=
 __device__ inline rtd partial_z_aspheric_surface(void)
 {
@@ -2669,6 +2415,7 @@ __device__ inline rtd partial_z_aspheric_surface(void)
 \label{sec:surf-setup--cleanup}
 
 A conic surface is initialized with the [[setup]] routine:
+\index{rayTracing!conic!setup}
 <<conic functions>>=
 void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_)
 {
@@ -2681,6 +2428,7 @@ void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_)
   <<conic allocation>>
 }
 @ or with a surface centered on [[origin]]
+\index{rayTracing!conic!setup}
 <<conic functions>>=
 void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, vector conic_origin)
 {
@@ -2694,6 +2442,7 @@ void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, vect
 }
 @
 A conic surface that sets in the GCS is simply defined with
+\index{rayTracing!conic!setup}
 <<conic functions>>=
 void conic::setup(rtd _c_, rtd _k_)
 {
@@ -2742,6 +2491,7 @@ void conic::setup_GMT_M1(void)
 }
 @
 Memory is freed with
+\index{rayTracing!conic!cleanup}
 <<conic functions>>=
 void conic::cleanup(void)
 {
@@ -2753,6 +2503,8 @@ void conic::cleanup(void)
 
 \section{Zernike surface}
 \label{sec:zernike-surface}
+
+\index{rayTracing!zernikeS}
 
 A Zernike surface is defined as the weighted sum of Zernike polynomials and it is represented with the [[zernikeS]] structure:
 <<zernikeS structure>>=
@@ -2849,6 +2601,7 @@ coordinate_system ref_frame;
 \label{sec:setup--cleanup-3}
 
 A [[zernikeS]] structure is initialized with the largest radial order in the surface and the series of Zernike coefficients for all the modes up to that radial order:
+\index{rayTracing!zernikeS!setup}
 <<zernikeS functions>>=
 void zernikeS::setup(int _max_n_, rtd *_a_)
 {
@@ -2868,6 +2621,7 @@ void zernikeS::setup(int _max_n_, rtd *_a_)
 }
 @ 
 The origin vector and Euler angles of the coordinate systems where the Zernike polynomials are defined can be passed as arguments:
+\index{rayTracing!zernikeS!setup}
 <<zernikeS functions>>=
 void zernikeS::setup(int _max_n_, rtd *_a_, vector _origin_, vector _euler_angles_)
 {
@@ -2887,6 +2641,7 @@ void zernikeS::setup(int _max_n_, rtd *_a_, vector _origin_, vector _euler_angle
 }
 @ 
 An array of [[N]] Zernike surface is created with
+\index{rayTracing!zernikeS!setup}
 <<zernikeS functions>>=
 void zernikeS::setup(int _max_n_, rtd *_a_, int _N_)
 {
@@ -2905,6 +2660,7 @@ void zernikeS::setup(int _max_n_, rtd *_a_, int _N_)
   <<zernikeS setup common>>
 }
 @ or with
+\index{rayTracing!zernikeS!setup}
 <<zernikeS functions>>=
 void zernikeS::setup(int _max_n_, rtd *_a_, 
 		     vector _origin_, vector _euler_angles_, int _N_)
@@ -3029,6 +2785,7 @@ by_col_ptr[jp] = ky;
   }
 @
 From the Zernike derivative coefficients, the coefficients of the Zernike surface derivative are computed:
+\index{rayTracing!zernikeS!surface\_derivative\_coefs}
 <<zernikeS functions>>=
 void zernikeS::surface_derivative_coefs(void) 
 {
@@ -3052,6 +2809,7 @@ void zernikeS::surface_derivative_coefs(void)
 }
 @ 
 The Zernike coefficients are updated with
+\index{rayTracing!zernikeS!update}
 <<zernikeS functions>>= 
 void zernikeS::update(rtd *_a_)
 {
@@ -3070,6 +2828,7 @@ void zernikeS::update(rtd *_a_)
 }
 @
 Memory is freed with:
+\index{rayTracing!zernikeS!cleanup}
 <<zernikeS functions>>=
 void zernikeS::cleanup(void)
 {
@@ -3093,6 +2852,7 @@ void zernikeS::cleanup(void)
 \subsection{Zernike surface equation}
 \label{sec:zern-surf-equat}
 
+\index{rayTracing!zernikeS!surface}
 <<zernikeS functions>>=
 void zernikeS::surface(rtd *d__S, rtd *d__r, rtd *d__o, const int N)
 {
@@ -3101,6 +2861,7 @@ void zernikeS::surface(rtd *d__S, rtd *d__r, rtd *d__o, const int N)
     surface_kern LLL gridDim, blockDim RRR (d__S, d__r, d__o, N, max_n, d__a);
 }
 @ 
+\index{rayTracing!zernikeS!surface}
 <<zernikeS functions>>=
 void zernikeS::surface(rtd *d__S, rtd *d__r, rtd *d__o, const int N, int surf_id)
 {
@@ -3124,6 +2885,7 @@ __global__ void surface_kern(rtd *S, rtd *r, rtd *o, const int N,
   }
 }
 @ where
+\index{rayTracing!zernikeS!zernike\_surface}
 <<zernike surface equation>>=
 __host__ __device__ rtd zernike_surface(rtd r, rtd o, int max_n, rtd *a)
 {
@@ -3286,6 +3048,7 @@ with
 \end{equation}
 
 The x and y derivatives of the Zernike surface are computed with
+\index{rayTracing!zernikeS!surface\_derivatives}
 <<zernikeS functions>>=
 void zernikeS::surface_derivatives(rtd *d__dSdx, rtd *d__dSdy, 
 				   rtd *d__r, rtd *d__o, const int N)
@@ -3346,6 +3109,7 @@ The projection $a_i$ of a wavefront phase $\varphi$ onto a Zernike polynomial is
   a_i = { \sum_k \varphi\left( \vec r_k \right) Z_i\left( \vec r_k \right) \over \sum_k \left| Z_i\left( \vec r_k \right) \right|^2 }
 \end{equation}
 @ 
+\index{rayTracing!zernikeS!projection}
 <<zernikeS functions>>=
 void zernikeS::projection(float *d__phase, rtd *d__r, rtd *d__o, const int N)
 {
@@ -3386,6 +3150,7 @@ __global__ void projection_kern(rtd *a, float *phase, rtd *r, rtd *o, const int 
 \section{Aperture}
 \label{sec:aperture}
 
+\index{rayTracing!aperture}
 An aperture is a bounded surface used to clip a bundle of ray to the aperture shape.
 <<aperture structure>>=
 struct aperture {
@@ -3421,6 +3186,7 @@ coordinate_system ref_frame;
 An aperture is initialized with:
 \begin{itemize}
 \item for a circular aperture,
+\index{rayTracing!aperture!setup}
 <<aperture functions>>=
 void aperture::setup(float _D_, int _D_px_, 
 		     vector _origin_, vector _euler_angles_) 
@@ -3433,6 +3199,7 @@ void aperture::setup(float _D_, int _D_px_,
   ref_frame.setup(_origin_, _euler_angles_);
 }
 @  \item for an annular aperture,
+\index{rayTracing!aperture!setup}
 <<aperture functions>>=
 void aperture::setup(float _D_, float _ri_, int _D_px_, 
 		     vector _origin_, vector _euler_angles_) 
@@ -3446,6 +3213,7 @@ void aperture::setup(float _D_, float _ri_, int _D_px_,
 }
 @
 \item for an aperture with [[N_segment]] circular segment of diameter [[D_seg]], each segment with a different coordinate system,
+\index{rayTracing!aperture!setup}
 <<aperture functions>>=
 void aperture::setup(float _D_, float _ri_, float _D_seg_, int _D_px_, 
 		     vector *_origin_, vector *_euler_angles_, int N_segment)
@@ -3461,50 +3229,8 @@ void aperture::setup(float _D_, float _ri_, float _D_seg_, int _D_px_,
 @
 \end{itemize}
 
-Based on the above, one can defined specific segmented apertures like
-\begin{description}
-\item[GMT M1] 
-The GMT M1 segment have all the same clear aperture of 8.365m diameter.
-The center segment has a hole of 2.4412m diameter.
-The center aperture is centered on the vertex of the conic surface that defines M1.
-The vertex is set as the origin of the global coordinate system (GCS).
-The center of the peripheral segments are evenly located on a circle of radius 8.710m with a phase of 30 degrees.
-The peripheral segments also tilted inwards by 13.522 degrees.
-<<aperture functions>>=
-void aperture::setup_GMT_M1(float _D_, int _D_px_)
-{
-  D_px  = _D_px_;
-  D     = _D_;
-  D_seg = 8.365;
-  ri    = 2.4412/8.365;
-  N = 7;
-  vector origin[7];
-  vector euler_angles[7];
-  origin[0].x = origin[0].y = origin[0].z = 0.0;
-  euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
-  rtd D_c, o, zo, sa;
-  sa = sin(13.522*PI/180);
-  D_c = 8.710 - (0.691-0.445)*sa;
-  zo = 8.417*sa*0.5 + 0.691 - 0.445;
-  int k;  
-  for (k=1; k<N; k++)
-  {
-    o = PI*(2*k-1)/6.0;
-    origin[k].x = D_c*cos(o);
-    origin[k].y = D_c*sin(o);
-    origin[k].z = zo;
-    euler_angles[k].x = 0.0;
-    euler_angles[k].y = 13.522*PI/180.0;
-    euler_angles[k].z = o;
-  }
-  V.setup(D_px*D_px*N);
-  ref_frame.setup(origin, euler_angles, N);
-}
-@ 
-\end{description}
-
-
 The memory is freed with
+\index{rayTracing!aperture!cleanup}
 <<aperture functions>>=
 void aperture::cleanup(void)
 {
@@ -3514,6 +3240,7 @@ void aperture::cleanup(void)
 }
 @ 
 The vignetting of the rays are done with
+\index{rayTracing!aperture!vignetting}
 <<aperture functions>>=
 void aperture::vignetting(bundle *rays)
 {
@@ -3528,7 +3255,7 @@ void aperture::vignetting(bundle *rays)
 						Rri2, R2,
 						ref_frame.d__R,
 						ref_frame.d__origin);
-  GMT_intersection LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY);
+  intersection LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY);
 }
 @ calling the device kernel:
 <<vignetting kernel>>=
@@ -3579,6 +3306,22 @@ __global__ void vignetting_kernel(char *mask, ray *d__ray, int N_RAY,
       {
 	mask[ij] = 1;
       }
+  }
+}
+@
+The vignetting by the aperture is computed as the intersection between the aperture mask and the ray vignetting flags: 
+<<aperture intersection>>=
+__global__ void intersection(char *mask, ray *d__ray, int N_RAY)
+{
+  int i, j, ij, iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
+  if  ( ij<N_RAY )
+  {
+    ij += iSource*N_RAY;
+    d__ray[ij].v &= mask[ij];
   }
 }
 @
@@ -4091,1460 +3834,6 @@ void thin_lens(bundle *rays)
 }
 @
 
-\section{GMT M1}
-\label{sec:gmt-m1}
-
-A new structure to hold GMT M1 and M2 parameters and functions is defined.
-<<GMT M1 structure>>=
-struct gmt_m1 {
-  <<GMT M12 parameters>>
-  <<GMT M12 functions>>
-};
-@  with
-<<GMT M12 functions>>=
-void setup(float _D_, int _D_px_);
-void setup(float _D_, int _D_px_, zernikeS *ZS);
-void setup(float _D_, int _D_px_, int N_SRC);
-void setup(float _D_, int _D_px_, zernikeS *ZS, int N_SRC);
-void cleanup(void);
-void update(vector _origin_, vector _euler_angles_,int idx);
-void reset(void);
-void trace(bundle *rays);
-void blocking(bundle *rays);
-void global_tiptilt(float tip, float tilt);
-void test_ray_tracing(void);
-void track(float *x, float *y, float *z, int N, int idx);
-void edge_sensors(float *x, float *y, float *z, int N, int idx0, int idx_edge_sensor);
-@ 
-The GMT M12 parameters are:
-\begin{itemize}
-\item the mirror ID:
-<<GMT M12 parameters>>=
-int M_ID;
-@
-\item the mirror assembly diameter $[[D_assembly]]$:
-<<GMT M12 parameters>>=
-rtd D_assembly;
-@
-\item the segment clear aperture diameter $[[D_clear]]$:
-<<GMT M12 parameters>>=
-rtd D_clear;
-@
-\item the segment full aperture diameter $[[D_full]]$:
-<<GMT M12 parameters>>=
-rtd D_full;
-@
-\item the obscuration ratio of the center segment $[[ri]]$
-<<GMT M12 parameters>>=
-rtd ri;
-@
-\item the tilt angle of the peripheral segment $[[beta]]$degree
-<<GMT M12 parameters>>=
-rtd beta;
-@
-\item the distance from the optical axis to the center of the tilted peripheral segments $[[L]]$m:
-<<GMT M12 parameters>>=
-rtd L;
-@
-\item the size of the square array containing M1 in meter and pixel [[D]] and [[D_px]]:
-<<GMT M12 parameters>>=
-rtd D;
-int D_px;
-@
-\item the mirror total area
-<<GMT M12 parameters>>=
-rtd area;
-@
-\item the number of segment $[[N]]=7$
-<<GMT M12 parameters>>=
-int N;
-@
-\item the edge to center depth of the segment conic $[[depth]]$:
-<<GMT M12 parameters>>=
-rtd depth;
-@
-\item the reference frames of the apertures:
-<<GMT M12 parameters>>=
-coordinate_system aperture_CS;
-@
-\item the reference frames and origins of the conics:
-<<GMT M12 parameters>>=
-coordinate_system conic_CS;
-vector conic_origin[7], *d__conic_origin;
-@
-\item the conic parameters:
-<<GMT M12 parameters>>=
-rtd conic_c, conic_k;
-@
-\item the reference frames of the rigid bodies:
-<<GMT M12 parameters>>=
-coordinate_system rigid_body_CS;
-@
-\item the reference frames of the motions:
-<<GMT M12 parameters>>=
-coordinate_system motion_CS;
-@
-\item the mirror height
-<<GMT M12 parameters>>=
-rtd height;
-@
-\item the M1 pupil mask [[V]]:
-<<GMT M12 parameters>>=
-mask *V;
-@
-\item the segment index offset (0 for M1 and 3 for M2):
-<<GMT M12 parameters>>=
-int idx_offset;
-@
-\item an array of Zernike surface, one per segment, [[ZS]]:
-<<GMT M12 parameters>>=
-zernikeS *ZS;
-@
-\item the segment piston mask
-<<GMT M12 parameters>>=
-int *d__piston_mask;
-@
-\item the reference frames of the edge sensors:
-<<GMT M12 parameters>>=
-coordinate_system edge_sensors_CS;
-@
-\item global tip--tilt transformation variables:
-  \begin{itemize}
-  \item a coordinate system:
-<<GMT M12 parameters>>=
-coordinate_system TT_CS;
-@
-\item a pointer to a matrix array:
-<<GMT M12 parameters>>=
-double *d__C;
-@
-\item a CUBLAS handle:
-<<GMT M12 parameters>>=
-cublasHandle_t handle;
-@
-\end{itemize}
- \end{itemize}
-
-
-\subsection{Setup \& Cleanup}
-\label{sec:setup--cleanup-1}
-
-The GMT M1 segment have all the same clear aperture of 8.365m diameter.
-The center segment has a hole of 2.4412m diameter.
-The center aperture is centered on the vertex of the conic surface that defines M1.
-The vertex is set as the origin of the global coordinate system (GCS).
-The center of the peripheral segments are evenly located on a circle of radius 8.710m with a phase of 30 degrees.
-The peripheral segments also tilted inwards by 13.522 degrees.
-The [[GMT_M1]] structure is initialized with the size of the square array containing M1 in meter and pixel.
-The size must be 25.5m or more to contain M1 fully.
-<<GMT M1 functions>>=
-void gmt_m1::setup(float _D_, int _D_px_)
-{
-  ZS = NULL;
-  <<M1 parameters>>
-  <<GMT setup common>>
-}
-@ or
-<<GMT M1 functions>>=
-void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_)
-{
-  ZS = _ZS_;
-  <<M1 parameters>>
-  <<GMT setup common>>
-}
-@ where
-<<M1 parameters>>=
- M_ID    = 1;
- D_px    = _D_px_;
- D       = _D_;
- D_assembly = 25.498;
- D_full  = 8.417;
- D_clear = 8.365;
- area    = 368;
- ri      = 2.4412/8.365;
- beta    = 13.522*PI/180.0;
- L       = 8.710;
- N       = 7;
- conic_c = 1.0/36.0;
- conic_k = 1-0.9982857;
- height  = 0.0;
- idx_offset = 0;
-@  
-If an array of sources is propagated through the telescope then
-<<GMT M1 functions>>=
-void gmt_m1::setup(float _D_, int _D_px_, int N_SRC)
-{
-  ZS = NULL;
-  <<M1 parameters>>
-  <<GMT setup common>>
-}
-@ or
-<<GMT M1 functions>>=
-void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
-{
-  ZS = _ZS_;
-  <<M1 parameters>>
-  <<GMT setup common>>
-}
-@  where
-<<GMT setup common>>=
-
-vector __v0 = {0.0,0.0,0.0},
-       __v = {D_full*0.5,0.0,0.0},
-       origin[12],
-       euler_angles[12];
-rtd D_c, o, zo;
- int k, idx;    
-char tag[16];
-
-depth = conic_equation(&__v,&__v0,conic_k,conic_c);
-D_c = L;
-__v.x = L;
-zo = conic_equation(&__v,&__v0,conic_k,conic_c);
-
-<<M12 rigid body definition>>
-
-<<M12 aperture definition>>
-
-<<M12 conic definition>>
-
-<<M12 motion definition>>
-
-<<M12 edge sensor definition>>
-
-<<GMT global tip-tilt setup>>
-@
-\subsubsection{Rigid body coordinate systems}
-\label{sec:rigid-body-coord}
-
-
-The rigid body coordinate systems are aligned with the segment coordinate systems.
-The origins $[x_O, y_O, z_O]$ of the segment coordinate systems are given with respect to the global coordinate system which origin is at the vertex of M1 conic surface: 
-\begin{eqnarray}
-  \label{eq:35}
-  x_{O,k} &=& L\cos(\theta_{O,k}), \\
-  y_{O,k} &=& L\sin(\theta_{O,k}), \\
-  z_O &=& F(L),\\
-\end{eqnarray}
-with, for M1, $L = 8.71$m, $\theta_{O,k}=\pi(3-2k)/6, \forall k \in [0,5]$, $x_{O,6}=y_{O,6}=0$ and
-\begin{equation}
-  \label{eq:36}
-  F(\rho) = {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} }.
-\end{equation}
-In addition to the change of origin with respect to the GCS, the segment coordinate system is rotated around the z--axis of $-k\pi/3$radian and then tilted around the x--axis of $\beta$.
-\begin{center}
-\begin{tikzpicture}
-  \draw[->] (-25mm,0) -- (35mm,0) node[below] {$\bar x$};
-  \draw[->] (0,-25mm) -- (0,35mm) node[right] {$\bar y$};
-  \draw[thin,dashed] (0,0) circle [radius=21mm];
-  \coordinate (O) at (0,0);
-  \draw (O) circle [radius=10mm] node[above left=3mm] {7};
-  \draw[->,thick,red] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\hat x$};
-  \draw[->,thick,red] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\hat y$};
-  \foreach \x in {1,...,6} {
-    \coordinate (O) at (150-\x*60:21mm);
-    \draw (O) circle [radius=10mm] node[above left=3mm] {\x};
-    \draw[->,thick,red,rotate=-60*(\x-1)] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\hat x$};
-    \draw[->,thick,red,rotate=-60*(\x-1)] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\hat y$};
-
-  }    
-\end{tikzpicture}  
-\end{center}
-<<M12 rigid body definition>>=
-origin[N-1].x = origin[N-1].y = 0.0;
-origin[N-1].z = height;
-euler_angles[N-1].x = euler_angles[N-1].y = euler_angles[N-1].z = 0.0;
-for (k=0; k<N-1; k++)
-{
-  o = PI*(3-2*k)/6.0;
-  <<segment index offset>>
-  origin[idx].x = D_c*cos(o);
-  origin[idx].y = D_c*sin(o);
-  origin[idx].z = height + zo;
-  euler_angles[idx].x = beta;
-  euler_angles[idx].y = 0.0;
-  euler_angles[idx].z = -PI*k/3.0;
-}
-sprintf(tag,"M%d RIGID BODY",M_ID);
-rigid_body_CS.setup(origin, euler_angles, N, tag);
-@ with
-<<segment index offset>>=
-idx = (k + idx_offset)%6;
-@
-\subsubsection{Aperture coordinate systems}
-\label{sec:apert-coord-syst}
-
-
-The coordinate systems of the segment apertures are defined with respect to the coordinate systems of the rigid body motions.
-The apertures are directly above the segments such as they rest on the rim of the segments. 
-<<M12 aperture definition>>=
-origin[N-1].x = origin[N-1].y = 0.0;
-origin[N-1].z = depth;
-euler_angles[N-1].x = euler_angles[N-1].y = euler_angles[N-1].z = 0.0;
-for (k=0; k<N-1; k++)
-{
-  <<segment index offset>>
-  origin[idx].x = 0.0;
-  origin[idx].y = 0.0;
-  origin[idx].z = depth;
-  euler_angles[idx].x = 0.0;
-  euler_angles[idx].y = 0.0;
-  euler_angles[idx].z = 0.0;
-}
-sprintf(tag,"M%d APERTURE",M_ID);
-aperture_CS.setup(origin, euler_angles, N, tag);
-@
-\subsubsection{Conic coordinate systems}
-\label{sec:conic-coord-syst}
-
-
-The coordinate systems of the segment conics are defined with respect to the coordinate systems of the rigid body motions.
-Both coordinate systems share the same origin but x--axis and y--axis are parallel to the x--axis and y--axis of the GCS.
-The origins of the segment conics are also given in the coordinate systems of the segment conics.
-\begin{center}
-\begin{tikzpicture}
-  \draw[->] (-25mm,0) -- (35mm,0) node[below] {$\bar x$};
-  \draw[->] (0,-25mm) -- (0,35mm) node[right] {$\bar y$};
-  \draw[thin,dashed] (0,0) circle [radius=21mm];
-  \coordinate (O) at (0,0);
-  \draw (O) circle [radius=10mm] node[above left=3mm] {7};
-  \draw[->,thick,red] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\hat x$};
-  \draw[->,thick,red] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\hat y$};
-  \foreach \x in {1,...,6} {
-    \coordinate (O) at (150-\x*60:21mm);
-    \draw (O) circle [radius=10mm] node[above left=3mm] {\x};
-    \draw[->,thick,red] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\check x$};
-    \draw[->,thick,red] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\check y$};
-
-  }    
-\end{tikzpicture}  
-\end{center}
-<<M12 conic definition>>=
-origin[N-1].x = origin[N-1].y = origin[N-1].z = 0.0;
-euler_angles[N-1].x = euler_angles[N-1].y = euler_angles[N-1].z = 0.0;
-conic_origin[N-1].x = conic_origin[N-1].y = conic_origin[N-1].z = 0.0; 
-for (k=0; k<N-1; k++)
-{
-  <<segment index offset>>
-  o = PI*(3-2*k)/6.0;
-  origin[idx].x = 0.0;
-  origin[idx].y = 0.0;
-  origin[idx].z = 0.0;
-  euler_angles[idx].x = beta;
-  euler_angles[idx].y = 0.0;
-  euler_angles[idx].z = -PI*k/3.0;
-  conic_origin[idx].x = -D_c*cos(o);
-  conic_origin[idx].y = -D_c*sin(o);
-  conic_origin[idx].z = -zo;
-}
-//euler_angles[0].x = 30.0*PI/180.0/3600.0;
-sprintf(tag,"M%d CONIC",M_ID);
-conic_CS.setup(origin, euler_angles, N, tag);
-HANDLE_ERROR( cudaMalloc((void**)&d__conic_origin, sizeof(vector)*N ) );
-HANDLE_ERROR( cudaMemcpy( d__conic_origin, conic_origin, 
-			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
-@
-\subsubsection{Segment motion coordinate systems}
-\label{sec:segm-moti-coord}
-
-
-The motion coordinate systems are defined with respect to the coordinate systems of the rigid body motions.
-For unperturbed segments, both coordinate systems coincide.
-<<M12 motion definition>>=
-for (k=0; k<N; k++)
-{
-  origin[k].x = 0.0;
-  origin[k].y = 0.0;
-  origin[k].z = 0.0;
-  euler_angles[k].x = 0.0;
-  euler_angles[k].y = 0.0;
-  euler_angles[k].z = 0.0;
-}
-sprintf(tag,"M%d MOTION",M_ID);
-motion_CS.setup(origin, euler_angles, N, tag);
-@
-\subsubsection{Edge sensors}
-\label{sec:edge-sensors}
-
-There are twelve edge sensors located across the twelve closest gaps of the 7 mirrors.
-We define 12 edge sensor coordinate systems (ESCS).
-
-\begin{center}
-\begin{tikzpicture}
-  \draw[->] (-25mm,0) -- (35mm,0) node[below] {$\bar x$};
-  \draw[->] (0,-25mm) -- (0,35mm) node[right] {$\bar y$};
-  \draw[thin,dotted] (0,0) circle [radius=21mm];
-  \coordinate (O) at (0,0);
-  \draw (O) circle [radius=10mm] node[above left=3mm] {7};
-  % \draw[->,thick,red] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\hat x$};
-  % \draw[->,thick,red] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\hat y$};
-  \draw[dashed,thin] (150:21mm) -- (-30:21mm);
-  \draw[dashed,thin] (-150:21mm) -- (30:21mm);
-  \foreach \x in {1,...,6} {
-    \coordinate (O) at (150-\x*60:21mm);
-    \coordinate (O next) at (90-\x*60:21mm);
-    \draw[dashed] (O) -- (O next);
-    \coordinate (Oes) at (120-\x*60:18.2mm);
-    \draw[->,thick,red,rotate=-60*(\x-2)] ($(Oes)$) -- ($(Oes)+(5mm,0)$) node[below] {$\psi$};
-    \draw[->,thick,red,rotate=-60*(\x-2)] ($(Oes)$) -- ($(Oes)+(0,5mm)$) node[right] {$\xi$};
-    \fill[blue] (O) circle [radius=0.5mm];
-  }    
-  \foreach \x in {1,...,6} {
-    \coordinate (O) at (150-\x*60:21mm);
-    \draw (O) circle [radius=10mm] node[above left=3mm] {\x};
-    \coordinate (Oes) at (150-\x*60:10mm);
-    \draw[->,thick,red,rotate=-60*(\x-1)] ($(Oes)$) -- ($(Oes)+(5mm,0)$) node[below] {$\psi$};
-    \draw[->,thick,red,rotate=-60*(\x-1)] ($(Oes)$) -- ($(Oes)+(0,5mm)$) node[right] {$\xi$};
-    \fill[white,draw=red,thin] (150-\x*60:11mm) circle [radius=1pt];
-    \coordinate (O next) at (90-\x*60:21mm);
-    \fill[white,draw=red,thin] ($ (O) !.47! (O next) $) circle [radius=1pt];
-    \fill[white,draw=red,thin] ($ (O) !.53! (O next) $) circle [radius=1pt];
-  }    
-\end{tikzpicture}  
-\end{center}
-@ 
-<<M12 edge sensor definition>>=
-<<center segment edge sensors>>
-<<outer segment edge sensors>>
-sprintf(tag,"M%d EDGE SENSORS",M_ID);
-edge_sensors_CS.setup(origin, euler_angles, 12, tag);
-@ 
-The first 6 ESCSs are located on the center segment rim at azimuths $\pi(3-2k)/6,\quad \forall k \in [0,5]$ and the y--axis ($\xi$) points towards the center of the nearest outer segment i.e. it is rotated of $-\pi k/3$ around the z--axis.
-<<center segment edge sensors>>=
-for (k=0; k<6; k++)
-{
-  o = PI*(3-2*k)/6.0 + (M_ID-1)*PI;
-  origin[k].x = 0.5*D_full*cos(o);
-  origin[k].y = 0.5*D_full*sin(o);
-  origin[k].z = height + conic_equation(origin + k, &__v0, conic_k, conic_c);;
-  euler_angles[k].x = 0.0;
-  euler_angles[k].y = 0.0;
-  euler_angles[k].z = -PI*k/3.0 + (M_ID-1)*PI;
-}
-@
-The other 6 ESCSs are located in the middle of the line joining the center of two adjacent outer segments.
-The distance from the GCS origin to the outer ESCS is $\sqrt 3 L/2$.
-The y--axis ($\xi$) is aligned with the line joining the center of two adjacent outer segments i.e. it is rotated of $-\pi (1-k)/3$ around the z--axis.
-<<outer segment edge sensors>>=
-float R;
-R = sqrt(3.0)*L/2.0;
-for (k=0; k<6; k++)
-{
-  o = PI*(1-k)/3.0 + (M_ID-1)*PI;
-  origin[k+6].x = R*cos(o);
-  origin[k+6].y = R*sin(o);
-  origin[k+6].z = height + conic_equation(origin + k + 6, &__v0, conic_k, conic_c);
-  euler_angles[k+6].x = 0.0;
-  euler_angles[k+6].y = 0.0;
-  euler_angles[k+6].z = PI*(1-k)/3.0 + (M_ID-1)*PI;
-}
-@ 
-There is measurement point for the 6 inner ESCSs.
-There coordinates in the conic CS are given in polar coordinates by
-\begin{eqnarray}
-  \label{eq:64}
-  \rho &=& [[L]] - \rho_0, \\
-  \theta &=& -\pi{2k+3\over 6},
-\end{eqnarray}
-where $\rho_0$ is the root of
-\begin{equation}
-  \label{eq:65}
-  [[D_full]]^2 - ([[D_assembly/2]]-\rho_0)^2 - \left[ F([[D_assembly/2]]) - F(\rho_0) \right]^2 = 0,
-\end{equation}
-and with
-\begin{equation}
-  \label{eq:66}
-  F(r) = {c r^2 \over 1 + \sqrt{1-\kappa(cr)^2} } .
-\end{equation}
-
-There are 2 measurement points for the 6 outer ESCSs.
-The polar coordinates in the conic CS are given by
-\begin{eqnarray}
-  \label{eq:67}
-  \rho &=& [[D_full]]/2, \\
-  \theta &=& -\pi{2k+1\over 6},  
-\end{eqnarray}
-and
-\begin{eqnarray}
-  \label{eq:68}
-  \rho &=& [[D_full]]/2, \\
-  \theta &=& \pi{7-2k\over 6}.
-\end{eqnarray}
-
-<<GMT M1 functions>>=
-void gmt_m1::edge_sensors(float *x, float *y, float *z, int N, int idx0, int idx_edge_sensor)
-{
-<<GMT edge sensors common>>
-}
-@  with
-<<GMT edge sensors common>>=
-dim3 blockDim(6,1);
-dim3 gridDim(1,1);
-edge_sensors_kernel LLL gridDim, blockDim RRR (x, y, z, 6,
-					idx0,
-					conic_CS.d__R,
-					conic_CS.d__origin,
-					conic_k, conic_c,
-					d__conic_origin,
-					rigid_body_CS.d__R,
-					rigid_body_CS.d__origin,
-					motion_CS.d__R,
-					motion_CS.d__origin,
-                                        edge_sensors_CS.d__R,
-                                        edge_sensors_CS.d__origin, idx_edge_sensor);
-
-@ and
-<<GMT edge sensors kernel>>= 
-__global__ void edge_sensors_kernel(float *x, float *y, float *z, const int N,
-			     const int iCoordSys0,
-			     rtd *d__conic_R, vector *d__conic_origin,
-			     const rtd Fk, const rtd Fc,
-			     vector *d__conic_self_origin,
-			     rtd *d__rigid_body_R, vector *d__rigid_body_origin,
-			     rtd *d__motion_R, vector *d__motion_origin,
-                             rtd *d__edge_sensors_R, vector *d__edge_sensors_origin,
-                             int i0)
- {
-   int i, i_seg, i_edge;
-   vector v, v0;
-   i = blockIdx.x * blockDim.x + threadIdx.x;
-   if (i<N) {
-     i_seg = (i + iCoordSys0)%6;
-     i_edge = i + i0;
-     v0.x = v0.y = 0.0;
-     v.x = x[i];
-     v.y = y[i];
-     v.z = conic_equation(&v,  d__conic_self_origin + i_seg, Fk, Fc) - 
-           conic_equation(&v0, d__conic_self_origin + i_seg, Fk, Fc);
-     // CONIC <<<
-     forward_transform_centered(&v, &v,
-				d__conic_R+i_seg*9);
-     // MOTION <<<
-     backward_transform(&v, &v,
-			d__motion_R+i_seg*9, d__motion_origin+i_seg);
-     // RIGID_BODY <<<
-     backward_transform(&v, &v,
-			d__rigid_body_R+i_seg*9,
-			d__rigid_body_origin+i_seg);
-     // EDGE SENSORS <<<
-     forward_transform(&v, &v,
-		  d__edge_sensors_R+i_edge*9, d__edge_sensors_origin+i_edge);
-     x[i] = v.x;
-     y[i] = v.y;
-     z[i] = v.z;
-   }
-}
-@
-\subsubsection{Cleanup, update \& reset}
-\label{sec:cleanup-update-reset}
-
-
-Memory is freed with
-<<GMT M1 functions>>=
-void gmt_m1::cleanup(void)
-{
-  fprintf(stdout,"@(CEO)>gmt_m1: freeing memory!\n");
-  <<GMT cleanup common>>
-}
-@ with
-<<GMT cleanup common>>=
-fprintf(stdout," |-");
-<<GMT global tip-tilt cleanup>>
-fprintf(stdout," |-");
-aperture_CS.cleanup();
-fprintf(stdout," |-");
-conic_CS.cleanup();
-fprintf(stdout," |-");
-rigid_body_CS.cleanup();
-fprintf(stdout," |-");
-motion_CS.cleanup();
-fprintf(stdout," |-");
-edge_sensors_CS.cleanup();
-HANDLE_ERROR( cudaFree( d__conic_origin ) );
-@
-The rigid body motion parameters are updated with:
-<<GMT M1 functions>>=
-void gmt_m1::update(vector _origin_, vector _euler_angles_,int idx)
-{
-    <<GMT M12 update>>
-}
-@ where
-<<GMT M12 update>>=
-  //fprintf(stdout,"\n\x1B[31m");
-motion_CS.update( _origin_, _euler_angles_, --idx);
-//motion_CS.info();
-@ 
-The rigid body motion are reset to 0 with:
-<<GMT M1 functions>>=
-void gmt_m1::reset(void)
-{
-    <<GMT M12 reset>>
-}
-@ where
-<<GMT M12 reset>>=
-vector zero;
-zero.x = 0.0;
-zero.y = 0.0;
-zero.z = 0.0;
-//fprintf(stdout,"\n\x1B[31m");
-for (int k=0; k<N; k++)
-   motion_CS.update( zero, zero, k);
-//motion_CS.info();
-@ 
-\subsection{Blocking}
-\label{sec:blocking}
-
-The rays blocking with M1 is computed with
-<<GMT M1 functions>>=
-void gmt_m1::blocking(bundle *rays)
-{
-  <<GMT blocking common>>
-}
-@ where
-<<GMT blocking common>>=
- rtd R2, Rri2;
- R2 = D_clear*D_clear*0.25;
- Rri2 = R2*ri*ri;
- V = &(rays->V);
- // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
- // printf("N_BUNDLE=%d\n",rays->N_BUNDLE);
- int nel = rays->N_RAY*rays->N_BUNDLE;
- dim3 blockDim(N_THREAD2);
- dim3 gridDim(nel/N_THREAD2+1);
- fill_ones_char LLL gridDim,blockDim RRR (V->m,nel);
- blockDim = dim3(N_THREAD,N_THREAD);
- gridDim  = dim3(rays->N_RAY/N_THREAD2+1,1,rays->N_BUNDLE);
- m1_blocking_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY, 
-					     Rri2, R2,
-					     aperture_CS.d__R,
-					     aperture_CS.d__origin,
-					     rigid_body_CS.d__R,
-					     rigid_body_CS.d__origin,
-					     motion_CS.d__R,
-					     motion_CS.d__origin);
- GMT_intersection LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY);
-@ and with the kernel
-<<GMT blocking kernel>>=
-__global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY, 
-				rtd inner2, rtd outer2,
-				rtd *d__aperture_R, vector *d__aperture_origin,
-				rtd *d__rigid_body_R, vector *d__rigid_body_origin,
-				rtd *d__motion_R, vector *d__motion_origin)
-{
-  int i, j, ij, iCoordSys, iSource;
-  rtd rho2;
-  rtd x, y, z, x1, y1, s0, k, l, m;
-  vector xyz, klm, xyz_GS, klm_GS;
-
-  i = blockIdx.x * blockDim.x + threadIdx.x;
-  j = threadIdx.y;
-  //  iCoordSys = blockIdx.y;
-  ij = j * gridDim.x * blockDim.x + i;
-  iSource = blockIdx.z;
-  j = ij;
-  ij += iSource*N_RAY;
-  if  ( ( j<N_RAY ) && (d__ray[ij].v) )// & (iCoordSys<1) )
-  {
-
-    for (iCoordSys=0; iCoordSys<7; iCoordSys++)
-      {
-
-        <<from global CS to motion CS>>
-
-	<<from motion CS to aperture intersection>>
-
-	if (rho2<=outer2)
-	  {
-	    mask[ij] = 0;
-          }
-       }
-   }
-}
-@
-\subsection{Ray tracing}
-\label{sec:ray-tracing}
-
-The rays propagation through M1 is computed with
-<<GMT M1 functions>>=
-void gmt_m1::trace(bundle *rays)
-{
-  rays->V.area = area;
-  <<GMT trace common>>
-}
-@ where
-<<GMT trace common>>=
- rtd R2, Rri2;
- R2 = D_clear*D_clear*0.25;
- Rri2 = R2*ri*ri;
- V = &(rays->V);
- // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
- dim3 blockDim(1,1);
- dim3 gridDim(1,1,rays->N_BUNDLE);
- m1_trace_chief_kernel LLL gridDim , blockDim RRR (V->m, rays->d__chief_ray, 1, 
-						   conic_CS.d__R,
-						   conic_CS.d__origin,
-						   conic_k, conic_c,
-						   d__conic_origin,
-						   rigid_body_CS.d__R,
-						   rigid_body_CS.d__origin,
-						   motion_CS.d__R,
-						   motion_CS.d__origin,
-						   ZS->max_n, ZS->n_mode,
-						   ZS->d__a, ZS->d__cx, ZS->d__cy,
-						   0.5*D_full);
- blockDim = dim3(N_THREAD,N_THREAD);
- gridDim  = dim3(rays->N_RAY/N_THREAD2+1,1,rays->N_BUNDLE);
- HANDLE_ERROR( cudaMemset(V->m, 0, sizeof(char)*rays->N_RAY*rays->N_BUNDLE ) );
- HANDLE_ERROR( cudaMemset(rays->d__piston_mask, 0, 
-			  sizeof(int)*rays->N_RAY*rays->N_BUNDLE ) );
- m1_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY, 
-					     Rri2, R2,
-					     aperture_CS.d__R,
-					     aperture_CS.d__origin,
-					     conic_CS.d__R,
-					     conic_CS.d__origin,
-					     conic_k, conic_c,
-					     d__conic_origin,
-					     rigid_body_CS.d__R,
-					     rigid_body_CS.d__origin,
-					     motion_CS.d__R,
-					     motion_CS.d__origin,
-					     ZS->max_n, ZS->n_mode,
-					     ZS->d__a, ZS->d__cx, ZS->d__cy,
-					     0.5*D_full,
-					     rays->d__chief_ray,
-					     rays->d__piston_mask);
- GMT_intersection LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY);
-
-@ and with the kernel
-<<GMT ray tracing kernel>>=
-__global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY, 
-				rtd inner2, rtd outer2,
-				rtd *d__aperture_R, vector *d__aperture_origin,
-				rtd *d__conic_R, vector *d__conic_origin,
-                                const rtd Fk, const rtd Fc,
-                                vector *d__conic_self_origin,
-				rtd *d__rigid_body_R, vector *d__rigid_body_origin,
-				rtd *d__motion_R, vector *d__motion_origin,
-				int max_n, int n_mode,
-				rtd *d__a, rtd *d__cx, rtd *d__cy, rtd R,
-				ray *d__chief_ray,
-				int *d__piston_mask)
-{
-  int i, j, ij, iCoordSys, iSource, b_n_mode;
-  rtd rho2;
-  rtd x, y, z, x1, y1, s0, k, l, m;
-  rtd s1, S, K, L ,M, dSds;
-  rtd G2, a;
-  vector d__origin, xyz, klm, xyz_GS, klm_GS;
-
-  i = blockIdx.x * blockDim.x + threadIdx.x;
-  j = threadIdx.y;
-  //  iCoordSys = blockIdx.y;
-  ij = j * gridDim.x * blockDim.x + i;
-  iSource = blockIdx.z;
-  j = ij;
-  ij += iSource*N_RAY;
-  b_n_mode = max_n*(max_n+1)*0.5;
-  if  ( ( j<N_RAY ) && (d__ray[ij].v) )// & (iCoordSys<1) )
-  {
-
-    for (iCoordSys=0; iCoordSys<7; iCoordSys++)
-      {
-
-	d__origin = d__conic_self_origin[iCoordSys];
-
-        <<from global CS to motion CS>>
-
-	<<from motion CS to aperture intersection>>
-
-	if (rho2<=outer2)
-	  {
-	    mask[ij] = 1;
-	    d__piston_mask[ij] = iCoordSys + 1;
-
-            <<from motion CS to conic intersection and back to global CS>>
-	    d__ray[ij].optical_path_difference += 
-		d__ray[ij].optical_path_length - d__chief_ray[iSource].optical_path_length;
-	  }
-      }
-  }
-}
-@ and the chief ray kernel
-<<GMT chief ray tracing kernel>>=
-__global__ void m1_trace_chief_kernel(char *mask, ray *d__ray, int N_RAY, 
-				      rtd *d__conic_R, vector *d__conic_origin,
-				      const rtd Fk, const rtd Fc,
-				      vector *d__conic_self_origin,
-				      rtd *d__rigid_body_R, vector *d__rigid_body_origin,
-				      rtd *d__motion_R, vector *d__motion_origin,
-				      int max_n, int n_mode,
-				      rtd *d__a, rtd *d__cx, rtd *d__cy, rtd R)
-{
-  int j, ij, iCoordSys, iSource;
-  rtd x1, y1, s0, k, l, m;
-  rtd s1, S, K, L ,M, dSds;
-  rtd G2, a;
-  vector d__origin, xyz, klm, xyz_GS, klm_GS;
-
-  iSource = blockIdx.z;
-  ij = iSource*N_RAY;
-  iCoordSys = 0;
-
-  d__origin = d__conic_self_origin[iCoordSys];
-
-  <<from global CS to rigid body CS>>
-
-  <<from motion CS to conic CS>>
-  <<GMT intersection with conic>>
-  <<reflection from the surface>>
-  <<from conic CS to motion CS>>
-  <<from rigid body CS to global CS>>
-
-}
-@ The following is a test routine to validate the sequence of transformation in the ray tracing kernel:
-<<GMT M1 functions>>=
-void gmt_m1::test_ray_tracing(void)
-{
-  int iCoordSys;
-  vector in, out;
-
-  in.x = 8.71*cos(PI/6);
-  in.y = 8.71*sin(PI/6);
-  in.z = 0.0;
-
-  printf("Output vector:\n");
-  for (iCoordSys = 0; iCoordSys<N; iCoordSys++)
-    {
-      printf(" #%d\n",iCoordSys);
-        forward_transform(&out, &in,
-                          rigid_body_CS.R+iCoordSys*9,
-                          rigid_body_CS.origin+iCoordSys);
-        printf(". x = %.2e ; y = %.2e ; z = %.2e\n",out.x,out.y,out.z);
-
-        forward_transform(&out, &out,
-                          motion_CS.R+iCoordSys*9,
-                          motion_CS.origin+iCoordSys);
-        printf(". x = %.2e ; y = %.2e ; z = %.2e\n",out.x,out.y,out.z);
-
-	backward_transform_centered(&out, &out,
-				    conic_CS.R+iCoordSys*9);
-        printf(". x = %.2e ; y = %.2e ; z = %.2e\n",out.x,out.y,out.z);
-
-	forward_transform_centered(&out, &out,
-				    conic_CS.R+iCoordSys*9);
-        printf(". x = %.2e ; y = %.2e ; z = %.2e\n",out.x,out.y,out.z);
-
-        backward_transform(&out, &out,
-                          motion_CS.R+iCoordSys*9,
-                          motion_CS.origin+iCoordSys);
-        printf(". x = %.2e ; y = %.2e ; z = %.2e\n",out.x,out.y,out.z);
-
-        backward_transform(&out, &out,
-                          rigid_body_CS.R+iCoordSys*9,
-                          rigid_body_CS.origin+iCoordSys);
-        printf(". x = %.2e ; y = %.2e ; z = %.2e\n",out.x-in.x,out.y-in.y,out.z-in.z);
-    }
-    
-}
-@ 
-The transformation of the coordinates and directions of the rays is performed in 3 steps, 
-<<from global CS to motion CS>>=
-<<from global CS to rigid body CS>>
-<<from rigid body CS to motion CS>>
-@ (i) the rays are transformed into the CS of the segment,
-<<from global CS to rigid body CS>>=
-// RIGID BODY >>> 
-forward_transform(&xyz_GS, &(d__ray[ij].coordinates),
-		  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
-forward_transform_centered(&klm_GS, &(d__ray[ij].directions),
-			   d__rigid_body_R+iCoordSys*9);
-@ (ii) the segments are perturbed
-<<from rigid body CS to motion CS>>=
-// MOTION >>>  
-forward_transform(&xyz_GS, &xyz_GS,
-		  d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
-forward_transform_centered(&klm_GS, &klm_GS,
-			    d__motion_R+iCoordSys*9);
-@  and (iii) the rays are transformed into the CS of the aperture:
-<<from motion CS to aperture intersection>>=
-// APERTURE >>>
-forward_transform(&xyz, &xyz_GS,
-		  d__aperture_R+iCoordSys*9,
-		  d__aperture_origin+iCoordSys);
-forward_transform_centered(&klm, &klm_GS,
-			   d__aperture_R+iCoordSys*9);
- 
-	x = xyz.x;
-	y = xyz.y;
-	z = xyz.z;
-	k = klm.x;
-	l = klm.y;
-	m = klm.z;
-
-        <<GMT intersection with aperture plane>>
-
-        rho2 = x1*x1 + y1*y1;
-	if ( (iCoordSys==6) && (rho2<inner2) )
-	  {
-	    return;
-	  }
-@
-The intersection with and reflection from the surface is done with
-<<from motion CS to conic intersection and back to global CS>>=
-<<from motion CS to conic CS>>
-<<GMT intersection with aspheric>>
-<<reflection from the surface>>
-<<from conic CS to motion CS>>
-<<from motion CS to rigid body CS>>
-<<from rigid body CS to global CS>>
-@ 
-<<from motion CS to conic CS>>=
-// CONIC >>>
-backward_transform_centered(&xyz, &xyz_GS,
-			    d__conic_R+iCoordSys*9);
-backward_transform_centered(&klm, &klm_GS,
-			    d__conic_R+iCoordSys*9);
-@ 
-<<reflection from the surface>>=
-G2 = K*K + L*L + M*M;
-a  = k*K + l*L + m*M;
-
-a *= -2.0/G2;
-klm.x += a*K;
-klm.y += a*L;
-klm.z += a*M;
-@ 
-<<from conic CS to motion CS>>=
- // CONIC <<<
- forward_transform_centered(&xyz_GS, &xyz,
-			    d__conic_R+iCoordSys*9);
- forward_transform_centered(&klm_GS, &klm,
-			    d__conic_R+iCoordSys*9);
-@ 
-<<from motion CS to rigid body CS>>=
- // MOTION <<<
- backward_transform(&xyz_GS, &xyz_GS,
-		    d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
- backward_transform_centered(&klm_GS, &klm_GS,
-			     d__motion_R+iCoordSys*9);
-@ 
-<<from rigid body CS to global CS>>=
- // RIGID_BODY <<<
- backward_transform(&(d__ray[ij].coordinates), &xyz_GS,
-		    d__rigid_body_R+iCoordSys*9,
-		    d__rigid_body_origin+iCoordSys);
- backward_transform_centered(&(d__ray[ij].directions), &klm_GS,
-			     d__rigid_body_R+iCoordSys*9);
-
-@
-The vignetting by the aperture is computed as the intersection between the aperture mask and the ray vignetting flags: 
-<<GMT aperture intersection>>=
-__global__ void GMT_intersection(char *mask, ray *d__ray, int N_RAY)
-{
-  int i, j, ij, iSource;
-  i = blockIdx.x * blockDim.x + threadIdx.x;
-  j = threadIdx.y;
-  ij = j * gridDim.x * blockDim.x + i;
-  iSource = blockIdx.z;
-  if  ( ij<N_RAY )
-  {
-    ij += iSource*N_RAY;
-    d__ray[ij].v &= mask[ij];
-  }
-}
-@
-The intersection with the aperture plane is computed with
-<<GMT intersection with aperture plane>>=
-if (m==0) { return; }
-s0 = -z/m;
-x1 = x + k*s0;
-y1 = y + l*s0;
-@ 
-The intersection with the plane $z=0$ in the conic coordinate transformed is computed with  
-<<GMT intersection with aspheric>>=
-k  = klm.x;
-l  = klm.y;
-m  = klm.z;
-if (m==0) { return; }
-s0 = -xyz.z/m;
-x1 = xyz.x + k*s0;
-y1 = xyz.y + l*s0;
-d__ray[ij].optical_path_length = s0;
-s0 = s1 = 0;
-for (j=0; j<SNELL_N_ITERATION; j++)
-{
-  xyz.x = x1 + k*s0;
-  xyz.y = y1 + l*s0;
-  xyz.z = m*s0;
-  <<aspheric surface>>
-  <<aspheric surface derivatives>>
-  dSds = K*k + L*l + M*m;
-  if (dSds==0) { break; }
-  s1 = s0 - S/dSds;
-  if (abs(s1-s0)<TOL)
-    {
-      xyz.x = x1 + k*s1;
-      xyz.y = y1 + l*s1;
-      xyz.z = m*s1;
-      <<aspheric surface derivatives>>
-      d__ray[ij].optical_path_length += s1;
-      d__ray[ij].n_iteration = j;
-      break;
-    }
-  s0 = s1;
-}
-@ 
-<<aspheric surface>>=
-S = aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n, 
-                     d__a + iCoordSys*n_mode, R);
-@
-<<aspheric surface derivatives>>=
-K = partial_x_aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n, 
-                               d__cx + iCoordSys*b_n_mode, R);
-L = partial_y_aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n, 
-                               d__cy + iCoordSys*b_n_mode, R);
-M = partial_z_aspheric_surface();
-@
-<<GMT intersection with conic>>=
-k  = klm.x;
-l  = klm.y;
-m  = klm.z;
-if (m==0) { return; }
-s0 = -xyz.z/m;
-x1 = xyz.x + k*s0;
-y1 = xyz.y + l*s0;
-d__ray[ij].optical_path_length = s0;
-s0 = s1 = 0;
-for (j=0; j<SNELL_N_ITERATION; j++)
-{
-  xyz.x = x1 + k*s0;
-  xyz.y = y1 + l*s0;
-  xyz.z = m*s0;
-  <<conic surface>>
-  <<conic surface derivatives>>
-  dSds = K*k + L*l + M*m;
-  if (dSds==0) { break; }
-  s1 = s0 - S/dSds;
-  if (abs(s1-s0)<TOL)
-    {
-      xyz.x = x1 + k*s1;
-      xyz.y = y1 + l*s1;
-      xyz.z = m*s1;
-      <<conic surface derivatives>>
-      d__ray[ij].optical_path_length += s1;
-      d__ray[ij].n_iteration = j;
-      break;
-    }
-  s0 = s1;
-}
-@ 
-<<conic surface>>=
-S = conic_surface(&xyz, &d__origin, Fk, Fc);
-@
-<<conic surface derivatives>>=
-K = partial_x_conic_surface(&xyz, &d__origin, Fk, Fc);
-L = partial_y_conic_surface(&xyz, &d__origin, Fk, Fc);
-M = partial_z_conic_surface();
-@
-\subsection{Mirror location tracker}
-\label{sec:mirr-locat-track}
-
-The track function computes the location of a point of the mirror in the GCS for a given $(x,y)$ coordinate in the conic CS.
-
-<<GMT M1 functions>>=
-void gmt_m1::track(float *x, float *y, float *z, int N, int idx)
-{
-  <<GMT track common>>
-}
-@  with
-<<GMT track common>>=
-dim3 blockDim(N_THREAD,1);
-dim3 gridDim(N/N_THREAD+1,1);
-track_kernel LLL gridDim, blockDim RRR (x, y, z, N,
-					idx,
-					conic_CS.d__R,
-					conic_CS.d__origin,
-					conic_k, conic_c,
-					d__conic_origin,
-					rigid_body_CS.d__R,
-					rigid_body_CS.d__origin,
-					motion_CS.d__R,
-					motion_CS.d__origin);
-@ and
-<<GMT track kernel>>= 
-__global__ void track_kernel(float *x, float *y, float *z, const int N,
-			     const int iCoordSys,
-			     rtd *d__conic_R, vector *d__conic_origin,
-			     const rtd Fk, const rtd Fc,
-			     vector *d__conic_self_origin,
-			     rtd *d__rigid_body_R, vector *d__rigid_body_origin,
-			     rtd *d__motion_R, vector *d__motion_origin)
- {
-   int i;
-   vector v, v0;
-   i = blockIdx.x * blockDim.x + threadIdx.x;
-   if (i<N) {
-     v0.x = v0.y = 0.0;
-     v.x = x[i];
-     v.y = y[i];
-     v.z = conic_equation(&v,  d__conic_self_origin + iCoordSys, Fk, Fc) - 
-           conic_equation(&v0, d__conic_self_origin + iCoordSys, Fk, Fc);
-     // CONIC <<<
-     forward_transform_centered(&v, &v,
-				d__conic_R+iCoordSys*9);
-     // MOTION <<<
-     backward_transform(&v, &v,
-			d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
-     // RIGID_BODY <<<
-     backward_transform(&v, &v,
-			d__rigid_body_R+iCoordSys*9,
-			d__rigid_body_origin+iCoordSys);
-     x[i] = v.x;
-     y[i] = v.y;
-     z[i] = v.z;
-   }
-}
-
-@ 
-\subsection{Global tip--tilt}
-\label{sec:global-tip-tilt}
-
-\def\ijk{\ensuremath{\left[\vec i,\vec j, \vec k\right]}}
-\def\uvw{\ensuremath{\left[\vec u,\vec v, \vec w\right]_k}}
-\def\uvwp{\ensuremath{\left[\vec u^\prime,\vec v^\prime, \vec w^\prime\right]}}
-\def\RS{\ensuremath{R_{{\cal S},k}}}
-\def\RT{\ensuremath{R_{\cal T}}}
-\def\RM{\ensuremath{R_{\cal M}}}
-
-The GCS is defined with the 3 ortho--normal unit vectors \ijk.
-The segment coordinate systems also called rigid body CSs are defined with the 3 ortho-normal vectors \uvw.
-\uvw are derived from \ijk with the matrix \RS
-\begin{equation}
-  \label{eq:37}
-  \uvw = \RS^T \ijk.
-\end{equation}
-Within the rigid body CSs, motion CSs (\uvwp) are defined with
-\begin{equation}
-  \label{eq:38}
-  \uvwp = \RM^T \uvw = \RM^T \RS^T \ijk,
-\end{equation}
-where \RM is the 3D rotation matrix of each segment.
-
-When a global tip--tilt is applied to M1, \ijk becomes $\RT^T\ijk$ with \RT the tip--tilt matrix, and the motion CSs are given by
-\begin{equation}
-  \label{eq:39}
-  \uvwp = \RS^T\RT^T\ijk.
-\end{equation}
-
-From Eq.~(\ref{eq:38}) and Eq.~(\ref{eq:39}), the 3D rotation matrix of each segment as a result of a global tip--tilt is given by
-\begin{equation}
-  \label{eq:40}
-  \RM = \RS^T \RT \RS.
-\end{equation}
-<<global tip-tilt transformation>>=
- cublasDgemm(handle,
-	     CUBLAS_OP_N, CUBLAS_OP_N,
-	     3,3,3,
-	     &alpha,
-	     rigid_body_CS.d__R+k9, 3,
-	     TT_CS.d__R, 3,
-	     &beta,
-	     d__C, 3);
- cublasDgemm(handle,
-	     CUBLAS_OP_N, CUBLAS_OP_T,
-	     3,3,3,
-	     &alpha,
-	     d__C, 3,
-	     rigid_body_CS.d__R+k9, 3,
-	     &beta,
-	     motion_CS.d__R+k9, 3);
-
- HANDLE_ERROR( cudaMemcpy( motion_CS.R+k9, motion_CS.d__R+k9, 
-			   sizeof(double)*9, cudaMemcpyDeviceToHost ) );
- /* 
- int i, j, idx = 0;
-for (i=0;i<3;i++)
-   {
-     fprintf(stdout,"||  ");
-     for (j=0;j<3;j++)
-       {
-	 idx = j + i*3 + k9;
-	 fprintf(stdout,"%+.4e  ",motion_CS.R[idx]);
-       }
-     fprintf(stdout,"||\n");
-   }
- */
-@
-From \RM, the Euler angles corresponding to the 3 rotations of each segment are derived
-\begin{eqnarray}
-  \label{eq:41}
-  \alpha &=& \arctan\left( \RM(32) \over \RM(33) \right) \\\nonumber
-  \beta  &=& \arcsin\left( -\RM(31) \right) \\\nonumber
-  \gamma &=& \arctan\left( \RM(21) \over \RM(11) \right) 
-\end{eqnarray}
-<<global tip-tilt transformation>>=
-motion_CS.euler_angles[k].x = atan2(motion_CS.R[7+k9],motion_CS.R[8+k9]);
-motion_CS.euler_angles[k].y = asin(-1.0*motion_CS.R[6+k9]);
-motion_CS.euler_angles[k].z = atan2(motion_CS.R[3+k9],motion_CS.R[k9]);
-@
-The tip--tilt transformation is also applied to the origin of each segment $\vec O_k$ and the difference between the two origins is the translation of the motion CS, i.e.
-\begin{equation}
-  \label{eq:42}
-  \vec O_k^\prime = \vec O_k - \vec O_R - \RT^T\left( \vec O_k -\vec O_R \right)
-\end{equation}
-where $\vec O_R$ is the rotation point.
-<<global tip-tilt transformation>>=
- forward_transform(motion_CS.origin + k, rigid_body_CS.origin + k,
-		   TT_CS.R, TT_CS.origin);
- motion_CS.origin[k].x = rigid_body_CS.origin[k].x - TT_CS.origin->x - motion_CS.origin[k].x;
- motion_CS.origin[k].y = rigid_body_CS.origin[k].y - TT_CS.origin->y - motion_CS.origin[k].y;
- motion_CS.origin[k].z = rigid_body_CS.origin[k].z - TT_CS.origin->z - motion_CS.origin[k].z;
- forward_transform_centered(motion_CS.origin + k, motion_CS.origin + k, rigid_body_CS.R + k9);
- HANDLE_ERROR( cudaMemcpy( motion_CS.d__origin+k, motion_CS.origin+k, 
-			   sizeof(vector), cudaMemcpyHostToDevice ) );
-
-/*
- fprintf(stdout,"#%d >> MOTION CS origins [micron]  : %+.3e, %+.3e, %+.3e\n",k,
-	 motion_CS.origin[k].x*1e6,
-	 motion_CS.origin[k].y*1e6,
-	 motion_CS.origin[k].z*1e6);
-
- float r2d;
- r2d = 1000*3600*180.0/PI;
- fprintf(stdout,"#%d >> MOTION CS Euler angles [mas]: %+.3e, %+.3e, %+.3e\n",k,
-	 r2d*motion_CS.euler_angles[k].x,
-	 r2d*motion_CS.euler_angles[k].y,
-	 r2d*motion_CS.euler_angles[k].z);
-*/
-
-<<GMT M1 functions>>=
-void gmt_m1::global_tiptilt(float tip, float tilt)
-{
-  <<GMT global tip-tilt common>>
-}    
-@  with
-<<GMT global tip-tilt setup>>=
-sprintf(tag,"GLOBAL TIP-TILT");
-vector TT_CS_origin, TT_CS_euler_angles;
-TT_CS_origin.x = TT_CS_origin.y = TT_CS_origin.z = 0.0;
-TT_CS_euler_angles.x = TT_CS_euler_angles.y = TT_CS_euler_angles.z = 0.0;
-TT_CS.setup(&TT_CS_origin, &TT_CS_euler_angles, 1, tag);
-cublasCreate(&handle);
-HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
-@
-<<GMT global tip-tilt cleanup>>=
-TT_CS.cleanup();
-cublasDestroy(handle);
-HANDLE_ERROR( cudaFree( d__C ) );
-@  and 
-<<GMT global tip-tilt common>>=
-double alpha, beta;
-alpha = 1.0;
-beta  = 0.0;
-int k, k9;
-vector origin, euler_angles;
-origin.x = origin.y = origin.z = 0.0;
-euler_angles.x = tip;
-euler_angles.y = tilt;
-euler_angles.z = 0.0;
-TT_CS.update(origin,euler_angles,0);
-for (k=0;k<N;k++)
-  {
-    k9 = k*9;
-    <<global tip-tilt transformation>>
-  }
-@ 
-\section{GMT M2}
-\label{sec:gmt-m2}
-
-A new structure to hold GMT M1 parameters and functions is defined.
-<<GMT M2 structure>>=
-struct gmt_m2 {
-  <<GMT M12 parameters>>
-  <<GMT M12 functions>>
-  void pointing_neutral(float tip, float tilt);
-  void coma_neutral(float tip, float tilt);
-};
-@
-\subsection{Setup \& Cleanup}
-\label{sec:setup--cleanup-2}
-
-<<GMT M2 functions>>=
-void gmt_m2::setup(float _D_, int _D_px_)
-{
-  <<M2 parameters>>
-  <<GMT setup common>>
-}
-@ with
-<<M2 parameters>>=
- M_ID    = 2;
- D_px    = _D_px_;
- D       = _D_;
- D_assembly = 3.168;
- D_full  = 1.0425*1.005; // slightly larger to always encompass M1; needed for the Zernike
- D_clear = 1.0415;
- ri      = 0.0;
- beta    = -14.706*PI/180.0;
- L       = 1.08774;
- N       = 7;
- conic_c = -1.0/4.1639009;
- conic_k = 1-0.71692784;
- height  = 20.26247614;
- idx_offset = 3;
-@  
-If an array of sources is propagated through the telescope then
-<<GMT M2 functions>>=
-void gmt_m2::setup(float _D_, int _D_px_, int N_SRC)
-{
-  ZS = NULL;
-  M_ID    = 2;
-  <<M2 parameters>>
-  <<GMT setup common>>
-}
-@ 
-<<GMT M2 functions>>=
-void gmt_m2::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
-{
-  ZS = _ZS_;
-  M_ID    = 2;
-  <<M2 parameters>>
-  <<GMT setup common>>
-}
-@ 
-Memory is freed with
-<<GMT M2 functions>>=
-void gmt_m2::cleanup(void)
-{
-  fprintf(stdout,"@(CEO)>gmt_m2: freeing memory!\n");
-  <<GMT cleanup common>>
-}
-@
-\subsection{Blocking}
-\label{sec:blocking-2}
-
-The rays blocking with M2 is computed with
-<<GMT M2 functions>>=
-void gmt_m2::blocking(bundle *rays)
-{
-  <<GMT blocking common>>
-}
-@
-\subsection{Ray tracing}
-\label{sec:ray-tracing-2}
-
-The rays propagation through M1 is computed with
-<<GMT M2 functions>>=
-void gmt_m2::trace(bundle *rays)
-{ 
- <<GMT trace common>>
-}
-@
-The rigid body motion parameters are updated with:
-<<GMT M2 functions>>=
-void gmt_m2::update(vector _origin_, vector _euler_angles_,int idx)
-{
-    <<GMT M12 update>>
-}
-@ 
-The rigid body motion are reset to 0 with:
-<<GMT M2 functions>>=
-void gmt_m2::reset(void)
-{
-    <<GMT M12 reset>>
-}
-@
-\subsection{Edge sensors}
-\label{sec:edge-sensors-1}
-
-<<GMT M2 functions>>=
-void gmt_m2::edge_sensors(float *x, float *y, float *z, int N, int idx0, int idx_edge_sensor)
-{
-  <<GMT edge sensors common>>
-}
-@
-\subsection{Global motions}
-\label{sec:global-motions}
-
-\subsection{Global tip--tilt}
-\label{sec:global-tip-tilt-1}
-
-<<GMT M2 functions>>=
-void gmt_m2::global_tiptilt(float tip, float tilt)
-{
-  <<GMT global tip-tilt common>>
-}    
-@
-\subsubsection{Tip--tilt neutral}
-\label{sec:tip-tilt-neutral}
-
-<<GMT M2 functions>>=
-void gmt_m2::pointing_neutral(float tip, float tilt)
-{
-  double alpha, beta, *d__C;
-  vector origin, euler_angles;
-  cublasHandle_t handle;
-  coordinate_system TT_CS;
-
-  origin.x = origin.y = 0.0;
-  origin.z = height - 4390.312E-03;
-  euler_angles.x = tip;
-  euler_angles.y = tilt;
-  euler_angles.z = 0.0;
-
-  TT_CS.setup(origin, euler_angles);
-  cublasCreate(&handle);
-
-  alpha = 1;
-  beta  = 0;
-  HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
-  int k, k9;
-  for (k=0;k<N;k++)
-    {
-      k9 = k*9;
-      <<global tip-tilt transformation>>
-    }
-
-  cublasDestroy(handle);
-  TT_CS.cleanup();
-  HANDLE_ERROR( cudaFree( d__C ) );
-}
-@
-\subsubsection{Coma neutral}
-\label{sec:coma-neutral}
-
-<<GMT M2 functions>>=
-void gmt_m2::coma_neutral(float tip, float tilt)
-{
-  double alpha, beta, *d__C;
-  vector origin, euler_angles;
-  cublasHandle_t handle;
-  coordinate_system TT_CS;
-
-  origin.x = origin.y = 0.0;
-  origin.z = height - 2246.410E-03;
-  euler_angles.x = tip;
-  euler_angles.y = tilt;
-  euler_angles.z = 0.0;
-
-  TT_CS.setup(origin, euler_angles);
-  cublasCreate(&handle);
-
-  alpha = 1;
-  beta  = 0;
-  HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
-  int k, k9;
-  for (k=0;k<N;k++)
-    {
-      k9 = k*9;
-      <<global tip-tilt transformation>>
-    }
-
-  cublasDestroy(handle);
-  TT_CS.cleanup();
-  HANDLE_ERROR( cudaFree( d__C ) );
-}
-@
 \section{Input/Output}
 \label{sec:inputoutput}
 

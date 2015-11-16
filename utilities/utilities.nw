@@ -1,5 +1,6 @@
-% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+-*- mode: Noweb; noweb-code-mode: c-mode -*-
 
+\index{utilities}
 \section{The files}
 
 \subsection{Header}
@@ -24,6 +25,15 @@
 #define MAX(a, b)  (((a) > (b)) ? (a) : (b))
 #define CUBLAS_VERBOSE 0
 #define RAND_SEED 2013
+
+static void Error( const char *errMsg,
+		   const char *file,
+		   int line ) {
+  fprintf(stderr,"\n\x1B[31m@(CEO)>ERROR: %s in %s at line %d\x1B[0m\n", 
+	  errMsg, file, line );
+  exit( EXIT_FAILURE );
+}
+#define ERROR( errMsg ) (Error( errMsg, __FILE__, __LINE__ ))
 
 static void HandleError( cudaError_t err,
                          const char *file,
@@ -86,7 +96,7 @@ void CUBLAS_ERROR(cublasStatus_t status);
 __global__ void fill_ones_char(char *ones, int n_data) ;
 __global__ void circular_pupil(char *pupil, int N);
 __global__ void square_pupil(char *pupil, int N, int N_S, int I_S, int J_S);
-__global__ void rot_square_pupil(char *pupil, int N, float N_S, float I_S, float J_S, float theta);
+__global__ void rot_square_pupil(char *pupil, int N, float N_S, float I_0, float J_0, float theta, float I_S, float J_S);
 __global__ void GMT_pupil(char *pupil, const int N, const float S, float Dsh, const float c, const char v);
 //__global__ void valid_lenslet(char *mask, int N_pupil, float threshold);
 __global__ void fried_geometry(char *lenslet_mask, char *actuator_mask, 
@@ -124,8 +134,11 @@ void freedev( float **dev_data );
 
 <<template gpu data structure>>
 
-void wavefront_finite_difference(float *sx, float *sy, int NL, float *phi, int n, float d);
-void wavefront_finite_difference(float *sx, float *sy, int NL, float *phi, int n, float d, mask *pupil);
+void wavefront_finite_difference(float *sx, float *sy, int NL, 
+                                 float *phi, int n, float d);
+void wavefront_finite_difference(float *sx, float *sy, int NL, 
+                                 float *phi, int n, float d, 
+                                 mask *pupil, int N_GS);
 
 #endif  // __UTILITIES_H__
 @
@@ -156,6 +169,7 @@ int round_up_to_nhp2(int n) {
 <<fill ones (char)>>
 <<fill ones filtered>>
 <<fill ones altered>>
+<<add mask kernel>>
 <<non zeros index>>
 <<statistics functions>>
 <<mask functions>>
@@ -186,6 +200,8 @@ int round_up_to_nhp2(int n) {
 \subsection{Python}
 \label{sec:python}
 
+\index{utilities!python}
+
 <<utilities.pxd>>=
 cdef extern from "utilities.h":
 @ 
@@ -205,6 +221,7 @@ cimport utilities
 
 When dealing with lenslet arrays, a thread in a given thread block correspond to a pixel coordinate $[i,j]$ in a given lenslet $[i_l,j_L]$.
 The following function computes the coordinates $[i,j]$ and $[i_l,j_L]$ based on the thread and block index, the block size and the number of pixel per lenslet [[n_px_lenslet]].
+\index{utilities!threads2lenslet}
 <<threads2lenslet>>=
 __device__ inline char threads2lenslet(dim3 threadIdx, dim3 blockIdx, dim3 blockDim, 
 				      int *i_px_lenslet, int *j_px_lenslet, int n_px_lenslet, 
@@ -255,6 +272,7 @@ The third dimension of the block grid gives the source index.
 \end{figure}
 @
 Once the coordinates $[i,j]$ and $[i_l,j_L]$ have been computed, the linear index in the image is computed with
+\index{utilities!lenslet2array}
 <<lenslet2array>>=
 __device__ inline int lenslet2array(int i_px_lenslet, int j_px_lenslet, int n_px_lenslet, 
 			 int i_lenslet, int j_lenslet, int n_lenslet, int i_source)
@@ -266,6 +284,8 @@ __device__ inline int lenslet2array(int i_px_lenslet, int j_px_lenslet, int n_px
   index += j_lenslet*n_px_lenslet + j_px_lenslet;
   return index;
 }
+@ 
+\index{utilities!lenslet2array\_overlap}
 <<lenslet2array (overlap)>>=
 __device__ inline int lenslet2array_overlap(int i_px_lenslet, int j_px_lenslet, int n_px_lenslet, 
 			 int i_lenslet, int j_lenslet, int n_lenslet, int i_source)
@@ -312,6 +332,7 @@ where $N_s$ is the number of sources.
 \end{figure}
 
 To compute the Fourier transform of the wavefront of each lenslet in a batch, all the lenslets are concatenated into a single column:
+\index{utilities!lenslet2row}
 <<lenslet2row>>=
 __device__ inline int lenslet2row(int i_px_lenslet, int j_px_lenslet, int n_px_lenslet, 
 			 int i_lenslet, int j_lenslet, int n_lenslet, 
@@ -360,6 +381,7 @@ where $N_s$ is the number of sources.
 \label{sec:stopwatch}
 
 In the following, a structure to time a chunk of CUDA code is defined:
+\index{utilities!stopwatch}
 <<tic-toc>>=
 struct stopwatch{
   cudaEvent_t     start, stop;
@@ -408,6 +430,7 @@ struct stopwatch{
 };
 @
 The python wrapper is 
+\index{utilities!python!StopWatch}
 <<utilities.pxd>>=
 ## stopwatch structure
     cdef cppclass stopwatch:
@@ -449,6 +472,7 @@ cdef class StopWatch:
 \label{sec:stat-defin}
 
 Statistical moment are computed with the structure [[stats]]
+\index{utilities!stats}
 <<statistics definition>>=
 struct stats {
   cublasHandle_t handle;
@@ -466,13 +490,19 @@ struct stats {
   float diff_var(const float *data1, const float *data2, mask *M, int n_data);
   float diff_std(const float *data1, const float *data2, mask *M, int n_data);
 };
+@ 
+\index{utilities!stats!setup}
 <<statistics functions>>=
 void stats::setup(void) {
   cublasCreate(&handle);
 }
+@ 
+\index{utilities!stats!cleanup}
+<<statistics functions>>=
 void stats::cleanup(void) {
   cublasDestroy(handle);
 }
+<<statistics functions>>=
 <<mean>> 
 <<mean filtered data>>
 <<variance>> 
@@ -485,6 +515,7 @@ void stats::cleanup(void) {
 <<differential standard deviation filtered data>>
 @  
 Computing the mean of a vector [[data]]$=x$, $\bar x = \langle x \rangle$:
+\index{utilities!stats!mean}
 <<mean>>=
 float stats::mean(const float *data, int n_data) {
   float results, *ones;
@@ -516,6 +547,7 @@ i = blockIdx.x * blockDim.x + threadIdx.x;
 
 @  
 Computing the mean of a vector [[data]]$=x\times f$, $\bar xf = \langle xf \rangle$ where $f$ is a filtering vector the same size than $x$ and made of 0 and 1:
+\index{utilities!stats!mean}
 <<mean filtered data>>=
 float stats::mean(const float *data, mask *M, int n_data) {
   float results;
@@ -525,6 +557,7 @@ float stats::mean(const float *data, mask *M, int n_data) {
 
 @  
 Computing the variance of a vector [[data]]$=x$, $\sigma^2_x=\langle x^2 \rangle - \langle x \rangle^2$:
+\index{utilities!stats!var}
 <<variance>>=
 float stats::var(const float *data, int n_data) {
   <<variance algorithm>>
@@ -545,6 +578,7 @@ results /= n_data;
 results -= (mean_data*mean_data);
 @  
 Computing the standart deviation $\sigma_x$ of a vector [[data]]$=x$:
+\index{utilities!stats!std}
 <<standart deviation>>=
 float stats::std(const float *data, int n_data) {
   <<variance algorithm>>
@@ -552,6 +586,7 @@ float stats::std(const float *data, int n_data) {
 }
 @  
 Computing the variance of a vector [[data]]$=x\times f$, $\sigma^2_{xf}=\langle (xf)^2 \rangle - \langle xf \rangle^2$ where $f$ is a filtering vector the same size than $x$ and made of 0 and 1:
+\index{utilities!stats!var}
 <<variance filtered data>>=
 float stats::var(const float *data1, mask *M, int n_data) {
   float results, mean_data, *data;
@@ -560,6 +595,8 @@ float stats::var(const float *data1, mask *M, int n_data) {
   <<variance filtered data steps>>
   return results;
 }
+@ 
+\index{utilities!stats!diff\_var}
 <<differential variance filtered data>>=
 float stats::diff_var(const float *data1, const float *data2, mask *M, int n_data) {
   float results, mean_data, *data;
@@ -570,6 +607,8 @@ float stats::diff_var(const float *data1, const float *data2, mask *M, int n_dat
   <<variance filtered data steps>>
   return results;
 }
+@
+\index{utilities!stats!diff\_std}
 <<differential standard deviation filtered data>>=
 float stats::diff_std(const float *data1, const float *data2, mask *M, int n_data) {
   float results, mean_data, *data;
@@ -590,6 +629,7 @@ results -= (mean_data*mean_data);
 HANDLE_ERROR( cudaFree( data ) );
 @  
 Computing the standard deviation of a vector [[data]]$=x\times f$, $\sigma_{xf}=\left(\langle (xf)^2 \rangle - \langle xf \rangle^2\right)^{1/2}$ where $f$ is a filtering vector the same size than $x$ and made of 0 and 1:
+\index{utilities!stats!std}
 <<standart deviation filtered data>>=
 float stats::std(const float *data1, mask *M, int n_data) {
   float results, mean_data, *data;
@@ -617,6 +657,7 @@ CUBLAS_ERROR( cublasSaxpy(handle, n_data, &alpha, data2, 1, data, 1) );
 HANDLE_ERROR( cudaFree( data ) );
 @  
 Computing the differential standart deviation $\sigma_{x_1-x_2}$ of vector [[data1]]$=x_1$ and [[data2]]$=x_2$:
+\index{utilities!stats!diff\_std}
 <<differential standart deviation>>=
 float stats::diff_std(const float *data1, const float *data2, int n_data) {
   <<differential variance algorithm>>
@@ -694,7 +735,7 @@ __global__ void square_pupil(char *pupil, int N, int N_S, int I_S, int J_S)
 @ 
 If the square pupil is rotated of angle $\theta$ degree, the kernel becomes
 <<square pupil>>=
-__global__ void rot_square_pupil(char *pupil, int N, float N_S, float I_S, float J_S, float theta)
+__global__ void rot_square_pupil(char *pupil, int N, float N_S, float I_0, float J_0, float theta, float I_S, float J_S)
 {
   int i, j, k;
   float c, s, h, x, y, xr, yr;
@@ -704,8 +745,8 @@ __global__ void rot_square_pupil(char *pupil, int N, float N_S, float I_S, float
   if ( (i<N) && (j<N) ) {
     sincosf(theta,&s,&c);
     h = (1.0*N_S)/N;
-    x = (2.0*i)/(N-1) - 1.0;
-    y = (2.0*j)/(N-1) - 1.0;
+    x = (2.0*(i-I_0))/(N-1) - 1.0;
+    y = (2.0*(j-J_0))/(N-1) - 1.0;
     xr = c*x + y*s;
     yr = -s*x + y*c;
     xr -= (2.0*I_S)/(N-1) - 1.0;
@@ -754,6 +795,7 @@ __global__ void valid_lenslet(char *mask, int N_pupil, float threshold)
   }
 }
 @  The following routine computes the masks of valid lenslet [[lenslet_mask]] and actuators [[actuator_mask]] for a circular pupil corresponding to a square [[NL]]$\times$[[NL]] lenslet array with [[n]] pixel per lenslet.
+\index{utilities!fried\_geometry\_setup}
 <<Fried geometry masks>>=
 char fried_geometry_setup(char *lenslet_mask, char *actuator_mask, 
 			  int NL, int n, float threshold)
@@ -818,6 +860,7 @@ return 1;
 }
 @ 
 The following routine computes the masks of valid lenslet [[lenslet_mask]] and actuators [[actuator_mask]] for an arbitrary pupil corresponding to a square [[NL]]$\times$[[NL]] lenslet array with [[n]] pixel per lenslet.
+\index{utilities!fried\_geometry\_setup\_vs\_pupil}
 <<Fried geometry masks (arbitrary pupil)>>=
 char fried_geometry_setup_vs_pupil(char *lenslet_mask, char *actuator_mask, 
 			  int NL, int n, float threshold, char *pupil)
@@ -997,6 +1040,7 @@ if ( (h>=Dsh) && (h<=Dsca) ) {
 \subsection{Mask structure}
 \label{sec:mask-structure}
 
+\index{utilities!mask}
 Lets define a mask structure with the following parameters:
 \begin{itemize}
 \item the mask [[m]] has a type of char and contains 0 and 1,
@@ -1038,14 +1082,18 @@ struct mask {
   void setup(int n);
   void setup(int n, float L);
   void setup(int n, float L, int i_s, int j_s, int n_out);
-  void setup(float n, float L, float i_s, float j_s, 
-	     float theta, int n_out );
+  void setup(float n, float L, float i_0, float j_0, 
+	     float theta, float i_s, float j_s, int n_out );
   void setup_circular(int n);
   void setup_circular(int n, float D);
   void setup_GMT(int n, float S);
   void set_filter(void);
   void set_filter_quiet(void);
   void alter(float *filter);
+  void add(mask *other);
+  void add(char *other, int other_nel);
+  void add(mask *other, int offset);
+  void add(char *other, int other_nel, int offset);
   void cleanup(void);
 };
 @ 
@@ -1054,6 +1102,7 @@ The mask functions are:
 \item [[setup]]
   \begin{itemize}
   \item with the total number of element in the mask [[n]]:
+\index{utilities!mask!setup}
 <<mask functions>>=
 void mask::setup(int n) {
   nel = n;
@@ -1073,6 +1122,7 @@ HANDLE_ERROR( cudaMemset( f, 0, sizeof(float)*nel) );
 HANDLE_ERROR( cudaMalloc((void**)&idx, sizeof(int)*nel ) );
 cublasCreate(&handle);
 @ \item with a square mask of [[n]] pixel across and [[L]] meter width:
+\index{utilities!mask!setup}
 <<mask functions>>=
 void mask::setup(int n, float L) {
   size_px[0] = size_px[1] = n;
@@ -1087,6 +1137,7 @@ void mask::setup(int n, float L) {
   set_filter();
 }
 @ \item with a square mask of [[n]] pixel across and [[L]] meter width inside a [[n_out]]$\times$[[n_out]] array and centered on pixel coordinates [[i_s]] and [[j_s]]:
+\index{utilities!mask!setup}
 <<mask functions>>=
 void mask::setup(int n, float L, int i_s, int j_s, int n_out) {
   size_px[0] = size_px[1] = n_out;
@@ -1101,10 +1152,11 @@ void mask::setup(int n, float L, int i_s, int j_s, int n_out) {
   square_pupil LLL gridDim,blockDim RRR (m,n_out,n,i_s,j_s);
   set_filter();
 }
-@ \item with a square mask of [[n]] pixel across and [[L]] meter width inside a [[n_out]]$\times$[[n_out]] array and centered on pixel coordinates [[i_s]] and [[j_s]] and rotated around [[i_s]] and [[j_s]] of an angle $\theta$:
+@ \item with a square mask of [[n]] pixel across and [[L]] meter width inside a [[n_out]]$\times$[[n_out]] array and rotated around [[i_0]] and [[j_0]] of an angle $\theta$ and centered on pixel coordinates [[i_s]] and [[j_s]] :
+\index{utilities!mask!setup}
 <<mask functions>>=
-void mask::setup(float n, float L, float i_s, float j_s, 
-                 float theta, int n_out ) {
+void mask::setup(float n, float L, float i_0, float j_0, float theta, 
+                 float i_s, float j_s, int n_out ) {
   size_px[0] = size_px[1] = n_out;
   size_m[0]  = size_m[1]  = L;
   delta[0]   = delta[1]   = L/(n-1);
@@ -1114,10 +1166,11 @@ void mask::setup(float n, float L, float i_s, float j_s,
   <<setup common>>
   dim3 blockDim(16,16);
   dim3 gridDim(n_out/16+1,n_out/16+1);
-  rot_square_pupil LLL gridDim,blockDim RRR (m,n_out,n,i_s,j_s,theta);
+  rot_square_pupil LLL gridDim,blockDim RRR (m,n_out,n,i_0,j_0,theta,i_s,j_s);
   set_filter();
 }
 @ \item with a circular mask inside an [[n]]$\times$[[n]] array
+\index{utilities!mask!setup\_circular}
 <<mask functions>>=
 void mask::setup_circular(int n) {
   nel = n*n;
@@ -1129,6 +1182,7 @@ void mask::setup_circular(int n) {
   set_filter();
 }
 @ \item with a circular mask of diameter [[D]] (in meter) inside an [[n]]$\times$[[n]] array
+\index{utilities!mask!setup\_circular}
 <<mask functions>>=
 void mask::setup_circular(int n, float D) {
   size_px[0] = size_px[1] = n;
@@ -1143,6 +1197,7 @@ void mask::setup_circular(int n, float D) {
   set_filter();
 }
 @ \item with the Giant Magellan Telescope mask inside an [[n]]$\times$[[n]] array of length [[S]] in meter
+\index{utilities!mask!setup\_GMT}
 <<mask functions>>=
 void mask::setup_GMT(int n, float S) {
   size_px[0] = size_px[1] = n;
@@ -1168,25 +1223,27 @@ void mask::setup_GMT(int n, float S) {
 @
 \end{itemize}
 \item set the filter and compute the number of non--zeros elements:
+\index{utilities!mask!set\_filter}
 <<mask functions>>=
 void mask::set_filter(void) {
-  dim3 blockDim(256);
-  dim3 gridDim(nel/256+1);
-  fill_ones_filtered LLL gridDim,blockDim RRR (f, m, nel);
-
-  CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
+  <<set filter common>>
   fprintf(stdout,"@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
-
-  //nnz_idx LLL 1,1 RRR (idx, m, nel);
 }
+@ 
+\index{utilities!mask!set\_filter\_quiet}
+<<mask functions>>=
 void mask::set_filter_quiet(void) {
-  dim3 blockDim(256);
-  dim3 gridDim(nel/256+1);
-  fill_ones_filtered LLL gridDim,blockDim RRR (f, m, nel);
-  CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
-  //  nnz_idx LLL 1,1 RRR (idx, m, nel); time comsuming!!!
+  <<set filter common>>
 }
+@ with
+<<set filter common>>=
+dim3 blockDim(256);
+dim3 gridDim(nel/256+1);
+fill_ones_filtered LLL gridDim,blockDim RRR (f, m, nel);
+CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
+nnz_idx LLL 1,1 RRR (idx, m, nel); //time comsuming!!!
 @ \item [[cleanup]]
+\index{utilities!mask!cleanup}
 <<mask functions>>=
 void mask::cleanup(void) {
   fprintf(stdout,"@(CEO)>mask: freeing memory!\n");
@@ -1216,17 +1273,17 @@ __global__ void nnz_idx(int *idx, const char* mask, int n_data)
 }
 @
 \item the mask can be altered by passing an array of 1 and 0 that is multiplied by the existing mask
+\index{utilities!mask!alter}
 <<mask functions>>=
 void mask::alter(float *filter)
 {
   dim3 blockDim(256);
   dim3 gridDim(nel/256+1);
   fill_ones_altered LLL gridDim,blockDim RRR (f, m, nel, filter);
-
   CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
   fprintf(stdout,"@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
 }
-@  with the kernels
+@  with the kernel
 <<fill ones altered>>=
 __global__ void fill_ones_altered(float *ones, char* mask, int n_data, float *filter) 
 {
@@ -1238,6 +1295,60 @@ __global__ void fill_ones_altered(float *ones, char* mask, int n_data, float *fi
   }
 }
 @
+\item masks can be added together with 
+\index{utilities!mask!add}
+<<mask functions>>=
+void mask::add(mask *other)
+{
+  if (other->nel>nel)
+    ERROR("Addition of masks failed because of size mismatch!");
+  dim3 blockDim(256);
+  dim3 gridDim(other->nel/256+1);
+  add_kernel LLL gridDim,blockDim RRR (m, other->m, other->nel);  
+  set_filter();
+}
+void mask::add(char *other, int other_nel)
+{
+  if (other_nel>nel)
+    ERROR("Addition of masks failed because of size mismatch!");
+  dim3 blockDim(256);
+  dim3 gridDim(other_nel/256+1);
+  add_kernel LLL gridDim,blockDim RRR (m, other, other_nel);  
+  set_filter();
+}
+@ with the kernel
+<<add mask kernel>>=
+__global__ void add_kernel(char *mask, char *other_mask, int n_data)
+{
+  int i;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if ( (i<n_data) && (other_mask[i]) ) {
+    mask[i] = other_mask[i];
+  }
+}
+@
+\item the mask addition can be done with an offset on the mask
+\index{utilities!mask!add}
+<<mask functions>>=
+void mask::add(mask *other, int offset)
+{
+  if (other->nel>nel-offset)
+    ERROR("Addition of masks failed because of size mismatch!");
+  dim3 blockDim(256);
+  dim3 gridDim(other->nel/256+1);
+  add_kernel LLL gridDim,blockDim RRR (m+offset, other->m, other->nel);  
+  set_filter();
+}
+void mask::add(char *other, int other_nel, int offset)
+{
+  if (other_nel>nel-offset)
+    ERROR("Addition of masks failed because of size mismatch!");
+  dim3 blockDim(256);
+  dim3 gridDim(other_nel/256+1);
+  add_kernel LLL gridDim,blockDim RRR (m+offset, other, other_nel);  
+  set_filter();
+}
+@
 \end{itemize}
 
 \subsubsection{Python}
@@ -1247,24 +1358,26 @@ The python wrapper is
 <<utilities.pxd>>=
 ## mask structure
     cdef cppclass mask:
-        int nnz
+        int nel, nnz
         char *m
         float *f
+        float area
         void setup(int, float)
         void setup(int, float, int, int, int)
         void setup(float , float , float , float , 
-                   float , int)
+                   float , float , float , int)
         void setup_circular(int, float)
         void setup_GMT(int, float)
         void alter(float *)
         void cleanup()
 @ 
+\index{utilities!python!MaskAbstract}
 <<class definitions>>=
 # MaskAbstract
 cdef class MaskAbstract:
     cdef mask *_c_mask
-    cdef int n    
-    cdef public cuFloatArray f
+    cdef readonly int n    
+    cdef readonly cuFloatArray f
 <<utilities.pyx>>=
 ## mask structure
 cdef class MaskAbstract:
@@ -1297,6 +1410,16 @@ cdef class MaskAbstract:
         def __get__(self):
             return self._c_mask.nnz
 
+    property nel:
+        def __get__(self):
+            return self._c_mask.nel
+
+    property area:
+        def __get__(self):
+            return self._c_mask.area
+@ 
+\index{utilities!python!Mask}
+<<utilities.pyx>>=
 cdef class Mask(MaskAbstract):
     """ 
     Creates a square mask object.
@@ -1307,11 +1430,11 @@ cdef class Mask(MaskAbstract):
         the linear sampling in pixel of the pupil
     L : float
         the linear size of the mask in meter    
-    i_s : float, optionnal
+    i_s : float, optional
         the row pixel coordinate of the mask center, default: 0
-    j_s : float, optionnal
+    j_s : float, optional
         the column pixel coordinate of the mask center, default: 0
-     n_s : float, optionnal
+     n_s : float, optional
         the mask size in pixel, default: 0 means n_s=n 
      theta : float
         the rotation angle [rd] of the mask with respect to i_s and j_s, default: 0
@@ -1321,19 +1444,21 @@ cdef class Mask(MaskAbstract):
     MaskAbstract
     """
 
-    def __cinit__(self,int n, float L, float i_s=0.0, float j_s=0.0, 
-                  float n_s=0.0, float theta=0.0):
+    def __cinit__(self,int n, float L, float i_0=0.0, float j_0=0.0, 
+                  float n_s=0.0, float theta=0.0, float i_s=0.0, float j_s=0.0):
         self.n = n*n
         if n_s==0:
             self._c_mask.setup(n,L)
         else:
-            self._c_mask.setup(n_s,L,i_s,j_s,theta,n)
+            self._c_mask.setup(n_s,L,i_0,j_0,theta,i_s,j_s,n)
 	self.f = cuFloatArray(shape=(self.n,1))
         self.f._c_gpu.dev_data = self._c_mask.f
 
     def __dealloc__(self):
         self._c_mask.cleanup()
-
+@ 
+\index{utilities!python!Telescope}
+<<utilities.pyx>>=
 cdef class Telescope(MaskAbstract):
     """ 
     Creates a circular mask object.
@@ -1357,7 +1482,9 @@ cdef class Telescope(MaskAbstract):
 
     def __dealloc__(self):
         self._c_mask.cleanup()
-
+@ 
+\index{utilities!python!GMT}
+<<utilities.pyx>>=
 cdef class GMT(MaskAbstract):
     """ 
     Creates a mask object for the Giant Magellan Telescope pupil.
@@ -1388,6 +1515,7 @@ cdef class GMT(MaskAbstract):
 
 In the following, the routines to write data on the device into a file are described.
 Each file contains first an integer with the number of pages [[n_page]] and for each page the number of elements [[n_data]] and the data [[data]].
+\index{utilities!dev2file}
 <<device to file>>=
 void dev2file(const char* filename, float* d__data, int n_data) {
   int n_page=1;
@@ -1499,6 +1627,7 @@ fprintf(stdout,"@(CEO)>utilities: Data saved to %s!\n",filename);
 \subsection{Device to host}
 \label{sec:dev-to-host}
 
+\index{utilities!dev2host}
 <<data to host from device>>=
 void dev2host( float *host_data, float *dev_data, int N) {
      HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
@@ -1506,6 +1635,7 @@ void dev2host( float *host_data, float *dev_data, int N) {
      HANDLE_ERROR( cudaDeviceSynchronize() );
 }
 @
+\index{utilities!host2dev}
 <<data to device from host>>=
 void host2dev( float **dev_data, float *host_data, int N) {
     fprintf(stdout,"__ HOST2DEV __\n");
@@ -1515,12 +1645,14 @@ void host2dev( float **dev_data, float *host_data, int N) {
     HANDLE_ERROR( cudaDeviceSynchronize() );
 }
 @ 
+\index{utilities!freedev}
 <<free device>>=
 void freedev( float **dev_data ) {
     fprintf(stdout,"__ FREEDEV __\n");
     HANDLE_ERROR( cudaFree( *dev_data) );
 }
 @ 
+\index{utilities!gpu}
 <<template gpu data structure>>=
 template<typename T> 
 struct gpu_t {
@@ -1539,12 +1671,13 @@ struct gpu_t {
   void dev2host(void) {
     HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
 			      N*nb, cudaMemcpyDeviceToHost ) ) ;
-    HANDLE_ERROR( cudaDeviceSynchronize() ); 
   }
   void host2dev(void) {
     HANDLE_ERROR( cudaMemcpy( dev_data, host_data, 
 			      N*nb, cudaMemcpyHostToDevice ) ) ;
-    HANDLE_ERROR( cudaDeviceSynchronize() );
+  }
+  void reset(void) {
+    HANDLE_ERROR( cudaMemset( dev_data, 0, N*nb) );
   }
 };
 @ 
@@ -1566,7 +1699,9 @@ cdef extern from "utilities.h":
         void free_dev()
         void dev2host()
         void host2dev()
+        void reset()
 @ 
+\index{utilities!python!cuFloatArray}
 <<class definitions>>=
 # cuFloatArray
 from operator import mul
@@ -1604,11 +1739,11 @@ cdef class cuFloatArray:
 <<cu array class doc>>= 
 Parameters
 ----------
-shape : tuple of int, optionnal
+shape : tuple of int, optional
     Number of rows and colums; default: None
-host_data : list or tuple or numpy array, optionnal
+host_data : list or tuple or numpy array, optional
     Host data to copy to the device; default: None
-dev_malloc : bool, optionnal
+dev_malloc : bool, optional
     Flag to allocate memory on device; default: False
 
 Attributes
@@ -1654,6 +1789,9 @@ def __dealloc__(self):
 
 def host(self,units=None,zm=False,mask=None,shape=None):
     <<cu array host>>
+
+def reset(self):
+    self._c_gpu.reset()
 @
 <<cu array host>>=
 <<cu array method doc>>
@@ -1682,11 +1820,11 @@ Transfers data on the GPU device to the memory of the host
 
 Parameters
 ----------
-shape : tuple, optionnal
+shape : tuple, optional
     The shape of the data array, default to None
-units : string, optionnal
+units : string, optional
     The data converstion units: ""micron"", ""nm"", ""arcsec" and ""mas"", default to None
-zm : boolean, optionnal
+zm : boolean, optional
     If True, the data mean is removed; default to False
 mask : boolean
     If zm is True, the mean is computed for data values where the mask is True
@@ -1696,6 +1834,7 @@ Returns
 numpy array : a copy of the device data on the host
 """
 @
+\index{utilities!python!cuIntArray}
 <<class definitions>>=
 # cuIntArray
 cdef class cuIntArray:
@@ -1720,6 +1859,7 @@ cdef class cuIntArray:
         self._c_gpu.host_data = <int *>self.host_data.data;
 
 @
+\index{utilities!python!cuDoubleArray}
 <<class definitions>>=
 # cuDoubleArray
 cdef class cuDoubleArray:
@@ -1756,6 +1896,7 @@ It is defined with the model of Owens\cite{Owens67} (\url{http://www.astrosurf.c
   && \left[ 6487.31 + 58.05\sigma^2 - 0.71150\sigma^4 + 0.08851\sigma^6 \right]D_w,
 \end{eqnarray*}
 in which $\sigma=1/\lambda$, $\lambda$ is the wavelength in micron.
+\index{utilities!atmosphere\_refractive\_index}
 <<atmosphere refractive index>>=
 double atmosphere_refractive_index(float wavelength, float altitude, 
 				   float temperature, float humidity)
@@ -1823,6 +1964,7 @@ The atmospheric dispersion $\Xi$ corresponding to a spectral filter of width $\D
 \begin{equation*}
   \Xi = \left[ n\left( \lambda_c - {\Delta\lambda\over2} \right) - n\left( \lambda_c + {\Delta\lambda\over2} \right) \right] \tan(z)
 \end{equation*}
+\index{utilities!atmosphere\_dispersion}
 <<atmospheric dispersion>>=
 double atmospheric_dispersion(float wavelength, float delta_wavelength,
                                    float zenith, float altitude, 
@@ -1842,6 +1984,8 @@ return xi;
 @
 
 The python wrapper is 
+\index{utilities!python!atmosphereRefractiveIndex}
+\index{utilities!python!atmosphericDispersion}
 <<utilities.pxd>>=
 ## atmosphere dispersion  
     double atmosphere_refractive_index(float wavelength, float altitude, 
@@ -1877,6 +2021,7 @@ The x and y slopes corresponding to the average gradient of the wavefront $\varp
   s_x(i_L,j_L) &=& {1\over (n+1)d} \sum_{k=0}^{n} \varphi\left[ i_Ln,j_Ln+k \right] -  \varphi\left[ (i_L+1)n,j_Ln+k\right] 
 \end{eqnarray}
 
+\index{utilities!wavefront\_finite\_difference}
 <<wavefront differentiation>>=
 void wavefront_finite_difference(float *sx, float *sy, int NL, 
                                  float *phi, int n, float d)
@@ -1890,9 +2035,10 @@ void wavefront_finite_difference(float *sx, float *sy, int NL,
 __global__ void wavefront_finite_difference_kernel(float *sx, float *sy, int NL, 
                                                    float *phi, int n, float d)
   {
-    int iL, jL, kL, k, u, v, w, NP;
+    int iL, jL, kL, k, u, v, w, w0, NP, iSource;
     iL = blockIdx.x * blockDim.x + threadIdx.x;
     jL = blockIdx.y * blockDim.y + threadIdx.y;
+    iSource = blockIdx.z;
     if ( (iL<NL) && (jL<NL) ) {
       <<wavefront differentiation core>>
     }
@@ -1901,17 +2047,19 @@ __global__ void wavefront_finite_difference_kernel(float *sx, float *sy, int NL,
 <<wavefront differentiation core>>=
  kL = iL*NL+jL;
  NP = n*NL + 1;
+ kL += iSource*NL*NL;
  u = iL*n;
  v = jL*n;
+ w0 = iSource*NP*NP;
  sx[kL] = sy[kL] = 0.0;
  for (k=0;k<=n;k++) {
    // x slope
-   w = u*NP + v + k;
+   w = w0 + u*NP + v + k;
    sx[kL] += phi[w];
    w += n*NP;
    sx[kL] -= phi[w];
    // y slope
-   w = (u+k)*NP + v;
+   w = w0 + (u+k)*NP + v;
    sy[kL] += phi[w];
    w += n;
    sy[kL] -= phi[w];
@@ -1920,16 +2068,17 @@ __global__ void wavefront_finite_difference_kernel(float *sx, float *sy, int NL,
  sy[kL] /= (n+1)*d;
 @ 
 In case of finite pupil:
+\index{utilities!wavefront\_finite\_difference}
 <<wavefront differentiation (with mask)>>=
 void wavefront_finite_difference(float *sx, float *sy, int NL, 
                                  float *phi, int n, float d,
-                                 mask *pupil)
+                                 mask *pupil, int N_GS)
   {
     int sxy_nbyte = sizeof(float)*NL*NL;
     HANDLE_ERROR( cudaMemset(sx,  0, sxy_nbyte ) );
     HANDLE_ERROR( cudaMemset(sy,  0, sxy_nbyte ) );
     dim3 blockDim(16,16);
-    dim3 gridDim(NL/16+1,NL/16+1);
+    dim3 gridDim(NL/16+1,NL/16+1,N_GS);
     wavefront_finite_difference_kernel_masked LLL gridDim,blockDim RRR 
                                 (sx, sy, NL, phi, n, d,pupil->m);
   }
@@ -1940,33 +2089,38 @@ __global__ void wavefront_finite_difference_kernel_masked(
                                  float *phi, int n, float d,
                                  char *M)
   {
-    int iL, jL, kL, k, u, v, w, NP;
+    int iL, jL, kL, k, u, v, w0, w, NP, iSource;
     iL = blockIdx.x * blockDim.x + threadIdx.x;
     jL = blockIdx.y * blockDim.y + threadIdx.y;
+    iSource = blockIdx.z;
     kL = iL*NL+jL;
+    kL += iSource*NL*NL;
     if ( ( (iL<NL) && (jL<NL) ) && (M[kL]>0) ) {
       <<wavefront differentiation core>>
     }
   }
 @ 
+\index{utilities!python!wavefrontFiniteDifference}
 The python wrapper is
 <<utilities.pxd>>=
 ## wavefront differentiation
     void wavefront_finite_difference(float *sx, float *sy, int NL, 
                                      float *phi, int n, float d)
     void wavefront_finite_difference(float *sx, float *sy, int NL, 
-                                     float *phi, int n, float d, mask *pupil)
+                                     float *phi, int n, float d, 
+                                     mask *pupil, int N_GS)
 @ 
 <<utilities.pyx>>=
 ## wavefront differentiation
 cpdef wavefrontFiniteDifference(cuFloatArray sx, cuFloatArray sy, int NL, 
-                                cuFloatArray phi, int n, float d, MaskAbstract M=None):
+                                cuFloatArray phi, int n, float d, 
+                                MaskAbstract M=None, int N_GS=0):
     if M is None:
         wavefront_finite_difference(sx._c_gpu.dev_data, sy._c_gpu.dev_data, NL, 
                                     phi._c_gpu.dev_data, n, d)
     else:
         wavefront_finite_difference(sx._c_gpu.dev_data, sy._c_gpu.dev_data, NL, 
-                                    phi._c_gpu.dev_data, n, d, M._c_mask)
+                                    phi._c_gpu.dev_data, n, d, M._c_mask, N_GS)
 @ 
 Adding the class definitions to the definition file
 <<utilities.pxd>>=

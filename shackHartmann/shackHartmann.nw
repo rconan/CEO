@@ -1,5 +1,6 @@
 % -*- mode: Noweb; noweb-code-mode: c-mode -*-
 @
+\index{shackHartmann}
 \section{The files}
 \label{sec:files}
 
@@ -66,6 +67,7 @@ struct shackHartmann {
 \subsection{Python}
 \label{sec:python}
 
+\index{shackHartmann!python}
 <<shackHartmann.pxd>>=
 from utilities cimport mask
 from imaging cimport imaging
@@ -90,6 +92,7 @@ cdef extern from "shackHartmann.h":
         void get_valid_slopes(float *)
 <<class definitions>>
 @ 
+\index{shackHartmann!python!ShackHartmann}
 <<class definitions>>=
 from utilities cimport cuFloatArray, MaskAbstract
 from imaging cimport Imaging
@@ -120,13 +123,13 @@ cdef class ShackHartmann:
        The sampling in pixel of one lenslet.
     d : float
        The lenslet pitch [m].
-    DFT_osf : int, optionnal
+    DFT_osf : int, optional
        The oversampling factor for the Discrete Fourier Transform, defaults to 2
-    N_PX_IMAGE : int, optionnal
+    N_PX_IMAGE : int, optional
        The sampling in pixel of the imagelet, defaults to N_PX_LENSLET
-    BIN_IMAGE : int, optionnal
+    BIN_IMAGE : int, optional
        The binning factor of the imagelet, default to 1
-    N_GS : int, optionnal
+    N_GS : int, optional
        The number of guide stars, defaults to 1
 
     Attributes
@@ -385,6 +388,7 @@ cdef class ShackHartmann:
 \section{Parameters}
 \label{sec:parameters}
 
+\index{shackHartmann!shackHartmann}
 The parameters of the [[shackHartmann]] structure are:
 \begin{itemize}
 \item the number of wavefront sensor:
@@ -446,6 +450,7 @@ The [[shackHartmann]] structure is initialized with:
 \item the binning factor of the image plane [[BIN_IMAGE]]$\geq 1$,
 \item the number of guide stars [[N_GS]].
 \end{itemize}
+\index{shackHartmann!shackHartmann!setup}
 <<setup>>=
 void shackHartmann::setup(int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
 			  int DFT_osf_, int N_PX_IMAGE, int BIN_IMAGE, int N_GS)
@@ -475,6 +480,7 @@ HANDLE_ERROR( cudaFree( data_proc.lenslet_mask) );
 data_proc.lenslet_mask = valid_lenslet.m;
 @
 Allocated memory is freed with:
+\index{shackHartmann!shackHartmann!cleanup}
 <<cleanup>>=
 void shackHartmann::cleanup(void)
 {
@@ -495,6 +501,7 @@ void shackHartmann::cleanup(void)
 \label{sec:calibration}
 
 The WFS calibration routine is:
+\index{shackHartmann!shackHartmann!calibrate}
 <<WFS calibration>>= 
 void shackHartmann::calibrate(source *src, float threshold) {
   <<WFS calibration source propagation>>
@@ -588,6 +595,7 @@ __global__ void set_valid_lenslet(char *lenslet_mask, char *actuator_mask,
 \label{sec:wavefront-processing}
 
 The guide star [[gs]] is propagated through the lenslet array to the detector:
+\index{shackHartmann!shackHartmann!propagate}
 <<wavefront propagation>>=
 void shackHartmann::propagate(source *gs) {
     /* printf("slopes gain:%.2E\n",slopes_gain); */
@@ -597,6 +605,7 @@ void shackHartmann::propagate(source *gs) {
   camera.propagate(gs);
 }
 @ and the resulting frame is processed to extract the centroids
+\index{shackHartmann!shackHartmann!process}
 <<wavefront centroiding>>=
 void shackHartmann::process(void) {
   data_proc.get_data(camera.d__frame,camera.N_PX_CAMERA,
@@ -605,6 +614,7 @@ void shackHartmann::process(void) {
 }
 @
 Noiseless propagation and centroiding can be performed with a single call to:
+\index{shackHartmann!shackHartmann!analyze}
 <<wavefront processing>>=
 void shackHartmann::analyze(source *gs) {
     /* printf("slopes gain:%.2E\n",slopes_gain); */
@@ -624,6 +634,7 @@ float* shackHartmann::get_frame_dev_ptr(void) {
 }
 @ 
 The slopes in the valid lenslet are extracted with
+\index{shackHartmann!shackHartmann!get\_valid\_slopes}
 <<valid lenslet slopes>>=
 void shackHartmann::get_valid_slopes(float *d__valid_slopes) 
 {

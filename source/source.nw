@@ -1,5 +1,6 @@
 % -*- mode: Noweb; noweb-code-mode: c-mode -*-
 
+\index{source}
 The source structure contains all the data associated with a remote optical emitter: its location, wavefront, irradiance, ...
 
 \section{The files}
@@ -52,9 +53,6 @@ struct source {
 
   void reset_rays(void);
 
-  void trace(gmt_m1 *M1);
-  void trace(gmt_m2 *M2);
-  void stop(gmt_m2 *M2);
   void opd2phase(void);
    
   void info(void);
@@ -63,6 +61,7 @@ struct source {
 
   float wavelength(void);
   float wavelength_micron(void);
+  float spectral_bandwidth(void);
   float n_photon(void);
   float wavenumber(void);
 
@@ -116,6 +115,7 @@ struct source {
 <<info>>
 
 <<wavelength>>
+<<spectral bandwidth>>
 <<number of photons>>
 <<wavenumber>>
 <<plot phase>>
@@ -134,9 +134,11 @@ struct source {
 \subsection{Python}
 \label{sec:python}
 
+\index{source!python}
+
 <<source.pxd>>=
 from utilities cimport mask
-from rayTracing cimport bundle, gmt_m1, gmt_m2, vector, rtd, aperture, conic
+from rayTracing cimport bundle, vector, rtd, aperture, conic
 cdef extern from "source.h":
     cdef cppclass complex_amplitude:
         int N
@@ -161,33 +163,38 @@ cdef extern from "source.h":
         void setup(const char *,float *, float *, float , int , rtd, int, vector)
         void cleanup()
         void reset_rays()
-        void trace(gmt_m1 *)
-        void trace(gmt_m2 *)
-        void block(gmt_m2 *)
         void opd2phase()
         void info()
         float n_photon()
         float wavelength()
+        float spectral_bandwidth()
 @
 <<class definitions>>= 
 from numpy cimport ndarray
 from utilities cimport cuFloatArray, MaskAbstract
 from rayTracing cimport Bundle
 cdef class Complex_amplitude:
-    cdef complex_amplitude *_c_complex_amplitude
-    cdef public cuFloatArray phase
-    cdef public cuFloatArray amplitude
+    cdef:
+        complex_amplitude *_c_complex_amplitude
+        readonly cuFloatArray phase
+        readonly cuFloatArray amplitude
 cdef class Source:
-    cdef source *_c_source
-    cdef public int N_SRC
-    cdef public int n, m
-    cdef public int size
-    cdef public ndarray zenith, azimuth
-    cdef public float height
-    cdef public Bundle rays
-    cdef public Complex_amplitude wavefront
-    cdef public sphere_distance
+    cdef:
+        source *_c_source
+        readonly int N_SRC
+        readonly int n, m
+        readonly int size
+        readonly ndarray zenith, azimuth
+        readonly float height
+        readonly Bundle rays
+        readonly Complex_amplitude wavefront
+        readonly sphere_distance
 @
+\subsubsection{Complex amplitude}
+\label{sec:complex-amplitude-1}
+
+\index{source!python!Complex\_amplitude}
+
 <<source.pyx>>=
 import numpy as np
 cimport cython
@@ -217,14 +224,20 @@ cdef class Complex_amplitude:
     --------
     Source: a class for astronomical sources
     """
-    def __cinit__(self,Source src):
+    def __cinit__(self,Source src=None):
         self._c_complex_amplitude = new complex_amplitude()
-        self._c_complex_amplitude = &(src._c_source.wavefront)
-        self.phase = cuFloatArray(shape=(self._c_complex_amplitude.N,
-                                         self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N))
+        if src is not None:
+            self._c_complex_amplitude = &(src._c_source.wavefront)
+            self.__alloc__()
+
+    def __alloc__(self, tuple shape=None):
+        if shape is None:
+            shape = (self._c_complex_amplitude.N,
+                     self._c_complex_amplitude.N_PX/\
+                     self._c_complex_amplitude.N)
+        self.phase = cuFloatArray(shape=shape)
         self.phase._c_gpu.dev_data = self._c_complex_amplitude.phase
-        self.amplitude = cuFloatArray(shape=(self._c_complex_amplitude.N,
-                                             self._c_complex_amplitude.N_PX/self._c_complex_amplitude.N))
+        self.amplitude = cuFloatArray(shape=shape)
         self.amplitude._c_gpu.dev_data = self._c_complex_amplitude.amplitude
 
 
@@ -234,7 +247,7 @@ cdef class Complex_amplitude:
 
         Parameters
         ----------
-        units_exponent: int, optionnal
+        units_exponent: int, optional
             3 for km, 0 for meter, -2 for cm, -3 for mm, -6 for micron, -9 for nm, etc; default: 0
 
         Returns
@@ -252,7 +265,7 @@ cdef class Complex_amplitude:
 
         Parameters
         ----------
-        phase : cuFloatArray, optionnal
+        phase : cuFloatArray, optional
             The GPU array the wavefront phase is reset to; default to None
 
         See also
@@ -265,7 +278,13 @@ cdef class Complex_amplitude:
 
     def reset_phase(self):
         self._c_complex_amplitude.reset_phase()
+@
+\subsubsection{Source}
+\label{sec:source}
 
+\index{source!python!Source}
+
+<<source.pyx>>=
 cdef class Source:
     """ 
     A class to represent an astronomical source
@@ -274,21 +293,21 @@ cdef class Source:
     ----------
     photometric_band : char
         The sources photometric band
-    zenith : list, tuple or numpy array, optionnal
+    zenith : list, tuple or numpy array, optional
         The sources zenith angles [rd], defaults to 0.
-    azimuth :  list, tuple or numpy array, optionnal
+    azimuth :  list, tuple or numpy array, optional
         The sources azimuth angles [rd], defaults to 0.
-    height : float, optionnal
+    height : float, optional
         The sources altitude [m], defaults to infinity.
     resolution : tuple
         A 2 element tuple with the sampling [n,m] in pixel of the source wavefront complex amplitude.
-    fwhm : float, optionnal
+    fwhm : float, optional
         The fwhm of the source intensity distribution, defaults to None.
-    rays_box_size : float, optionnal
+    rays_box_size : float, optional
         The size of the ray bundle [m], defaults to None.
-    rays_box_sampling : int, optionnal
+    rays_box_sampling : int, optional
         The linear sampling of the ray bundle
-    rays_origin : list, optionnal
+    rays_origin : list, optional
          A 3 element list, with the first 2 being the (x,y) origin of the ray bundle and the 3rd the ray bundle starting z coordinates
 
     Attributes
@@ -311,6 +330,8 @@ cdef class Source:
         wavefront phase
     wavelength : float, read only
         the wavelength of the source
+    spectral_bandwidth : float, read only
+        the spectral bandwidth associated to the source
     nPhoton : float, read only
         number of photon
     magnitude : float, write only
@@ -400,38 +421,6 @@ cdef class Source:
     def __dealloc__(self):
         self._c_source.cleanup()
 
-    def trace(self, optics):
-        """
-        Ray tracing to the optic device
-
-        Parameters
-        ----------
-        optics: GMT_M1 or GMT_M2
-            The GMT mirror M1 or M2 models 
-
-        See also
-        --------
-        GMT_M1 : the class for GMT M1 model
-        GMT_M2 : the class for GMT M2 model
-        """
-        optics.trace(self.rays)
-
-    def stop(self, optics):
-        """
-        Ray tracing to the optic device acting as a stop
-
-        Parameters
-        ----------
-        optics: GMT_M1 or GMT_M2
-            The GMT mirror M1 or M2 models 
-
-        See also
-        --------
-        GMT_M1 : the class for GMT M1 model
-        GMT_M2 : the class for GMT M2 model
-        """
-        optics.blocking(self.rays)
-
     def opd2phase(self):
         """
         Transfer the OPD from ray tracing to the wavefront phase
@@ -455,6 +444,10 @@ cdef class Source:
     property wavelength:
         def __get__(self):
             return self._c_source.wavelength()
+    
+    property spectral_bandwidth:
+        def __get__(self):
+            return self._c_source.spectral_bandwidth()
 
     property nPhoton:
         def __get__(self):
@@ -494,7 +487,7 @@ cdef class Source:
 
         Parameters
         ----------
-        where : string, optionnal
+        where : string, optional
             Either "pupil" for a piston on the full pupil or "segments" for pistons of each segment
 
         Returns
@@ -569,6 +562,7 @@ def Reflect(Source src):
 \section{Parameters}
 \label{sec:params}
 
+\index{source!source}
 The source structure is a collection of [[N_SRC]] light sources.
 <<source parameters>>=
 int N_SRC;
@@ -634,6 +628,8 @@ bundle rays;
 @
 \subsection{Setup \& cleanup}
 \label{sec:setup--cleanup}
+
+\index{source!source!setup}
 
 Sources are initialized with the setup function:
 \begin{itemize}
@@ -803,7 +799,7 @@ void source::setup(const char *_photometric_band,
   reset_rays();
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
 }
-@ with
+@ with \index{source!source!reset\_rays}
 <<reset rays>>=
 void source::reset_rays(void)
 {
@@ -890,8 +886,10 @@ y   = L*(j - (N_L-1)*0.5)/(N_L-1);
 \subsubsection{Complex amplitude}
 \label{sec:complex-amplitude}
 
+\index{source!complex\_amplitude}
 
 The complex amplitude structure is initialized with
+\index{source!complex\_amplitude!setup}
 <<complex amplitude setup I>>=
 void complex_amplitude::setup(int n_pixel) {
   N = 1;
@@ -915,6 +913,7 @@ if (N_PX>0) {
 }
 
 @ and memory is de--allocated with:
+\index{source!complex\_amplitude!cleanup}
 <<complex amplitude cleanup>>=
 void complex_amplitude::cleanup(void) {
   if (amplitude!=NULL)          
@@ -923,6 +922,7 @@ void complex_amplitude::cleanup(void) {
     HANDLE_ERROR( cudaFree( phase ) );
 }
 @ Allocated variable are freed with the [[cleanup]] routine
+\index{source!source!cleanup}
 <<cleanup>>=
 void source::cleanup(void) {
   fprintf(stdout,"@(CEO)>%s: freeing memory!\n",tag);
@@ -938,7 +938,7 @@ void source::cleanup(void) {
 @ 
 The amplitude and phase are initialized to respectively 1 and 0:
 <<square geometry>>=
-  __global__ void squarePupil(float* amplitude, float *phase, const int N) {
+__global__ void squarePupil(float* amplitude, float *phase, const int N) {
   int id;
   id = blockIdx.x * blockDim.x + threadIdx.x;
   if (id<N) {
@@ -953,6 +953,7 @@ The amplitude and phase are initialized to respectively 1 and 0:
 \label{sec:photometry}
 
 The [[wavelength]] in meter corresponding to the photometric band is given by
+\index{source!source!wavelength}
 <<wavelength>>=
 float source::wavelength(void) {
   float lambda;
@@ -974,11 +975,13 @@ float source::wavelength(void) {
 }
 @ 
 The [[wavelength]] in \textsl{micron}  is given by
+\index{source!source!wavelength\_micron}
 <<wavelength>>=
 float source::wavelength_micron(void) {
   return 1E6*wavelength();
 }
 @ The number of photon in $m^{-2}.s^{-1}$ is derived with
+\index{source!source!n\_photon}
 <<number of photons>>=
 float source::n_photon(void) {
   float zero_point;
@@ -998,7 +1001,29 @@ float source::n_photon(void) {
     zero_point = 1.49e19;
   return N_SRC*zero_point*powf(10 , -0.4*magnitude );
 }
+@ The spectral bandwidth is derived with
+\index{source!source!spectral\_bandwidth}
+<<spectral bandwidth>>=
+float source::spectral_bandwidth(void) {
+  float spectral_bandwidth;
+  if (strcmp(photometric_band,"V")==0)
+    spectral_bandwidth = 0.090;
+  if (strcmp(photometric_band,"R")==0)
+    spectral_bandwidth = 0.150;
+  if (strcmp(photometric_band,"I")==0)
+    spectral_bandwidth = 0.150;
+  if (strcmp(photometric_band,"J")==0)
+    spectral_bandwidth = 0.260;
+  if (strcmp(photometric_band,"H")==0)
+    spectral_bandwidth = 0.290;
+  if (strcmp(photometric_band,"K")==0)
+    spectral_bandwidth = 0.410;
+  if (strcmp(photometric_band,"Ks")==0)
+    spectral_bandwidth = 0.320;
+  return spectral_bandwidth*1e-6;
+}
 @ The wave number is given by
+\index{source!source!wavenumber}
 <<wavenumber>>=
 float source::wavenumber(void) {
   float lambda;
@@ -1026,6 +1051,7 @@ float source::wavenumber(void) {
 \subsubsection{Resetting the wavefront}
 \label{sec:resetting-wavefront}
 The following resets the wavefront amplitude to zero and phase to 1:
+\index{source!complex\_amplitude!reset}
 <<resetting the wavefront>>=
 void complex_amplitude::reset(void)
 {
@@ -1045,6 +1071,7 @@ void complex_amplitude::reset(complex_amplitude wavefront_prime)
 }
 @ 
 The wavefront phase is reset to 0 with
+\index{source!complex\_amplitude!reset\_phase}
 <<resetting the phase>>=
 void complex_amplitude::reset_phase(void)
 {
@@ -1055,6 +1082,7 @@ HANDLE_ERROR( cudaMemset( phase, 0, sizeof(float)*N_PX ) );
 \subsubsection{Adding wavefront phase}
 \label{sec:adding-wavefr-phase}
 The following adds a phase aberration to the wavefront phase $$\varphi = \varphi + \alpha \varphi^\prime$$:
+\index{source!complex\_amplitude!add\_phase}
 <<adding wavefront phase>>=
 void complex_amplitude::add_phase(float alpha, float *phase_prime)
 {
@@ -1068,6 +1096,7 @@ void complex_amplitude::add_phase(float alpha, float *phase_prime)
 \subsubsection{Masking wavefront amplitude}
 \label{sec:mask-wavefr-ampl}
 The following applies the pupil mask to the wavefront:
+\index{source!complex\_amplitude!masked}
 <<masking wavefront amplitude I>>=
 void complex_amplitude::masked(void)
 {
@@ -1101,6 +1130,7 @@ __global__ void apply_mask(float* amplitude, float* phase, const int N,
 \subsubsection{Wavefront rms}
 \label{sec:wavefront-rms}
 
+\index{source!complex\_amplitude!rms}
 <<wavefront stats>>=
 void complex_amplitude::rms(float *rms)
 {
@@ -1657,22 +1687,8 @@ void thin_lens(source *src)
 \subsubsection{Trace}
 \label{sec:trace}
 
-Ray tracing through the GMT M1 and M2 mirrors are achieved with:
-<<ray tracing>>=
-void source::trace(gmt_m1 *M1)
-{
-  M1->trace(&rays);
-}
-void source::trace(gmt_m2 *M2)
-{
-  M2->trace(&rays);
-}
-void source::stop(gmt_m2 *M2)
-{
-  M2->blocking(&rays);
-}
-@ 
 The ray tracing data are transferred to the wavefront structure with
+\index{source!source!opd2phase}
 <<ray tracing>>=
 void source::opd2phase(void)
 {
@@ -1717,6 +1733,7 @@ __global__ void opd2phase_kernel(float *amplitude, float *phase,
 \label{sec:inputoutput}
 
 The main parameters of the source are displayed with the [[info]] routine:
+\index{source!source!info}
 <<info>>=
 void source::info(void)
 {
@@ -1732,6 +1749,7 @@ void source::info(void)
 }
 
 @ The wavefront phase is save to a file with
+\index{source!source!phase2file}
 <<phase to file>>=
 void source::phase2file(const char *filename) {
   dev2file(filename,wavefront.phase,wavefront.N_PX,wavefront.N_PX/N_SRC,N_SRC);

@@ -8,6 +8,8 @@
 \def\nk{N_\kappa}
 \def\na{N_\varphi}
 
+\index{atmosphere}
+
 \section{The files}
 
 \subsection{Header}
@@ -183,6 +185,8 @@ struct atmosphere {
 \subsection{Python}
 \label{sec:python}
 
+\index{atmosphere!python}
+
 <<atmosphere.pxd>>=
 from source cimport source
 from centroiding cimport centroiding
@@ -220,11 +224,13 @@ from source cimport Source
 from centroiding cimport Centroiding
 from shackHartmann cimport ShackHartmann
 cdef class AtmosphereAbstract:
-    cdef atmosphere *_c_atmosphere
-    cdef public float r0, L0
-    cdef public int N_LAYER
-    cdef public ndarray altitude, xi0, wind_speed, wind_direction
+    cdef:
+        atmosphere *_c_atmosphere
+        readonly float r0, L0
+        readonly int N_LAYER
+        readonly ndarray altitude, xi0, wind_speed, wind_direction
 @ 
+\index{atmosphere!python!AtmosphereAbstract}
 <<atmosphere.pyx>>=
 import numpy as np
 cimport cython
@@ -248,7 +254,9 @@ cdef class AtmosphereAbstract:
         self.wind_direction = np.array( wind_direction, dtype=np.float32)
 
     <<python atmosphere methods>>
-
+@ 
+\index{atmosphere!python!Atmosphere}
+<<atmosphere.pyx>>=
 cdef class Atmosphere(AtmosphereAbstract):
     """ 
     Create an atmosphere
@@ -454,6 +462,10 @@ def __dealloc__(self):
 \section{Parameters}
 \label{sec:prms}
 
+\index{atmosphere!atmosphere}
+\index{atmosphere!profile}
+\index{atmosphere!layer}
+
 The atmosphere parameters are
 \begin{itemize}
 \item the Fried parameter $r_0$ are a given photometric band
@@ -501,6 +513,7 @@ int N_PHASE_LAYER_byte;
 \label{sec:functions}
 
 The main parameters of the atmosphere are displayed with the [[info]] routine:
+\index{atmosphere!atmosphere!info}
 <<info>>=
 void atmosphere::info(void)
 {
@@ -622,6 +635,7 @@ curandState *devStates;
 profile turbulence, *d__turbulence;
 layer *layers;
 @ This variables are defined in the setup routines:
+\index{atmosphere!atmosphere!setup}
 <<atmosphere setup>>=
 void atmosphere::setup(float r0_, float L0, int _NLAYER,
 		       float *altitude, float *xi0,
@@ -643,6 +657,7 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
   phase_screen_LAYER = NULL;
 }
 @ 
+\index{atmosphere!atmosphere!setup}
 <<atmosphere setup (ray tracing)>>=
 void atmosphere::setup(float r0_, float L0, int _NLAYER,
 		       float *altitude, float *xi0,
@@ -708,6 +723,7 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
 
 }
 @ For the GMT simulations, the GMT standard atmosphere model is called with:
+\index{atmosphere!atmosphere!gmt\_setup}
 <<atmosphere setup (GMT)>>=
 void atmosphere::gmt_setup() {
   wavelength = 550e-9;
@@ -810,6 +826,7 @@ HANDLE_ERROR( cudaDeviceSynchronize() );
 }
 */
 @ 
+\index{atmosphere!profile!setup}
 <<profile setup>>=
 void profile::setup(float *altitude_, float *xi0_,
 		    float *wind_speed_, float *wind_direction_, int N_LAYER) {
@@ -845,6 +862,7 @@ void profile::setup(float *altitude_, float *xi0_,
   fprintf(stdout," . minimum frequency    = %6.4f\n",kmin);
 }
 @ 
+\index{atmosphere!profile!cleanup}
 <<profile cleanup>>=
 void profile::cleanup(void) {
   free(altitude);
@@ -854,6 +872,7 @@ void profile::cleanup(void) {
 }
 @ 
 An atmospheric layer parameters are set with:
+\index{atmosphere!layer!setup}
 <<layer setup>>=
 int layer::setup(float _altitude, float _xi0,
 		  float _wind_speed, float _wind_direction,
@@ -938,6 +957,7 @@ __global__ void generateVariates(float *zeta1, float *eta1, float *zeta2, float 
     }
 }
 @ New variates can be computed with the call to the routine:
+\index{atmosphere!atmosphere!reset}
 <<new variates>>=
 void atmosphere::reset(void)
 {
@@ -947,6 +967,7 @@ void atmosphere::reset(void)
   generateVariates LLL gridDim,blockDim RRR (zeta1, eta1, zeta2, eta2, devStates, nel);
 }
 @ The dynamically allocated variables are freed in the cleanup routine:
+\index{atmosphere!atmosphere!cleanup}
 <<cleanup>>=
 void atmosphere::cleanup(void) {
   fprintf(stdout,"@(CEO)>atmosphere: freeing memory!\n");
@@ -962,6 +983,7 @@ void atmosphere::cleanup(void) {
 }
 @
 The phase screen are defined in the telescope pupil at the ground 
+\index{atmosphere!atmosphere!get\_phase\_screen}
 <<phase screen I>>=
 void atmosphere::get_phase_screen(float *phase_screen,
 		       float const *x, float const *y, int N_xy, 
@@ -978,6 +1000,7 @@ void atmosphere::get_phase_screen(float *phase_screen,
 				   src->dev_ptr, time);
 }
 @ 
+\index{atmosphere!atmosphere!get\_phase\_screen}
 <<phase screen II>>=
 void atmosphere::get_phase_screen(float const *x, float const *y, int N_xy, 
 		       source *src, float time)
@@ -1110,6 +1133,7 @@ A collimated beam can be forced by re--writing the sum over the layer without th
 <<layer sum: PSD quadrature>>
 @ 
 The next routine compute the phase screen on a square grid of size [[N_x]]$\times$[[N_y]]
+\index{atmosphere!atmosphere!get\_phase\_screen}
 <<phase screen III>>=
 void atmosphere::get_phase_screen(float const delta_x, int N_x, float const delta_y, int N_y, 
 		       source *src, float time)
@@ -1377,6 +1401,7 @@ y_{L,l} &=& \gamma_l^\ast (y_L-v_yt) + h_l\theta_{\ast y} \\
 \bky &=& \bk \sin \phi_j 
 \end{eqnarray}
 The phase screen gradient are computed on a $N_L\times N_L$ array with a resolution $d$
+\index{atmosphere!atmosphere!get\_phase\_screen\_gradient}
 <<phase screen gradient I>>=
 void atmosphere::get_phase_screen_gradient(float *sx, float *sy, int NL, float const d, source *src, float time)
 {
@@ -1484,6 +1509,7 @@ __global__ void plps_gradient(float *sx, float *sy, int NL, float const d,
 }
 @ 
 A mask identifying the valid lenslet can also be passed to the routine:
+\index{atmosphere!atmosphere!get\_phase\_screen\_gradient}
 <<phase screen gradient (masked)>>=
 void atmosphere::get_phase_screen_gradient(float *sx, float *sy, int NL, char *valid_lenslet,
 					   float const d, source *src, float time)
@@ -1583,6 +1609,7 @@ For a circular pupil of radius $R$, the centroids are given by:
   s_y &=& -{\lambda\over2\pi} {1 \over \pi R} \int_0^{2\pi} {\mathrm d}\theta \sin(\theta) \varphi(R,\theta)
 \end{eqnarray}
 @
+\index{atmosphere!atmosphere!get\_phase\_screen\_circ\_centroids}
 <<phase screen circular centroids>>=
 void atmosphere::get_phase_screen_circ_centroids(centroiding *cog, const float R, 
                                                  source *src, int N_SRC, float time)
@@ -1654,6 +1681,7 @@ The uplink jitter is given by:
   s_y &=& \sum_k^{[[N_LAYER]]} \left( 1 - {z_k\over L} \right) s_y(k) \\  
 \end{eqnarray}
 where $L$ is the source height and $z_k$ is the atmosphere layer altitude.
+\index{atmosphere!atmosphere!get\_phase\_screen\_circ\_uplink\_centroids}
 @
 <<phase screen circular uplink centroids>>=
 void atmosphere::get_phase_screen_circ_uplink_centroids(centroiding *cog, const float R, 
