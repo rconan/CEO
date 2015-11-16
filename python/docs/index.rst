@@ -11,7 +11,7 @@ Cuda Engined Adaptive Optics
 .. toctree::
    :maxdepth: 2
 
-Cuda Engined Adaptive Optics or CEO is a CUDA library for the modeling of Adaptive Optics (AO) systems in Astronomy. 
+Cuda Engined Optics or CEO is a CUDA library for the modeling of Adaptive Optics (AO) systems in Astronomy. 
 
 CEO consists of a C++ API that hides most of the CUDA API. The CEO API can then be used to build AO simulations.
 
