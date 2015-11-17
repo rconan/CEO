@@ -1,5 +1,6 @@
 % -*- mode: Noweb; noweb-code-mode: c-mode -*-
 
+\index{source}
 The source structure contains all the data associated with a remote optical emitter: its location, wavefront, irradiance, ...
 
 \section{The files}
@@ -28,24 +29,24 @@ struct source {
 
   <<source parameters>>
 
-  void setup(char *_photometric_band, 
+  void setup(const char *_photometric_band, 
 	     float zenith, float azimuth, float height);
-  void setup(char *_photometric_band, 
+  void setup(const char *_photometric_band, 
 	     float zenith, float azimuth, float height, 
 	     int resolution);
-  void setup(char *_photometric_band, 
+  void setup(const char *_photometric_band, 
 	     float zenith, float azimuth, float height, 
-	     char *tag_in);
-  void setup(char *_photometric_band, 
+	     const char *tag_in);
+  void setup(const char *_photometric_band, 
 	     float zenith, float azimuth, float height, 
-	     int resolution, char *tag_in);
-  void setup(char *_photometric_band, 
+	     int resolution, const char *tag_in);
+  void setup(const char *_photometric_band, 
 	     float *_zenith, float *_azimuth, float _height, 
 	     int _N_SRC);
-  void setup(char *_photometric_band, 
+  void setup(const char *_photometric_band, 
 	     float *_zenith, float *_azimuth, float _height, 
 	     int _N_SRC, int resolution);
-  void setup(char *_photometric_band, 
+  void setup(const char *_photometric_band, 
 	     float *_zenith, float *_azimuth, float _height, 
 	     int _N_SRC, rtd _L_, int _N_L_, vector origin);
   void cleanup(void);
@@ -133,6 +134,8 @@ struct source {
 \subsection{Python}
 \label{sec:python}
 
+\index{source!python}
+
 <<source.pxd>>=
 from utilities cimport mask
 from rayTracing cimport bundle, vector, rtd, aperture, conic
@@ -150,14 +153,14 @@ cdef extern from "source.h":
         void rms(float *)
     cdef cppclass source:
         int N_SRC
-        char *photometric_band
+        const char *photometric_band
         float fwhm, magnitude
         complex_amplitude wavefront
         bundle rays
-        void setup(char *,float , float , float )
-	void setup(char *,float , float , float , int )
-        void setup(char *,float *, float *, float , int , int )
-        void setup(char *,float *, float *, float , int , rtd, int, vector)
+        void setup(const char *,float , float , float )
+	void setup(const char *,float , float , float , int )
+        void setup(const char *,float *, float *, float , int , int )
+        void setup(const char *,float *, float *, float , int , rtd, int, vector)
         void cleanup()
         void reset_rays()
         void opd2phase()
@@ -189,6 +192,8 @@ cdef class Source:
 @
 \subsubsection{Complex amplitude}
 \label{sec:complex-amplitude-1}
+
+\index{source!python!Complex\_amplitude}
 
 <<source.pyx>>=
 import numpy as np
@@ -276,6 +281,8 @@ cdef class Complex_amplitude:
 @
 \subsubsection{Source}
 \label{sec:source}
+
+\index{source!python!Source}
 
 <<source.pyx>>=
 cdef class Source:
@@ -555,6 +562,7 @@ def Reflect(Source src):
 \section{Parameters}
 \label{sec:params}
 
+\index{source!source}
 The source structure is a collection of [[N_SRC]] light sources.
 <<source parameters>>=
 int N_SRC;
@@ -595,7 +603,7 @@ float *amplitude, *phase;
 mask *M;
 @ The magnitude at a given photometric band are set with:
 <<source parameters>>=
-char *photometric_band;
+const char *photometric_band;
 float magnitude;
 @ If the source is resolved by the  optical system, the irradiance is assumed to have a Gaussian shape of full width a half maximum [[fwhm]]
 <<source parameters>>=
@@ -621,11 +629,13 @@ bundle rays;
 \subsection{Setup \& cleanup}
 \label{sec:setup--cleanup}
 
+\index{source!source!setup}
+
 Sources are initialized with the setup function:
 \begin{itemize}
 \item for a single source:
 <<setup>>=
-void source::setup(char *_photometric_band, 
+void source::setup(const char *_photometric_band, 
 		   float _zenith, float _azimuth, 
 		   float _height) {
   <<setup single source contents>>
@@ -635,7 +645,7 @@ void source::setup(char *_photometric_band,
 }
 @ \item for a single source with wavefront resolution:
 <<setup with wavefront resolution>>=
-void source::setup(char *_photometric_band, 
+void source::setup(const char *_photometric_band, 
 		   float _zenith, float _azimuth, 
 		   float _height, int resolution) {
   <<setup single source contents>>
@@ -645,9 +655,9 @@ void source::setup(char *_photometric_band,
 }
 @ \item for a single source with tag:
 <<setup with tag>>=
-void source::setup(char *_photometric_band, 
+void source::setup(const char *_photometric_band, 
 		   float _zenith, float _azimuth, 
-		   float _height, char *tag_in) {
+		   float _height, const char *tag_in) {
   <<setup single source contents>>
   wavefront.setup(0);
   strcpy(tag,tag_in);
@@ -655,9 +665,9 @@ void source::setup(char *_photometric_band,
 }
 @ \item for a single source with wavefront resolution and tag:
 <<setup with wavefront resolution and tag>>=
-void source::setup(char *_photometric_band, 
+void source::setup(const char *_photometric_band, 
 		   float _zenith, float _azimuth, float _height, 
-		   int resolution, char *tag_in) {
+		   int resolution, const char *tag_in) {
   <<setup single source contents>>
   wavefront.setup(resolution);
   strcpy(tag,tag_in);
@@ -688,7 +698,7 @@ HANDLE_ERROR( cudaMemcpy( dev_ptr, &__src,
 
 @ \item for multiple sources:
 <<setup for multiple sources>>=
-void source::setup(char *_photometric_band, 
+void source::setup(const char *_photometric_band, 
 		   float *_zenith, float *_azimuth, 
 		   float _height, int _N_SRC) {
   rays_exist = 0;
@@ -721,7 +731,7 @@ void source::setup(char *_photometric_band,
 }
 @  \item for multiple sources with wavefront resolution:
 <<setup for multiple sources with wavefront resolution>>=
-void source::setup(char *_photometric_band, 
+void source::setup(const char *_photometric_band, 
 		   float *_zenith, float *_azimuth, float _height, 
 		   int _N_SRC, int resolution) {
   rays_exist = 0;
@@ -755,7 +765,7 @@ void source::setup(char *_photometric_band,
 }
 @  \item for multiple sources with wavefront resolution and with ray bundle:
 <<setup for multiple sources with wavefront resolution and ray bundle>>=
-void source::setup(char *_photometric_band, 
+void source::setup(const char *_photometric_band, 
 		   float *_zenith, float *_azimuth, float _height, 
 		   int _N_SRC, rtd L, int N_L, vector origin) {
   N_SRC = _N_SRC;
@@ -789,7 +799,7 @@ void source::setup(char *_photometric_band,
   reset_rays();
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
 }
-@ with
+@ with \index{source!source!reset\_rays}
 <<reset rays>>=
 void source::reset_rays(void)
 {
@@ -876,8 +886,10 @@ y   = L*(j - (N_L-1)*0.5)/(N_L-1);
 \subsubsection{Complex amplitude}
 \label{sec:complex-amplitude}
 
+\index{source!complex\_amplitude}
 
 The complex amplitude structure is initialized with
+\index{source!complex\_amplitude!setup}
 <<complex amplitude setup I>>=
 void complex_amplitude::setup(int n_pixel) {
   N = 1;
@@ -901,6 +913,7 @@ if (N_PX>0) {
 }
 
 @ and memory is de--allocated with:
+\index{source!complex\_amplitude!cleanup}
 <<complex amplitude cleanup>>=
 void complex_amplitude::cleanup(void) {
   if (amplitude!=NULL)          
@@ -909,6 +922,7 @@ void complex_amplitude::cleanup(void) {
     HANDLE_ERROR( cudaFree( phase ) );
 }
 @ Allocated variable are freed with the [[cleanup]] routine
+\index{source!source!cleanup}
 <<cleanup>>=
 void source::cleanup(void) {
   fprintf(stdout,"@(CEO)>%s: freeing memory!\n",tag);
@@ -939,6 +953,7 @@ __global__ void squarePupil(float* amplitude, float *phase, const int N) {
 \label{sec:photometry}
 
 The [[wavelength]] in meter corresponding to the photometric band is given by
+\index{source!source!wavelength}
 <<wavelength>>=
 float source::wavelength(void) {
   float lambda;
@@ -960,11 +975,13 @@ float source::wavelength(void) {
 }
 @ 
 The [[wavelength]] in \textsl{micron}  is given by
+\index{source!source!wavelength\_micron}
 <<wavelength>>=
 float source::wavelength_micron(void) {
   return 1E6*wavelength();
 }
 @ The number of photon in $m^{-2}.s^{-1}$ is derived with
+\index{source!source!n\_photon}
 <<number of photons>>=
 float source::n_photon(void) {
   float zero_point;
@@ -985,6 +1002,7 @@ float source::n_photon(void) {
   return N_SRC*zero_point*powf(10 , -0.4*magnitude );
 }
 @ The spectral bandwidth is derived with
+\index{source!source!spectral\_bandwidth}
 <<spectral bandwidth>>=
 float source::spectral_bandwidth(void) {
   float spectral_bandwidth;
@@ -1005,6 +1023,7 @@ float source::spectral_bandwidth(void) {
   return spectral_bandwidth*1e-6;
 }
 @ The wave number is given by
+\index{source!source!wavenumber}
 <<wavenumber>>=
 float source::wavenumber(void) {
   float lambda;
@@ -1032,6 +1051,7 @@ float source::wavenumber(void) {
 \subsubsection{Resetting the wavefront}
 \label{sec:resetting-wavefront}
 The following resets the wavefront amplitude to zero and phase to 1:
+\index{source!complex\_amplitude!reset}
 <<resetting the wavefront>>=
 void complex_amplitude::reset(void)
 {
@@ -1051,6 +1071,7 @@ void complex_amplitude::reset(complex_amplitude wavefront_prime)
 }
 @ 
 The wavefront phase is reset to 0 with
+\index{source!complex\_amplitude!reset\_phase}
 <<resetting the phase>>=
 void complex_amplitude::reset_phase(void)
 {
@@ -1061,6 +1082,7 @@ HANDLE_ERROR( cudaMemset( phase, 0, sizeof(float)*N_PX ) );
 \subsubsection{Adding wavefront phase}
 \label{sec:adding-wavefr-phase}
 The following adds a phase aberration to the wavefront phase $$\varphi = \varphi + \alpha \varphi^\prime$$:
+\index{source!complex\_amplitude!add\_phase}
 <<adding wavefront phase>>=
 void complex_amplitude::add_phase(float alpha, float *phase_prime)
 {
@@ -1074,6 +1096,7 @@ void complex_amplitude::add_phase(float alpha, float *phase_prime)
 \subsubsection{Masking wavefront amplitude}
 \label{sec:mask-wavefr-ampl}
 The following applies the pupil mask to the wavefront:
+\index{source!complex\_amplitude!masked}
 <<masking wavefront amplitude I>>=
 void complex_amplitude::masked(void)
 {
@@ -1107,6 +1130,7 @@ __global__ void apply_mask(float* amplitude, float* phase, const int N,
 \subsubsection{Wavefront rms}
 \label{sec:wavefront-rms}
 
+\index{source!complex\_amplitude!rms}
 <<wavefront stats>>=
 void complex_amplitude::rms(float *rms)
 {
@@ -1664,6 +1688,7 @@ void thin_lens(source *src)
 \label{sec:trace}
 
 The ray tracing data are transferred to the wavefront structure with
+\index{source!source!opd2phase}
 <<ray tracing>>=
 void source::opd2phase(void)
 {
@@ -1708,6 +1733,7 @@ __global__ void opd2phase_kernel(float *amplitude, float *phase,
 \label{sec:inputoutput}
 
 The main parameters of the source are displayed with the [[info]] routine:
+\index{source!source!info}
 <<info>>=
 void source::info(void)
 {
@@ -1723,6 +1749,7 @@ void source::info(void)
 }
 
 @ The wavefront phase is save to a file with
+\index{source!source!phase2file}
 <<phase to file>>=
 void source::phase2file(const char *filename) {
   dev2file(filename,wavefront.phase,wavefront.N_PX,wavefront.N_PX/N_SRC,N_SRC);

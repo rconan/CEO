@@ -1,5 +1,6 @@
 -*- mode: Noweb; noweb-code-mode: c-mode -*-
 
+\index{utilities}
 \section{The files}
 
 \subsection{Header}
@@ -199,6 +200,8 @@ int round_up_to_nhp2(int n) {
 \subsection{Python}
 \label{sec:python}
 
+\index{utilities!python}
+
 <<utilities.pxd>>=
 cdef extern from "utilities.h":
 @ 
@@ -218,6 +221,7 @@ cimport utilities
 
 When dealing with lenslet arrays, a thread in a given thread block correspond to a pixel coordinate $[i,j]$ in a given lenslet $[i_l,j_L]$.
 The following function computes the coordinates $[i,j]$ and $[i_l,j_L]$ based on the thread and block index, the block size and the number of pixel per lenslet [[n_px_lenslet]].
+\index{utilities!threads2lenslet}
 <<threads2lenslet>>=
 __device__ inline char threads2lenslet(dim3 threadIdx, dim3 blockIdx, dim3 blockDim, 
 				      int *i_px_lenslet, int *j_px_lenslet, int n_px_lenslet, 
@@ -268,6 +272,7 @@ The third dimension of the block grid gives the source index.
 \end{figure}
 @
 Once the coordinates $[i,j]$ and $[i_l,j_L]$ have been computed, the linear index in the image is computed with
+\index{utilities!lenslet2array}
 <<lenslet2array>>=
 __device__ inline int lenslet2array(int i_px_lenslet, int j_px_lenslet, int n_px_lenslet, 
 			 int i_lenslet, int j_lenslet, int n_lenslet, int i_source)
@@ -279,6 +284,8 @@ __device__ inline int lenslet2array(int i_px_lenslet, int j_px_lenslet, int n_px
   index += j_lenslet*n_px_lenslet + j_px_lenslet;
   return index;
 }
+@ 
+\index{utilities!lenslet2array\_overlap}
 <<lenslet2array (overlap)>>=
 __device__ inline int lenslet2array_overlap(int i_px_lenslet, int j_px_lenslet, int n_px_lenslet, 
 			 int i_lenslet, int j_lenslet, int n_lenslet, int i_source)
@@ -325,6 +332,7 @@ where $N_s$ is the number of sources.
 \end{figure}
 
 To compute the Fourier transform of the wavefront of each lenslet in a batch, all the lenslets are concatenated into a single column:
+\index{utilities!lenslet2row}
 <<lenslet2row>>=
 __device__ inline int lenslet2row(int i_px_lenslet, int j_px_lenslet, int n_px_lenslet, 
 			 int i_lenslet, int j_lenslet, int n_lenslet, 
@@ -373,6 +381,7 @@ where $N_s$ is the number of sources.
 \label{sec:stopwatch}
 
 In the following, a structure to time a chunk of CUDA code is defined:
+\index{utilities!stopwatch}
 <<tic-toc>>=
 struct stopwatch{
   cudaEvent_t     start, stop;
@@ -391,7 +400,7 @@ struct stopwatch{
     HANDLE_ERROR( cudaEventDestroy( start ) );
     HANDLE_ERROR( cudaEventDestroy( stop ) );
   }
-  void toc(char *message) {
+  void toc(const char *message) {
     HANDLE_ERROR( cudaEventRecord( stop, 0 ) );
     HANDLE_ERROR( cudaEventSynchronize( stop ) );
     float   elapsedTime;
@@ -401,7 +410,7 @@ struct stopwatch{
     HANDLE_ERROR( cudaEventDestroy( start ) );
     HANDLE_ERROR( cudaEventDestroy( stop ) );
   }
-  void toc(float *elapsedTime, char *message) {
+  void toc(float *elapsedTime, const char *message) {
     HANDLE_ERROR( cudaEventRecord( stop, 0 ) );
     HANDLE_ERROR( cudaEventSynchronize( stop ) );
     HANDLE_ERROR( cudaEventElapsedTime( elapsedTime,
@@ -421,6 +430,7 @@ struct stopwatch{
 };
 @
 The python wrapper is 
+\index{utilities!python!StopWatch}
 <<utilities.pxd>>=
 ## stopwatch structure
     cdef cppclass stopwatch:
@@ -462,6 +472,7 @@ cdef class StopWatch:
 \label{sec:stat-defin}
 
 Statistical moment are computed with the structure [[stats]]
+\index{utilities!stats}
 <<statistics definition>>=
 struct stats {
   cublasHandle_t handle;
@@ -479,13 +490,19 @@ struct stats {
   float diff_var(const float *data1, const float *data2, mask *M, int n_data);
   float diff_std(const float *data1, const float *data2, mask *M, int n_data);
 };
+@ 
+\index{utilities!stats!setup}
 <<statistics functions>>=
 void stats::setup(void) {
   cublasCreate(&handle);
 }
+@ 
+\index{utilities!stats!cleanup}
+<<statistics functions>>=
 void stats::cleanup(void) {
   cublasDestroy(handle);
 }
+<<statistics functions>>=
 <<mean>> 
 <<mean filtered data>>
 <<variance>> 
@@ -498,6 +515,7 @@ void stats::cleanup(void) {
 <<differential standard deviation filtered data>>
 @  
 Computing the mean of a vector [[data]]$=x$, $\bar x = \langle x \rangle$:
+\index{utilities!stats!mean}
 <<mean>>=
 float stats::mean(const float *data, int n_data) {
   float results, *ones;
@@ -529,6 +547,7 @@ i = blockIdx.x * blockDim.x + threadIdx.x;
 
 @  
 Computing the mean of a vector [[data]]$=x\times f$, $\bar xf = \langle xf \rangle$ where $f$ is a filtering vector the same size than $x$ and made of 0 and 1:
+\index{utilities!stats!mean}
 <<mean filtered data>>=
 float stats::mean(const float *data, mask *M, int n_data) {
   float results;
@@ -538,6 +557,7 @@ float stats::mean(const float *data, mask *M, int n_data) {
 
 @  
 Computing the variance of a vector [[data]]$=x$, $\sigma^2_x=\langle x^2 \rangle - \langle x \rangle^2$:
+\index{utilities!stats!var}
 <<variance>>=
 float stats::var(const float *data, int n_data) {
   <<variance algorithm>>
@@ -558,6 +578,7 @@ results /= n_data;
 results -= (mean_data*mean_data);
 @  
 Computing the standart deviation $\sigma_x$ of a vector [[data]]$=x$:
+\index{utilities!stats!std}
 <<standart deviation>>=
 float stats::std(const float *data, int n_data) {
   <<variance algorithm>>
@@ -565,6 +586,7 @@ float stats::std(const float *data, int n_data) {
 }
 @  
 Computing the variance of a vector [[data]]$=x\times f$, $\sigma^2_{xf}=\langle (xf)^2 \rangle - \langle xf \rangle^2$ where $f$ is a filtering vector the same size than $x$ and made of 0 and 1:
+\index{utilities!stats!var}
 <<variance filtered data>>=
 float stats::var(const float *data1, mask *M, int n_data) {
   float results, mean_data, *data;
@@ -573,6 +595,8 @@ float stats::var(const float *data1, mask *M, int n_data) {
   <<variance filtered data steps>>
   return results;
 }
+@ 
+\index{utilities!stats!diff\_var}
 <<differential variance filtered data>>=
 float stats::diff_var(const float *data1, const float *data2, mask *M, int n_data) {
   float results, mean_data, *data;
@@ -583,6 +607,8 @@ float stats::diff_var(const float *data1, const float *data2, mask *M, int n_dat
   <<variance filtered data steps>>
   return results;
 }
+@
+\index{utilities!stats!diff\_std}
 <<differential standard deviation filtered data>>=
 float stats::diff_std(const float *data1, const float *data2, mask *M, int n_data) {
   float results, mean_data, *data;
@@ -603,6 +629,7 @@ results -= (mean_data*mean_data);
 HANDLE_ERROR( cudaFree( data ) );
 @  
 Computing the standard deviation of a vector [[data]]$=x\times f$, $\sigma_{xf}=\left(\langle (xf)^2 \rangle - \langle xf \rangle^2\right)^{1/2}$ where $f$ is a filtering vector the same size than $x$ and made of 0 and 1:
+\index{utilities!stats!std}
 <<standart deviation filtered data>>=
 float stats::std(const float *data1, mask *M, int n_data) {
   float results, mean_data, *data;
@@ -630,6 +657,7 @@ CUBLAS_ERROR( cublasSaxpy(handle, n_data, &alpha, data2, 1, data, 1) );
 HANDLE_ERROR( cudaFree( data ) );
 @  
 Computing the differential standart deviation $\sigma_{x_1-x_2}$ of vector [[data1]]$=x_1$ and [[data2]]$=x_2$:
+\index{utilities!stats!diff\_std}
 <<differential standart deviation>>=
 float stats::diff_std(const float *data1, const float *data2, int n_data) {
   <<differential variance algorithm>>
@@ -767,6 +795,7 @@ __global__ void valid_lenslet(char *mask, int N_pupil, float threshold)
   }
 }
 @  The following routine computes the masks of valid lenslet [[lenslet_mask]] and actuators [[actuator_mask]] for a circular pupil corresponding to a square [[NL]]$\times$[[NL]] lenslet array with [[n]] pixel per lenslet.
+\index{utilities!fried\_geometry\_setup}
 <<Fried geometry masks>>=
 char fried_geometry_setup(char *lenslet_mask, char *actuator_mask, 
 			  int NL, int n, float threshold)
@@ -831,6 +860,7 @@ return 1;
 }
 @ 
 The following routine computes the masks of valid lenslet [[lenslet_mask]] and actuators [[actuator_mask]] for an arbitrary pupil corresponding to a square [[NL]]$\times$[[NL]] lenslet array with [[n]] pixel per lenslet.
+\index{utilities!fried\_geometry\_setup\_vs\_pupil}
 <<Fried geometry masks (arbitrary pupil)>>=
 char fried_geometry_setup_vs_pupil(char *lenslet_mask, char *actuator_mask, 
 			  int NL, int n, float threshold, char *pupil)
@@ -1010,6 +1040,7 @@ if ( (h>=Dsh) && (h<=Dsca) ) {
 \subsection{Mask structure}
 \label{sec:mask-structure}
 
+\index{utilities!mask}
 Lets define a mask structure with the following parameters:
 \begin{itemize}
 \item the mask [[m]] has a type of char and contains 0 and 1,
@@ -1071,6 +1102,7 @@ The mask functions are:
 \item [[setup]]
   \begin{itemize}
   \item with the total number of element in the mask [[n]]:
+\index{utilities!mask!setup}
 <<mask functions>>=
 void mask::setup(int n) {
   nel = n;
@@ -1090,6 +1122,7 @@ HANDLE_ERROR( cudaMemset( f, 0, sizeof(float)*nel) );
 HANDLE_ERROR( cudaMalloc((void**)&idx, sizeof(int)*nel ) );
 cublasCreate(&handle);
 @ \item with a square mask of [[n]] pixel across and [[L]] meter width:
+\index{utilities!mask!setup}
 <<mask functions>>=
 void mask::setup(int n, float L) {
   size_px[0] = size_px[1] = n;
@@ -1104,6 +1137,7 @@ void mask::setup(int n, float L) {
   set_filter();
 }
 @ \item with a square mask of [[n]] pixel across and [[L]] meter width inside a [[n_out]]$\times$[[n_out]] array and centered on pixel coordinates [[i_s]] and [[j_s]]:
+\index{utilities!mask!setup}
 <<mask functions>>=
 void mask::setup(int n, float L, int i_s, int j_s, int n_out) {
   size_px[0] = size_px[1] = n_out;
@@ -1119,6 +1153,7 @@ void mask::setup(int n, float L, int i_s, int j_s, int n_out) {
   set_filter();
 }
 @ \item with a square mask of [[n]] pixel across and [[L]] meter width inside a [[n_out]]$\times$[[n_out]] array and rotated around [[i_0]] and [[j_0]] of an angle $\theta$ and centered on pixel coordinates [[i_s]] and [[j_s]] :
+\index{utilities!mask!setup}
 <<mask functions>>=
 void mask::setup(float n, float L, float i_0, float j_0, float theta, 
                  float i_s, float j_s, int n_out ) {
@@ -1135,6 +1170,7 @@ void mask::setup(float n, float L, float i_0, float j_0, float theta,
   set_filter();
 }
 @ \item with a circular mask inside an [[n]]$\times$[[n]] array
+\index{utilities!mask!setup\_circular}
 <<mask functions>>=
 void mask::setup_circular(int n) {
   nel = n*n;
@@ -1146,6 +1182,7 @@ void mask::setup_circular(int n) {
   set_filter();
 }
 @ \item with a circular mask of diameter [[D]] (in meter) inside an [[n]]$\times$[[n]] array
+\index{utilities!mask!setup\_circular}
 <<mask functions>>=
 void mask::setup_circular(int n, float D) {
   size_px[0] = size_px[1] = n;
@@ -1160,6 +1197,7 @@ void mask::setup_circular(int n, float D) {
   set_filter();
 }
 @ \item with the Giant Magellan Telescope mask inside an [[n]]$\times$[[n]] array of length [[S]] in meter
+\index{utilities!mask!setup\_GMT}
 <<mask functions>>=
 void mask::setup_GMT(int n, float S) {
   size_px[0] = size_px[1] = n;
@@ -1185,11 +1223,15 @@ void mask::setup_GMT(int n, float S) {
 @
 \end{itemize}
 \item set the filter and compute the number of non--zeros elements:
+\index{utilities!mask!set\_filter}
 <<mask functions>>=
 void mask::set_filter(void) {
   <<set filter common>>
   fprintf(stdout,"@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
 }
+@ 
+\index{utilities!mask!set\_filter\_quiet}
+<<mask functions>>=
 void mask::set_filter_quiet(void) {
   <<set filter common>>
 }
@@ -1201,6 +1243,7 @@ fill_ones_filtered LLL gridDim,blockDim RRR (f, m, nel);
 CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
 nnz_idx LLL 1,1 RRR (idx, m, nel); //time comsuming!!!
 @ \item [[cleanup]]
+\index{utilities!mask!cleanup}
 <<mask functions>>=
 void mask::cleanup(void) {
   fprintf(stdout,"@(CEO)>mask: freeing memory!\n");
@@ -1230,6 +1273,7 @@ __global__ void nnz_idx(int *idx, const char* mask, int n_data)
 }
 @
 \item the mask can be altered by passing an array of 1 and 0 that is multiplied by the existing mask
+\index{utilities!mask!alter}
 <<mask functions>>=
 void mask::alter(float *filter)
 {
@@ -1252,6 +1296,7 @@ __global__ void fill_ones_altered(float *ones, char* mask, int n_data, float *fi
 }
 @
 \item masks can be added together with 
+\index{utilities!mask!add}
 <<mask functions>>=
 void mask::add(mask *other)
 {
@@ -1283,6 +1328,7 @@ __global__ void add_kernel(char *mask, char *other_mask, int n_data)
 }
 @
 \item the mask addition can be done with an offset on the mask
+\index{utilities!mask!add}
 <<mask functions>>=
 void mask::add(mask *other, int offset)
 {
@@ -1325,6 +1371,7 @@ The python wrapper is
         void alter(float *)
         void cleanup()
 @ 
+\index{utilities!python!MaskAbstract}
 <<class definitions>>=
 # MaskAbstract
 cdef class MaskAbstract:
@@ -1370,7 +1417,9 @@ cdef class MaskAbstract:
     property area:
         def __get__(self):
             return self._c_mask.area
-
+@ 
+\index{utilities!python!Mask}
+<<utilities.pyx>>=
 cdef class Mask(MaskAbstract):
     """ 
     Creates a square mask object.
@@ -1407,7 +1456,9 @@ cdef class Mask(MaskAbstract):
 
     def __dealloc__(self):
         self._c_mask.cleanup()
-
+@ 
+\index{utilities!python!Telescope}
+<<utilities.pyx>>=
 cdef class Telescope(MaskAbstract):
     """ 
     Creates a circular mask object.
@@ -1431,7 +1482,9 @@ cdef class Telescope(MaskAbstract):
 
     def __dealloc__(self):
         self._c_mask.cleanup()
-
+@ 
+\index{utilities!python!GMT}
+<<utilities.pyx>>=
 cdef class GMT(MaskAbstract):
     """ 
     Creates a mask object for the Giant Magellan Telescope pupil.
@@ -1462,6 +1515,7 @@ cdef class GMT(MaskAbstract):
 
 In the following, the routines to write data on the device into a file are described.
 Each file contains first an integer with the number of pages [[n_page]] and for each page the number of elements [[n_data]] and the data [[data]].
+\index{utilities!dev2file}
 <<device to file>>=
 void dev2file(const char* filename, float* d__data, int n_data) {
   int n_page=1;
@@ -1573,6 +1627,7 @@ fprintf(stdout,"@(CEO)>utilities: Data saved to %s!\n",filename);
 \subsection{Device to host}
 \label{sec:dev-to-host}
 
+\index{utilities!dev2host}
 <<data to host from device>>=
 void dev2host( float *host_data, float *dev_data, int N) {
      HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
@@ -1580,6 +1635,7 @@ void dev2host( float *host_data, float *dev_data, int N) {
      HANDLE_ERROR( cudaDeviceSynchronize() );
 }
 @
+\index{utilities!host2dev}
 <<data to device from host>>=
 void host2dev( float **dev_data, float *host_data, int N) {
     fprintf(stdout,"__ HOST2DEV __\n");
@@ -1589,12 +1645,14 @@ void host2dev( float **dev_data, float *host_data, int N) {
     HANDLE_ERROR( cudaDeviceSynchronize() );
 }
 @ 
+\index{utilities!freedev}
 <<free device>>=
 void freedev( float **dev_data ) {
     fprintf(stdout,"__ FREEDEV __\n");
     HANDLE_ERROR( cudaFree( *dev_data) );
 }
 @ 
+\index{utilities!gpu}
 <<template gpu data structure>>=
 template<typename T> 
 struct gpu_t {
@@ -1643,6 +1701,7 @@ cdef extern from "utilities.h":
         void host2dev()
         void reset()
 @ 
+\index{utilities!python!cuFloatArray}
 <<class definitions>>=
 # cuFloatArray
 from operator import mul
@@ -1775,6 +1834,7 @@ Returns
 numpy array : a copy of the device data on the host
 """
 @
+\index{utilities!python!cuIntArray}
 <<class definitions>>=
 # cuIntArray
 cdef class cuIntArray:
@@ -1799,6 +1859,7 @@ cdef class cuIntArray:
         self._c_gpu.host_data = <int *>self.host_data.data;
 
 @
+\index{utilities!python!cuDoubleArray}
 <<class definitions>>=
 # cuDoubleArray
 cdef class cuDoubleArray:
@@ -1835,6 +1896,7 @@ It is defined with the model of Owens\cite{Owens67} (\url{http://www.astrosurf.c
   && \left[ 6487.31 + 58.05\sigma^2 - 0.71150\sigma^4 + 0.08851\sigma^6 \right]D_w,
 \end{eqnarray*}
 in which $\sigma=1/\lambda$, $\lambda$ is the wavelength in micron.
+\index{utilities!atmosphere\_refractive\_index}
 <<atmosphere refractive index>>=
 double atmosphere_refractive_index(float wavelength, float altitude, 
 				   float temperature, float humidity)
@@ -1902,6 +1964,7 @@ The atmospheric dispersion $\Xi$ corresponding to a spectral filter of width $\D
 \begin{equation*}
   \Xi = \left[ n\left( \lambda_c - {\Delta\lambda\over2} \right) - n\left( \lambda_c + {\Delta\lambda\over2} \right) \right] \tan(z)
 \end{equation*}
+\index{utilities!atmosphere\_dispersion}
 <<atmospheric dispersion>>=
 double atmospheric_dispersion(float wavelength, float delta_wavelength,
                                    float zenith, float altitude, 
@@ -1921,6 +1984,8 @@ return xi;
 @
 
 The python wrapper is 
+\index{utilities!python!atmosphereRefractiveIndex}
+\index{utilities!python!atmosphericDispersion}
 <<utilities.pxd>>=
 ## atmosphere dispersion  
     double atmosphere_refractive_index(float wavelength, float altitude, 
@@ -1956,6 +2021,7 @@ The x and y slopes corresponding to the average gradient of the wavefront $\varp
   s_x(i_L,j_L) &=& {1\over (n+1)d} \sum_{k=0}^{n} \varphi\left[ i_Ln,j_Ln+k \right] -  \varphi\left[ (i_L+1)n,j_Ln+k\right] 
 \end{eqnarray}
 
+\index{utilities!wavefront\_finite\_difference}
 <<wavefront differentiation>>=
 void wavefront_finite_difference(float *sx, float *sy, int NL, 
                                  float *phi, int n, float d)
@@ -2002,6 +2068,7 @@ __global__ void wavefront_finite_difference_kernel(float *sx, float *sy, int NL,
  sy[kL] /= (n+1)*d;
 @ 
 In case of finite pupil:
+\index{utilities!wavefront\_finite\_difference}
 <<wavefront differentiation (with mask)>>=
 void wavefront_finite_difference(float *sx, float *sy, int NL, 
                                  float *phi, int n, float d,
@@ -2033,6 +2100,7 @@ __global__ void wavefront_finite_difference_kernel_masked(
     }
   }
 @ 
+\index{utilities!python!wavefrontFiniteDifference}
 The python wrapper is
 <<utilities.pxd>>=
 ## wavefront differentiation

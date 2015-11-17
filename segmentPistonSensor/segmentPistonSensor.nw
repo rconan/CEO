@@ -1,5 +1,6 @@
 % -*- mode: Noweb; noweb-code-mode: c-mode -*-
 @
+\index{segmentPistonSensor}
 \section{The files}
 \label{sec:files}
 
@@ -35,6 +36,7 @@ struct segmentPistonSensor {
 	     float _nyquist_factor_);
   void cleanup(void);
   void propagate(source *src);
+  void readout(float exposureTime, float readoutNoiseRms, float nBackgroundPhoton);
   void fft(void);
   void info(void);
 };
@@ -52,12 +54,14 @@ struct segmentPistonSensor {
 <<setup>>
 <<cleanup>>
 <<propagation>>
+<<read-out>>
 <<Fourier>>
 <<info>>
 @
 \subsection{Python}
 \label{sec:python}
 
+\index{segmentPistonSensor!python}
 <<segmentPistonSensor.pxd>>=
 from utilities cimport cuFloatArray
 from gmtMirrors cimport gmt_m1, GMT_M1
@@ -71,9 +75,11 @@ cdef extern from "segmentPistonSensor.h":
         void setup(gmt_m1 *, source *, float, float, float)
         void cleanup()
         void propagate(source *)
+        void readout(float, float, float)
         void fft()
 <<class definition>>
 @ 
+\index{segmentPistonSensor!python!SegmentPistonSensor}
 <<class definition>>=
 cdef class SegmentPistonSensor:
     cdef:
@@ -151,6 +157,9 @@ cdef class SegmentPistonSensor:
             The segment piston sensor guide star(s)
         """
         self._c_segmentPistonSensor.propagate(gs._c_source)
+     
+    def readOut(self, float exposureTime, float readOutNoiseRms, float backgroundMagnitude):
+        self._c_segmentPistonSensor.readout(exposureTime, readOutNoiseRms, backgroundMagnitude)
 
     def fft(self):
         self._c_segmentPistonSensor.fft();
@@ -225,6 +234,7 @@ There are as many of these block arrays as there are guide stars.
 \section{Parameters}
 \label{sec:parameters}
 
+\index{segmentPistonSensor!segmentPistonSensor}
 The parameters for the segment piston sensor models are:
 \begin{itemize}
 \item the inner and outer radius of the lenslet locations:
@@ -298,7 +308,7 @@ imaging FFT;
 source fft_src;
 float *fft_phase;
 mask fft_mask;
-@ 
+@
 \item some internal variables:
 <<parameters>>=
 int D_px, D_px2;
@@ -312,6 +322,7 @@ float m2px, R, lambda0, spectral_bandwidth;
 \subsection{Setup \& Cleanup}
 \label{sec:setup--cleanup}
 
+\index{segmentPistonSensor!segmentPistonSensor!setup}
 <<setup>>=
 void segmentPistonSensor::setup(gmt_m1 *M1, source *src, 
 				float _dispersion_,
@@ -410,6 +421,7 @@ fft_mask.area               = 1.0/N_LAMBDA;
 fft_src.wavefront.M         = &fft_mask;
 @ 
 The memory is freed with:
+\index{segmentPistonSensor!segmentPistonSensor!cleanup}
 <<cleanup>>=
 void segmentPistonSensor::cleanup(void)
 {
@@ -430,12 +442,12 @@ void segmentPistonSensor::cleanup(void)
 \subsection{Propagation}
 \label{sec:propagation}
 
+\index{segmentPistonSensor!segmentPistonSensor!propagate}
 <<propagation>>=
 void segmentPistonSensor::propagate(source *gs)
 {
   int k;
   float d, wavenumber;
-
   <<propagation content>>
 }
 @
@@ -567,22 +579,41 @@ pupil = ( ( (xr>=-h) && (xr<=h) ) && ( (yr>=-h) && (yr<=h) ) ) ? 1.0 : 0.0;
 piecewise_phase[k_out]     = pupil*pupil_phase[k_in];
 piecewise_amplitude[k_out] = pupil*pupil_amplitude[k_in];
 m[k_out]                   = (piecewise_amplitude[k_out]==1) ? 1 : 0;
+@
+\subsection{Read--out}
+\label{sec:read-out}
+
+\index{segmentPistonSensor!segmentPistonSensor!readout}
+<<read-out>>=
+void segmentPistonSensor::readout(float exposureTime, float readOutNoiseRms, float backgroundMagnitude)
+{
+  float p2, nBackgroundPhoton;
+  p2 = pixel_scale*camera.BIN_IMAGE/ARCSEC(1);
+  p2 *= p2;
+  lenslet_src.magnitude = backgroundMagnitude;
+  nBackgroundPhoton = p2*lenslet_src.n_photon();
+  nBackgroundPhoton *= lenslet_size/camera.N_PX_CAMERA;
+  nBackgroundPhoton *= camera.photoelectron_gain*lenslet_size/camera.N_PX_CAMERA;
+  fprintf(stdout,"nBackgroundPhoton=%g\n",nBackgroundPhoton);
+  camera.readout(exposureTime, readOutNoiseRms, nBackgroundPhoton);
+}
 @ 
 
 \subsection{Fourier analysis}
 \label{sec:fourier-analysis}
 
+\index{segmentPistonSensor!segmentPistonSensor!fft}
 <<Fourier>>=
 void segmentPistonSensor::fft(void)
 {
   FFT.propagateNoOverlap( &fft_src );
 }
 @ 
-
 \subsection{Input/Output}
 \label{sec:inputoutput}
 
 The main parameters are displayed with:
+\index{segmentPistonSensor!segmentPistonSensor!info}
 <<info>>=
 void segmentPistonSensor::info(void)
 {
@@ -592,7 +623,7 @@ void segmentPistonSensor::info(void)
   fprintf(stdout," . center wavelength, spectral bandwidth and resolution: %6.3fmicron, %6.3fmicron, %d\n",
 	  (lambda0+spectral_bandwidth*0.5)*1e6,
 	  spectral_bandwidth*1e6, N_LAMBDA);
-  fprintf(stdout," . pixel scale       : %6.3farcsec\n",pixel_scale*2/ARCSEC(1));
+  fprintf(stdout," . pixel scale       : %6.3farcsec\n",pixel_scale*camera.BIN_IMAGE/ARCSEC(1));
   fprintf(stdout," . field-of-view     : %6.3farcsec\n",N_PX_IMAGE*pixel_scale/ARCSEC(1));
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n"); 
 }
