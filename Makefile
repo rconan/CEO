@@ -32,6 +32,9 @@ cython: makefile
 doc: tex
 	make -C doc all
 
+pydoc: cython
+	make -C python/docs html 
+
 pydoc:
 	make -C python/docs html
 
