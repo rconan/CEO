@@ -73,7 +73,7 @@ u
                             M1_radial_order=M1_radial_order,
                             M2_radial_order=M2_radial_order)
 
-    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,agws=None,recmat=None):
+    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,agws=None,recmat=None,first_mode=3):
         """
         Calibrate the different degrees of freedom of the  mirrors 
 
@@ -227,11 +227,11 @@ u
                 sys.stdout.write("\n")
             if mode=="zernike":
                 n_mode = self.M1.zernike.n_mode
-                D = np.zeros((wfs.valid_lenslet.nnz*2,(n_mode-3)*7))
+                D = np.zeros((wfs.valid_lenslet.nnz*2,(n_mode-first_mode)*7))
                 idx = 0;
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
-                    for kMode in range(3,n_mode):
+                    for kMode in range(first_mode, n_mode):
                         sys.stdout.write("%d "%(kMode+1))
                         D[:,idx] = pushpull( M1_zernike_update )
                         idx += 1
@@ -338,11 +338,11 @@ u
                 sys.stdout.write("\n")
             if mode=="zernike":
                 n_mode = self.M1.zernike.n_mode
-                D = np.zeros((wfs.valid_lenslet.nnz*2,(n_mode-3)*7))
+                D = np.zeros((wfs.valid_lenslet.nnz*2,(n_mode-first_mode)*7))
                 idx = 0;
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
-                    for kMode in range(3,n_mode):
+                    for kMode in range(first_mode,n_mode):
                         sys.stdout.write("%d "%(kMode+1))
                         D[:,idx] = pushpull( M2_zernike_update )
                         idx += 1
