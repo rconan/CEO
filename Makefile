@@ -35,9 +35,6 @@ doc: tex
 pydoc: cython
 	make -C python/docs html 
 
-pydoc:
-	make -C python/docs html
-
 test:
 	make -C test all
 
