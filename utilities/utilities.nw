@@ -109,6 +109,12 @@ __global__ void wavefront_finite_difference_kernel_masked(
                                  float *sx, float *sy, int NL, 
                                  float *phi, int n, float d,
                                  char *M);
+__global__ void wavefront_finite_difference_sparse_matrix_kernel(
+                                                   float *csrValH, 
+                                                   int *csrColIndH, 
+                                                   int *csrRowPtrH, 
+                                                   const int NL, const int n, const float d);
+
 char fried_geometry_setup(char *lenslet_mask, char *actuator_mask, 
                           int NL, int n, float threshold);
 char fried_geometry_setup_vs_pupil(char *lenslet_mask, char *actuator_mask, 
@@ -133,6 +139,8 @@ void host2dev( float **dev_data, float *host_data, int N);
 void freedev( float **dev_data );
 
 <<template gpu data structure>>
+
+<<sparse matrix>>
 
 void wavefront_finite_difference(float *sx, float *sy, int NL, 
                                  float *phi, int n, float d);
@@ -191,10 +199,13 @@ int round_up_to_nhp2(int n) {
 <<data to device from host>>
 <<free device>>
 
+<<sparse matrix methods>>
+
 <<wavefront differentiation>>
 <<wavefront differentiation (with mask)>>
 <<wavefront differentiation kernel>>
 <<wavefront differentiation kernel (with mask)>>
+<<wavefront differentiation sparse matrix kernel>>
 @
 
 \subsection{Python}
@@ -2067,6 +2078,61 @@ __global__ void wavefront_finite_difference_kernel(float *sx, float *sy, int NL,
  sx[kL] /= (n+1)*d;
  sy[kL] /= (n+1)*d;
 @ 
+The wavefront averaged-gradient can also be derived with a sparse gradient matrix operator,
+<<wavefront differentiation sparse matrix kernel>>=
+__global__ void wavefront_finite_difference_sparse_matrix_kernel(
+                                                   float *csrValH, 
+                                                   int *csrColIndH, 
+                                                   int *csrRowPtrH, 
+                                                   const int NL, 
+                                                   const int n, 
+                                                   const float d)
+  {
+    int iL, jL, kL, k, u, v, w, w0, NP, 
+        NL2, iSource, idx, nnz_per_axis;
+    float norm;
+    iL = blockIdx.x * blockDim.x + threadIdx.x;
+    jL = blockIdx.y * blockDim.y + threadIdx.y;
+    iSource = blockIdx.z;
+    if ( (iL<NL) && (jL<NL) ) {
+      <<wavefront differentiation sparse matrix core>>
+    }
+  }
+@  where
+<<wavefront differentiation sparse matrix core>>=
+ NL2 = NL*NL;
+ norm = 1.0/((n+1)*d);
+ kL = iL*NL+jL;
+ NP = n*NL + 1;
+ kL += iSource*NL2;
+ u = iL*n;
+ v = jL*n;
+ w0 = iSource*NP*NP;
+ nnz_per_axis = NL2*(n+1)*2;
+ idx = kL*2*(n+1) + nnz_per_axis*2*iSource;
+   // x slope
+ for (k=0;k<=n;k++) {
+   w = w0 + u*NP + v + k;
+   csrValH[idx]      = norm;
+   csrColIndH[idx] = w;
+   w += n*NP;
+   csrValH[n+1+idx]      = -norm;
+   csrColIndH[n+1+idx++] = w;
+ }
+csrRowPtrH[kL+1] = 2*(n+1)*(kL+1);
+ idx = (NL2+kL)*2*(n+1) + nnz_per_axis*2*iSource;
+  // y slope
+ for (k=0;k<=n;k++) {
+   w = w0 + (u+k)*NP + v;
+   csrValH[idx]      = norm;
+   csrColIndH[idx] = w;
+   w += n;
+   csrValH[n+1+idx]      = -norm;
+   csrColIndH[n+1+idx++] = w;
+ }
+csrRowPtrH[kL+1+NL2] = 2*(n+1)*(kL+1+NL2);
+   
+@
 In case of finite pupil:
 \index{utilities!wavefront\_finite\_difference}
 <<wavefront differentiation (with mask)>>=
@@ -2121,6 +2187,133 @@ cpdef wavefrontFiniteDifference(cuFloatArray sx, cuFloatArray sy, int NL,
     else:
         wavefront_finite_difference(sx._c_gpu.dev_data, sy._c_gpu.dev_data, NL, 
                                     phi._c_gpu.dev_data, n, d, M._c_mask, N_GS)
+@
+\subsection{Sparse matrix}
+\label{sec:sparse-matrix}
+
+\index{utilities!sparseMatrix}
+The sparse matrix structure holds the data to build a matrix in the compressed row storage.
+<<sparse matrix>>=
+struct sparseMatrix {
+<<sparse matrix parameters>>
+void setup(const int _n_row_, const int _n_col_, const int _nnz_);
+void gradient( int NL,  int N_LENSLET_PX,  float d);
+void cleanup(void);
+};
+@ 
+The sparse matrix parameters are
+<<sparse matrix parameters>>=
+int nnz, n_row, n_col;
+float *csrValH;
+int *csrColIndH, *csrRowPtrH;
+cudaError_t cudaStat;
+cusparseStatus_t status;
+cusparseHandle_t handle;
+cusparseMatDescr_t descr;
+@ 
+The sparse matrix methods are
+\begin{itemize}
+\item setup
+\index{utilities!sparseMatrix!setup}
+<<sparse matrix methods>>=
+void sparseMatrix::setup(int _n_row_, int _n_col_, int _nnz_) 
+{
+n_row = _n_row_;
+n_col = _n_col_;
+nnz   = _nnz_;
+<<sparse matrix allocation>>
+}
+@ 
+with
+<<sparse matrix allocation>>=
+HANDLE_ERROR_CUSPARSE( cusparseCreate(&handle), 
+		       "CUSPARSE Library initialization failed!");
+HANDLE_ERROR_CUSPARSE( cusparseCreateMatDescr(&descr), 
+		       "Matrix descriptor initialization failed!");
+
+cusparseSetMatType(descr,CUSPARSE_MATRIX_TYPE_GENERAL);
+cusparseSetMatIndexBase(descr,CUSPARSE_INDEX_BASE_ZERO);
+
+HANDLE_ERROR( cudaMalloc((void**)&csrValH,    sizeof(float)*nnz ) );
+HANDLE_ERROR( cudaMalloc((void**)&csrColIndH, sizeof(int)*nnz ) );
+HANDLE_ERROR( cudaMalloc((void**)&csrRowPtrH, sizeof(int)*(n_row+1) ) );
+HANDLE_ERROR( cudaMemset(csrRowPtrH, 0, sizeof(int)*(n_row+1) ) );
+@
+\item sparse gradient matrix operator to compute the average slopes of the wavefront on an array of $[[NL]]\times[[NL]]$ lenslets with [[N_LENSET_PX]] pixel per lenslet and a lenslet pitch [[d]]:,
+\index{utilities!sparseMatrix!gradient}
+<<sparse matrix methods>>=
+void sparseMatrix::gradient( int NL,  int N_LENSLET_PX,  float d) 
+{
+  n_row = 2*NL*NL;
+  n_col = NL*N_LENSLET_PX + 1;
+  nnz   = 2*(N_LENSLET_PX+1)*n_row;
+  <<sparse matrix allocation>>
+  dim3 blockDim(16,16);
+  dim3 gridDim(NL/16+1,NL/16+1);
+  wavefront_finite_difference_sparse_matrix_kernel LLL gridDim,blockDim RRR
+  (csrValH, csrColIndH, csrRowPtrH, NL, N_LENSLET_PX, d);
+}
+@
+\item cleanup
+\index{utilities!sparseMatrix!cleanup}
+<<sparse matrix methods>>=
+void sparseMatrix::cleanup(void)
+{
+  HANDLE_ERROR_CUSPARSE( cusparseDestroyMatDescr(descr),
+		       "Matrix descriptor destruction failed!");
+  HANDLE_ERROR_CUSPARSE( cusparseDestroy(handle),
+		       "CUSPARSE Library release of resources failed!"); 
+  HANDLE_ERROR( cudaFree( csrValH ) ); 
+  HANDLE_ERROR( cudaFree( csrColIndH ) );
+  HANDLE_ERROR( cudaFree( csrRowPtrH ) );
+}
+@
+\end{itemize}
+
+\subsubsection{python}
+\label{sec:python-2}
+
+\index{utilities!python!SparseMatrix}
+<<utilities.pxd>>=
+## sparsematrix structure
+    cdef cppclass sparseMatrix:
+        int nnz, n_row, n_col
+        int *csrColIndH
+        int *csrRowPtrH
+        float *csrValH
+        void gradient(int , int, float ) 
+        void cleanup()
+@
+<<class definitions>>= 
+cdef class SparseGradient:
+    cdef:
+        sparseMatrix *_c_sparseMatrix
+        readonly int nnz, n_row, n_col
+        readonly cuFloatArray csrValH
+        readonly cuIntArray csrColIndH, csrRowPtrH
+@
+<<utilities.pyx>>=
+## gradient
+cdef class SparseGradient:
+
+    def __cinit__(self, int NL, int N_LENSLET_PX, float d):
+        self._c_sparseMatrix = new sparseMatrix();
+        self._c_sparseMatrix.gradient(NL, N_LENSLET_PX, d)
+        self.nnz        = self._c_sparseMatrix.nnz
+        self.n_row        = self._c_sparseMatrix.n_row
+        self.n_col        = self._c_sparseMatrix.n_col
+        self.csrValH    = cuFloatArray(shape=(self.nnz,1))
+        self.csrValH._c_gpu.dev_data \
+                        = self._c_sparseMatrix.csrValH
+        self.csrColIndH = cuIntArray(shape=(self.nnz,1))
+        self.csrColIndH._c_gpu.dev_data \
+                        = self._c_sparseMatrix.csrColIndH
+        self.csrRowPtrH = cuIntArray(shape=(self.n_row+1,1))
+        self.csrRowPtrH._c_gpu.dev_data \
+                        = self._c_sparseMatrix.csrRowPtrH
+
+    def __dealloc__(self):
+        self._c_sparseMatrix.cleanup()
 @ 
 Adding the class definitions to the definition file
 <<utilities.pxd>>=
