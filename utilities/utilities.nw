@@ -1,4 +1,4 @@
--*- mode: Noweb; noweb-code-mode: c-mode -*-
+%-*- mode: Noweb; noweb-code-mode: c-mode -*-
 
 \index{utilities}
 \section{The files}
@@ -199,13 +199,15 @@ int round_up_to_nhp2(int n) {
 <<data to device from host>>
 <<free device>>
 
-<<sparse matrix methods>>
-
 <<wavefront differentiation>>
 <<wavefront differentiation (with mask)>>
 <<wavefront differentiation kernel>>
 <<wavefront differentiation kernel (with mask)>>
 <<wavefront differentiation sparse matrix kernel>>
+<<bilinear interpolation sparse matrix kernel>>
+<<bilinear interpolation sparse matrix kernel with pupil mask>>
+
+<<sparse matrix methods>>
 @
 
 \subsection{Python}
@@ -2198,12 +2200,17 @@ struct sparseMatrix {
 <<sparse matrix parameters>>
 void setup(const int _n_row_, const int _n_col_, const int _nnz_);
 void gradient( int NL,  int N_LENSLET_PX,  float d);
+void interpolation(int NI, int NP);
+void interpolation(int NI, int NP, mask *pupil,float i0, float j0);
 void cleanup(void);
+void MVM(float *y, float *x);
+void add(sparseMatrix *C, sparseMatrix *B);
 };
 @ 
 The sparse matrix parameters are
 <<sparse matrix parameters>>=
 int nnz, n_row, n_col;
+float alpha, beta;
 float *csrValH;
 int *csrColIndH, *csrRowPtrH;
 cudaError_t cudaStat;
@@ -2226,6 +2233,8 @@ nnz   = _nnz_;
 @ 
 with
 <<sparse matrix allocation>>=
+alpha = 1.0;
+beta = 0.0;
 HANDLE_ERROR_CUSPARSE( cusparseCreate(&handle), 
 		       "CUSPARSE Library initialization failed!");
 HANDLE_ERROR_CUSPARSE( cusparseCreateMatDescr(&descr), 
@@ -2254,6 +2263,177 @@ void sparseMatrix::gradient( int NL,  int N_LENSLET_PX,  float d)
   (csrValH, csrColIndH, csrRowPtrH, NL, N_LENSLET_PX, d);
 }
 @
+\item bi--linear 2D interpolation
+<<sparse matrix methods>>=
+void sparseMatrix::interpolation(int NI, int NP)
+{
+n_row = NI;
+n_col = NP;
+nnz   = 4*NI*NI;
+<<sparse matrix allocation>>
+<<sparse building>>
+}
+void sparseMatrix::interpolation(int NI, int NP, mask *pupil,
+                                 float i0, float j0)
+{
+n_row = NI*NI;
+n_col = NP*NP;
+nnz = 4*pupil->nnz;
+<<sparse matrix allocation>>
+<<sparse building with pupil mask>>
+}
+@ creation of the sparse matrix:
+<<sparse building>>=
+dim3 blockDim(16,16);
+dim3 gridDim(NI/16+1,NI/16+1);
+bilinearInterpSparseOperator2 LLL gridDim,blockDim RRR 
+  (csrValH, csrColIndH, csrRowPtrH, NP, NI);
+@ Creation of the sparse matrix with the pupil mask:
+<<sparse building with pupil mask>>=
+dim3 blockDim(16,16);
+dim3 gridDim(NI/16+1,NI/16+1);
+bilinearInterpSparseOperatorMask2 LLL gridDim,blockDim RRR 
+  (csrValH, csrColIndH, csrRowPtrH, NP, NI, 
+  pupil->m, pupil->nnz, i0, j0);
+@ The sparse matrix is stored in the compressed sparse row format and it is computed with the kernel
+<<bilinear interpolation sparse matrix kernel>>=
+__global__ void bilinearInterpSparseOperator2(float *csrValH, int *csrColIndH, 
+                                             int *csrRowPtrH, int NP, int NI)
+{
+  int i, j, k, idx, ndx, offset;
+  float scale, s, t, fs, ft, onemt, onems, delta, delta_p;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<NI) && (j<(NI)) ) {
+    delta   = 1.0;
+    k = i*NI + j;
+    idx = 4*k - 1;
+    offset = 0;
+
+    delta_p = delta;
+    <<bilinear interpolation modified>>
+
+    csrRowPtrH[k+1] = 4*(k+1);
+  }
+}
+@ The sparse matrix is modified to take into account the pupil mask.
+Where the pupil mask is zero, the corresponding row in the sparse matrix must be filled with zeros.
+<<bilinear interpolation sparse matrix kernel with pupil mask>>=
+__global__ void bilinearInterpSparseOperatorMask2(float *csrValH, int *csrColIndH, 
+                                                  int *csrRowPtrH, int NP, int NI,
+                                                  const char *mask, int nnz,
+                                                  const float i0, const float j0)
+{
+  int ii, jj, k, idx, ndx, offset, l, pos;
+  float scale, s, t, fs, ft, onemt, onems, delta, delta_p, i, j;
+  ii = blockIdx.x * blockDim.x + threadIdx.x;
+  jj = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (ii<NI) && (jj<(NI)) ) {
+    delta   = 1.0;
+    k = ii*NI + jj;
+    if (mask[k]>0) {
+       i = ii - i0;
+       j = jj - j0;
+       <<nnz position>>
+       idx =  4*(pos-1) - 1;
+       offset = 0;
+
+         delta_p = delta;
+
+         <<bilinear interpolation modified>>
+         offset += NP*NP;
+
+       csrRowPtrH[k] = 4*(pos-1);
+       <<csrRowPtrH for empty rows>>
+       if ( k==(NI*NI-1) )
+          csrRowPtrH[k+1] = 4*nnz;
+    } else { 
+         if ( k==(NI*NI-1) ) {
+           ++k;
+           csrRowPtrH[k] = 4*nnz;
+           <<csrRowPtrH for empty rows>>
+        } 
+     }
+   }
+ }
+@ 
+
+\paragraph{Sparse bi--linear interpolation}
+\label{sec:sparse-bi-linear-1}
+
+
+A wavefront $\hat\varphi$ is sampled on a $N_p\times N_p$ square grid with sampling step $\delta_p$.
+The wavefront $\varphi_{bli}$, sampled on a square grid $N\times N$ with sampling step $\delta$ is derived from a bi--linear interpolation of $\hat\varphi$.
+The coordinates of $\hat\varphi$ samples are given by
+\begin{equation}
+  \label{eq:9}
+  \left(
+    \begin{array}{c}
+      x_{i_p} \\
+      y_{j_p}
+    \end{array}
+  \right) = \delta_p \left[ \left(
+    \begin{array}{c}
+      i_p \\
+      j_p
+    \end{array}
+    \right) + {1-N_p \over 2} \right], \forall i,j \in [0,\dots,N_p-1]
+\end{equation}
+and the samples of $\varphi_{bli}$ are located at
+\begin{equation}
+  \label{eq:10}
+  \left(
+    \begin{array}{c}
+      x_i \\
+      y_j
+    \end{array}
+  \right) = \delta \left[ \left(
+    \begin{array}{c}
+      i \\
+      j
+    \end{array}
+    \right) + {1-N \over 2} \right], \forall i,j \in [0,\dots,N-1]  
+\end{equation}
+
+@ The interpolation starts with normalizing the coordinates $(x_i,y_j)$ with respect to the coordinates $(x_{i_p},y_{j_p})$
+<<bilinear interpolation modified>>=
+scale = delta/(delta_p*(NP-1));
+s = (scale*(i + (1-NI)/2) + 0.5)*(NP-1);
+t = (scale*(j + (1-NI)/2) + 0.5)*(NP-1);
+@  and taking the floor integer part to locate the bottom--left coordinate of the pixels surrounding [[xi]] and [[yi]]
+<<bilinear interpolation modified>>=
+fs  = floorf(s);
+ft  = floorf(t);
+ndx = __float2int_rd( ft + fs*NP );
+@ Next, one checks if the edges of the array have been reached
+<<bilinear interpolation modified>>=
+if (s==(NP-1)) { s += 1 - fs; ndx -= NP; } else { s -= fs; }    
+if (t==(NP-1)) { t += 1 - ft; ndx -= 1; }   else { t -= ft; }
+@ and finally the interpolation is computed as
+<<bilinear interpolation modified>>=	 
+onems = 1 - s;
+onemt = 1 - t;
+ndx += offset;
+csrValH[++idx]  = onems*onemt;
+csrColIndH[idx] = ndx;
+csrValH[++idx]  = onems*t;
+csrColIndH[idx] = ndx + 1;
+csrValH[++idx]  = s*onemt;
+csrColIndH[idx] = ndx + NP;
+csrValH[++idx]  = s*t;
+csrColIndH[idx] = ndx + NP + 1;
+@  For a given location in the pupil, the position of the non--zero values in the non-zero value vector is given but the sum of the mask up to that point:
+<<nnz position>>=
+pos = 0;
+for (l=0;l<=k;l++)
+    pos += (mask[l]) ? 1 : 0;
+@ This position is saved in [[csrRowPtrH]].
+The consecutive rows above the current row corresponding to zero values in the pupil mask must have their [[csrRowPtrH]] value set to the same as the current row.
+<<csrRowPtrH for empty rows>>=
+l = k-1;
+ while ( (l>=0) && (!mask[l]) )
+    csrRowPtrH[l--] = csrRowPtrH[k];
+@
 \item cleanup
 \index{utilities!sparseMatrix!cleanup}
 <<sparse matrix methods>>=
@@ -2266,6 +2446,30 @@ void sparseMatrix::cleanup(void)
   HANDLE_ERROR( cudaFree( csrValH ) ); 
   HANDLE_ERROR( cudaFree( csrColIndH ) );
   HANDLE_ERROR( cudaFree( csrRowPtrH ) );
+}
+@
+\item matrix vector multiplication $y=Sx$
+\index{utilities!sparseMatrix!MVM}
+<<sparse matrix methods>>=
+void sparseMatrix::MVM(float *y, float *x)
+{
+HANDLE_ERROR_CUSPARSE(cusparseScsrmv(handle, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                       n_row, n_col, nnz, &alpha, descr,
+                       csrValH, csrRowPtrH, csrColIndH,
+                       x, &beta, y), "Sparse matrix to vector multiplication failed!");
+}
+@
+\item matrix addition $C = S + B$
+\index{utilities!sparseMatrix!add}
+<<sparse matrix methods>>=
+void sparseMatrix::add(sparseMatrix *C, sparseMatrix *B)
+{
+ HANDLE_ERROR_CUSPARSE( cusparseScsrgeam( handle, n_row, n_col, &alpha,
+                        descr, nnz, csrValH, csrRowPtrH, csrColIndH,
+                        &beta, 
+                        B->descr, B->nnz, B->csrValH, B->csrRowPtrH, B->csrColIndH,
+                        C->descr, C->csrValH, C->csrRowPtrH, C->csrColIndH) ,
+                        "Sparse matrix addition failed!");
 }
 @
 \end{itemize}
@@ -2282,26 +2486,39 @@ void sparseMatrix::cleanup(void)
         int *csrRowPtrH
         float *csrValH
         void gradient(int , int, float ) 
+        void interpolation(int, int, mask *,float i0, float)
+        void MVM(float *, float *)
+        void add(sparseMatrix *C, sparseMatrix *A)
         void cleanup()
 @
 <<class definitions>>= 
-cdef class SparseGradient:
+cdef class SparseMatrix:
     cdef:
         sparseMatrix *_c_sparseMatrix
         readonly int nnz, n_row, n_col
         readonly cuFloatArray csrValH
         readonly cuIntArray csrColIndH, csrRowPtrH
+cdef class SparseGradient(SparseMatrix):
+    cdef:
+        readonly int NL, N_LENSLET_PX
+        readonly float d
+from source cimport Complex_amplitude
+cdef class SparseInterpolation(SparseMatrix):
+    pass
 @
 <<utilities.pyx>>=
-## gradient
-cdef class SparseGradient:
+## SparseMatrix
+cdef class SparseMatrix:
 
-    def __cinit__(self, int NL, int N_LENSLET_PX, float d):
+    def __cinit__(self, *args, **kwargs):
+        print('SparseMatrix.cinit', args, kwargs)
         self._c_sparseMatrix = new sparseMatrix();
-        self._c_sparseMatrix.gradient(NL, N_LENSLET_PX, d)
-        self.nnz        = self._c_sparseMatrix.nnz
-        self.n_row        = self._c_sparseMatrix.n_row
-        self.n_col        = self._c_sparseMatrix.n_col
+
+    def __init__(self, int nnz, int n_row, int n_col, *args, **kwargs):
+        print('SparseMatrix.init', nnz, n_row, n_col, args, kwargs)
+        self.nnz          = nnz
+        self.n_row        = n_row
+        self.n_col        = n_col
         self.csrValH    = cuFloatArray(shape=(self.nnz,1))
         self.csrValH._c_gpu.dev_data \
                         = self._c_sparseMatrix.csrValH
@@ -2314,6 +2531,54 @@ cdef class SparseGradient:
 
     def __dealloc__(self):
         self._c_sparseMatrix.cleanup()
+
+    def __mul__(_S_,_X_):
+        if isinstance(_S_,SparseMatrix) and isinstance(_X_,cuFloatArray):
+            S = <SparseMatrix>_S_
+            X = <cuFloatArray>_X_
+            Y = cuFloatArray(shape=(S.n_row,1),dev_malloc=True)
+            S._c_sparseMatrix.MVM(Y._c_gpu.dev_data,X._c_gpu.dev_data)
+            return Y
+        else:
+            return NotImplemented
+
+    def __add__(_A_,_B_):
+        if isinstance(_A_,SparseMatrix) and isinstance(_B_,SparseMatrix):
+            A = <SparseMatrix>_A_
+            B = <SparseMatrix>_B_
+            C = SparseMatrix(A.nnz+B.nnz, A.n_row, A.n_col)
+            A._c_sparseMatrix.add(C._c_sparseMatrix,B._c_sparseMatrix)
+            return C
+        else:
+            return NotImplemented
+
+    property H:
+        def __get__(self):
+            from scipy.sparse import csr_matrix
+            return csr_matrix((self.csrValH.host().ravel(),
+			       self.csrColIndH.host().ravel(),
+			       self.csrRowPtrH.host().ravel()),
+                              shape=(self.n_row,self.n_col))
+## SparseGradient
+cdef class SparseGradient(SparseMatrix):
+
+    def __init__(self, int NL, int N_LENSLET_PX, float d):
+        self.NL          = NL
+        self.N_LENSLET_PX = N_LENSLET_PX
+        self.d           = d
+        self._c_sparseMatrix.gradient(NL, N_LENSLET_PX, d)
+        super().__init__(self._c_sparseMatrix.nnz,
+                         self._c_sparseMatrix.n_row,
+                         self._c_sparseMatrix.n_col)
+## SparseInterpolation
+cdef class SparseInterpolation(SparseMatrix):
+
+    def __init__(self,int NI, int NP, Complex_amplitude W,
+                 float i0, float j0):
+        self._c_sparseMatrix.interpolation(NI,NP,W._c_complex_amplitude.M,i0,j0)
+        super().__init__(self._c_sparseMatrix.nnz,
+                         self._c_sparseMatrix.n_row,
+                         self._c_sparseMatrix.n_col)
 @ 
 Adding the class definitions to the definition file
 <<utilities.pxd>>=
