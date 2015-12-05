@@ -47,8 +47,13 @@ GMT_MX
     :members:
 
 IdealSegmentPistonSensor
-~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~
 .. autoclass:: IdealSegmentPistonSensor
+    :members:
+
+DispersedFringeSensor
+~~~~~~~~~~~~~~~~~~~~~
+.. autoclass:: DispersedFringeSensor
     :members:
 
 Imaging
