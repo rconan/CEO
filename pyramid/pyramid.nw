@@ -1,0 +1,117 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+@
+\index{pyramid}
+\section{The files}
+\label{sec:files}
+
+\subsection{Header}
+\label{sec:header}
+
+<<pyramid.h>>=
+#ifndef __PYRAMID__
+#define __PYRAMID__
+
+#include "imaging.h"
+#include "centroiding.h"
+
+  struct pyramid {
+    <<parameters>>
+    void setup(int N_PX_PUPIL,
+	       int _N_PUPIL_SAMPLING_,
+	       int N_GS);
+    void cleanup(void);
+  };
+
+#endif // __PYRAMID__
+@ 
+\subsection{Source}
+\label{sec:source}
+
+<<pyramid.cu>>=
+#include "pyramid.h"
+
+<<setup>>
+<<cleanup>>
+@ 
+\subsection{Python}
+\label{sec:python}
+
+\index{pyramid!python}
+<<pyramid.pxd>>=
+cdef extern from "pyramid.h":
+    cdef cppclass pyramid:
+        void setup(int, int, int)
+        void cleanup()
+<<class definitions>>
+@ 
+\index{pyramid!python!Pyramid}
+<<class definitions>>=
+cdef class Pyramid:
+    cdef:
+        pyramid *_c_pyramid
+@
+<<pyramid.pyx>>=
+cdef class Pyramid:
+    def __cinit__(self,int N_PX_PUPIL,
+                  int N_PUPIL_SAMPLING,
+                  int N_GS=1):
+        self._c_pyramid = new pyramid()
+        self._c_pyramid.setup(N_PX_PUPIL,N_PUPIL_SAMPLING,N_GS)
+
+    def __dealloc__(self):
+        self._c_pyramid.cleanup()
+        
+@ 
+\section{Parameters}
+\label{sec:parameters}
+
+\index{pyramid!pyramid}
+The parameters of the [[pyramid]] structure are:
+\begin{itemize}
+\item the pupil sampling with the pyramid 
+<<parameters>>=
+int N_PUPIL_SAMPLING;
+@
+\item the pyramid detector
+<<parameters>>=
+imaging camera;
+@
+\item the slopes container
+<<parameters>>=
+centroiding data;
+@ 
+\end{itemize}
+\section{Functions}
+\label{sec:functions}
+
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
+\index{pyramid!pyramid!setup}
+<<setup>>=
+void pyramid::setup(int N_PX_PUPIL,
+		    int _N_PUPIL_SAMPLING_,
+		    int N_GS)
+{
+  N_PUPIL_SAMPLING = _N_PUPIL_SAMPLING_;
+  camera.setup(N_PX_PUPIL,1,2,N_PUPIL_SAMPLING*4,1,N_GS);
+  data.setup(N_PUPIL_SAMPLING*2, N_GS);
+}
+@ 
+\index{pyramid!pyramid!cleanup}
+<<cleanup>>=
+void pyramid::cleanup(void)
+{
+  fprintf(stdout,"@(CEO)>pyramid: freeing memory!\n");
+  fprintf(stdout," |-");
+  camera.cleanup();
+  fprintf(stdout," |-");
+  data.cleanup();
+}
+@ 
+\subsection{Input/Output}
+\label{sec:inputoutput}
+
+\section{Tests}
+\label{sec:tests}
+
