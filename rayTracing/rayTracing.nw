@@ -1363,9 +1363,152 @@ __global__ void to_z_plane_chief_kernel(ray *d__ray, int N_RAY, rtd z_plane)
 \subsection{Reference sphere}
 \label{sec:reference-sphere}
 
-\subsubsection{Kernels}
-\label{sec:method}
+\subsubsection{Spherical focal plane}
+\label{sec:spher-focal-plane}
 
+\index{rayTracing!bundle!to\_sphere}
+
+<<ray bundle functions>>= 
+void bundle::to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  <<reference sphere distance>>
+  <<reference sphere origin>>
+  <<reference sphere radius>>
+  <<chief ray optical path length>>
+  <<rays optical path difference>>
+}
+@
+Given the $z$ location of the focal plane on axis [[z_chief_on_axis]] and the radius of curvature of the focal plane [[rho_focal_plane]], the distance to the object from the last surface for the chief ray is given by
+<<reference sphere distance>>= 
+to_focal_surface_chief_kernel LLL gridDim , blockDim RRR (d__sphere_distance, d__chief_ray, 1, 
+                                                          z_chief_on_axis, 
+							  rho_focal_plane);
+@  with
+<<to sphere kernel>>=
+__global__ void to_focal_surface_chief_kernel(rtd *s, ray *d__ray, int N_RAY, 
+                                              rtd z_chief_on_axis, rtd rho_focal_plane)
+{
+  int k, iSource;
+  rtd x, y, z, g, rho2;
+  iSource = blockIdx.z;
+  k = iSource;
+  x = d__ray[k].coordinates.x;
+  y = d__ray[k].coordinates.y;
+  z = d__ray[k].coordinates.z - z_chief_on_axis + rho_focal_plane;
+  g = x*d__ray[k].directions.x + y*d__ray[k].directions.y + z*d__ray[k].directions.z;
+  rho2 = x*x + y*y + z*z;
+  s[k] = -1.0*sqrt( g*g - (rho2-rho_focal_plane*rho_focal_plane) ) - g;
+}
+@
+The origin of the reference sphere is computed next 
+<<reference sphere origin>>= 
+chief_parametric_equation LLL gridDim , blockDim RRR (d__sphere_origin, 
+						      d__chief_ray, 1, 
+						      d__sphere_distance);
+@ 
+The chief ray defines the location of the object and the reference sphere is centered on the object e.g. the origin of the reference sphere is on the chief ray.
+If the distance from the last surface to the object is known for the chief ray, then the origin of the reference sphere is given by:
+<<reference sphere origin from chief ray>>=
+__global__ void chief_parametric_equation(vector *d__v, ray *d__ray, int N_RAY, rtd *s)
+{
+  int k, iSource;
+  iSource = blockIdx.z;
+  k = iSource;
+  d__v[k].x = d__ray[k].coordinates.x + d__ray[k].directions.x*s[k];
+  d__v[k].y = d__ray[k].coordinates.y + d__ray[k].directions.y*s[k];
+  d__v[k].z = d__ray[k].coordinates.z + d__ray[k].directions.z*s[k];
+}
+@ The computation of the radius of the reference sphere, which must be tangent to the exit pupil, is:
+<<reference sphere radius>>= 
+sphere_radius_kernel LLL gridDim , blockDim RRR (d__sphere_radius, d__chief_ray, 1, 
+						 d__sphere_origin);
+@ 
+To compute the reference sphere radius, one must know the location of the exit pupil.
+The location of the exit pupil is given by the intersection of the chief ray with the optical axis after the last surface of the system.
+Remembering the rays parametric equation:
+\begin{eqnarray}
+  \label{eq:60}
+  x &=& x_{-1} + k_{-1}s \\
+  y &=& y_{-1} + l_{-1}s \\
+  z &=& z_{-1} + m_{-1}s \\
+\end{eqnarray}
+and noting that, at the intersection $x=y=0$, the distance $s$ from the last surface to the exit pupil is given by
+\begin{equation}
+  \label{eq:61}
+  s = \sqrt{  x_{-1}^2 + y_{-1}^2 \over k_{-1}^2 + l_{-1}^2 }
+\end{equation}
+Given the origin of the reference sphere $\left( x_{s,0},y_{s,0},z_{s,0} \right)$, the radius $\varrho_s$ is written
+\begin{equation}
+  \label{eq:62}
+  \varrho_s = \sqrt{ x_{s,0}^2 + y_{s,0}^2 + \left( z_{s,0} - z_E \right) },
+\end{equation}
+where $z_E$ is the exit pupil coordinate on the z--axis,
+\begin{equation}
+  \label{eq:63}
+  z_E = z_{-1} + m_{-1}s.
+\end{equation}
+In the case of an on--axis source, $k_{-1}=l_{-1}=0$ and $s=\infty$ so the radius is set to $\varrho_s=23.772110269559725$m.
+<<to sphere kernel>>=
+__global__ void sphere_radius_kernel(rtd *radius, ray *d__ray, int N_RAY, 
+				     vector *sphere_origin)
+{
+  int k, iSource;
+  rtd rho2_xy, rho2_kl, buf, s, z;
+  iSource = blockIdx.z;
+  k = iSource;
+
+  buf =  d__ray[k].coordinates.x;
+  buf *= buf;
+  rho2_xy = buf;
+  buf =  d__ray[k].coordinates.y;
+  buf *= buf;
+  rho2_xy += buf;
+
+  buf =  d__ray[k].directions.x;
+  buf *= buf;
+  rho2_kl = buf;
+  buf =  d__ray[k].directions.y;
+  buf *= buf;
+  rho2_kl += buf;
+  
+  if (rho2_kl<1E-24)
+    radius[k] = 23.772110269559725;
+  else {
+    s = sqrt(rho2_xy/rho2_kl);
+    z = d__ray[k].coordinates.z + d__ray[k].directions.z*s;
+
+    buf = sphere_origin[k].x;
+    buf *= buf;
+    radius[k] = buf;
+
+    buf = sphere_origin[k].y;
+    buf *= buf;
+    radius[k] += buf;
+
+    buf = sphere_origin[k].z - z;
+    buf *= buf;
+    radius[k] += buf;
+    radius[k] = sqrt( radius[k] );
+  }
+}
+@ The optical path length of the chief ray from the last surface to the reference sphere is computed with
+<<chief ray optical path length>>= 
+to_sphere_chief_kernel LLL gridDim , blockDim RRR (d__chief_ray, 1, 
+                                                   d__sphere_origin, d__sphere_radius);
+@ with
+<<to sphere kernel>>=
+__global__ void to_sphere_chief_kernel(ray *d__ray, int N_RAY, 
+                                       vector *sphere_origin, rtd *sphere_radius)
+{
+  int k, iSource;
+  rtd s, x, y, z, g, rho2;
+  iSource = blockIdx.z;
+  k = iSource;
+  <<to sphere kernel common>>
+}
+@
 The optical path difference (OPD) is usually computed with respect to a reference sphere centered on the object.
 The OPD is given by the difference between the rays optical path length (OPL) to the sphere and the OPL of the chief ray to the sphere.
 The OPL $s$ is used to compute the intersection of a ray with the sphere from the parametric equation:
@@ -1410,6 +1553,14 @@ d__ray[k].coordinates.x += s*d__ray[k].directions.x;
 d__ray[k].coordinates.y += s*d__ray[k].directions.y;
 d__ray[k].coordinates.z += s*d__ray[k].directions.z;
 @
+The optical path difference of the source rays is computed last
+<<rays optical path difference>>= 
+blockDim = dim3(N_THREAD,N_THREAD);
+gridDim  = dim3(N_RAY/N_THREAD2+1,1, N_BUNDLE);
+to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
+                                             d__sphere_origin, d__sphere_radius, 
+                                             d__chief_ray);
+@  with
 <<to sphere kernel>>=
 __global__ void to_sphere_kernel(ray *d__ray, int N_RAY, 
 				 vector *sphere_origin, rtd *sphere_radius,
@@ -1430,157 +1581,7 @@ __global__ void to_sphere_kernel(ray *d__ray, int N_RAY,
       d__ray[k].optical_path_length - d__chief_ray[iSource].optical_path_length;
   }
 }
-__global__ void to_sphere_chief_kernel(ray *d__ray, int N_RAY, 
-                                       vector *sphere_origin, rtd *sphere_radius)
-{
-  int k, iSource;
-  rtd s, x, y, z, g, rho2;
-  iSource = blockIdx.z;
-  k = iSource;
-  <<to sphere kernel common>>
-}
-__global__ void to_focal_surface_chief_kernel(rtd *s, ray *d__ray, int N_RAY, 
-                                              rtd z_chief_on_axis, rtd rho_focal_plane)
-{
-  int k, iSource;
-  rtd x, y, z, g, rho2;
-  iSource = blockIdx.z;
-  k = iSource;
-  x = d__ray[k].coordinates.x;
-  y = d__ray[k].coordinates.y;
-  z = d__ray[k].coordinates.z - z_chief_on_axis + rho_focal_plane;
-  g = x*d__ray[k].directions.x + y*d__ray[k].directions.y + z*d__ray[k].directions.z;
-  rho2 = x*x + y*y + z*z;
-  s[k] = -1.0*sqrt( g*g - (rho2-rho_focal_plane*rho_focal_plane) ) - g;
-}
-@ 
-The chief ray defines the location of the object and the reference sphere is centered on the object e.g. the origin of the reference sphere is on the chief ray.
-If the distance from the last surface to the object is known for the chief ray, then the origin of the reference sphere is given by:
-<<reference sphere origin from chief ray>>=
-__global__ void chief_parametric_equation(vector *d__v, ray *d__ray, int N_RAY, rtd *s)
-{
-  int k, iSource;
-  iSource = blockIdx.z;
-  k = iSource;
-  d__v[k].x = d__ray[k].coordinates.x + d__ray[k].directions.x*s[k];
-  d__v[k].y = d__ray[k].coordinates.y + d__ray[k].directions.y*s[k];
-  d__v[k].z = d__ray[k].coordinates.z + d__ray[k].directions.z*s[k];
-}
-@ 
-To compute the reference sphere radius, one must know the location of the exit pupil.
-The location of the exit pupil is given by the intersection of the chief ray with the optical axis after the last surface of the system.
-Remembering the rays parametric equation:
-\begin{eqnarray}
-  \label{eq:60}
-  x &=& x_{-1} + k_{-1}s \\
-  y &=& y_{-1} + l_{-1}s \\
-  z &=& z_{-1} + m_{-1}s \\
-\end{eqnarray}
-and noting that, at the intersection $x=y=0$, the distance $s$ from the last surface to the exit pupil is given by
-\begin{equation}
-  \label{eq:61}
-  s = \sqrt{  x_{-1}^2 + y_{-1}^2 \over k_{-1}^2 + l_{-1}^2 }
-\end{equation}
-Given the origin of the reference sphere $\left( x_{s,0},y_{s,0},z_{s,0} \right)$, the radius $\varrho_s$ is written
-\begin{equation}
-  \label{eq:62}
-  \varrho_s = \sqrt{ x_{s,0}^2 + y_{s,0}^2 + \left( z_{s,0} - z_E \right) },
-\end{equation}
-where $z_E$ is the exit pupil coordinate on the z--axis,
-\begin{equation}
-  \label{eq:63}
-  z_E = z_{-1} + m_{-1}s.
-\end{equation}
-In the case of an on--axis source, $k_{-1}=l_{-1}=0$ and $s=\infty$ so the radius is set to $\varrho_s=23.772110269559725$m.
 
-<<to sphere kernel>>=
-__global__ void sphere_radius_kernel(rtd *radius, ray *d__ray, int N_RAY, 
-				     vector *sphere_origin)
-{
-  int k, iSource;
-  rtd rho2_xy, rho2_kl, buf, s, z;
-  iSource = blockIdx.z;
-  k = iSource;
-
-  buf =  d__ray[k].coordinates.x;
-  buf *= buf;
-  rho2_xy = buf;
-  buf =  d__ray[k].coordinates.y;
-  buf *= buf;
-  rho2_xy += buf;
-
-  buf =  d__ray[k].directions.x;
-  buf *= buf;
-  rho2_kl = buf;
-  buf =  d__ray[k].directions.y;
-  buf *= buf;
-  rho2_kl += buf;
-  
-  if (rho2_kl<1E-24)
-    radius[k] = 23.772110269559725;
-  else {
-    s = sqrt(rho2_xy/rho2_kl);
-    z = d__ray[k].coordinates.z + d__ray[k].directions.z*s;
-
-    buf = sphere_origin[k].x;
-    buf *= buf;
-    radius[k] = buf;
-
-    buf = sphere_origin[k].y;
-    buf *= buf;
-    radius[k] += buf;
-
-    buf = sphere_origin[k].z - z;
-    buf *= buf;
-    radius[k] += buf;
-    radius[k] = sqrt( radius[k] );
-  }
-}
-@
-\subsubsection{Spherical focal plane}
-\label{sec:spher-focal-plane}
-
-\index{rayTracing!bundle!to\_sphere}
-
-<<ray bundle functions>>= 
-void bundle::to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane)
-{
-  dim3 blockDim(1,1);
-  dim3 gridDim(1,1, N_BUNDLE);
-  <<reference sphere distance>>
-  <<reference sphere origin>>
-  <<reference sphere radius>>
-  <<chief ray optical path length>>
-  <<rays optical path difference>>
-}
-@
-Given the $z$ location of the focal plane on axis [[z_chief_on_axis]] and the radius of curvature of the focal plane [[rho_focal_plane]], the distance to the object from the last surface for the chief ray is given by
-<<reference sphere distance>>= 
-to_focal_surface_chief_kernel LLL gridDim , blockDim RRR (d__sphere_distance, d__chief_ray, 1, 
-                                                          z_chief_on_axis, 
-							  rho_focal_plane);
-@
-The origin of the reference sphere is computed next 
-<<reference sphere origin>>= 
-chief_parametric_equation LLL gridDim , blockDim RRR (d__sphere_origin, 
-						      d__chief_ray, 1, 
-						      d__sphere_distance);
-@ followed by the computation of the radius of the reference sphere, which must be tangent to the exit pupil,
-<<reference sphere radius>>= 
-sphere_radius_kernel LLL gridDim , blockDim RRR (d__sphere_radius, d__chief_ray, 1, 
-						 d__sphere_origin);
-@ and of the optical path length of the chief ray from the last surface to the reference sphere
-<<chief ray optical path length>>= 
-to_sphere_chief_kernel LLL gridDim , blockDim RRR (d__chief_ray, 1, 
-                                                   d__sphere_origin, d__sphere_radius);
-@
-The optical path difference of the source rays is computed last
-<<rays optical path difference>>= 
-blockDim = dim3(N_THREAD,N_THREAD);
-gridDim  = dim3(N_RAY/N_THREAD2+1,1, N_BUNDLE);
-to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
-                                             d__sphere_origin, d__sphere_radius, 
-                                             d__chief_ray);
 @
 \subsubsection{Reference sphere origin}
 \label{sec:refer-sphere-orig}

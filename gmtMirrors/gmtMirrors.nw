@@ -1199,6 +1199,22 @@ __global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY,
 \subsection{Ray tracing}
 \label{sec:ray-tracing}
 
+Ray tracing flowchart for GMT M1 and M2 mirrors:\newline
+  \begin{tikzpicture}[>=stealth',black!50, text=black, thick,
+    every new ->/.style= {shorten >=1pt},
+    action/.style={draw,inner sep=5pt,rounded corners,draw=black!50,very thick,fill=black!5!blue!2},
+    test/.style={draw,diamond,rounded corners,fill=black!2},
+    graphs/every graph/.style= {edges=rounded corners},
+    skip loop/.style= {to path={-- ++(#1,0) |- (\tikztotarget)}},
+    hv path/.style= {to path={-| (\tikztotarget)}},
+    vh path/.style= {to path={|- (\tikztotarget)}}]
+    \graph [grow down sep=7mm, branch left=4cm, simple] {
+      "From previous surface" ->["$k=0$"] s/"Segment \#: $k=k+1$"[action] -> "GCS to Rigid Body CS"[action] -> "Rigid Body CS to Motion CS"[action] ->  "Motion CS to Aperture CS"[action] -> {q1/"Vignetted?"[test,aspect=2.5],q2/"$k<7?$"[test,aspect=2,not source,not target,label={[xshift=3mm]below:No}]} ->["No"] "Motion CS to Conic CS"[action] ->  "Segment Intersection"[action] -> "Segment Reflection"[action] -> "Conic CS to Motion CS"[action]  -> "Motion CS to Rigid Body CS"[action] -> "Rigid Body CS to GCS"[action]    -> x/"To next surface";
+q1 -> q2 ->[vh path] { x , s};
+};
+  \end{tikzpicture}
+
+
 The rays propagation through M1 is computed with
 \index{gmtMirrors!gmt\_m1!trace}
 <<GMT M1 functions>>=
