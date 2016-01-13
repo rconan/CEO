@@ -18,6 +18,7 @@
     <<parameters>>
     void setup(int N_PX_PUPIL,
 	       int _N_PUPIL_SAMPLING_,
+               float _modulation_,
 	       int N_GS);
     void cleanup(void);
   };
@@ -38,9 +39,13 @@
 
 \index{pyramid!python}
 <<pyramid.pxd>>=
+from imaging cimport imaging, Imaging
+from centroiding cimport centroiding, Centroiding
 cdef extern from "pyramid.h":
     cdef cppclass pyramid:
-        void setup(int, int, int)
+        imaging camera
+        centroiding data
+        void setup(int, int, float, int)
         void cleanup()
 <<class definitions>>
 @ 
@@ -49,14 +54,20 @@ cdef extern from "pyramid.h":
 cdef class Pyramid:
     cdef:
         pyramid *_c_pyramid
+        readonly Imaging camera
+        readonly Centroiding data
 @
 <<pyramid.pyx>>=
 cdef class Pyramid:
     def __cinit__(self,int N_PX_PUPIL,
                   int N_PUPIL_SAMPLING,
+                  float modulation = 0.0,
                   int N_GS=1):
         self._c_pyramid = new pyramid()
-        self._c_pyramid.setup(N_PX_PUPIL,N_PUPIL_SAMPLING,N_GS)
+        self._c_pyramid.setup(N_PX_PUPIL,N_PUPIL_SAMPLING,modulation,N_GS)
+        self.camera = Imaging(1,N_PX_PUPIL,N_PX_IMAGE=4*N_PUPIL_SAMPLING,
+                              N_SOURCE=N_GS,pym=self)
+        self.data = Centroiding(N_PUPIL_SAMPLING*2,N_GS,pym=self)
 
     def __dealloc__(self):
         self._c_pyramid.cleanup()
@@ -72,6 +83,10 @@ The parameters of the [[pyramid]] structure are:
 <<parameters>>=
 int N_PUPIL_SAMPLING;
 @
+\item the pyramid modulation amplitude in units of $\lambda/D$
+<<parameters>>=
+float modulation;
+@ 
 \item the pyramid detector
 <<parameters>>=
 imaging camera;
@@ -91,9 +106,11 @@ centroiding data;
 <<setup>>=
 void pyramid::setup(int N_PX_PUPIL,
 		    int _N_PUPIL_SAMPLING_,
+                    float _modulation_,
 		    int N_GS)
 {
   N_PUPIL_SAMPLING = _N_PUPIL_SAMPLING_;
+  modulation = _modulation_;
   camera.setup(N_PX_PUPIL,1,2,N_PUPIL_SAMPLING*4,1,N_GS);
   data.setup(N_PUPIL_SAMPLING*2, N_GS);
 }
