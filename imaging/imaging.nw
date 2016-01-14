@@ -781,8 +781,8 @@ void imaging::propagateThroughPyramid(source *src) {
                                               pixel_scale, theta_x, theta_y,
 					      absolute_pointing,0);
   <<imaging CUFFT execution>>
- 
-      gridDim = dim3(1+N_DFT/16,1+N_DFT/16, N_SOURCE);
+
+  gridDim = dim3(1+N_DFT/16,1+N_DFT/16, N_SOURCE);
   apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL);
 
   <<propagation (FFT, intensity and binning)>>
@@ -797,18 +797,16 @@ __global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL)
   j = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
   if ( (i<N_DFT) && (j<N_DFT) ) {
-    w = N_DFT & 1;
+    k = i*N_DFT + j + iSource*N_DFT*N_DFT;
+    w = N_PX_PUPIL & 1;
     half = (N_DFT-2+w)/2;
     if (i>half)
-      xi = (float) (i - N_DFT);
-    else
-      xi = (float) i;
+      i -= N_DFT;
     if (j>half)
-      yj = (float) (j - N_DFT);
-    else
-      yj = (float) j;
-    k = i*N_DFT + j + iSource*N_DFT*N_DFT;
-    phasor = -2.*(i+j)*(N_PX_PUPIL*1.5+0.5+w)/N_DFT;
+      j -= N_DFT;
+    xi = (float) i;
+    yj = (float) j; 
+    phasor = -2*(i+j)*(N_PX_PUPIL*1.5 + 1 - w*0.5)/N_DFT;
     phasor -= 0.5*(fabs(xi)+fabs(yj));
     sincospif(phasor,&s,&c);
     a = d__wave_PUPIL[k].x;
