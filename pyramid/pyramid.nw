@@ -41,8 +41,10 @@
 <<pyramid.pxd>>=
 from imaging cimport imaging, Imaging
 from centroiding cimport centroiding, Centroiding
+from source cimport Source
 cdef extern from "pyramid.h":
     cdef cppclass pyramid:
+        float modulation
         imaging camera
         centroiding data
         void setup(int, int, float, int)
@@ -59,19 +61,22 @@ cdef class Pyramid:
 @
 <<pyramid.pyx>>=
 cdef class Pyramid:
-    def __cinit__(self,int N_PX_PUPIL,
-                  int N_PUPIL_SAMPLING,
+    def __cinit__(self,int N_SIDE_LENSLET,
+                  int N_PX_LENSLET,
                   float modulation = 0.0,
                   int N_GS=1):
         self._c_pyramid = new pyramid()
-        self._c_pyramid.setup(N_PX_PUPIL,N_PUPIL_SAMPLING,modulation,N_GS)
-        self.camera = Imaging(1,N_PX_PUPIL,N_PX_IMAGE=4*N_PUPIL_SAMPLING,
+        self._c_pyramid.setup(N_SIDE_LENSLET,N_PX_LENSLET,modulation,N_GS)
+        self.camera = Imaging(1,N_PX_LENSLET-1,DFT_osf=4,N_PX_IMAGE=4*N_PX_LENSLET,
+                              BIN_IMAGE=N_PX_LENSLET/N_SIDE_LENSLET,
                               N_SOURCE=N_GS,pym=self)
-        self.data = Centroiding(N_PUPIL_SAMPLING*2,N_GS,pym=self)
+        self.data = Centroiding(N_SIDE_LENSLET*2,N_GS,pym=self)
 
     def __dealloc__(self):
         self._c_pyramid.cleanup()
-        
+
+    def propagate(self, Source gs):
+        self.camera.propagateThroughPyramid(gs,self._c_pyramid.modulation)
 @ 
 \section{Parameters}
 \label{sec:parameters}
@@ -81,7 +86,7 @@ The parameters of the [[pyramid]] structure are:
 \begin{itemize}
 \item the pupil sampling with the pyramid 
 <<parameters>>=
-int N_PUPIL_SAMPLING;
+int N_PX_LENSLET;
 @
 \item the pyramid modulation amplitude in units of $\lambda/D$
 <<parameters>>=
@@ -104,15 +109,15 @@ centroiding data;
 
 \index{pyramid!pyramid!setup}
 <<setup>>=
-void pyramid::setup(int N_PX_PUPIL,
-		    int _N_PUPIL_SAMPLING_,
+void pyramid::setup(int N_SIDE_LENSLET,
+		    int _N_PX_LENSLET_,
                     float _modulation_,
 		    int N_GS)
 {
-  N_PUPIL_SAMPLING = _N_PUPIL_SAMPLING_;
+  N_PX_LENSLET = _N_PX_LENSLET_;
   modulation = _modulation_;
-  camera.setup(N_PX_PUPIL,1,2,N_PUPIL_SAMPLING*4,1,N_GS);
-  data.setup(N_PUPIL_SAMPLING*2, N_GS);
+  camera.setup(N_PX_LENSLET-1,1,4,N_PX_LENSLET*4,N_PX_LENSLET/N_SIDE_LENSLET,N_GS);
+  data.setup(N_SIDE_LENSLET*2, N_GS);
 }
 @ 
 \index{pyramid!pyramid!cleanup}
