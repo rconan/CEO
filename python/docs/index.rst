@@ -71,6 +71,11 @@ ShackHartmann
 .. autoclass:: ShackHartmann
     :members:
 
+Pyramid
+-------------
+.. autoclass:: Pyramid
+    :members:
+
 rayTracing
 ----------
 
