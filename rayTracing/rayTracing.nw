@@ -1167,7 +1167,7 @@ __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
                             rtd RADIUS, int N_RADIUS, int N_THETA, vector *origin)
 {
   int i, j, k, iSource;
-  rtd rho, theta;
+  rtd rho, theta, s;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
@@ -1184,17 +1184,21 @@ __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
     theta = 2*PI*j/N_THETA; 
     d__ray[k].coordinates.x = rho*cos(theta) + origin->x; 
     d__ray[k].coordinates.y = rho*sin(theta) + origin->y; 
-    d__ray[k].coordinates.z = origin->z;
-    d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
-    d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
-    d__ray[k].directions.z  = cos(src[iSource].zenith);
-    d__ray[k].optical_path_length = 0.0;
-    d__ray[k].optical_path_difference = 0.0;
-    d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
-    d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
-    d__ray[k].v = 1;
+    <<bundle coordinates kernel (common)>>
   }
 }
+@ where
+<<bundle coordinates kernel (common)>>=
+d__ray[k].coordinates.z = origin->z;
+d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
+d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
+d__ray[k].directions.z  = -cos(src[iSource].zenith);
+d__ray[k].optical_path_length = 0.0;
+d__ray[k].optical_path_difference = 0.0;
+s = -origin->z/d__ray[k].directions.z;
+d__ray[k].coordinates.x -= s*d__ray[k].directions.x;
+d__ray[k].coordinates.y -= s*d__ray[k].directions.y;
+d__ray[k].v = 1;
 @
 The chief ray is defined with
 <<chief ray allocation>>=
@@ -1259,7 +1263,7 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
                                     rtd L, int N_L, vector *origin)
 {
   int i, j, k, iSource;
-  rtd x, y;
+  rtd x, y, s;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
@@ -1270,15 +1274,7 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
     k = i + j*N_L + iSource*N_RAY;
     d__ray[k].coordinates.x = x + origin->x; 
     d__ray[k].coordinates.y = y + origin->y; 
-    d__ray[k].coordinates.z = origin->z;
-    d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
-    d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
-    d__ray[k].directions.z  = cos(src[iSource].zenith);
-    d__ray[k].optical_path_length = 0.0;
-    d__ray[k].optical_path_difference = 0.0;
-    d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
-    d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
-    d__ray[k].v = 1;
+    <<bundle coordinates kernel (common)>>
   }
 }
 @
