@@ -671,22 +671,23 @@ void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_)
 }
 @ where
 <<M1 parameters>>=
- M_ID    = 1;
- D_px    = _D_px_;
- D       = _D_;
- D_assembly = 25.498;
- D_full  = 8.417;
- D_clear = 8.365;
- area    = 368;
- area0   = 368;
- ri      = 2.4412/8.365;
- beta    = 13.601685*PI/180.0;
- L       = 8.710;
- N       = 7;
- conic_c = 1.0/36.0;
- conic_k = 1-0.9982857;
- height  = 0.0;
- idx_offset = 0;
+M_ID    = 1;
+D_px    = _D_px_;
+D       = _D_;
+D_assembly = 25.498;
+D_full  = 8.417;
+D_clear = 8.365;
+area    = 368;
+area0   = 368;
+ri      = 2.4412/8.365;
+beta    = 13.601685*PI/180.0;
+L       = 8.710;
+N       = 7;
+conic_c = 1.0/36.0;
+conic_k = 1-0.9982857;
+height  = 0.0;
+idx_offset = 0;
+V = NULL;
 @  
 If an array of sources is propagated through the telescope then
 \index{gmtMirrors!gmt\_m1!setup}
@@ -749,7 +750,6 @@ V->set_filter();
 area0_px = src.rays.V.nnz;
 fprintf(stdout,"M1 on axis nnz rays: %.0f\n",area0_px);
 src.cleanup();
-
 @
 \subsubsection{Rigid body coordinate systems}
 \label{sec:rigid-body-coord}
@@ -1208,47 +1208,7 @@ __global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY,
 
   \begin{figure}
     \centering    
-  \begin{tikzpicture}[>=stealth',black!50, text=black, thick,
-    every new ->/.style= {shorten >=1pt},
-    every path/.style={rounded corners},
-    action/.style={draw,inner sep=5pt,rounded corners,draw=black!50,very thick,fill=black!5!blue!2,minimum width=4cm},
-    test/.style={draw,diamond,rounded corners,fill=black!2},
-    graphs/every graph/.style= {edges=rounded corners},
-    skip loop/.style= {to path={-- ++(#1,0) |- (\tikztotarget)}},
-    hv path/.style= {to path={-| (\tikztotarget)}},
-    vh path/.style= {to path={|- (\tikztotarget)}}]
-    \graph [grow down sep=7mm, branch left=35mm] {
-      bundle/"Ray bundle" -> p/"Plane of origin"[action]->["$Id=0$"] m/"Mirror \#: $Id=Id+1$"[action]  ->["$k=0$"] s/"Segment \#: $k=k+1$"[action] -> g/"To Rigid Body CS"[action] -> "To Motion CS"[action] ->  "To Aperture CS"[action] -> {q1/"Vignetted?"[test,aspect=2.5],q2/"$k<7?$"[test,aspect=2,not source,not target,label={[xshift=3mm]below:No}]} ->["No"] mc/"To Conic CS"[action] ->  si/"Segment Intersection"[action] -> sr/"Segment Reflection"[action] -> cm/"To Motion CS"[action]  -> mr/"To Rigid Body CS"[action] -> rg/"To GCS"[action]    -> x/"$Id<2$"[test,aspect=2,label={[yshift=3mm]right:No}]];
-q1 -> q2 ->[vh path] { x , s};
-%{[edge={red}] s->g;}
-};
-\draw[rounded corners,->] (x.south) -- ++(0,-5mm) -- ++(-48mm,0cm) |- (m.west);
-\node[right,red] at (bundle.east) (chief) {Chief ray};
-\begin{scope}[draw=red,every path/.style={->,rounded corners,dashed}]
-\draw (chief) -- ($(p.north)!0.70!(p.north east)$);
-\draw ($(p.south)!0.70!(p.south east)$) -- ($(m.north)!0.70!(m.north east)$);
-\draw ($(m.south)!0.70!(m.south east)$) -- ($(s.north)!0.70!(s.north east)$) node[midway,right,red] {$k=7$};
-\draw ($(s.south)!0.70!(s.south east)$) -- ($(g.north)!0.70!(g.north east)$);
-\draw ($(g.south)!0.70!(g.south east)$) |- ++(8mm,-4mm) |- ++(-8mm,-43mm) -- ($(mc.north)!0.70!(mc.north east)$);
-\draw ($(mc.south)!0.70!(mc.south east)$) -- ($(si.north)!0.70!(si.north east)$);
-\draw ($(si.south)!0.70!(si.south east)$) -- ($(sr.north)!0.70!(sr.north east)$);
-\draw ($(sr.south)!0.70!(sr.south east)$) |- ++(8mm,-5mm) |- ++(-8mm,-10mm) -- ($(mr.north)!0.70!(mr.north east)$);
-\draw ($(mr.south)!0.70!(mr.south east)$) -- ($(rg.north)!0.70!(rg.north east)$);
-\end{scope}
-\draw[red,dashed,shorten >=3pt] (rg.south) -- (x.north);
-\draw[red,dashed,shorten >=3pt,rounded corners] (x.south) -- ++(0,-5mm) -- ++(-48mm,0cm) |- (m.west);
 
-\begin{scope}[xshift=7cm,yshift=-13.5cm]
-  \graph[grow down sep=7mm] {
-{ [edge={red,dashed}] distance/"Intersection with focal plane"[action] -> origin/"Reference sphere origin"[action] -> "Intersection with exit pupil"[action] -> "Reference sphere radius"[action] -> sphere/"Intersection with reference sphere"[action] ->[black!50,solid] "\emph{Optical path difference}";}
-};
-%\draw (distance.east) -> (origin.east) node[midway,right] {distance};
-\end{scope}
-
-\draw[->] (x.east) -| ++(20mm,5mm) |- (sphere.west);
-\draw[red,dashed,->] (x.east) -| ++(20mm,30mm) |- (distance.west);
-
-  \end{tikzpicture}
     \caption{Ray tracing flowchart for GMT M1 and M2 mirrors.}
     \label{fig:1}
   \end{figure}
@@ -1259,18 +1219,23 @@ The rays propagation through M1 is computed with
 void gmt_m1::trace(bundle *rays)
 {
   rays->V.area = area0;
-  rays->V.nnz = area0_px;
   <<GMT trace common>>
 }
 @ where
 <<GMT trace common>>=
+ dim3 blockDim, gridDim;
  rtd R2, Rri2;
  R2 = D_clear*D_clear*0.25;
  Rri2 = R2*ri*ri;
+ /* if (V!=NULL) { */
+ /*    blockDim = dim3(N_THREAD,N_THREAD); */
+ /*    gridDim  = dim3(rays->N_RAY/N_THREAD2+1,1,rays->N_BUNDLE); */
+ /*    intersection LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY); */
+ /* } */
  V = &(rays->V);
  // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
- dim3 blockDim(1,1);
- dim3 gridDim(1,1,rays->N_BUNDLE);
+ blockDim = dim3(1,1);
+ gridDim  = dim3(1,1,rays->N_BUNDLE);
  m1_trace_chief_kernel LLL gridDim , blockDim RRR (V->m, rays->d__chief_ray, 1, 
 						   conic_CS.d__R,
 						   conic_CS.d__origin,
@@ -1307,11 +1272,12 @@ void gmt_m1::trace(bundle *rays)
 					     rays->d__piston_mask);
 intersection LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY);
 float previous_nnz = rays->V.nnz;
-fprintf(stdout,"M%d previous nnz rays: %f\n",M_ID,previous_nnz);
+//fprintf(stdout,"M%d previous nnz rays: %f\n",M_ID,previous_nnz);
 rays->V.set_filter_quiet();
-fprintf(stdout,"M%d current nnz rays: %f\n",M_ID,rays->V.nnz);
-rays->V.area *= rays->V.nnz/previous_nnz;
-
+//fprintf(stdout,"M%d current nnz rays: %f\n",M_ID,rays->V.nnz);
+if (previous_nnz<rays->N_RAY)
+  rays->V.area *= rays->V.nnz/previous_nnz;
+//fprintf(stdout,"M%d current area: %f\n",M_ID,rays->V.area);
 @ and with the kernel
 <<GMT ray tracing kernel>>=
 __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY, 
@@ -1943,7 +1909,7 @@ The rays propagation through M1 is computed with
 <<GMT M2 functions>>=
 void gmt_m2::trace(bundle *rays)
 { 
- <<GMT trace common>>
+  <<GMT trace common>>
 }
 @
 The rigid body motion parameters are updated with:
