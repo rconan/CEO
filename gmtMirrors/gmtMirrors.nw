@@ -64,7 +64,7 @@ cdef extern from "gmtMirrors.h":
     cdef cppclass gmt_m1:
         void test_ray_tracing()
         <<python GMT M12 functions>>
-        void track(float *, float *, float *, int, int)
+        void track(float *, float *, int, int)
 @  where
 <<python GMT M12 functions>>=
 int M_ID
@@ -226,17 +226,15 @@ cdef class GMT_M1:
     def test(self):
         self._c_gmt_m12.test_ray_tracing();
 
-    def track(self, ndarray x, ndarray y, ndarray z, int segId):
+    def track(self, ndarray x, ndarray y, int segId):
 
         cdef cuFloatArray gx, gy, gz
         gx = cuFloatArray( host_data = x )
         gy = cuFloatArray( host_data = y )
-        gz = cuFloatArray( host_data = z )
         self._c_gmt_m12.track(gx._c_gpu.dev_data,
                               gy._c_gpu.dev_data,
-                              gz._c_gpu.dev_data,
                               x.size, segId)
-        return gx.host(), gy.host(), gz.host()
+        return gx.host(), gy.host()
 @
 <<GMT M12 constructor>>=
 self.zernike = ZernikeS(radial_order,N_SURF=7)
@@ -521,7 +519,7 @@ void trace(bundle *rays);
 void blocking(bundle *rays);
 void global_tiptilt(float tip, float tilt);
 void test_ray_tracing(void);
-void track(float *x, float *y, float *z, int N, int idx);
+void track(float *x, float *y, int N, int idx);
 void edge_sensors(float *x, float *y, float *z, int N, int idx0, int idx_edge_sensor);
 @ 
 The GMT M12 parameters are:
@@ -1594,11 +1592,11 @@ M = partial_z_conic_surface();
 \subsection{Mirror location tracker}
 \label{sec:mirr-locat-track}
 
-The track function computes the location of a point of the mirror in the GCS for a given $(x,y)$ coordinate in the conic CS.
+The track function transforms the coordinates $(x,y,0)$ in the motion CS of segment [[idx]] to the GCS.
 
 \index{gmtMirrors!gmt\_m1!track}
 <<GMT M1 functions>>=
-void gmt_m1::track(float *x, float *y, float *z, int N, int idx)
+void gmt_m1::track(float *d__x, float *d__y, int N, int idx)
 {
   <<GMT track common>>
 }
@@ -1606,38 +1604,26 @@ void gmt_m1::track(float *x, float *y, float *z, int N, int idx)
 <<GMT track common>>=
 dim3 blockDim(N_THREAD,1);
 dim3 gridDim(N/N_THREAD+1,1);
-track_kernel LLL gridDim, blockDim RRR (x, y, z, N,
+track_kernel LLL gridDim, blockDim RRR (d__x, d__y, N,
 					idx,
-					conic_CS.d__R,
-					conic_CS.d__origin,
-					conic_k, conic_c,
-					d__conic_origin,
 					rigid_body_CS.d__R,
 					rigid_body_CS.d__origin,
 					motion_CS.d__R,
 					motion_CS.d__origin);
 @ and
 <<GMT track kernel>>= 
-__global__ void track_kernel(float *x, float *y, float *z, const int N,
+__global__ void track_kernel(float *x, float *y, const int N,
 			     const int iCoordSys,
-			     rtd *d__conic_R, vector *d__conic_origin,
-			     const rtd Fk, const rtd Fc,
-			     vector *d__conic_self_origin,
 			     rtd *d__rigid_body_R, vector *d__rigid_body_origin,
 			     rtd *d__motion_R, vector *d__motion_origin)
  {
    int i;
-   vector v, v0;
+   vector v;
    i = blockIdx.x * blockDim.x + threadIdx.x;
    if (i<N) {
-     v0.x = v0.y = 0.0;
      v.x = x[i];
      v.y = y[i];
-     v.z = conic_equation(&v,  d__conic_self_origin + iCoordSys, Fk, Fc) - 
-           conic_equation(&v0, d__conic_self_origin + iCoordSys, Fk, Fc);
-     // CONIC <<<
-     forward_transform_centered(&v, &v,
-				d__conic_R+iCoordSys*9);
+     v.z = 0.0;
      // MOTION <<<
      backward_transform(&v, &v,
 			d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
@@ -1647,7 +1633,6 @@ __global__ void track_kernel(float *x, float *y, float *z, const int N,
 			d__rigid_body_origin+iCoordSys);
      x[i] = v.x;
      y[i] = v.y;
-     z[i] = v.z;
    }
 }
 
