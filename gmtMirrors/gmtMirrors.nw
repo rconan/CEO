@@ -714,6 +714,7 @@ rtd D_c, o, zo;
 char tag[16];
 
 depth = conic_equation(&__v,&__v0,conic_k,conic_c);
+fprintf(stdout,"Aperture depth: %.2fm\n",depth);
 D_c = L;
 __v.x = L;
 zo = conic_equation(&__v,&__v0,conic_k,conic_c);
@@ -769,8 +770,8 @@ In addition to the change of origin with respect to the GCS, the segment coordin
 <<M12 rigid body definition>>=
 origin[N-1].x = origin[N-1].y = 0.0;
 origin[N-1].z = height;
-euler_angles[N-1].x = euler_angles[N-1].z = (idx_offset/2)*PI;
-euler_angles[N-1].y = 0.0;
+euler_angles[N-1].x = euler_angles[N-1].y = 0.0;
+euler_angles[N-1].z = (idx_offset/2)*PI;
 for (k=0; k<N-1; k++)
 {
   o = PI*(3-2*k)/6.0;
@@ -838,8 +839,8 @@ The origins of the segment conics are also given in the coordinate systems of th
 \end{center}
 <<M12 conic definition>>=
 origin[N-1].x = origin[N-1].y = origin[N-1].z = 0.0;
-euler_angles[N-1].x = euler_angles[N-1].z = (idx_offset/2)*PI;
-euler_angles[N-1].y = 0.0;
+euler_angles[N-1].x = euler_angles[N-1].y = 0.0;
+euler_angles[N-1].z = (idx_offset/2)*PI;
 conic_origin[N-1].x = conic_origin[N-1].y = conic_origin[N-1].z = 0.0; 
 for (k=0; k<N-1; k++)
 {
@@ -884,11 +885,43 @@ motion_CS.setup(origin, euler_angles, N, tag);
 \subsubsection{Edge sensors}
 \label{sec:edge-sensors}
 
-There are twelve edge sensors located across the twelve closest gaps of the 7 mirrors.
-We define 12 edge sensor coordinate systems (ESCS).
+Edge sensors are set on the rim of each segment.
+12 edges sensors are located on the central segment.
+Pairs of edge sensor are at an angle $\pm \alpha$ with respect to the line joining the center of the segment to the center of the peripheral segment.
+The coordinates of the edge sensor in the motion CS are
+\begin{equation}
+  \label{eq:1}
+  \zeta_{7,k} = {1\over 2}[[D_full]]\exp\left(i \left( {\pi(3-2k)\over 6} \pm \alpha  \right)\right), \forall k=0,\dots,5.
+\end{equation}
+Each peripheral segment has 2 pairs of edge sensors facing the adjacent peripheral segments.
+The coordinates of the edge sensors of a peripheral segment in the motion CS are:
+\begin{eqnarray}
+  \label{eq:2}
+  \zeta_\rightarrow &=& {1\over 2}[[D_full]]\exp\left(i \left( -{\pi\over 6} \pm \alpha \right) \right), \\
+  \zeta_\leftarrow &=& {1\over 2}[[D_full]]\exp\left(i  \left( -{\pi\over 6} \pm \alpha \right) \right). 
+\end{eqnarray}
+Each peripheral segment has also a pair of edge sensor facing the central segment whose coordinates, in the motion CS, are:
+\begin{equation}
+  \label{eq:3}
+  \zeta_\downarrow = {1\over 2}[[D_full]]\exp\left(i \left( -{\pi\over 2} \pm \alpha \right) \right).  
+\end{equation}
+The heights of the edge sensors are $z=0$ in the motion CS of the segment they belong to.
+
 
 \begin{center}
 \begin{tikzpicture}
+  \foreach \x in {1,...,6} {
+    \coordinate (O) at (150-\x*60:21mm);
+    \fill[black!5] (O) circle [radius=10mm] node[above left=3mm] {\x};
+ }
+  \coordinate (O) at (0,0);
+  \fill[black!5] (O) circle [radius=10mm] node[above left=3mm] {7};
+  \draw[->] (-25mm,0) -- (30mm,0) node[below] {$\bar x$};
+  \draw[->] (0,-25mm) -- (0,35mm) node[right] {$\bar y$};
+  \draw[thin,dashed] (0,0) circle [radius=21mm];
+  \draw[->,thick,red] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\hat x$};
+  \draw[->,thick,red] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\hat y$};
+
   \draw[->] (-25mm,0) -- (35mm,0) node[below] {$\bar x$};
   \draw[->] (0,-25mm) -- (0,35mm) node[right] {$\bar y$};
   \draw[thin,dotted] (0,0) circle [radius=21mm];
@@ -902,21 +935,28 @@ We define 12 edge sensor coordinate systems (ESCS).
     \coordinate (O) at (150-\x*60:21mm);
     \coordinate (O next) at (90-\x*60:21mm);
     \draw[dashed] (O) -- (O next);
-    \coordinate (Oes) at (120-\x*60:18.2mm);
-    \draw[->,thick,red,rotate=-60*(\x-2)] ($(Oes)$) -- ($(Oes)+(5mm,0)$) node[below] {$\psi$};
-    \draw[->,thick,red,rotate=-60*(\x-2)] ($(Oes)$) -- ($(Oes)+(0,5mm)$) node[right] {$\xi$};
-    \fill[blue] (O) circle [radius=0.5mm];
-  }    
-  \foreach \x in {1,...,6} {
-    \coordinate (O) at (150-\x*60:21mm);
-    \draw (O) circle [radius=10mm] node[above left=3mm] {\x};
-    \coordinate (Oes) at (150-\x*60:10mm);
-    \draw[->,thick,red,rotate=-60*(\x-1)] ($(Oes)$) -- ($(Oes)+(5mm,0)$) node[below] {$\psi$};
-    \draw[->,thick,red,rotate=-60*(\x-1)] ($(Oes)$) -- ($(Oes)+(0,5mm)$) node[right] {$\xi$};
-    \fill[white,draw=red,thin] (150-\x*60:11mm) circle [radius=1pt];
-    \coordinate (O next) at (90-\x*60:21mm);
-    \fill[white,draw=red,thin] ($ (O) !.47! (O next) $) circle [radius=1pt];
-    \fill[white,draw=red,thin] ($ (O) !.53! (O next) $) circle [radius=1pt];
+%    \draw (O) circle [radius=10mm] node[above left=3mm] {\x};
+    \draw[->,thick,red,rotate=-60*(\x-1)] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\hat x$};
+    \draw[->,thick,red,rotate=-60*(\x-1)] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\hat y$};
+  % \foreach \x in {1,...,6} {
+  %   \coordinate (O) at (150-\x*60:21mm);
+  %   \coordinate (O next) at (90-\x*60:21mm);
+  %   \draw[dashed] (O) -- (O next);
+  %   \coordinate (Oes) at (120-\x*60:18.2mm);
+  %   \draw[->,thick,red,rotate=-60*(\x-2)] ($(Oes)$) -- ($(Oes)+(5mm,0)$) node[below] {$\psi$};
+  %   \draw[->,thick,red,rotate=-60*(\x-2)] ($(Oes)$) -- ($(Oes)+(0,5mm)$) node[right] {$\xi$};
+  %   \fill[blue] (O) circle [radius=0.5mm];
+  % }    
+  % \foreach \x in {1,...,6} {
+  %   \coordinate (O) at (150-\x*60:21mm);
+  %   \draw (O) circle [radius=10mm] node[above left=3mm] {\x};
+  %   \coordinate (Oes) at (150-\x*60:10mm);
+  %   \draw[->,thick,red,rotate=-60*(\x-1)] ($(Oes)$) -- ($(Oes)+(5mm,0)$) node[below] {$\psi$};
+  %   \draw[->,thick,red,rotate=-60*(\x-1)] ($(Oes)$) -- ($(Oes)+(0,5mm)$) node[right] {$\xi$};
+  %   \fill[white,draw=red,thin] (150-\x*60:11mm) circle [radius=1pt];
+  %   \coordinate (O next) at (90-\x*60:21mm);
+  %   \fill[white,draw=red,thin] ($ (O) !.47! (O next) $) circle [radius=1pt];
+  %   \fill[white,draw=red,thin] ($ (O) !.53! (O next) $) circle [radius=1pt];
   }    
 \end{tikzpicture}  
 \end{center}
@@ -1820,7 +1860,7 @@ void gmt_m2::setup(float _D_, int _D_px_)
  D_full  = 1.0425*1.005; // slightly larger to always encompass M1; needed for the Zernike
  D_clear = 1.0415;
  ri      = 0.0;
- beta    = PI - 14.777462*PI/180.0;
+ beta    = -14.777462*PI/180.0;
  L       = 1.08774;
  N       = 7;
  conic_c = -1.0/4.1639009;
