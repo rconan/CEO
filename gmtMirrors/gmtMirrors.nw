@@ -35,6 +35,7 @@
 <<GMT blocking kernel>>
 <<GMT track kernel>>
 <<GMT edge sensors kernel>>
+<<M1 edge sensors initialization kernel>>
 
 <<GMT M1 functions>>
 <<GMT M2 functions>>
@@ -46,7 +47,7 @@
 \index{gmtMirrors!python}
 <<gmtMirrors.pxd>>=
 from numpy cimport ndarray
-from utilities cimport cuFloatArray
+from utilities cimport cuFloatArray, cuDoubleArray
 from rayTracing cimport rtd, vector, coordinate_system, bundle, \
     zernikeS, ZernikeS, Coordinate_system, Bundle
 from source cimport Source
@@ -62,6 +63,8 @@ cdef extern from "gmtMirrors.h":
 
 <<gmtMirrors.pxd contents>>=
     cdef cppclass gmt_m1:
+        rtd *d__x_EDGE_SENSOR
+        rtd *d__y_EDGE_SENSOR
         void test_ray_tracing()
         <<python GMT M12 functions>>
         void track(float *, float *, int, int)
@@ -209,7 +212,9 @@ u
 \index{gmtMirrors!python!GMT\_M1}
 <<class definitions>>=
 cdef class GMT_M1:
-    cdef gmt_m1 *_c_gmt_m12
+    cdef:
+        gmt_m1 *_c_gmt_m12
+        public cuDoubleArray x_EDGE_SENSOR, y_EDGE_SENSOR
     <<GMT M12 class properties>>    
 @
 <<gmtMirrors.pyx>>=
@@ -220,6 +225,10 @@ cdef class GMT_M1:
     def __cinit__(self, float D, int D_px, int radial_order=0, int N_SRC=1):
         self._c_gmt_m12 = new gmt_m1()
         <<GMT M12 constructor>>
+        self.x_EDGE_SENSOR = cuDoubleArray( shape=(1,18), dev_malloc=False )
+        self.x_EDGE_SENSOR._c_gpu.dev_data = self._c_gmt_m12.d__x_EDGE_SENSOR
+        self.y_EDGE_SENSOR = cuDoubleArray( shape=(1,18), dev_malloc=False )
+        self.y_EDGE_SENSOR._c_gpu.dev_data = self._c_gmt_m12.d__x_EDGE_SENSOR
 
     <<GMT M12 methods>>
 
@@ -504,6 +513,7 @@ A new structure to hold GMT M1 and M2 parameters and functions is defined.
 <<GMT M1 structure>>=
 struct gmt_m1 {
   <<GMT M12 parameters>>
+  <<GMT M1 parameters>>
   <<GMT M12 functions>>
 };
 @  with
@@ -714,7 +724,6 @@ rtd D_c, o, zo;
 char tag[16];
 
 depth = conic_equation(&__v,&__v0,conic_k,conic_c);
-fprintf(stdout,"Aperture depth: %.2fm\n",depth);
 D_c = L;
 __v.x = L;
 zo = conic_equation(&__v,&__v0,conic_k,conic_c);
@@ -734,7 +743,6 @@ zo = conic_equation(&__v,&__v0,conic_k,conic_c);
 \subsubsection{Rigid body coordinate systems}
 \label{sec:rigid-body-coord}
 
-
 The rigid body coordinate systems are aligned with the segment coordinate systems.
 The origins $[x_O, y_O, z_O]$ of the segment coordinate systems are given with respect to the global coordinate system which origin is at the vertex of M1 conic surface: 
 \begin{eqnarray}
@@ -750,22 +758,7 @@ with, for M1, $L = 8.71$m, $\theta_{O,k}=\pi(3-2k)/6, \forall k \in [0,5]$, $x_{
 \end{equation}
 In addition to the change of origin with respect to the GCS, the segment coordinate system is rotated around the z--axis of $-k\pi/3$radian and then tilted around the x--axis of $\beta$.
 \begin{center}
-\begin{tikzpicture}
-  \draw[->] (-25mm,0) -- (35mm,0) node[below] {$\bar x$};
-  \draw[->] (0,-25mm) -- (0,35mm) node[right] {$\bar y$};
-  \draw[thin,dashed] (0,0) circle [radius=21mm];
-  \coordinate (O) at (0,0);
-  \draw (O) circle [radius=10mm] node[above left=3mm] {7};
-  \draw[->,thick,red] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\hat x$};
-  \draw[->,thick,red] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\hat y$};
-  \foreach \x in {1,...,6} {
-    \coordinate (O) at (150-\x*60:21mm);
-    \draw (O) circle [radius=10mm] node[above left=3mm] {\x};
-    \draw[->,thick,red,rotate=-60*(\x-1)] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\hat x$};
-    \draw[->,thick,red,rotate=-60*(\x-1)] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\hat y$};
-
-  }    
-\end{tikzpicture}  
+\input{rigidBodyCS.tex}
 \end{center}
 <<M12 rigid body definition>>=
 origin[N-1].x = origin[N-1].y = 0.0;
@@ -885,81 +878,117 @@ motion_CS.setup(origin, euler_angles, N, tag);
 \subsubsection{Edge sensors}
 \label{sec:edge-sensors}
 
+\index{gmtMirrors!gmt\_m1!edge\_sensors}
 Edge sensors are set on the rim of each segment.
 12 edges sensors are located on the central segment.
 Pairs of edge sensor are at an angle $\pm \alpha$ with respect to the line joining the center of the segment to the center of the peripheral segment.
-The coordinates of the edge sensor in the motion CS are
+The coordinates of the edge sensor in the rigid CS are
 \begin{equation}
   \label{eq:1}
-  \zeta_{7,k} = {1\over 2}[[D_full]]\exp\left(i \left( {\pi(3-2k)\over 6} \pm \alpha  \right)\right), \forall k=0,\dots,5.
+  \left|
+  \begin{array}{c}
+    l_{7,k} \\
+    r_{7,k}
+  \end{array}
+  \right|
+   = {1\over 2}[[D_full]]\exp\left(i \left( {\pi(3-2k)\over 6} \pm \alpha  \right)\right), \forall k=0,\dots,5.
 \end{equation}
 Each peripheral segment has 2 pairs of edge sensors facing the adjacent peripheral segments.
-The coordinates of the edge sensors of a peripheral segment in the motion CS are:
+The coordinates of the edge sensors of a peripheral segment in the rigid CS are:
 \begin{eqnarray}
   \label{eq:2}
-  \zeta_\rightarrow &=& {1\over 2}[[D_full]]\exp\left(i \left( -{\pi\over 6} \pm \alpha \right) \right), \\
-  \zeta_\leftarrow &=& {1\over 2}[[D_full]]\exp\left(i  \left( -{\pi\over 6} \pm \alpha \right) \right). 
+  \left|
+  \begin{array}{c}
+    l_{k,3} \\
+    r_{k,3}
+  \end{array}
+  \right|
+   &=& {1\over 2}[[D_full]]\exp\left(i \left( -{\pi\over 6} \pm \alpha \right) \right), \\
+  \left|
+  \begin{array}{c}
+    l_{k,5} \\
+    r_{k,5}
+  \end{array}
+  \right|
+   &=& {1\over 2}[[D_full]]\exp\left(i  \left( -{5\pi\over 6} \pm \alpha \right) \right). 
 \end{eqnarray}
-Each peripheral segment has also a pair of edge sensor facing the central segment whose coordinates, in the motion CS, are:
+Each peripheral segment has also a pair of edge sensor facing the central segment whose coordinates, in the rigid CS, are:
 \begin{equation}
   \label{eq:3}
-  \zeta_\downarrow = {1\over 2}[[D_full]]\exp\left(i \left( -{\pi\over 2} \pm \alpha \right) \right).  
+  \left|
+  \begin{array}{c}
+    l_{k,4} \\
+    r_{k,4}
+  \end{array}
+  \right|
+   = {1\over 2}[[D_full]]\exp\left(i \left( -{\pi\over 2} \pm \alpha \right) \right).  
 \end{equation}
-The heights of the edge sensors are $z=0$ in the motion CS of the segment they belong to.
+The heights of the edge sensors are $z=0$ in the rigid CS of the segment they belong to.
 
-
+\begin{figure}
 \begin{center}
-\begin{tikzpicture}
-  \foreach \x in {1,...,6} {
-    \coordinate (O) at (150-\x*60:21mm);
-    \fill[black!5] (O) circle [radius=10mm] node[above left=3mm] {\x};
- }
-  \coordinate (O) at (0,0);
-  \fill[black!5] (O) circle [radius=10mm] node[above left=3mm] {7};
-  \draw[->] (-25mm,0) -- (30mm,0) node[below] {$\bar x$};
-  \draw[->] (0,-25mm) -- (0,35mm) node[right] {$\bar y$};
-  \draw[thin,dashed] (0,0) circle [radius=21mm];
-  \draw[->,thick,red] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\hat x$};
-  \draw[->,thick,red] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\hat y$};
+\input{edgeSensor.tex}
+\end{center}  
+  \caption{Edge sensor layout.}
+  \label{fig:3}
+\end{figure}
 
-  \draw[->] (-25mm,0) -- (35mm,0) node[below] {$\bar x$};
-  \draw[->] (0,-25mm) -- (0,35mm) node[right] {$\bar y$};
-  \draw[thin,dotted] (0,0) circle [radius=21mm];
-  \coordinate (O) at (0,0);
-  \draw (O) circle [radius=10mm] node[above left=3mm] {7};
-  % \draw[->,thick,red] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\hat x$};
-  % \draw[->,thick,red] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\hat y$};
-  \draw[dashed,thin] (150:21mm) -- (-30:21mm);
-  \draw[dashed,thin] (-150:21mm) -- (30:21mm);
-  \foreach \x in {1,...,6} {
-    \coordinate (O) at (150-\x*60:21mm);
-    \coordinate (O next) at (90-\x*60:21mm);
-    \draw[dashed] (O) -- (O next);
-%    \draw (O) circle [radius=10mm] node[above left=3mm] {\x};
-    \draw[->,thick,red,rotate=-60*(\x-1)] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\hat x$};
-    \draw[->,thick,red,rotate=-60*(\x-1)] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\hat y$};
-  % \foreach \x in {1,...,6} {
-  %   \coordinate (O) at (150-\x*60:21mm);
-  %   \coordinate (O next) at (90-\x*60:21mm);
-  %   \draw[dashed] (O) -- (O next);
-  %   \coordinate (Oes) at (120-\x*60:18.2mm);
-  %   \draw[->,thick,red,rotate=-60*(\x-2)] ($(Oes)$) -- ($(Oes)+(5mm,0)$) node[below] {$\psi$};
-  %   \draw[->,thick,red,rotate=-60*(\x-2)] ($(Oes)$) -- ($(Oes)+(0,5mm)$) node[right] {$\xi$};
-  %   \fill[blue] (O) circle [radius=0.5mm];
-  % }    
-  % \foreach \x in {1,...,6} {
-  %   \coordinate (O) at (150-\x*60:21mm);
-  %   \draw (O) circle [radius=10mm] node[above left=3mm] {\x};
-  %   \coordinate (Oes) at (150-\x*60:10mm);
-  %   \draw[->,thick,red,rotate=-60*(\x-1)] ($(Oes)$) -- ($(Oes)+(5mm,0)$) node[below] {$\psi$};
-  %   \draw[->,thick,red,rotate=-60*(\x-1)] ($(Oes)$) -- ($(Oes)+(0,5mm)$) node[right] {$\xi$};
-  %   \fill[white,draw=red,thin] (150-\x*60:11mm) circle [radius=1pt];
-  %   \coordinate (O next) at (90-\x*60:21mm);
-  %   \fill[white,draw=red,thin] ($ (O) !.47! (O next) $) circle [radius=1pt];
-  %   \fill[white,draw=red,thin] ($ (O) !.53! (O next) $) circle [radius=1pt];
-  }    
-\end{tikzpicture}  
-\end{center}
+The total number of unique edge sensors coordinates in the rigid CS is 18 whose 12 are on the central segment and 6 on the peripheral segments.
+<<GMT M1 parameters>>=
+int N_EDGE_SENSOR;
+<<M1 parameters>>=
+N_EDGE_SENSOR = 18;
+@ The $\alpha$ angle is set to 19.5degree
+<<GMT M1 parameters>>=
+rtd alpha;
+<<M1 parameters>>=
+alpha = 19.5;
+@
+The $x$ and $y$ coordinates of the edge sensors are saved in the [[d__x_EDGE_SENSOR]] and [[d__y_EDGE_SENSOR]].
+<<GMT M1 parameters>>=
+rtd *d__x_EDGE_SENSOR, *d__y_EDGE_SENSOR;
+<<M1 parameters>>=
+HANDLE_ERROR( cudaMalloc((void**)&d__x_EDGE_SENSOR, sizeof(rtd)*N_EDGE_SENSOR ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__y_EDGE_SENSOR, sizeof(rtd)*N_EDGE_SENSOR ) );
+<<GMT M1 cleanup common>>=
+HANDLE_ERROR( cudaFree( d__x_EDGE_SENSOR ) );
+HANDLE_ERROR( cudaFree( d__y_EDGE_SENSOR ) );
+@
+The edge sensor coordinates are computed with:
+<<M1 parameters>>=
+fprintf(stdout,"@(CEO)>gmt_m1: Initializing edge sensors coordinates!\n");
+dim3 blockDim(6,1);
+dim3 gridDim(1,1);
+edge_sensors_init LLL gridDim, blockDim RRR (d__x_EDGE_SENSOR, d__y_EDGE_SENSOR, N-1, D_full, alpha);
+@ with
+<<M1 edge sensors initialization kernel>>=
+__global__ void edge_sensors_init(rtd *x, rtd *y, int N_OUT_SEGMENT, rtd D, rtd alpha)
+{
+  int i, k;
+  rtd R, a, offset_angle;
+  i = threadIdx.x;
+  if (i<N_OUT_SEGMENT)
+  {
+    k = i;
+    R = 0.5*D;
+    a = alpha/180;
+    offset_angle = (3.0-2.0*k)/6.0;
+    x[k]         = R*cospi( offset_angle + a);
+    k            += N_OUT_SEGMENT;
+    x[k]         = R*cospi( offset_angle - a);
+    __syncthreads();
+    k = 2*N_OUT_SEGMENT;
+    offset_angle = -0.5;
+    x[k++]       = R*cospi( offset_angle + a);
+    x[k++]       = R*cospi( offset_angle - a);
+    offset_angle = -1.0/6.0;
+    x[k++]       = R*cospi( offset_angle + a);
+    x[k++]       = R*cospi( offset_angle - a);
+    offset_angle = -5.0/6.0;
+    x[k++]       = R*cospi( offset_angle + a);
+    x[k]         = R*cospi( offset_angle - a);
+  }
+}
 @ 
 <<M12 edge sensor definition>>=
 <<center segment edge sensors>>
@@ -1105,6 +1134,7 @@ void gmt_m1::cleanup(void)
 {
   fprintf(stdout,"@(CEO)>gmt_m1: freeing memory!\n");
   <<GMT cleanup common>>
+  <<GMT M1 cleanup common>>
 }
 @ with
 <<GMT cleanup common>>=
