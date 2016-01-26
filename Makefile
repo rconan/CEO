@@ -63,6 +63,12 @@ jsmnlib:
 clean_makefile:
 	for i in $(SOURCE_DIR); do (rm -f $$i/Makefile); done
 
+cleanpython:
+	for i in $(SOURCE_DIR); do (make -C $$i cleanpython); done
+	rm -f python/ceo/*.so
+	rm -f python/ceo/*.pxd
+	rm -f python/ceo/*.pyx*
+
 clean:
 	for i in $(SOURCE_DIR); do (make -C $$i clean); done
 	rm -f *.*~
