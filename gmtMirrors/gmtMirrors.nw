@@ -63,8 +63,6 @@ cdef extern from "gmtMirrors.h":
 
 <<gmtMirrors.pxd contents>>=
     cdef cppclass gmt_m1:
-        rtd *d__x_EDGE_SENSOR
-        rtd *d__y_EDGE_SENSOR
         vector *v0_EDGE_SENSOR
         vector *dv0_EDGE_SENSOR
         vector *v_EDGE_SENSOR
@@ -72,6 +70,7 @@ cdef extern from "gmtMirrors.h":
         void test_ray_tracing()
         <<python GMT M12 functions>>
         void track(float *, float *, int, int)
+        void edge_sensors_data()
 @  where
 <<python GMT M12 functions>>=
 int M_ID
@@ -217,8 +216,8 @@ u
 cdef class GMT_M1:
     cdef:
         gmt_m1 *_c_gmt_m12
-        public cuDoubleArray x_EDGE_SENSOR, y_EDGE_SENSOR
-        public Coordinates v0_EDGE_SENSOR, v_EDGE_SENSOR, dv0_EDGE_SENSOR, dv_EDGE_SENSOR
+        public Coordinates v0_EDGE_SENSOR, v_EDGE_SENSOR, \
+            dv0_EDGE_SENSOR, dv_EDGE_SENSOR
     <<GMT M12 class properties>>    
 @
 <<gmtMirrors.pyx>>=
@@ -229,10 +228,6 @@ cdef class GMT_M1:
     def __cinit__(self, float D, int D_px, int radial_order=0, int N_SRC=1):
         self._c_gmt_m12 = new gmt_m1()
         <<GMT M12 constructor>>
-        self.x_EDGE_SENSOR = cuDoubleArray( shape=(1,18), dev_malloc=False )
-        self.x_EDGE_SENSOR._c_gpu.dev_data = self._c_gmt_m12.d__x_EDGE_SENSOR
-        self.y_EDGE_SENSOR = cuDoubleArray( shape=(1,18), dev_malloc=False )
-        self.y_EDGE_SENSOR._c_gpu.dev_data = self._c_gmt_m12.d__x_EDGE_SENSOR
 
         self.v0_EDGE_SENSOR    = Coordinates((48,3))
         self.v0_EDGE_SENSOR.v  = self._c_gmt_m12.v0_EDGE_SENSOR
@@ -257,6 +252,18 @@ cdef class GMT_M1:
                               gy._c_gpu.dev_data,
                               x.size, segId)
         return gx.host(), gy.host()
+
+    def edge_sensors_data(self):
+        self._c_gmt_m12.edge_sensors_data()
+
+    def reset(self):
+        """
+        Reset the segments to their original prescription
+        """
+        self.motion_CS.origin[:] = 0.0
+        self.motion_CS.euler_angles[:] = 0.0
+        self.motion_CS.update()
+        self.edge_sensors_data()
 @
 <<GMT M12 constructor>>=
 self.zernike = ZernikeS(radial_order,N_SURF=7)
@@ -325,14 +332,6 @@ def update(self, list origin=[0.0,0.0,0.0], list euler_angles=[0.0,0.0,0.0], int
     assert idx>0 and idx<8, "The segment index must be between 1 and 7!"
     self.motion_CS.origin[idx-1,:] = origin
     self.motion_CS.euler_angles[idx-1,:] = euler_angles
-    self.motion_CS.update()
-
-def reset(self):
-    """
-    Reset the segments to their original prescription
-    """
-    self.motion_CS.origin[:] = 0.0
-    self.motion_CS.euler_angles[:] = 0.0
     self.motion_CS.update()
 
 def global_tiptilt(self, float tip, float tilt):
@@ -505,6 +504,14 @@ cdef class GMT_M2:
             The y axis angle
         """
         self._c_gmt_m12.coma_neutral(tip, tilt);
+
+    def reset(self):
+        """
+        Reset the segments to their original prescription
+        """
+        self.motion_CS.origin[:] = 0.0
+        self.motion_CS.euler_angles[:] = 0.0
+        self.motion_CS.update()
 @
 \section{GMT M1}
 \label{sec:gmt-m1}
@@ -516,7 +523,7 @@ struct gmt_m1 {
   <<GMT M12 parameters>>
   <<GMT M1 parameters>>
   <<GMT M12 functions>>
-  void edge_sensor_data(void);
+  void edge_sensors_data(void);
 };
 @  with
 <<GMT M12 functions>>=
@@ -1622,7 +1629,7 @@ for (k=0;k<N;k++)
 Edge sensors are set on the rim of each segment.
 12 edges sensors are located on the central segment.
 Pairs of edge sensor are at an angle $\pm \alpha$ with respect to the line joining the center of the segment to the center of the peripheral segment.
-The coordinates of the edge sensor in the rigid CS are
+The coordinates of the edge sensor in the rigid body CS are
 \begin{equation}
   \label{eq:1}
   \left|
@@ -1634,7 +1641,7 @@ The coordinates of the edge sensor in the rigid CS are
    = {1\over 2}[[D_full]]\exp\left(i \left( {\pi(3-2k)\over 6} \pm \alpha  \right)\right), \forall k=0,\dots,5.
 \end{equation}
 Each peripheral segment has 2 pairs of edge sensors facing the adjacent peripheral segments.
-The coordinates of the edge sensors of a peripheral segment in the rigid CS are:
+The coordinates of the edge sensors of a peripheral segment in the rigid body CS are:
 \begin{eqnarray}
   \label{eq:2}
   \left|
@@ -1652,7 +1659,7 @@ The coordinates of the edge sensors of a peripheral segment in the rigid CS are:
   \right|
    &=& {1\over 2}[[D_full]]\exp\left(i  \left( -{5\pi\over 6} \pm \alpha \right) \right). 
 \end{eqnarray}
-Each peripheral segment has also a pair of edge sensor facing the central segment whose coordinates, in the rigid CS, are:
+Each peripheral segment has also a pair of edge sensor facing the central segment whose coordinates, in the rigid body CS, are:
 \begin{equation}
   \label{eq:3}
   \left|
@@ -1663,7 +1670,7 @@ Each peripheral segment has also a pair of edge sensor facing the central segmen
   \right|
    = {1\over 2}[[D_full]]\exp\left(i \left( -{\pi\over 2} \pm \alpha \right) \right).  
 \end{equation}
-The heights of the edge sensors are $z=0$ in the rigid CS of the segment they belong to.
+The heights of the edge sensors are $z=0$ in the rigid body CS of the segment they belong to.
 
 \begin{figure}
 \begin{center}
@@ -1673,7 +1680,7 @@ The heights of the edge sensors are $z=0$ in the rigid CS of the segment they be
   \label{fig:3}
 \end{figure}
 
-The total number of unique edge sensors coordinates in the rigid CS is 18 whose 12 are on the central segment and 6 on the peripheral segments leading to a total of 48 edge sensors coordinates in the GCS and 24 edge sensor mesurements.
+The total number of unique edge sensors coordinates in the rigid body CS is 18 whose 12 are on the central segment and 6 on the peripheral segments leading to a total of 48 edge sensors coordinates in the GCS and 24 edge sensor mesurements.
 <<GMT M1 parameters>>=
 int N_EDGE_SENSOR, N_EDGE_SENSOR_DATA;
 <<M1 edge sensors>>=
@@ -1684,16 +1691,6 @@ N_EDGE_SENSOR_DATA = 24;
 rtd alpha;
 <<M1 edge sensors>>=
 alpha = 19.5;
-@
-The $x$ and $y$ coordinates of the edge sensors are saved in the [[d__x_EDGE_SENSOR]] and [[d__y_EDGE_SENSOR]].
-<<GMT M1 parameters>>=
-rtd *d__x_EDGE_SENSOR, *d__y_EDGE_SENSOR;
-<<M1 edge sensors>>=
-HANDLE_ERROR( cudaMalloc((void**)&d__x_EDGE_SENSOR, sizeof(rtd)*N_EDGE_SENSOR ) );
-HANDLE_ERROR( cudaMalloc((void**)&d__y_EDGE_SENSOR, sizeof(rtd)*N_EDGE_SENSOR ) );
-<<GMT M1 cleanup common>>=
-HANDLE_ERROR( cudaFree( d__x_EDGE_SENSOR ) );
-HANDLE_ERROR( cudaFree( d__y_EDGE_SENSOR ) );
 @
 The coordinates of the edge sensors in the GCS are saved in the vectors [[d__v0_EDGE_SENSOR]] for a perfectly aligned telescope and in the vectors [[d__v_EDGE_SENSOR]] for a perturbed telescope.
 <<GMT M1 parameters>>=
@@ -1732,7 +1729,7 @@ The edge sensor coordinates in the GCS are computed with:
 fprintf(stdout,"@(CEO)>gmt_m1: Initializing edge sensors coordinates!\n");
 dim3 blockDim(6,1);
 dim3 gridDim(1,1);
-edge_sensors_init LLL gridDim, blockDim RRR (d__v0_EDGE_SENSOR, N-1, D_full, alpha,
+edge_sensors_read LLL gridDim, blockDim RRR (d__v0_EDGE_SENSOR, N-1, D_full, alpha,
 					     rigid_body_CS.d__R,
                                              rigid_body_CS.d__origin,
                                              motion_CS.d__R,
@@ -1746,7 +1743,7 @@ HANDLE_ERROR( cudaMemcpy( v_EDGE_SENSOR, d__v_EDGE_SENSOR,
 @  and the reference measurements with:
 <<M1 edge sensors>>=
 HANDLE_ERROR( cudaMemset(d__dv0_EDGE_SENSOR, 0, n_byte_DATA ) );
-edge_sensor_data_kernel LLL gridDim, blockDim RRR (d__dv_EDGE_SENSOR,
+edge_sensors_data_kernel LLL gridDim, blockDim RRR (d__dv_EDGE_SENSOR,
                                                    d__v_EDGE_SENSOR,
                                                    d__dv0_EDGE_SENSOR,
                                                    N-1);
@@ -1758,36 +1755,8 @@ HANDLE_ERROR( cudaMemset(d__dv_EDGE_SENSOR, 0, n_byte_DATA ) );
 HANDLE_ERROR( cudaMemcpy( dv_EDGE_SENSOR, d__dv_EDGE_SENSOR, 
                           n_byte_DATA, cudaMemcpyDeviceToHost ) );
 @ with
-<<M1 edge sensors initialization kernel (opt-out)>>=
-__global__ void edge_sensors_init(rtd *x, rtd *y, int N_OUT_SEGMENT, rtd D, rtd alpha)
-{
-  int i, k;
-  rtd R, a, offset_angle;
-  i = threadIdx.x;
-  if (i<N_OUT_SEGMENT)
-  {
-    k = i;
-    R = 0.5*D;
-    a = alpha/180;
-    offset_angle = (3.0-2.0*k)/6.0;
-    x[k]         = R*cospi( offset_angle + a);
-    k            += N_OUT_SEGMENT;
-    x[k]         = R*cospi( offset_angle - a);
-    __syncthreads();
-    k = 2*N_OUT_SEGMENT;
-    offset_angle = -0.5;
-    x[k++]       = R*cospi( offset_angle + a);
-    x[k++]       = R*cospi( offset_angle - a);
-    offset_angle = -1.0/6.0;
-    x[k++]       = R*cospi( offset_angle + a);
-    x[k++]       = R*cospi( offset_angle - a);
-    offset_angle = -5.0/6.0;
-    x[k++]       = R*cospi( offset_angle + a);
-    x[k]         = R*cospi( offset_angle - a);
-  }
-}
 <<M1 edge sensors initialization kernel>>=
- __global__ void edge_sensors_init(vector *v, const int N_OUT_SEGMENT, 
+ __global__ void edge_sensors_read(vector *v, const int N_OUT_SEGMENT, 
 				   const rtd D, const rtd alpha,
 				   rtd *d__rigid_body_R, vector *d__rigid_body_origin,
 				   rtd *d__motion_R, vector *d__motion_origin)
@@ -1890,11 +1859,16 @@ The vectors linking pairs of edge sensors are also drawn.
 
 They measurements are computed with
 <<GMT M1 functions>>=
-void gmt_m1::edge_sensor_data(void)
+void gmt_m1::edge_sensors_data(void)
 {
   dim3 blockDim(6,1);
   dim3 gridDim(1,1);
-  edge_sensor_data_kernel LLL gridDim, blockDim RRR (d__dv_EDGE_SENSOR,
+  edge_sensors_read LLL gridDim, blockDim RRR (d__v_EDGE_SENSOR, N-1, D_full, alpha,
+       					     rigid_body_CS.d__R,
+                                             rigid_body_CS.d__origin,
+                                             motion_CS.d__R,
+                                             motion_CS.d__origin);
+  edge_sensors_data_kernel LLL gridDim, blockDim RRR (d__dv_EDGE_SENSOR,
 						     d__v_EDGE_SENSOR,
 						     d__dv0_EDGE_SENSOR,
 						     N-1);
@@ -1904,7 +1878,7 @@ void gmt_m1::edge_sensor_data(void)
 @  
 with the kernel
 <<M1 edge sensor data kernel>>=
-__global__ void edge_sensor_data_kernel(vector *d__dv_EDGE_SENSOR, 
+__global__ void edge_sensors_data_kernel(vector *d__dv_EDGE_SENSOR, 
 					vector *d__v_EDGE_SENSOR, 
 					vector *d__dv0_EDGE_SENSOR, 
 					const int N_OUT_SEGMENT)

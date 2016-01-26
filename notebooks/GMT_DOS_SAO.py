@@ -14,7 +14,7 @@ optics_throughtput = 0.25
 
 # GMT
 entrance_pupil_size_meter = N_LENSLET*lenslet_pitch_meter
-M1_zernike_radial_order = 3
+M1_zernike_radial_order = 7
 M1_init = {"global tip-tilt [arcsec]": 0.0014*DEG2ARCSEC,
     "Tx [micron]": 20, 
     "Ty [micron]": 20,

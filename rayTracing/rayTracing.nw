@@ -414,7 +414,9 @@ cdef class Quaternion:
 cdef class Coordinates:
     cdef:
         double[:,::1] data
+        public list data_log
         vector *v
+        public int log
 cdef class Coordinate_system:
     cdef:
         coordinate_system *_c_coordinate_system
@@ -499,6 +501,8 @@ cdef class Coordinates:
     """
     def __cinit__(self,tuple shape):
         self.data =  np.zeros(shape, dtype=np.float64)
+        self.log = 0
+        self.data_log = []
 
     def __getitem__(self,index):
         cdef int k
@@ -515,19 +519,31 @@ cdef class Coordinates:
             self.v[k].x = self.data[k,0]
             self.v[k].y = self.data[k,1]
             self.v[k].z = self.data[k,2]
+        if self.log>0:
+            if len(self.data_log)>self.log:
+                self.data_log.pop(0)
+            self.data_log.append(np.array(self.data))
 
     def __repr__(self):
         data = np.array(self.data)
         return data.__repr__()
 
     def __str__(self):
-        max_abs_data = np.max(np.abs(self.data))
+	max_abs_data = np.max(np.abs(self[:]))
         if  max_abs_data!=0:
             exp = -np.floor(np.log10(max_abs_data))
         else:
             exp = 0
         s = np.array_str(np.asarray(self.data)*(10**exp),precision=2,suppress_small=True)
         return "@(CEO)>Coordinates:\nX,Y,Z coordinates in meter: 10^%dX\n"%exp + s
+
+    property shape:
+        def __get__(self):
+            return self.data.shape
+
+    property size:
+        def __get__(self):
+            return self.data.size
 @
 \paragraph{Quaternions}
 \label{sec:quaternions}
