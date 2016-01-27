@@ -1,7 +1,7 @@
 from ceo.constants import *
 # AGWS 
 N_GS = 3
-zenith_distance_arcmin = 9.5
+zenith_distance_arcmin = 6
 AGWS_magnitude = -5
 AGWS_photometric_band = "R"
 N_LENSLET = 26
