@@ -39,7 +39,7 @@
 <<M1 edge sensors initialization kernel>>
 <<M1 edge sensor data kernel>>
 <<lateral edge sensors: laser coordinates kernel>>
-<<lateral edge sensors: camera coordinates kernel>>=
+<<lateral edge sensors: camera coordinates kernel>>
 <<lateral edge sensor pair vector kernel>>
 
 <<GMT M1 functions>>
@@ -2152,7 +2152,7 @@ __global__ void camera_coordinates(vector *v, const int N_OUT_SEGMENT,
 				   rtd *d__rigid_body_R, vector *d__rigid_body_origin,
 				   rtd *d__motion_R, vector *d__motion_origin)
 {
-  int i, iCoordSys_laser, iCoordSys_cam, k;
+  int i, k;
   rtd R, a, offset_angle;
   i = threadIdx.x;
   if (i<N_OUT_SEGMENT)
@@ -2182,14 +2182,13 @@ offset_angle = -5.0/6.0 - a;
 <<polar to cartesian>>
 @
 <<lateral edge sensors setup>>=
-edge_sensors_pair_vector LLL gridDim, blockDim RRR (d__dv, d__v,
-                                                    d__uP, d__vP,
-                                                    N-1);
-with the kernel
+edge_sensors_pair_vector_kernel LLL gridDim, blockDim RRR (d__dv, d__v,
+                                                           d__uP, d__vP,
+                                                           N-1);
+@ with the kernel
 <<lateral edge sensor pair vector kernel>>=
-__global__ void edge_sensors_pair_vector_kernel(vector *d__dv, 
+__global__ void edge_sensors_pair_vector_kernel(vector *d__dv, vector *d__v,
                                                 vector *d__uP, vector *d__vP,
-                                                vector *d__vP, 
                                                 const int N_OUT_SEGMENT)
 {
   int k;
@@ -2212,30 +2211,34 @@ __global__ void edge_sensors_pair_vector_kernel(vector *d__dv,
       	d__v[(k+1)%6+6*N_OUT_SEGMENT] - 
         d__v[k+5*N_OUT_SEGMENT];
       
-      d__dv[k                ] /= d__dv[k                ].norm();
-      d__dv[k+  N_OUT_SEGMENT] /= d__dv[k+  N_OUT_SEGMENT].norm();
-      d__dv[k+2*N_OUT_SEGMENT] /= d__dv[k+2*N_OUT_SEGMENT].norm();
-      d__dv[k+3*N_OUT_SEGMENT] /= d__dv[k+3*N_OUT_SEGMENT].norm();
+      d__dv[k                ].unit();
+      d__dv[k+  N_OUT_SEGMENT].unit();
+      d__dv[k+2*N_OUT_SEGMENT].unit();
+      d__dv[k+3*N_OUT_SEGMENT].unit();
 
-      d__uP[k                ] = d__dv[k                ].left_cross(n);                
-      d__uP[k+  N_OUT_SEGMENT] = d__dv[k+  N_OUT_SEGMENT].left_cross(n);
-      d__uP[k+2*N_OUT_SEGMENT] = d__dv[k+2*N_OUT_SEGMENT].left_cross(n);
-      d__uP[k+3*N_OUT_SEGMENT] = d__dv[k+3*N_OUT_SEGMENT].left_cross(n);
+      d__dv[k                ].left_cross(&d__uP[k                ],&n);                
+      d__dv[k+  N_OUT_SEGMENT].left_cross(&d__uP[k+  N_OUT_SEGMENT],&n);
+      d__dv[k+2*N_OUT_SEGMENT].left_cross(&d__uP[k+2*N_OUT_SEGMENT],&n);
+      d__dv[k+3*N_OUT_SEGMENT].left_cross(&d__uP[k+3*N_OUT_SEGMENT],&n);
       
-      d__uP[k                ] /= d__uP[k                ].norm();
-      d__uP[k+  N_OUT_SEGMENT] /= d__uP[k+  N_OUT_SEGMENT].norm();
-      d__uP[k+2*N_OUT_SEGMENT] /= d__uP[k+2*N_OUT_SEGMENT].norm();
-      d__uP[k+3*N_OUT_SEGMENT] /= d__uP[k+3*N_OUT_SEGMENT].norm();
+      d__uP[k                ].unit();
+      d__uP[k+  N_OUT_SEGMENT].unit();
+      d__uP[k+2*N_OUT_SEGMENT].unit();
+      d__uP[k+3*N_OUT_SEGMENT].unit();
 
-      d__vP[k                ] = d__uP[k                ].left_cross(d__dv[k                ]);                
-      d__vP[k+  N_OUT_SEGMENT] = d__uP[k+  N_OUT_SEGMENT].left_cross(d__dv[k+  N_OUT_SEGMENT]);
-      d__vP[k+2*N_OUT_SEGMENT] = d__uP[k+2*N_OUT_SEGMENT].left_cross(d__dv[k+2*N_OUT_SEGMENT]);
-      d__vP[k+3*N_OUT_SEGMENT] = d__uP[k+3*N_OUT_SEGMENT].left_cross(d__dv[k+3*N_OUT_SEGMENT]);
+      d__uP[k                ].left_cross(&d__vP[k                ],
+                                          &d__dv[k                ]);                
+      d__uP[k+  N_OUT_SEGMENT].left_cross(&d__vP[k+  N_OUT_SEGMENT],
+                                          &d__dv[k+  N_OUT_SEGMENT]);
+      d__uP[k+2*N_OUT_SEGMENT].left_cross(&d__vP[k+2*N_OUT_SEGMENT],
+                                          &d__dv[k+2*N_OUT_SEGMENT]);
+      d__uP[k+3*N_OUT_SEGMENT].left_cross(&d__vP[k+3*N_OUT_SEGMENT],
+                                          &d__dv[k+3*N_OUT_SEGMENT]);
       
-      d__vP[k                ] /= d__vP[k                ].norm();
-      d__vP[k+  N_OUT_SEGMENT] /= d__vP[k+  N_OUT_SEGMENT].norm();
-      d__vP[k+2*N_OUT_SEGMENT] /= d__vP[k+2*N_OUT_SEGMENT].norm();
-      d__vP[k+3*N_OUT_SEGMENT] /= d__vP[k+3*N_OUT_SEGMENT].norm();
+      d__vP[k                ].unit();
+      d__vP[k+  N_OUT_SEGMENT].unit();
+      d__vP[k+2*N_OUT_SEGMENT].unit();
+      d__vP[k+3*N_OUT_SEGMENT].unit();
 
     }
 }
