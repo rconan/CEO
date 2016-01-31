@@ -1,4 +1,5 @@
 % -*- mode: Noweb; noweb-code-mode: c-mode -*-
+
 @
 \index{gmtMirrors}
 \section{The files}
@@ -21,6 +22,7 @@
 
 <<GMT M1 structure>>
 <<GMT M2 structure>>
+<<lateral edge sensors structure>>
 
 #endif // __GMTMIRRORS_H_
 @
@@ -36,9 +38,14 @@
 <<GMT track kernel>>
 <<M1 edge sensors initialization kernel>>
 <<M1 edge sensor data kernel>>
+<<lateral edge sensors: laser coordinates kernel>>
+<<lateral edge sensors: camera coordinates kernel>>=
+<<lateral edge sensor pair vector kernel>>
 
 <<GMT M1 functions>>
 <<GMT M2 functions>>
+
+<<lateral edge sensors functions>>
 @ 
 
 \subsection{Python}
@@ -756,14 +763,14 @@ zo = conic_equation(&__v,&__v0,conic_k,conic_c);
 The rigid body coordinate systems are aligned with the segment coordinate systems.
 The origins $[x_O, y_O, z_O]$ of the segment coordinate systems are given with respect to the global coordinate system which origin is at the vertex of M1 conic surface: 
 \begin{eqnarray}
-  \label{eq:35}
+  \label{eq:1}
   x_{O,k} &=& L\cos(\theta_{O,k}), \\
   y_{O,k} &=& L\sin(\theta_{O,k}), \\
   z_O &=& F(L),\\
 \end{eqnarray}
 with, for M1, $L = 8.71$m, $\theta_{O,k}=\pi(3-2k)/6, \forall k \in [0,5]$, $x_{O,6}=y_{O,6}=0$ and
 \begin{equation}
-  \label{eq:36}
+  \label{eq:2}
   F(\rho) = {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} }.
 \end{equation}
 In addition to the change of origin with respect to the GCS, the segment coordinate system is rotated around the z--axis of $-k\pi/3$radian and then tilted around the x--axis of $\beta$.
@@ -1486,25 +1493,25 @@ The GCS is defined with the 3 ortho--normal unit vectors \ijk.
 The segment coordinate systems also called rigid body CSs are defined with the 3 ortho-normal vectors \uvw.
 \uvw are derived from \ijk with the matrix \RS
 \begin{equation}
-  \label{eq:37}
+  \label{eq:3}
   \uvw = \RS^T \ijk.
 \end{equation}
 Within the rigid body CSs, motion CSs (\uvwp) are defined with
 \begin{equation}
-  \label{eq:38}
+  \label{eq:4}
   \uvwp = \RM^T \uvw = \RM^T \RS^T \ijk,
 \end{equation}
 where \RM is the 3D rotation matrix of each segment.
 
 When a global tip--tilt is applied to M1, \ijk becomes $\RT^T\ijk$ with \RT the tip--tilt matrix, and the motion CSs are given by
 \begin{equation}
-  \label{eq:39}
+  \label{eq:5}
   \uvwp = \RS^T\RT^T\ijk.
 \end{equation}
 
-From Eq.~(\ref{eq:38}) and Eq.~(\ref{eq:39}), the 3D rotation matrix of each segment as a result of a global tip--tilt is given by
+From Eq.~(\ref{eq:4}) and Eq.~(\ref{eq:5}), the 3D rotation matrix of each segment as a result of a global tip--tilt is given by
 \begin{equation}
-  \label{eq:40}
+  \label{eq:6}
   \RM = \RS^T \RT \RS.
 \end{equation}
 <<global tip-tilt transformation>>=
@@ -1543,7 +1550,7 @@ for (i=0;i<3;i++)
 @
 From \RM, the Euler angles corresponding to the 3 rotations of each segment are derived
 \begin{eqnarray}
-  \label{eq:41}
+  \label{eq:7}
   \alpha &=& \arctan\left( \RM(32) \over \RM(33) \right) \\\nonumber
   \beta  &=& \arcsin\left( -\RM(31) \right) \\\nonumber
   \gamma &=& \arctan\left( \RM(21) \over \RM(11) \right) 
@@ -1555,7 +1562,7 @@ motion_CS.euler_angles[k].z = atan2(motion_CS.R[3+k9],motion_CS.R[k9]);
 @
 The tip--tilt transformation is also applied to the origin of each segment $\vec O_k$ and the difference between the two origins is the translation of the motion CS, i.e.
 \begin{equation}
-  \label{eq:42}
+  \label{eq:8}
   \vec O_k^\prime = \vec O_k - \vec O_R - \RT^T\left( \vec O_k -\vec O_R \right)
 \end{equation}
 where $\vec O_R$ is the rotation point.
@@ -1631,7 +1638,7 @@ Edge sensors are set on the rim of each segment.
 Pairs of edge sensor are at an angle $\pm \alpha$ with respect to the line joining the center of the segment to the center of the peripheral segment.
 The coordinates of the edge sensor in the rigid body CS are
 \begin{equation}
-  \label{eq:1}
+  \label{eq:9}
   \left|
   \begin{array}{c}
     l_{7,k} \\
@@ -1643,7 +1650,7 @@ The coordinates of the edge sensor in the rigid body CS are
 Each peripheral segment has 2 pairs of edge sensors facing the adjacent peripheral segments.
 The coordinates of the edge sensors of a peripheral segment in the rigid body CS are:
 \begin{eqnarray}
-  \label{eq:2}
+  \label{eq:10}
   \left|
   \begin{array}{c}
     l_{k,3} \\
@@ -1661,7 +1668,7 @@ The coordinates of the edge sensors of a peripheral segment in the rigid body CS
 \end{eqnarray}
 Each peripheral segment has also a pair of edge sensor facing the central segment whose coordinates, in the rigid body CS, are:
 \begin{equation}
-  \label{eq:3}
+  \label{eq:11}
   \left|
   \begin{array}{c}
     l_{k,4} \\
@@ -1677,7 +1684,7 @@ The heights of the edge sensors are $z=0$ in the rigid body CS of the segment th
 \input{edgeSensor.tex}
 \end{center}  
   \caption{Edge sensor layout.}
-  \label{fig:3}
+  \label{fig:edge_sensor}
 \end{figure}
 
 The total number of unique edge sensors coordinates in the rigid body CS is 18 whose 12 are on the central segment and 6 on the peripheral segments leading to a total of 48 edge sensors coordinates in the GCS and 24 edge sensor mesurements.
@@ -1905,6 +1912,408 @@ __global__ void edge_sensors_data_kernel(vector *d__dv_EDGE_SENSOR,
         d__dv0_EDGE_SENSOR[k+3*N_OUT_SEGMENT];
     }
 }
+@ 
+
+\subsubsection{Lateral displacement model}
+\label{sec:later-displ-model}
+
+<<lateral edge sensors structure>>=
+struct lateral_edge_sensor {
+<<lateral edge sensors parameters>>
+void setup(gmt_m1 *_mirror_);
+void cleanup(void);
+};
+@  with
+<<lateral edge sensors functions>>=
+void lateral_edge_sensor::setup(gmt_m1 *_mirror_) 
+{
+  <<lateral edge sensors setup>>
+}
+void lateral_edge_sensor::cleanup(void) 
+{
+  <<lateral edge sensors cleanup>>
+}
+@ 
+The lateral displacement model represents the case where a laser on one segment is aimed to a camera on an adjacent segment.
+The camera returns the position of the laser beam in the detector frame.
+%The difference between the current position of the laser beam and the position of the laser beam for a perfectly aligned telescope gives 
+
+Looking at Fig.~\ref{fig:edge_sensor}, each vector between pairs of edge sensors is a laser.
+The tail of the vector corresponds to the location where the laser is fired from and the head of the vector corresponds to the center of the camera.
+
+The total number of unique edge sensors coordinates in the rigid body CS is 18 whose 12 are on the central segment and 6 on the peripheral segments leading to a total of 48 edge sensors coordinates in the GCS and 24 edge sensor mesurements.
+<<lateral edge sensors parameters>>=
+int N, N_DATA;
+<<lateral edge sensors setup>>=
+N = 48;
+N_DATA = 24;
+@ The $\alpha$ angle is set to 19.5degree
+<<lateral edge sensors parameters>>=
+rtd alpha;
+<<lateral edge sensors setup>>=
+alpha = 19.5;
+@ The mirror the edge sensors are affected to is
+<<lateral edge sensors parameters>>=
+gmt_m1 *mirror;
+<<lateral edge sensors setup>>=
+mirror = _mirror_;
+@
+The location of the edge sensors are given by the vectors $l_{7,k}$, $r_{7,k}$, $l_{k,3}$, $r_{k,3}$, $l_{k,5}$, $r_{k,5}$, $l_{k,4}$ and $r_{k,4}$ stored in the arrays [[d__v0]] for a perfectly aligned telescope and in the vectors [[d__v]] for a perturbed telescope.
+The coordinates of the vectors joining pairs of edge sensors are saved in the vector [[d__dv0]] and [[d__dv]] for a perfectly aligned and perturbed telescope, respectively.
+<<lateral edge sensors parameters>>=
+vector *v0, *d__v0;
+vector *v, *d__v;
+vector *dv0, *d__dv0;
+vector *dv, *d__dv;
+vector *uP, *d__uP;
+vector *vP, *d__vP;
+@
+<<lateral edge sensors setup>>=
+int n_byte, n_byte_DATA;
+n_byte      = sizeof(vector)*N;
+n_byte_DATA = sizeof(vector)*N_DATA;
+v0 = (vector *)malloc(n_byte);
+v  = (vector *)malloc(n_byte);
+HANDLE_ERROR( cudaMalloc((void**)&d__v0, n_byte ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__v,  n_byte ) );
+dv0  = (vector *)malloc(n_byte_DATA);
+dv  = (vector *)malloc(n_byte_DATA);
+HANDLE_ERROR( cudaMalloc((void**)&d__dv0, n_byte_DATA ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__dv, n_byte_DATA ) );
+uP  = (vector *)malloc(n_byte_DATA);
+vP  = (vector *)malloc(n_byte_DATA);
+HANDLE_ERROR( cudaMalloc((void**)&d__uP, n_byte_DATA ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__vP, n_byte_DATA ) );
+@
+<<lateral edge sensors cleanup>>=
+free( v0 );
+free( v );
+HANDLE_ERROR( cudaFree( d__v0 ) );
+HANDLE_ERROR( cudaFree( d__v ) );
+free( dv0 );
+free( dv );
+HANDLE_ERROR( cudaFree( d__dv0 ) );
+HANDLE_ERROR( cudaFree( d__dv ) );
+free( uP );
+free( vP );
+HANDLE_ERROR( cudaFree( d__uP ) );
+HANDLE_ERROR( cudaFree( d__vP ) );
+@
+\def\aO{A^i_0}
+\def\aOi{A^i_{0i}}
+\def\kOi{\mathbf{k^i_{0i}}}
+\def\kOj{\mathbf{k^i_{0j}}}
+\def\kOjx{{k^i_{0j,x}}}
+\def\kOjy{{k^i_{0j,y}}}
+\def\kOjz{{k^i_{0j,z}}}
+\def\kj{\mathbf{k^i_{j}}}
+\def\kjx{{k^i_{j,x}}}
+\def\kjy{{k^i_{j,y}}}
+\def\kjz{{k^i_{j,z}}}
+\def\aOj{A^i_{0j}}
+\def\aOjx{A^i_{0jx}}
+\def\aOjy{A^i_{0jy}}
+\def\aOjz{A^i_{0jz}}
+\def\aj{A^i_{j}}
+\def\ajx{A^i_{j,x}}
+\def\ajy{A^i_{j,y}}
+\def\ajz{A^i_{j,z}}
+\def\bO{B^j_0}
+\def\bOi{B^j_{0i}}
+\def\bOj{B^j_{0j}}
+\def\bOjx{B^j_{0j,x}}
+\def\bOjy{B^j_{0j,y}}
+\def\bOjz{B^j_{0j,z}}
+\def\abO{\mathbf{AB}_0^{ij}}
+\def\abOj{\mathbf{AB}_{0j}^{ij}}
+\def\abOi{\mathbf{AB}_{0i}^{ij}}
+\def\abOjx{\kOjx}
+\def\abOjy{\kOjy}
+\def\abOjz{\kOjz}
+\def\camplane{\mathcal{P}_j}
+\def\tlp{t_{\mathcal{LP}}}
+\def\ilp{I^j_{\mathcal{LP}}}
+\def\bi{\mathbf{BI^j_{0j,{\mathcal{LP}}}}}
+\def\valpha{\boldsymbol{\alpha}}
+\def\vbeta{\boldsymbol{\beta}}
+\newcommand{\tocs}[3]{\mathrm{R}_{#1{#2}}\left(#3\right)}
+\newcommand{\itocs}[3]{\mathrm{R}^{-1}_{#1{#2}}\left(#3\right)}
+
+The coordinates transformation from one CS to another CS is noted $R_X$ where $X$ denote the final CS,
+$X\equiv R$ for the rigid body CS and $X\equiv M$ for the motion CS.
+
+The computation of the location of the laser on the camera requires to define both the camera plane and the line of sight between the camera and the laser when the telescope is perfectly aligned:
+\begin{enumerate}
+\item Lets define the camera plane $\camplane$ as being perpendicular to the line of sight of the laser:
+  \begin{enumerate}
+  \item Lets call $\aOi$ and $\bOj$, the coordinates of the laser location at segment \# $i$ and of the camera location at segment \# $j$, respectively, for that configuration.
+    Both $\aOi$ and $\bOj$ are given in their respective rigid body CS.
+    %$\abO$ is the vector joining the 2 points.
+  \item Lets transform $\aOi$ into the rigid body CS of segment \# $j$:
+    \begin{equation}
+      \label{eq:12}
+      \aOj = \tocs{R}{j}{\itocs{R}{i}{\aOi}},
+    \end{equation}
+@
+<<lateral edge sensors setup>>=
+fprintf(stdout,"@(CEO)>gmt_m1: Initializing edge sensors coordinates!\n");
+dim3 blockDim(6,1);
+dim3 gridDim(1,1);
+laser_coordinates LLL gridDim, blockDim RRR (d__v0, N-1, mirror->D_full, alpha,
+					     mirror->rigid_body_CS.d__R,
+                                             mirror->rigid_body_CS.d__origin,
+                                             mirror->motion_CS.d__R,
+                                             mirror->motion_CS.d__origin);
+HANDLE_ERROR( cudaMemcpy( v0, d__v0, 
+                          n_byte, cudaMemcpyDeviceToHost ) );
+HANDLE_ERROR( cudaMemcpy( d__v, d__v0, 
+                          n_byte, cudaMemcpyDeviceToDevice ) );
+HANDLE_ERROR( cudaMemcpy( v, d__v, 
+                          n_byte, cudaMemcpyDeviceToHost ) );
+@ with
+<<lateral edge sensors: laser coordinates kernel>>=
+__global__ void laser_coordinates(vector *v, const int N_OUT_SEGMENT, 
+				   const rtd D, const rtd alpha,
+				   rtd *d__rigid_body_R, vector *d__rigid_body_origin,
+				   rtd *d__motion_R, vector *d__motion_origin)
+{
+  int i, iCoordSys_laser, iCoordSys_cam, k;
+  rtd R, a, offset_angle;
+  i = threadIdx.x;
+  if (i<N_OUT_SEGMENT)
+  {
+    R = 0.5*D;
+    a = alpha/180;
+    <<central segment lateral edge sensors>>
+    __syncthreads();
+    <<outer segment lateral edge sensors>>
+  }
+}
+@ $l_{7,k}$ and $r_{7,k}$:
+<<central segment lateral edge sensors>>=
+iCoordSys_laser = 6;
+iCoordSys_cam   = i;
+k = i;
+offset_angle = (3.0-2.0*i)/6.0 + a;
+<<lateral edge sensor coordinates>>
+k             += N_OUT_SEGMENT;
+offset_angle = (3.0-2.0*i)/6.0 - a;
+<<lateral edge sensor coordinates>>
+@ $l_{k,3}$ and $r_{k,3}$:
+<<outer segment lateral edge sensors>>=
+iCoordSys_laser = i;
+iCoordSys_cam   = (i+1)%N_OUT_SEGMENT;
+k = 4*N_OUT_SEGMENT + i;
+offset_angle = -1.0/6.0 + a;
+<<lateral edge sensor coordinates>>
+k += 6;
+offset_angle = -1.0/6.0 - a;
+<<lateral edge sensor coordinates>>
+@ 
+<<polar to cartesian>>=
+sincospi( offset_angle, &(v[k].y), &(v[k].x) );
+v[k].x       *= R;
+v[k].y       *= R;
+v[k].z       = 0.0;
+<<lateral edge sensor coordinates>>=
+<<polar to cartesian>>
+// MOTION <<<
+backward_transform(v+k, v+k,
+		   d__motion_R+iCoordSys_laser*9,
+                   d__motion_origin+iCoordSys_laser);
+// RIGID_BODY <<<
+backward_transform(v+k, v+k,
+		   d__rigid_body_R+iCoordSys_laser*9,
+		   d__rigid_body_origin+iCoordSys_laser);
+// RIGID BODY >>> 
+forward_transform(v+k, v+k,
+		  d__rigid_body_R+iCoordSys_cam*9,
+                  d__rigid_body_origin+iCoordSys_cam);
+// MOTION >>>  
+forward_transform(v+k, v+k,
+		  d__motion_R+iCoordSys_cam*9,
+                  d__motion_origin+iCoordSys_cam);
+@
+  \item Lets define the unit vector of the line of sight expressed in the rigid body CS of segment \# $j$ as:
+    \begin{equation}
+      \label{eq:13}
+      \kOj = { \abOj \over \left\| \abOj \right\| },
+    \end{equation}
+<<lateral edge sensors setup>>=
+camera_coordinates LLL gridDim, blockDim RRR (d__v0, N-1, mirror->D_full, alpha,
+					     mirror->rigid_body_CS.d__R,
+                                             mirror->rigid_body_CS.d__origin,
+                                             mirror->motion_CS.d__R,
+                                             mirror->motion_CS.d__origin);
+@ with
+<<lateral edge sensors: camera coordinates kernel>>=
+__global__ void camera_coordinates(vector *v, const int N_OUT_SEGMENT, 
+				   const rtd D, const rtd alpha,
+				   rtd *d__rigid_body_R, vector *d__rigid_body_origin,
+				   rtd *d__motion_R, vector *d__motion_origin)
+{
+  int i, iCoordSys_laser, iCoordSys_cam, k;
+  rtd R, a, offset_angle;
+  i = threadIdx.x;
+  if (i<N_OUT_SEGMENT)
+  {
+    R = 0.5*D;
+    a = alpha/180;
+    <<central segment camera edge sensors>>
+    __syncthreads();
+    <<outer segment camera edge sensors>>
+  }
+}
+@ $l_{k,4}$ and $r_{k,4}$:
+<<central segment camera edge sensors>>=
+k            = 2*N_OUT_SEGMENT + i;
+offset_angle = -0.5 + a;
+<<polar to cartesian>>
+k += 6;
+offset_angle = -0.5 - a;
+<<polar to cartesian>>
+@ $l_{k,5},$ and $r_{k,5}$:
+<<outer segment camera edge sensors>>=
+k            = 6*N_OUT_SEGMENT + i;
+offset_angle = -5.0/6.0 + a;
+<<polar to cartesian>>
+k += 6;
+offset_angle = -5.0/6.0 - a;
+<<polar to cartesian>>
+@
+<<lateral edge sensors setup>>=
+edge_sensors_pair_vector LLL gridDim, blockDim RRR (d__dv, d__v,
+                                                    d__uP, d__vP,
+                                                    N-1);
+with the kernel
+<<lateral edge sensor pair vector kernel>>=
+__global__ void edge_sensors_pair_vector_kernel(vector *d__dv, 
+                                                vector *d__uP, vector *d__vP,
+                                                vector *d__vP, 
+                                                const int N_OUT_SEGMENT)
+{
+  int k;
+  k = threadIdx.x;
+  vector n;
+  n.x = n.y = 0.0;
+  n.z = 1.0;
+  if (k<N_OUT_SEGMENT)
+    {
+      d__dv[k]                 =
+      	d__v[k+3*N_OUT_SEGMENT] - 
+        d__v[k];
+      d__dv[k+  N_OUT_SEGMENT] =
+      	d__v[k+2*N_OUT_SEGMENT] - 
+        d__v[k+  N_OUT_SEGMENT] ;
+      d__dv[k+2*N_OUT_SEGMENT] =
+      	d__v[(k+1)%6+7*N_OUT_SEGMENT] - 
+        d__v[k+4*N_OUT_SEGMENT];
+      d__dv[k+3*N_OUT_SEGMENT] =
+      	d__v[(k+1)%6+6*N_OUT_SEGMENT] - 
+        d__v[k+5*N_OUT_SEGMENT];
+      
+      d__dv[k                ] /= d__dv[k                ].norm();
+      d__dv[k+  N_OUT_SEGMENT] /= d__dv[k+  N_OUT_SEGMENT].norm();
+      d__dv[k+2*N_OUT_SEGMENT] /= d__dv[k+2*N_OUT_SEGMENT].norm();
+      d__dv[k+3*N_OUT_SEGMENT] /= d__dv[k+3*N_OUT_SEGMENT].norm();
+
+      d__uP[k                ] = d__dv[k                ].left_cross(n);                
+      d__uP[k+  N_OUT_SEGMENT] = d__dv[k+  N_OUT_SEGMENT].left_cross(n);
+      d__uP[k+2*N_OUT_SEGMENT] = d__dv[k+2*N_OUT_SEGMENT].left_cross(n);
+      d__uP[k+3*N_OUT_SEGMENT] = d__dv[k+3*N_OUT_SEGMENT].left_cross(n);
+      
+      d__uP[k                ] /= d__uP[k                ].norm();
+      d__uP[k+  N_OUT_SEGMENT] /= d__uP[k+  N_OUT_SEGMENT].norm();
+      d__uP[k+2*N_OUT_SEGMENT] /= d__uP[k+2*N_OUT_SEGMENT].norm();
+      d__uP[k+3*N_OUT_SEGMENT] /= d__uP[k+3*N_OUT_SEGMENT].norm();
+
+      d__vP[k                ] = d__uP[k                ].left_cross(d__dv[k                ]);                
+      d__vP[k+  N_OUT_SEGMENT] = d__uP[k+  N_OUT_SEGMENT].left_cross(d__dv[k+  N_OUT_SEGMENT]);
+      d__vP[k+2*N_OUT_SEGMENT] = d__uP[k+2*N_OUT_SEGMENT].left_cross(d__dv[k+2*N_OUT_SEGMENT]);
+      d__vP[k+3*N_OUT_SEGMENT] = d__uP[k+3*N_OUT_SEGMENT].left_cross(d__dv[k+3*N_OUT_SEGMENT]);
+      
+      d__vP[k                ] /= d__vP[k                ].norm();
+      d__vP[k+  N_OUT_SEGMENT] /= d__vP[k+  N_OUT_SEGMENT].norm();
+      d__vP[k+2*N_OUT_SEGMENT] /= d__vP[k+2*N_OUT_SEGMENT].norm();
+      d__vP[k+3*N_OUT_SEGMENT] /= d__vP[k+3*N_OUT_SEGMENT].norm();
+
+    }
+}
+@ 
+  \item Lets define the plane $\camplane$ perpendicular to the vector $\kOj$ and including the point $\bOj$ in the rigid body CS of segment $j$:
+    \begin{equation}
+      \label{eq:14}
+      \camplane:\quad \abOjx \left( x - \bOjx \right) + \abOjy \left( y - \bOjy \right) +  \abOjz \left( z - \bOjz \right) = 0,
+    \end{equation}
+  \item Lets define the origin of coordinates in $\camplane$ at $\bOj$,
+  \item Lets define the $x$--axis of $\camplane$ to be in the horizontal plane $\mathcal{Z}_j: z=0$ of the rigid body CS of segment \# j and to include the point $\bOj$,
+  \item The unit vector normal to the plane $\mathcal{Z}_j$ is $\mathbf{n}_j=(0,0,1)$,
+  \item The vector parallel to the line that defines the intersection between $\camplane$ and $\mathcal{Z}_j$ is given by $\valpha=\mathbf{n}\wedge\kOj$,
+  \item The unit $x$--axis vector in $\camplane$ is given by
+    \begin{equation}
+      \label{eq:15}
+      \mathbf{u} = { \valpha \over \left\| \valpha \right\| },
+    \end{equation}
+  \item Lets define the vector perpendicular to both $\kOj$ and $\valpha$: $\vbeta = \valpha \wedge \kOj$, the vector $\vbeta$ lies in the plane $\camplane$,
+  \item The unit $y$--axis vector in $\camplane$ is given by
+    \begin{equation}
+      \label{eq:16}
+      \mathbf{v} = { \vbeta \over \left\| \vbeta \right\| },
+    \end{equation}
+  \end{enumerate}
+\item Lets define the line of sight in segment \# i:
+  \begin{enumerate}
+  \item Lets transform $\bOj$ into the rigid body CS of segment \# $i$:
+    \begin{equation}
+      \label{eq:17}
+      \bOi = \tocs{R}{i}{\itocs{R}{j}{\bOj}},
+    \end{equation}
+  \item Lets define the unit vector of the line of sight expressed in the rigid body CS of segment \# $i$ as:
+    \begin{equation}
+      \label{eq:18}
+      \kOi = { \abOi \over \left\| \abOi \right\| },
+    \end{equation}
+  \end{enumerate}
+\end{enumerate}
+
+The next step consists in deriving, for given displacements of segment \# $i$ and \# $j$, the intersection of the vector $\kOi$ with the plane $\camplane$:
+\begin{enumerate}
+\item Lets transform $\kOi$ into the motion CS of segment \# j
+  \begin{equation}
+    \label{eq:50}
+    \kj = \tocs{M}{j}{\tocs{R}{j}{\itocs{R}{i}{\itocs{M}{i}{\kOi}}}}.
+  \end{equation}
+\item Lets transform $\aOj$ into the motion CS of segment \# j
+  \begin{equation}
+    \label{eq:51}
+    \aj = \tocs{M}{j}{\tocs{R}{j}{\itocs{R}{i}{\itocs{M}{i}{\aOi}}}}
+  \end{equation}
+\item Lets define the line $\mathcal{L}_j$ with the equation: $\forall t \in [-\infty,+\infty]$,
+  \begin{eqnarray}
+    \label{eq:10a}
+    x &=& \kjx t + \ajx, \\
+    \label{eq:10b}
+    y &=& \kjy t + \ajy, \\
+    \label{eq:10c}
+    z &=& \kjz t + \ajz,
+  \end{eqnarray}
+\item Inserting Eq.~(\ref{eq:10a}), Eq.~(\ref{eq:10b}) and Eq.~(\ref{eq:10c}) into Eq.~(\ref{eq:14}) and solving for $t$ leads to
+  \begin{equation}
+    \label{eq:19}
+    \tlp = {\abOjx ( \bOjx - \ajx ) + \abOjy ( \bOjy - \ajy ) + \abOjz ( \bOjz - \ajz ) \over \kjx\abOjx + \kjz\abOjz + \kjz\abOjz},
+  \end{equation}
+\item Inserting $\tlp$ back into Eq.~(\ref{eq:10a}), Eq.~(\ref{eq:10b}) and Eq.~(\ref{eq:10c}) gives the point of intersection $\ilp$ between $\mathcal{L}_j$ and $\camplane$.
+\end{enumerate}
+@
+The last step is the computation of the $x_j$ and $y_j$ coordinates of the vector $\bi$ in $\camplane$:
+\begin{enumerate}
+\item the $x_j$ and $y_j$ coordinates of the laser location in the plane $\camplane$ are
+  \begin{eqnarray}
+    \label{eq:20}
+    x_j &=& \bi \cdot \mathbf{u}, \\
+    y_j &=& \bi \cdot \mathbf{v}.
+  \end{eqnarray}
+\end{enumerate}
 @
 \section{GMT M2}
 \label{sec:gmt-m2}

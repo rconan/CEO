@@ -21,7 +21,7 @@ tex: makefile $(texsrc)
 	for i in $(SOURCE_DIR); do (make -C $$i tex); done
 	for i in $(TUTORIAL); do (make -C TUTORIAL $$i.tex); done
 	rm -f doc/ceo.manual.main.tex
-	for i in $(SOURCE_DIR); do (echo -e "\input{ceo.manual.$$i}\n">>doc/ceo.manual.main.tex); done
+	for i in $(SOURCE_DIR); do (echo -e "\include{ceo.manual.$$i}\n">>doc/ceo.manual.main.tex); done
 	for i in $(SOURCE_DIR); do (echo -n "\chapter" >doc/ceo.manual.$$i.tex; echo -e "{$$i}\n\label{sec:$$i}\n\n\input{../$$i/$$i}">>doc/ceo.manual.$$i.tex); done
 
 
