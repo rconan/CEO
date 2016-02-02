@@ -227,6 +227,7 @@ cdef class GMT_M1:
         gmt_m1 *_c_gmt_m12
         public Coordinates v0_EDGE_SENSOR, v_EDGE_SENSOR, \
             dv0_EDGE_SENSOR, dv_EDGE_SENSOR
+        public Lateral_edge_sensors edge_sensors
     <<GMT M12 class properties>>    
 @
 <<gmtMirrors.pyx>>=
@@ -246,6 +247,7 @@ cdef class GMT_M1:
         self.v_EDGE_SENSOR.v   = self._c_gmt_m12.v_EDGE_SENSOR
         self.dv_EDGE_SENSOR   = Coordinates((24,3))
         self.dv_EDGE_SENSOR.v = self._c_gmt_m12.dv_EDGE_SENSOR
+        self.edge_sensors = Lateral_edge_sensors(self)
 
     <<GMT M12 methods>>
 
@@ -522,6 +524,48 @@ cdef class GMT_M2:
         self.motion_CS.euler_angles[:] = 0.0
         self.motion_CS.update()
 @
+\subsubsection{Lateral edge sensor}
+\label{sec:lateral-edge-sensor}
+
+\index{gmtMirrors!python!lateral\_edge\_sensors}
+<<gmtMirrors.pxd contents>>=
+    cdef cppclass lateral_edge_sensors:
+        vector *A
+        vector *B
+        vector *k_cam
+        vector *k_laser
+        rtd *x
+        rtd *y
+        void setup(gmt_m1 *)
+        void cleanup()
+        void data()
+@
+<<class definitions>>=
+cdef class Lateral_edge_sensors:
+    cdef:
+        lateral_edge_sensors *_c_lateral_edge_sensors
+        public Coordinates A, B, k_cam, k_laser
+@ 
+<<gmtMirrors.pyx>>=
+cdef class Lateral_edge_sensors:
+    def __cinit__(self,GMT_M1 mirror):
+        self._c_lateral_edge_sensors = new lateral_edge_sensors()
+        self._c_lateral_edge_sensors.setup(mirror._c_gmt_m12)
+        self.A = Coordinates((24,3))
+        self.A.v = self._c_lateral_edge_sensors.A
+        self.B = Coordinates((24,3))
+        self.B.v = self._c_lateral_edge_sensors.B
+        self.k_cam = Coordinates((24,3))
+        self.k_cam.v = self._c_lateral_edge_sensors.k_cam
+        self.k_laser = Coordinates((24,3))
+        self.k_laser.v = self._c_lateral_edge_sensors.k_laser
+
+    def __dealloc__(self):
+        self._c_lateral_edge_sensors.cleanup()
+
+    def data(self):
+        self._c_lateral_edge_sensors.data()
+@ 
 \section{GMT M1}
 \label{sec:gmt-m1}
 
@@ -1850,21 +1894,21 @@ The edge sensor measurements consist in the coordinates of the vector joining pa
 The edge sensors coordinates are stored in the [[d__v0_EDGE_SENSOR]] and  [[d__v0_EDGE_SENSOR]] arrays as shown in the diagram below.
 The vectors linking pairs of edge sensors are also drawn.
 
-% \begin{tikzpicture}[>=stealth',node distance=2cm,edge sensor block/.style={draw, anchor=base, minimum height=7mm,minimum width=2cm}]
-%   \node[edge sensor block] (l7k) {$l_{7,k}$};
-%   \node[edge sensor block, right of=l7k] (r7k) {$r_{7,k}$};
-%   \node[edge sensor block, right of=r7k] (lk4) {$l_{k,4}$};
-%   \node[edge sensor block, right of=lk4] (rk4) {$r_{k,4}$};
-%   \node[edge sensor block, right of=rk4] (lk3) {$l_{k,3}$};
-%   \node[edge sensor block, right of=lk3] (rk3) {$r_{k,3}$};
-%   \node[edge sensor block, right of=rk3] (lk5) {$l_{k,5}$};
-%   \node[edge sensor block, right of=lk5] (rk5) {$r_{k,5}$};
-%   \draw[->] (l7k.north) to [out=30,in=150] (rk4.north);
-%   \draw[->] (r7k.south) to [out=-90,in=-90] (lk4.south);
-%   \draw[->] (lk3.north) to [out=30,in=150] (rk5.north);
-%   \draw[->] (rk3.south) to [out=-90,in=-90] (lk5.south);
-%   \draw[blue!20] ($(l7k.south west)-(2mm,2mm)$) rectangle ($(rk5.north east)+(2mm,2mm)$);
-%  \end{tikzpicture}
+\begin{tikzpicture}[>=stealth',node distance=2cm,edge sensor block/.style={draw, anchor=base, minimum height=7mm,minimum width=2cm}]
+  \node[edge sensor block] (l7k) {$l_{7,k}$};
+  \node[edge sensor block, right of=l7k] (r7k) {$r_{7,k}$};
+  \node[edge sensor block, right of=r7k] (lk4) {$l_{k,4}$};
+  \node[edge sensor block, right of=lk4] (rk4) {$r_{k,4}$};
+  \node[edge sensor block, right of=rk4] (lk3) {$l_{k,3}$};
+  \node[edge sensor block, right of=lk3] (rk3) {$r_{k,3}$};
+  \node[edge sensor block, right of=rk3] (lk5) {$l_{k,5}$};
+  \node[edge sensor block, right of=lk5] (rk5) {$r_{k,5}$};
+  \draw[->] (l7k.north) to [out=30,in=150] (rk4.north);
+  \draw[->] (r7k.south) to [out=-90,in=-90] (lk4.south);
+  \draw[->] (lk3.north) to [out=30,in=150] (rk5.north);
+  \draw[->] (rk3.south) to [out=-90,in=-90] (lk5.south);
+  \draw[blue!20] ($(l7k.south west)-(2mm,2mm)$) rectangle ($(rk5.north east)+(2mm,2mm)$);
+ \end{tikzpicture}
 
 They measurements are computed with
 <<GMT M1 functions>>=
@@ -1919,8 +1963,10 @@ __global__ void edge_sensors_data_kernel(vector *d__dv_EDGE_SENSOR,
 \subsubsection{Lateral displacement model}
 \label{sec:later-displ-model}
 
+\index{gmtMirrors!gmt\_m1!lateral\_edge\_sensors}
+
 <<lateral edge sensors structure>>=
-struct lateral_edge_sensor {
+struct lateral_edge_sensors {
 <<lateral edge sensors parameters>>
 void setup(gmt_m1 *_mirror_);
 void cleanup(void);
@@ -1928,15 +1974,16 @@ void data(void);
 };
 @  with
 <<lateral edge sensors functions>>=
-void lateral_edge_sensor::setup(gmt_m1 *_mirror_) 
+void lateral_edge_sensors::setup(gmt_m1 *_mirror_) 
 {
   <<lateral edge sensors setup>>
 }
-void lateral_edge_sensor::cleanup(void) 
+void lateral_edge_sensors::cleanup(void) 
 {
+  fprintf(stdout,"@(CEO)>lateral_edge_sensors: freeing memory!\n");
   <<lateral edge sensors cleanup>>
 }
-void lateral_edge_sensor::data(void) 
+void lateral_edge_sensors::data(void) 
 {
   <<lateral edge sensors measurements>>
 }
@@ -2011,10 +2058,10 @@ uP  = (vector *)malloc(n_byte_DATA);
 vP  = (vector *)malloc(n_byte_DATA);
 HANDLE_ERROR( cudaMalloc((void**)&d__uP, n_byte_DATA ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__vP, n_byte_DATA ) );
-x  = (rtd*)malloc(n_byte_DATA);
-y  = (rtd*)malloc(n_byte_DATA);
-HANDLE_ERROR( cudaMalloc((void**)&d__x, n_byte_DATA ) );
-HANDLE_ERROR( cudaMalloc((void**)&d__y, n_byte_DATA ) );
+x  = (rtd*)malloc(sizeof(rtd)*N_DATA);
+y  = (rtd*)malloc(sizeof(rtd)*N_DATA);
+HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(rtd)*N_DATA ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__y, sizeof(rtd)*N_DATA ) );
 @
 <<lateral edge sensors cleanup>>=
 free( v0 );
@@ -2123,10 +2170,10 @@ The computation of the location of the laser on the camera requires to define bo
 <<lateral edge sensors parameters>>=
 vector *A, *B, *d__A, *d__B;
 <<lateral edge sensors setup>>=
-B = (vector *)malloc(n_byte);
-HANDLE_ERROR( cudaMalloc((void**)&d__B  n_byte ) );
-A = (vector *)malloc(n_byte);
-HANDLE_ERROR( cudaMalloc((void**)&d__A  n_byte ) );
+B = (vector *)malloc(n_byte_DATA);
+HANDLE_ERROR( cudaMalloc((void**)&d__B, n_byte_DATA ) );
+A = (vector *)malloc(n_byte_DATA);
+HANDLE_ERROR( cudaMalloc((void**)&d__A, n_byte_DATA ) );
 <<lateral edge sensors cleanup>>=
 free( A );
 free( B );
@@ -2146,18 +2193,15 @@ HANDLE_ERROR( cudaFree( d__B ) );
 fprintf(stdout,"@(CEO)>gmt_m1: Initializing edge sensors coordinates!\n");
 dim3 blockDim(6,1);
 dim3 gridDim(1,1);
-laser_coordinates LLL gridDim, blockDim RRR (d__v0, N-1, mirror->D_full, alpha,
+laser_coordinates LLL gridDim, blockDim RRR (d__A, mirror->N-1, mirror->D_full, alpha,
 					     mirror->rigid_body_CS.d__R,
                                              mirror->rigid_body_CS.d__origin,
                                              mirror->motion_CS.d__R,
                                              mirror->motion_CS.d__origin);
-HANDLE_ERROR( cudaMemcpy( v0, d__v0, 
-                          n_byte, cudaMemcpyDeviceToHost ) );
-HANDLE_ERROR( cudaMemcpy( d__v, d__v0, 
-                          n_byte, cudaMemcpyDeviceToDevice ) );
-HANDLE_ERROR( cudaMemcpy( v, d__v, 
-                          n_byte, cudaMemcpyDeviceToHost ) );
-@ with
+HANDLE_ERROR( cudaMemcpy( A, d__A, 
+                          n_byte_DATA, cudaMemcpyDeviceToHost ) );
+@ 
+ with
 <<lateral edge sensors: laser coordinates kernel>>=
 __global__ void laser_coordinates(vector *v, const int N_OUT_SEGMENT, 
 				   const rtd D, const rtd alpha,
@@ -2221,17 +2265,15 @@ forward_transform(v+k, v+k,
 		  d__motion_R+iCoordSys_cam*9,
                   d__motion_origin+iCoordSys_cam);
 @
-  \item Lets define the unit vector of the line of sight expressed in the rigid body CS of segment \# $j$ as:
-    \begin{equation}
-      \label{eq:13}
-      \kOj = { \abOj \over \left\| \abOj \right\| },
-    \end{equation}
+\item Lets compute the coordinates of $\bOj$ in the rigid body CS of segment \# j:
 <<lateral edge sensors setup>>=
-camera_coordinates LLL gridDim, blockDim RRR (d__v0, N-1, mirror->D_full, alpha,
+camera_coordinates LLL gridDim, blockDim RRR (d__B, mirror->N-1, mirror->D_full, alpha,
 					     mirror->rigid_body_CS.d__R,
                                              mirror->rigid_body_CS.d__origin,
                                              mirror->motion_CS.d__R,
                                              mirror->motion_CS.d__origin);
+HANDLE_ERROR( cudaMemcpy(B , d__B, 
+                          n_byte_DATA, cudaMemcpyDeviceToHost ) );
 @ with
 <<lateral edge sensors: camera coordinates kernel>>=
 __global__ void camera_coordinates(vector *v, const int N_OUT_SEGMENT, 
@@ -2251,23 +2293,28 @@ __global__ void camera_coordinates(vector *v, const int N_OUT_SEGMENT,
     <<outer segment camera edge sensors>>
   }
 }
-@ $l_{k,4}$ and $r_{k,4}$:
+@ $r_{k,4}$ and $l_{k,4}$:
 <<central segment camera edge sensors>>=
-k            = 4*N_OUT_SEGMENT + i;
-offset_angle = -0.5 + a;
-<<polar to cartesian>>
-k += 6;
+k = i;
 offset_angle = -0.5 - a;
 <<polar to cartesian>>
-@ $l_{k,5},$ and $r_{k,5}$:
-<<outer segment camera edge sensors>>=
-k            = 6*N_OUT_SEGMENT + i;
-offset_angle = -5.0/6.0 + a;
+k += N_OUT_SEGMENT;
+offset_angle = -0.5 + a;
 <<polar to cartesian>>
-k += 6;
+@ $r_{k,5},$ and $l_{k,5}$:
+<<outer segment camera edge sensors>>=
+k = 2*N_OUT_SEGMENT + i;
 offset_angle = -5.0/6.0 - a;
 <<polar to cartesian>>
+k += N_OUT_SEGMENT;
+offset_angle = -5.0/6.0 + a;
+<<polar to cartesian>>
 @
+  \item Lets define the unit vector of the line of sight expressed in the rigid body CS of segment \# $j$ as:
+    \begin{equation}
+      \label{eq:13}
+      \kOj = { \abOj \over \left\| \abOj \right\| },
+    \end{equation}
   \item Lets define the plane $\camplane$ perpendicular to the vector $\kOj$ and including the point $\bOj$ in the rigid body CS of segment $j$:
     \begin{equation}
       \label{eq:14}
@@ -2289,36 +2336,41 @@ offset_angle = -5.0/6.0 - a;
       \mathbf{v} = { \vbeta \over \left\| \vbeta \right\| },
     \end{equation}
 <<lateral edge sensors setup>>=
-edge_sensors_camera_vector_kernel LLL gridDim, blockDim RRR (d__k_cam, d__v0,
+edge_sensors_camera_vector_kernel LLL gridDim, blockDim RRR (d__k_cam, d__A, d__B,
                                                            d__uP, d__vP,
-                                                           N-1);
+                                                           mirror->N-1);
+HANDLE_ERROR( cudaMemcpy(k_cam , d__k_cam, 
+                          n_byte_DATA, cudaMemcpyDeviceToHost ) );
 @ with the kernel
 <<lateral edge sensor camera vector kernel>>=
 __global__ void edge_sensors_camera_vector_kernel(vector *d__k, 
-                                                vector *d__v,
+                                                vector *d__A, vector*d__B,
                                                 vector *d__uP, vector *d__vP,
                                                 const int N_OUT_SEGMENT)
 {
-  int k;
-  k = threadIdx.x;
+  int i, k;
+  i = threadIdx.x;
   vector n;
   n.x = n.y = 0.0;
   n.z = 1.0;
-  if (k<N_OUT_SEGMENT)
+  if (i<N_OUT_SEGMENT)
     {
-      d__k[k] = d__v[k+5*N_OUT_SEGMENT] - d__v[k];      
+      k = i;
+      d__k[k] = d__B[k] - d__A[k];      
       <<unitarize and derive u and v>>
 
       k += N_OUT_SEGMENT;
-      d__k[k] =	d__v[k+3*N_OUT_SEGMENT] - d__v[k];
+      d__k[k] =	d__B[k] - d__A[k];
+      <<unitarize and derive u and v>>
+
+      __syncthreads();
+
+      k = 2*N_OUT_SEGMENT + i;
+      d__k[k] =	d__B[k-i+(i+1)%6] - d__A[k];
       <<unitarize and derive u and v>>
 
       k += N_OUT_SEGMENT;
-      d__k[k] =	d__v[(k+1)%6+5*N_OUT_SEGMENT] - d__v[k];
-      <<unitarize and derive u and v>>
-
-      k += N_OUT_SEGMENT;
-      d__k[k] =	d__v[(k+1)%6+3*N_OUT_SEGMENT] - d__v[k];
+      d__k[k] =	d__B[k-i+(i+1)%6] - d__A[k];
       <<unitarize and derive u and v>>
     }
 }
@@ -2356,7 +2408,8 @@ The next step consists in deriving, for given displacements of segment \# $i$ an
 <<lateral edge sensors measurements>>=
 dim3 blockDim(6,1);
 dim3 gridDim(1,1);
-edge_sensors_laser_vector_kernel LLL gridDim, blockDim RRR (d__k_laser, d__k_cam, N-1,
+edge_sensors_laser_vector_kernel LLL gridDim, blockDim RRR (d__k_laser, d__k_cam, 
+                                                            mirror->N-1,
 							    mirror->rigid_body_CS.d__R,
 							    mirror->motion_CS.d__R);
 @ with the kernel
@@ -2413,11 +2466,15 @@ forward_transform_centered(d__k_laser+k, d__k_laser+k,
     \aj = \tocs{M}{j}{\tocs{R}{j}{\itocs{R}{i}{\itocs{M}{i}{\aOi}}}}
   \end{equation}
 <<lateral edge sensors measurements>>=
-laser_coordinates LLL gridDim, blockDim RRR (d__v, N-1, mirror->D_full, alpha,
+laser_coordinates LLL gridDim, blockDim RRR (d__A, mirror->N-1, mirror->D_full, alpha,
 					     mirror->rigid_body_CS.d__R,
                                              mirror->rigid_body_CS.d__origin,
                                              mirror->motion_CS.d__R,
                                              mirror->motion_CS.d__origin);
+int n_byte_DATA;
+n_byte_DATA = sizeof(vector)*N_DATA;
+HANDLE_ERROR( cudaMemcpy( A, d__A, 
+                          n_byte_DATA, cudaMemcpyDeviceToHost ) );
 @
 \item Lets define the line $\mathcal{L}_j$ with the equation: $\forall t \in [-\infty,+\infty]$,
   \begin{eqnarray}
@@ -2436,42 +2493,49 @@ laser_coordinates LLL gridDim, blockDim RRR (d__v, N-1, mirror->D_full, alpha,
 \item Inserting $\tlp$ back into Eq.~(\ref{eq:10a}), Eq.~(\ref{eq:10b}) and Eq.~(\ref{eq:10c}) gives the point of intersection $\ilp$ between $\mathcal{L}_j$ and $\camplane$.
 <<lateral edge sensors measurements>>=
 laser_camera_intersection LLL gridDim, blockDim RRR (d__x, d__y,
-						     d__v0, d__v,
+						     d__B, d__A,
 						     d__k_cam, d__k_laser,
 						     d__uP, d__vP,
 						     N-1);
+HANDLE_ERROR( cudaMemcpy( x, d__x, 
+                          sizeof(rtd)*N_DATA, cudaMemcpyDeviceToHost ) );
+HANDLE_ERROR( cudaMemcpy( y, d__y, 
+                          sizeof(rtd)*N_DATA, cudaMemcpyDeviceToHost ) );
 @
 with
 <<laser camera intersection kernel>>=
 __global__ void laser_camera_intersection(rtd *x, rtd *y,
-					  vector *v0, vector *v,
+					  vector *B, vector *A,
 					  vector *k_cam, vector *k_laser,
 					  vector *uP, vector *vP,
 					  const int N_OUT_SEGMENT)
 {
-  int k;
+  int i, k;
   rtd t;
   vector w, Ilp, *_v0_, *_v_;
-  k = threadIdx.x;
-  if (k<N_OUT_SEGMENT)
+  i = threadIdx.x;
+  if (i<N_OUT_SEGMENT)
     {
-      _v0_ = &v0[k+5*N_OUT_SEGMENT];
-      _v_  = &v[k];
+      k = i;
+      _v0_ = &B[k];
+      _v_  = &A[k];
       <<laser intersection coordinates>>
 
       k += N_OUT_SEGMENT;
-      _v0_ = &v0[k+3*N_OUT_SEGMENT];
-      _v_  = &v[k];
+      _v0_ = &B[k];
+      _v_  = &A[k];
+      <<laser intersection coordinates>>
+
+      __syncthreads();
+
+      k = 2*N_OUT_SEGMENT + i;
+      _v0_ = &B[k-i+(i+1)%6];
+      _v_  = &A[k];
       <<laser intersection coordinates>>
 
       k += N_OUT_SEGMENT;
-      _v0_ = &v0[(k+1)%6+5*N_OUT_SEGMENT];
-      _v_  = &v[k];
-      <<laser intersection coordinates>>
-
-      k += N_OUT_SEGMENT;
-      _v0_ = &v0[(k+1)%6+3*N_OUT_SEGMENT];
-      _v_  = &v[k];
+      _v0_ = &B[k-i+(i+1)%6];
+      _v_  = &A[k];
       <<laser intersection coordinates>>
 
     }  
