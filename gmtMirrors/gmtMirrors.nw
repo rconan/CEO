@@ -531,11 +531,12 @@ cdef class GMT_M2:
 <<gmtMirrors.pxd contents>>=
     cdef cppclass lateral_edge_sensors:
         vector *A
+        vector *B0
         vector *B
         vector *k_cam
         vector *k_laser
-        rtd *x
-        rtd *y
+        rtd *d__x
+        rtd *d__y
         void setup(gmt_m1 *)
         void cleanup()
         void data()
@@ -544,7 +545,8 @@ cdef class GMT_M2:
 cdef class Lateral_edge_sensors:
     cdef:
         lateral_edge_sensors *_c_lateral_edge_sensors
-        public Coordinates A, B, k_cam, k_laser
+        public Coordinates A, B, B0, k_cam, k_laser
+        public cuDoubleArray x, y
 @ 
 <<gmtMirrors.pyx>>=
 cdef class Lateral_edge_sensors:
@@ -553,12 +555,18 @@ cdef class Lateral_edge_sensors:
         self._c_lateral_edge_sensors.setup(mirror._c_gmt_m12)
         self.A = Coordinates((24,3))
         self.A.v = self._c_lateral_edge_sensors.A
+        self.B0 = Coordinates((24,3))
+        self.B0.v = self._c_lateral_edge_sensors.B0
         self.B = Coordinates((24,3))
         self.B.v = self._c_lateral_edge_sensors.B
         self.k_cam = Coordinates((24,3))
         self.k_cam.v = self._c_lateral_edge_sensors.k_cam
         self.k_laser = Coordinates((24,3))
         self.k_laser.v = self._c_lateral_edge_sensors.k_laser
+        self.x = cuDoubleArray(shape=(24,1),dev_malloc=False)
+        self.x._c_gpu.dev_data = self._c_lateral_edge_sensors.d__x
+        self.y = cuDoubleArray(shape=(24,1),dev_malloc=False)
+        self.y._c_gpu.dev_data = self._c_lateral_edge_sensors.d__y
 
     def __dealloc__(self):
         self._c_lateral_edge_sensors.cleanup()
@@ -780,8 +788,8 @@ void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
 }
 @  where
 <<GMT setup common>>=
-vector __v0 = {0.0,0.0,0.0},
-       __v = {D_full*0.5,0.0,0.0},
+vector __v0(0.0,0.0,0.0),
+       __v(D_full*0.5,0.0,0.0),
        origin[12],
        euler_angles[12];
 rtd D_c, o, zo;
@@ -2136,7 +2144,6 @@ They are stored in the arrays [[d__v0]] for a perfectly aligned telescope and in
     \node[edge sensor camera, label={[xshift=-4mm]above left:\scriptsize 1}, right of=rk4] (lk4) {$l_{k,4}$};
     \node[edge sensor camera, label={[xshift=-4mm]above left:\scriptsize 2}, right of=lk4] (rk5) {$r_{k,5}$};
     \node[edge sensor camera, label={[xshift=-4mm]above left:\scriptsize 3}, right of=rk5] (lk5) {$l_{k,5}$};
-    \draw[blue!20] ($(B.south west)-(2mm,4mm)$) rectangle ($(lk5.north east)+(4mm,4mm)$);    
   \end{scope}
   \begin{scope}[yshift=-1cm]
     \node (A) {[[A]]};
@@ -2148,14 +2155,19 @@ They are stored in the arrays [[d__v0]] for a perfectly aligned telescope and in
     % \draw[->] (r7k.south) to [out=-30,in=-150] (lk4.south);
     % \draw[->] (lk3.north) to [out=30,in=150] (rk5.north);
     % \draw[->] (rk3.south) to [out=-30,in=-150] (lk5.south);
-    \draw[red!20] ($(A.south west)-(2mm,4mm)$) rectangle ($(rk3.north east)+(4mm,4mm)$);    
   \end{scope}
   \draw[->] (l7k.north) to (rk4.south);
   \draw[->] (r7k.north) to (lk4.south);
   \draw[->] (lk3.north) to (rk5.south);
   \draw[->] (rk3.north) to (lk5.south);
- \end{tikzpicture}  
-  \caption{[[A]] and [[B]] vector arrays.}
+  \begin{scope}[on background layer]
+    \fill[black!10] ($(B.south west)-(2mm,4mm)$) rectangle ($(lk5.north east)+(4mm,4mm)$);    
+    \fill[black!10] ($(A.south west)-(2mm,4mm)$) rectangle ($(rk3.north east)+(4mm,4mm)$);    
+  \end{scope}
+  \node[right of=lk5] {Cameras};
+  \node[right of=rk3] {Lasers};
+\end{tikzpicture}  
+  \caption{[[A]] and [[B]] vector arrays with $k=\left[1,\dots,6\right]$.}
   \label{fig:lateral-edge-sensors-1}
 \end{figure}
 
@@ -2168,17 +2180,21 @@ The computation of the location of the laser on the camera requires to define bo
   \item Lets call $\aOj$, the coordinates of the laser location at segment \# $i$ in the rigid body CS of segment \# $j$;
     the coordinates are saved in the vector array [[A]] as show in Fig.~\ref{fig:lateral-edge-sensors-1}
 <<lateral edge sensors parameters>>=
-vector *A, *B, *d__A, *d__B;
+vector *A, *B, *B0, *d__A, *d__B, *d__B0;
 <<lateral edge sensors setup>>=
 B = (vector *)malloc(n_byte_DATA);
 HANDLE_ERROR( cudaMalloc((void**)&d__B, n_byte_DATA ) );
+B0 = (vector *)malloc(n_byte_DATA);
+HANDLE_ERROR( cudaMalloc((void**)&d__B0, n_byte_DATA ) );
 A = (vector *)malloc(n_byte_DATA);
 HANDLE_ERROR( cudaMalloc((void**)&d__A, n_byte_DATA ) );
 <<lateral edge sensors cleanup>>=
 free( A );
 free( B );
+free( B0 );
 HANDLE_ERROR( cudaFree( d__A ) );
 HANDLE_ERROR( cudaFree( d__B ) );
+HANDLE_ERROR( cudaFree( d__B0 ) );
 @
   \item Lets call $\aOi$ and $\bOj$, the coordinates of the laser location at segment \# $i$ and of the camera location at segment \# $j$, respectively, for that configuration.
     Both $\aOi$ and $\bOj$ are given in their respective rigid body CS.
@@ -2267,19 +2283,21 @@ forward_transform(v+k, v+k,
 @
 \item Lets compute the coordinates of $\bOj$ in the rigid body CS of segment \# j:
 <<lateral edge sensors setup>>=
-camera_coordinates LLL gridDim, blockDim RRR (d__B, mirror->N-1, mirror->D_full, alpha,
-					     mirror->rigid_body_CS.d__R,
-                                             mirror->rigid_body_CS.d__origin,
-                                             mirror->motion_CS.d__R,
-                                             mirror->motion_CS.d__origin);
+camera_coordinates LLL gridDim, blockDim RRR (d__B, d__B0, mirror->N-1, 
+                                              mirror->D_full, alpha,
+					      mirror->rigid_body_CS.d__R,
+					      mirror->rigid_body_CS.d__origin);
 HANDLE_ERROR( cudaMemcpy(B , d__B, 
+                          n_byte_DATA, cudaMemcpyDeviceToHost ) );
+HANDLE_ERROR( cudaMemcpy(B0 , d__B0, 
                           n_byte_DATA, cudaMemcpyDeviceToHost ) );
 @ with
 <<lateral edge sensors: camera coordinates kernel>>=
-__global__ void camera_coordinates(vector *v, const int N_OUT_SEGMENT, 
+__global__ void camera_coordinates(vector *v, vector *v0,
+                                   const int N_OUT_SEGMENT, 
 				   const rtd D, const rtd alpha,
-				   rtd *d__rigid_body_R, vector *d__rigid_body_origin,
-				   rtd *d__motion_R, vector *d__motion_origin)
+				   rtd *d__rigid_body_R,
+                                   vector *d__rigid_body_origin)
 {
   int i, k;
   rtd R, a, offset_angle;
@@ -2298,17 +2316,27 @@ __global__ void camera_coordinates(vector *v, const int N_OUT_SEGMENT,
 k = i;
 offset_angle = -0.5 - a;
 <<polar to cartesian>>
+<<from rigid body CS to GCS>>
 k += N_OUT_SEGMENT;
 offset_angle = -0.5 + a;
 <<polar to cartesian>>
+<<from rigid body CS to GCS>>
 @ $r_{k,5},$ and $l_{k,5}$:
 <<outer segment camera edge sensors>>=
 k = 2*N_OUT_SEGMENT + i;
 offset_angle = -5.0/6.0 - a;
 <<polar to cartesian>>
+<<from rigid body CS to GCS>>
 k += N_OUT_SEGMENT;
 offset_angle = -5.0/6.0 + a;
 <<polar to cartesian>>
+<<from rigid body CS to GCS>>
+@ 
+<<from rigid body CS to GCS>>=
+// RIGID_BODY <<<
+backward_transform(v0+k, v+k,
+		   d__rigid_body_R+i*9,
+		   d__rigid_body_origin+i);
 @
   \item Lets define the unit vector of the line of sight expressed in the rigid body CS of segment \# $j$ as:
     \begin{equation}
@@ -2376,7 +2404,7 @@ __global__ void edge_sensors_camera_vector_kernel(vector *d__k,
 }
 @ where
 <<unitarize and derive u and v>>=
-d__k[k].unit();
+//d__k[k].unit();
 d__k[k].left_cross(&d__uP[k],&n);
 d__uP[k].unit();
 d__uP[k].left_cross(&d__vP[k], &d__k[k]);
@@ -2412,6 +2440,8 @@ edge_sensors_laser_vector_kernel LLL gridDim, blockDim RRR (d__k_laser, d__k_cam
                                                             mirror->N-1,
 							    mirror->rigid_body_CS.d__R,
 							    mirror->motion_CS.d__R);
+HANDLE_ERROR( cudaMemcpy(k_laser , d__k_laser, 
+                          N_DATA*sizeof(vector), cudaMemcpyDeviceToHost ) );
 @ with the kernel
 <<lateral edge sensor laser vector kernel>>=
 __global__ void edge_sensors_laser_vector_kernel(vector *d__k_laser, 
@@ -2475,6 +2505,8 @@ int n_byte_DATA;
 n_byte_DATA = sizeof(vector)*N_DATA;
 HANDLE_ERROR( cudaMemcpy( A, d__A, 
                           n_byte_DATA, cudaMemcpyDeviceToHost ) );
+HANDLE_ERROR( cudaMemcpy( B, d__B, 
+                          n_byte_DATA, cudaMemcpyDeviceToHost ) );
 @
 \item Lets define the line $\mathcal{L}_j$ with the equation: $\forall t \in [-\infty,+\infty]$,
   \begin{eqnarray}
@@ -2496,7 +2528,7 @@ laser_camera_intersection LLL gridDim, blockDim RRR (d__x, d__y,
 						     d__B, d__A,
 						     d__k_cam, d__k_laser,
 						     d__uP, d__vP,
-						     N-1);
+						     mirror->N-1);
 HANDLE_ERROR( cudaMemcpy( x, d__x, 
                           sizeof(rtd)*N_DATA, cudaMemcpyDeviceToHost ) );
 HANDLE_ERROR( cudaMemcpy( y, d__y, 
@@ -2510,32 +2542,35 @@ __global__ void laser_camera_intersection(rtd *x, rtd *y,
 					  vector *uP, vector *vP,
 					  const int N_OUT_SEGMENT)
 {
-  int i, k;
+  int i, i_cam, i_laser;
   rtd t;
   vector w, Ilp, *_v0_, *_v_;
   i = threadIdx.x;
   if (i<N_OUT_SEGMENT)
     {
-      k = i;
-      _v0_ = &B[k];
-      _v_  = &A[k];
+      i_cam = i_laser = i;
+      _v0_ = &B[i_cam];
+      _v_  = &A[i_laser];
       <<laser intersection coordinates>>
 
-      k += N_OUT_SEGMENT;
-      _v0_ = &B[k];
-      _v_  = &A[k];
+      i_cam   += N_OUT_SEGMENT;
+      i_laser += N_OUT_SEGMENT;
+      _v0_ = &B[i_cam];
+      _v_  = &A[i_laser];
       <<laser intersection coordinates>>
 
       __syncthreads();
 
-      k = 2*N_OUT_SEGMENT + i;
-      _v0_ = &B[k-i+(i+1)%6];
-      _v_  = &A[k];
+      i_cam   = 2*N_OUT_SEGMENT + (i+1)%6; 
+      i_laser = 2*N_OUT_SEGMENT + i;
+      _v0_ = &B[i_cam];
+      _v_  = &A[i_laser];
       <<laser intersection coordinates>>
 
-      k += N_OUT_SEGMENT;
-      _v0_ = &B[k-i+(i+1)%6];
-      _v_  = &A[k];
+      i_cam   += N_OUT_SEGMENT;
+      i_laser += N_OUT_SEGMENT;
+      _v0_ = &B[i_cam];
+      _v_  = &A[i_laser];
       <<laser intersection coordinates>>
 
     }  
@@ -2545,15 +2580,15 @@ __global__ void laser_camera_intersection(rtd *x, rtd *y,
 w.x = _v0_->x - _v_->x;
 w.y = _v0_->y - _v_->y;
 w.z = _v0_->z - _v_->z;
-t = k_cam[k].dot( &w )/k_cam[k].dot( k_laser+k );
-Ilp.x =  k_laser[k].x*t + _v_->x;
-Ilp.y =  k_laser[k].y*t + _v_->y;
-Ilp.z =  k_laser[k].z*t + _v_->z;
+t = k_cam[i_cam].dot( &w )/k_cam[i_cam].dot( k_laser+i_laser );
+Ilp.x =  k_laser[i_laser].x*t + _v_->x;
+Ilp.y =  k_laser[i_laser].y*t + _v_->y;
+Ilp.z =  k_laser[i_laser].z*t + _v_->z;
 w.x = Ilp.x - _v0_->x;
 w.y = Ilp.y - _v0_->y;
 w.z = Ilp.z - _v0_->z;
-x[k] = w.dot( uP );
-y[k] = w.dot( vP );
+x[i_cam] = w.dot( uP );
+y[i_cam] = w.dot( vP );
 @
 \end{enumerate}
 @

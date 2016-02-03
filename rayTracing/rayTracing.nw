@@ -531,10 +531,10 @@ cdef class Coordinates:
     def __str__(self):
 	max_abs_data = np.max(np.abs(self[:]))
         if  max_abs_data!=0:
-            exp = -np.floor(np.log10(max_abs_data))
+            exp = np.floor(np.log10(max_abs_data))
         else:
             exp = 0
-        s = np.array_str(np.asarray(self.data)*(10**exp),precision=2,suppress_small=True)
+        s = np.array_str(np.asarray(self.data)*(10**-exp),precision=2,suppress_small=True)
         return "@(CEO)>Coordinates:\nX,Y,Z coordinates in meter: 10^%dX\n"%exp + s
 
     property shape:
@@ -980,6 +980,10 @@ struct vector{
   rtd x;
   rtd y;
   rtd z;
+  __host__ __device__ vector(rtd x=0.0, rtd y=0.0, rtd z=0.0)
+    : x(x), y(y), z(z)
+  {
+  }
   __host__ __device__ rtd rho2(void);
   __host__ __device__ rtd rho2_shift(rtd x0, rtd y0);
   __host__ __device__ rtd mag(void);
@@ -990,12 +994,22 @@ struct vector{
   __host__ __device__ void unit(void);
   __host__ __device__ void left_cross(vector *w, vector *u);
   __host__ __device__ void right_cross(vector *w, vector *u);
-  __host__ __device__ vector& operator-(const vector& rhs){
+  __host__ __device__ vector& operator=(const vector& v){
+     x = v.x;
+     y = v.y;
+     z = v.z;
+     return *this;
+   }
+  __host__ __device__ vector& operator-=(const vector& rhs){
      x -= rhs.x;
      y -= rhs.y;
      z -= rhs.z;
      return *this;
    }
+  __host__ __device__ vector operator-(const vector& rhs) const
+  {
+    return vector(x-rhs.x,y-rhs.y,z-rhs.z);
+  }
 };
 @ that represents the 3 coordinates in space of the tip of vector.
 The square of the magnitude of a vector projected in the x,y--plane i.e. $[[x]]^2+[[y]]^2$ is computed with 
