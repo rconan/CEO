@@ -2007,7 +2007,7 @@ The total number of unique edge sensors coordinates in the rigid body CS is 18 w
 <<lateral edge sensors parameters>>=
 int N, N_DATA;
 <<lateral edge sensors setup>>=
-N = 48;
+//N = 48;
 N_DATA = 24;
 @ The $\alpha$ angle is set to 19.5degree
 <<lateral edge sensors parameters>>=
@@ -2023,41 +2023,18 @@ mirror = _mirror_;
 The edge sensors have two components: a laser on one segment edge and a camera on another segment edge.
 The location of the lasers are given by the vectors $l_{7,k}$, $r_{7,k}$, $l_{k,3}$ and $r_{k,3}$.
 The location of the cameras are given by the vectors $l_{k,4}$, $r_{k,4}$, $l_{k,5}$ and $r_{k,5}$.
-
-% \begin{tikzpicture}[>=stealth',node distance=2cm,edge sensor block/.style={draw, anchor=base, minimum height=7mm,minimum width=2cm}]
-%   \node[edge sensor block, fill=red!20, label={[xshift=-4mm]above left:\small 0}] (l7k) {$l_{7,k}$};
-%   \node[edge sensor block, fill=red!20, label={[xshift=-4mm]above left:\small 1}, right of=l7k] (r7k) {$r_{7,k}$};
-%   \node[edge sensor block, fill=red!20, label={[xshift=-4mm]above left:\small 2}, right of=r7k] (lk3) {$l_{k,3}$};
-%   \node[edge sensor block, fill=red!20, label={[xshift=-4mm]above left:\small 3}, right of=lk3] (rk3) {$r_{k,3}$};
-%   \node[edge sensor block, fill=blue!20, label={[xshift=-4mm]above left:\small 4}, right of=rk3] (lk4) {$l_{k,4}$};
-%   \node[edge sensor block, fill=blue!20, label={[xshift=-4mm]above left:\small 5}, right of=lk4] (rk4) {$r_{k,4}$};
-%   \node[edge sensor block, fill=blue!20, label={[xshift=-4mm]above left:\small 6}, right of=rk4] (lk5) {$l_{k,5}$};
-%   \node[edge sensor block, fill=blue!20, label={[xshift=-4mm]above left:\small 7}, right of=lk5] (rk5) {$r_{k,5}$};
-%   \draw[->] (l7k.north) to [out=30,in=150] (rk4.north);
-%   \draw[->] (r7k.south) to [out=-30,in=-150] (lk4.south);
-%   \draw[->] (lk3.north) to [out=30,in=150] (rk5.north);
-%   \draw[->] (rk3.south) to [out=-30,in=-150] (lk5.south);
-%   \draw[blue!20] ($(l7k.south west)-(4mm,4mm)$) rectangle ($(rk5.north east)+(4mm,4mm)$);
-%  \end{tikzpicture}
  
-The coordinates of the vectors joining pairs of edge sensors are saved in the vector [[d__k0_cam]] and [[d__k0_laser]] for a perfectly aligned in the rigid body CS of their segments.
+The coordinates of the vectors joining pairs of edge sensors are saved in the vector [[d__k0_cam]] and [[d__k0_laser]] for a perfectly aligned telescope in the rigid body CS of their segments.
 <<lateral edge sensors parameters>>=
+int n_byte_DATA;
 rtd *x, *y, *d__x, *d__y;
-vector *v0, *d__v0;
-vector *v, *d__v;
 vector *k_cam, *d__k_cam;
 vector *k_laser, *d__k_laser;
 vector *uP, *d__uP;
 vector *vP, *d__vP;
 @
 <<lateral edge sensors setup>>=
-int n_byte, n_byte_DATA;
-n_byte      = sizeof(vector)*N;
 n_byte_DATA = sizeof(vector)*N_DATA;
-v0 = (vector *)malloc(n_byte);
-v  = (vector *)malloc(n_byte);
-HANDLE_ERROR( cudaMalloc((void**)&d__v0, n_byte ) );
-HANDLE_ERROR( cudaMalloc((void**)&d__v,  n_byte ) );
 k_cam  = (vector *)malloc(n_byte_DATA);
 k_laser  = (vector *)malloc(n_byte_DATA);
 HANDLE_ERROR( cudaMalloc((void**)&d__k_cam, n_byte_DATA ) );
@@ -2072,10 +2049,6 @@ HANDLE_ERROR( cudaMalloc((void**)&d__x, sizeof(rtd)*N_DATA ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__y, sizeof(rtd)*N_DATA ) );
 @
 <<lateral edge sensors cleanup>>=
-free( v0 );
-free( v );
-HANDLE_ERROR( cudaFree( d__v0 ) );
-HANDLE_ERROR( cudaFree( d__v ) );
 free( k_cam );
 free( k_laser );
 HANDLE_ERROR( cudaFree( d__k_cam ) );
@@ -2132,7 +2105,6 @@ HANDLE_ERROR( cudaFree( d__y ) );
 The coordinates transformation from one CS to another CS is noted $R_X$ where $X$ denote the final CS,
 $X\equiv R$ for the rigid body CS [[rigid_body_CS]] and $X\equiv M$ for the motion CS [[motion_CS]].
 
-They are stored in the arrays [[d__v0]] for a perfectly aligned telescope and in the vectors [[d__v]] for a perturbed telescope.
 \begin{figure}
   \centering
 \begin{tikzpicture}[>=stealth',node distance=2cm,
@@ -2196,9 +2168,6 @@ HANDLE_ERROR( cudaFree( d__A ) );
 HANDLE_ERROR( cudaFree( d__B ) );
 HANDLE_ERROR( cudaFree( d__B0 ) );
 @
-  \item Lets call $\aOi$ and $\bOj$, the coordinates of the laser location at segment \# $i$ and of the camera location at segment \# $j$, respectively, for that configuration.
-    Both $\aOi$ and $\bOj$ are given in their respective rigid body CS.
-    %$\abO$ is the vector joining the 2 points.
   \item Lets transform $\aOi$ into the rigid body CS of segment \# $j$:
     \begin{equation}
       \label{eq:12}
@@ -2242,27 +2211,27 @@ iCoordSys_laser = 6;
 iCoordSys_cam   = i;
 k = i;
 offset_angle = (3.0-2.0*i)/6.0 + a;
-<<lateral edge sensor coordinates>>
+<<from motion CS to motion CS>>
 k             += N_OUT_SEGMENT;
 offset_angle = (3.0-2.0*i)/6.0 - a;
-<<lateral edge sensor coordinates>>
+<<from motion CS to motion CS>>
 @ $l_{k,3}$ and $r_{k,3}$:
 <<outer segment lateral edge sensors>>=
 iCoordSys_laser = i;
 iCoordSys_cam   = (i+1)%N_OUT_SEGMENT;
 k = 2*N_OUT_SEGMENT + i;
 offset_angle = -1.0/6.0 + a;
-<<lateral edge sensor coordinates>>
+<<from motion CS to motion CS>>
 k += 6;
 offset_angle = -1.0/6.0 - a;
-<<lateral edge sensor coordinates>>
+<<from motion CS to motion CS>>
 @ 
 <<polar to cartesian>>=
 sincospi( offset_angle, &(v[k].y), &(v[k].x) );
 v[k].x       *= R;
 v[k].y       *= R;
 v[k].z       = 0.0;
-<<lateral edge sensor coordinates>>=
+<<from motion CS to motion CS>>=
 <<polar to cartesian>>
 // MOTION <<<
 backward_transform(v+k, v+k,
@@ -2281,7 +2250,7 @@ forward_transform(v+k, v+k,
 		  d__motion_R+iCoordSys_cam*9,
                   d__motion_origin+iCoordSys_cam);
 @
-\item Lets compute the coordinates of $\bOj$ in the rigid body CS of segment \# j:
+\item Lets compute the coordinates of $\bOj$ ([[B]]) in the rigid body CS of segment \# j and the coordinates of $\bO$ ([[B0]]) in the GCS:
 <<lateral edge sensors setup>>=
 camera_coordinates LLL gridDim, blockDim RRR (d__B, d__B0, mirror->N-1, 
                                               mirror->D_full, alpha,
@@ -2338,10 +2307,10 @@ backward_transform(v0+k, v+k,
 		   d__rigid_body_R+i*9,
 		   d__rigid_body_origin+i);
 @
-  \item Lets define the unit vector of the line of sight expressed in the rigid body CS of segment \# $j$ as:
+  \item Lets define the vector of the line of sight expressed in the rigid body CS of segment \# $j$ as:
     \begin{equation}
       \label{eq:13}
-      \kOj = { \abOj \over \left\| \abOj \right\| },
+      \kOj = \abOj,
     \end{equation}
   \item Lets define the plane $\camplane$ perpendicular to the vector $\kOj$ and including the point $\bOj$ in the rigid body CS of segment $j$:
     \begin{equation}
@@ -2385,25 +2354,25 @@ __global__ void edge_sensors_camera_vector_kernel(vector *d__k,
     {
       k = i;
       d__k[k] = d__B[k] - d__A[k];      
-      <<unitarize and derive u and v>>
+      <<u and v derivation>>
 
       k += N_OUT_SEGMENT;
       d__k[k] =	d__B[k] - d__A[k];
-      <<unitarize and derive u and v>>
+      <<u and v derivation>>
 
       __syncthreads();
 
       k = 2*N_OUT_SEGMENT + i;
       d__k[k] =	d__B[k-i+(i+1)%6] - d__A[k];
-      <<unitarize and derive u and v>>
+      <<u and v derivation>>
 
       k += N_OUT_SEGMENT;
       d__k[k] =	d__B[k-i+(i+1)%6] - d__A[k];
-      <<unitarize and derive u and v>>
+      <<u and v derivation>>
     }
 }
 @ where
-<<unitarize and derive u and v>>=
+<<u and v derivation>>=
 //d__k[k].unit();
 d__k[k].left_cross(&d__uP[k],&n);
 d__uP[k].unit();
@@ -2411,27 +2380,14 @@ d__uP[k].left_cross(&d__vP[k], &d__k[k]);
 d__vP[k].unit();
 @ 
   \end{enumerate}
-\item Lets define the line of sight in segment \# i:
-  \begin{enumerate}
-  \item Lets transform $\bOj$ into the rigid body CS of segment \# $i$:
-    \begin{equation}
-      \label{eq:17}
-      \bOi = \tocs{R}{i}{\itocs{R}{j}{\bOj}},
-    \end{equation}
-  \item Lets define the unit vector of the line of sight expressed in the rigid body CS of segment \# $i$ as:
-    \begin{equation}
-      \label{eq:18}
-      \kOi = { \abOi \over \left\| \abOi \right\| },
-    \end{equation}
-  \end{enumerate}
 \end{enumerate}
 
-The next step consists in deriving, for given displacements of segment \# $i$ and \# $j$, the intersection of the vector $\kOi$ with the plane $\camplane$:
+The next step consists in deriving, for given displacements of segment \# $i$ and \# $j$, the intersection of the vector $\kOj$ with the plane $\camplane$:
 \begin{enumerate}
-\item Lets transform $\kOi$ into the motion CS of segment \# j
+\item Lets transform $\kOj$ into the motion CS of segment \# $i$ and back to the motion CS of segment \# $j$:
   \begin{equation}
     \label{eq:50}
-    \kj = \tocs{M}{j}{\tocs{R}{j}{\itocs{R}{i}{\itocs{M}{i}{\kOi}}}}.
+    \kj = \tocs{M}{j}{\tocs{R}{j}{\itocs{R}{i}{\itocs{M}{i}{\tocs{R}{i}{\itocs{R}{j}{\kOj}}}}}}.
   \end{equation}
 <<lateral edge sensors measurements>>=
 dim3 blockDim(6,1);
@@ -2457,20 +2413,20 @@ __global__ void edge_sensors_laser_vector_kernel(vector *d__k_laser,
     iCoordSys_laser = 6;
     iCoordSys_cam   = i;
     k = i;
-    <<from camera rigid body CS to laser rigid body CS>>
+    <<from camera rigid body CS to camera motion CS through laser motion CS>>
     k             += N_OUT_SEGMENT;
-    <<from camera rigid body CS to laser rigid body CS>>
+    <<from camera rigid body CS to camera motion CS through laser motion CS>>
     __syncthreads();
     iCoordSys_laser = i;
     iCoordSys_cam   = (i+1)%N_OUT_SEGMENT;
     k = 2*N_OUT_SEGMENT + i;
-    <<from camera rigid body CS to laser rigid body CS>>
+    <<from camera rigid body CS to camera motion CS through laser motion CS>>
     k             += N_OUT_SEGMENT;
-    <<from camera rigid body CS to laser rigid body CS>>
+    <<from camera rigid body CS to camera motion CS through laser motion CS>>
   }
 }
 @ where
-<<from camera rigid body CS to laser rigid body CS>>=
+<<from camera rigid body CS to camera motion CS through laser motion CS>>=
 // RIGID_BODY <<<
 backward_transform_centered(d__k_laser+k, d__k_cam+k,
 			    d__rigid_body_R+iCoordSys_cam*9);
@@ -2505,8 +2461,6 @@ int n_byte_DATA;
 n_byte_DATA = sizeof(vector)*N_DATA;
 HANDLE_ERROR( cudaMemcpy( A, d__A, 
                           n_byte_DATA, cudaMemcpyDeviceToHost ) );
-HANDLE_ERROR( cudaMemcpy( B, d__B, 
-                          n_byte_DATA, cudaMemcpyDeviceToHost ) );
 @
 \item Lets define the line $\mathcal{L}_j$ with the equation: $\forall t \in [-\infty,+\infty]$,
   \begin{eqnarray}
@@ -2523,6 +2477,12 @@ HANDLE_ERROR( cudaMemcpy( B, d__B,
     \tlp = {\abOjx ( \bOjx - \ajx ) + \abOjy ( \bOjy - \ajy ) + \abOjz ( \bOjz - \ajz ) \over \kjx\abOjx + \kjz\abOjz + \kjz\abOjz},
   \end{equation}
 \item Inserting $\tlp$ back into Eq.~(\ref{eq:10a}), Eq.~(\ref{eq:10b}) and Eq.~(\ref{eq:10c}) gives the point of intersection $\ilp$ between $\mathcal{L}_j$ and $\camplane$.
+\item the $x_j$ and $y_j$ coordinates of the laser location in the plane $\camplane$ are
+  \begin{eqnarray}
+    \label{eq:20}
+    x_j &=& \bi \cdot \mathbf{u}, \\
+    y_j &=& \bi \cdot \mathbf{v}.
+  \end{eqnarray}
 <<lateral edge sensors measurements>>=
 laser_camera_intersection LLL gridDim, blockDim RRR (d__x, d__y,
 						     d__B, d__A,
@@ -2549,57 +2509,42 @@ __global__ void laser_camera_intersection(rtd *x, rtd *y,
   if (i<N_OUT_SEGMENT)
     {
       i_cam = i_laser = i;
-      _v0_ = &B[i_cam];
-      _v_  = &A[i_laser];
       <<laser intersection coordinates>>
 
       i_cam   += N_OUT_SEGMENT;
       i_laser += N_OUT_SEGMENT;
-      _v0_ = &B[i_cam];
-      _v_  = &A[i_laser];
       <<laser intersection coordinates>>
 
       __syncthreads();
 
       i_cam   = 2*N_OUT_SEGMENT + (i+1)%6; 
       i_laser = 2*N_OUT_SEGMENT + i;
-      _v0_ = &B[i_cam];
-      _v_  = &A[i_laser];
       <<laser intersection coordinates>>
 
       i_cam   += N_OUT_SEGMENT;
       i_laser += N_OUT_SEGMENT;
-      _v0_ = &B[i_cam];
-      _v_  = &A[i_laser];
       <<laser intersection coordinates>>
-
     }  
 }
 @ where
 <<laser intersection coordinates>>=
-w.x = _v0_->x - _v_->x;
-w.y = _v0_->y - _v_->y;
-w.z = _v0_->z - _v_->z;
+_v0_ = &B[i_cam];
+_v_  = &A[i_laser];
+/* w.x = _v0_->x - _v_->x; */
+/* w.y = _v0_->y - _v_->y; */
+/* w.z = _v0_->z - _v_->z; */
+w = B[i_cam] - A[i_laser];
 t = k_cam[i_cam].dot( &w )/k_cam[i_cam].dot( k_laser+i_laser );
 Ilp.x =  k_laser[i_laser].x*t + _v_->x;
 Ilp.y =  k_laser[i_laser].y*t + _v_->y;
 Ilp.z =  k_laser[i_laser].z*t + _v_->z;
-w.x = Ilp.x - _v0_->x;
-w.y = Ilp.y - _v0_->y;
-w.z = Ilp.z - _v0_->z;
+/* w.x = Ilp.x - _v0_->x; */
+/* w.y = Ilp.y - _v0_->y; */
+/* w.z = Ilp.z - _v0_->z; */
+w = Ilp - B[i_cam];
 x[i_cam] = w.dot( uP );
 y[i_cam] = w.dot( vP );
 @
-\end{enumerate}
-@
-The last step is the computation of the $x_j$ and $y_j$ coordinates of the vector $\bi$ in $\camplane$:
-\begin{enumerate}
-\item the $x_j$ and $y_j$ coordinates of the laser location in the plane $\camplane$ are
-  \begin{eqnarray}
-    \label{eq:20}
-    x_j &=& \bi \cdot \mathbf{u}, \\
-    y_j &=& \bi \cdot \mathbf{v}.
-  \end{eqnarray}
 \end{enumerate}
 @
 \section{GMT M2}
