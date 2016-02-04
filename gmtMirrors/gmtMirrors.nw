@@ -1754,7 +1754,7 @@ for (k=0;k<N;k++)
   }
 @ 
 @
-\subsection{Edge sensors}
+\section{Edge sensors}
 \label{sec:edge-sensors}
 
 \index{gmtMirrors!gmt\_m1!edge\_sensors}
@@ -1812,10 +1812,10 @@ The heights of the edge sensors are $z=0$ in the rigid body CS of the segment th
   \label{fig:edge_sensor}
 \end{figure}
 
-\subsubsection{Stereoscopic model}
+\subsection{Stereoscopic model}
 \label{sec:stereoscopic-model}
 
-\index{gmtMirrors!gmt\_m1!stereoscopic\_edge\_sensors}
+\index{gmtMirrors!stereoscopic\_edge\_sensors}
 
 <<stereoscopic edge sensors structure>>=
 struct stereoscopic_edge_sensors {
@@ -1825,9 +1825,9 @@ void cleanup(void);
 void data(void);
 };
 @  with
-\index{gmtMirrors!gmt\_m1!stereoscopic\_edge\_sensors!setup}
-\index{gmtMirrors!gmt\_m1!stereoscopic\_edge\_sensors!cleanup}
-\index{gmtMirrors!gmt\_m1!stereoscopic\_edge\_sensors!data}
+\index{gmtMirrors!stereoscopic\_edge\_sensors!setup}
+\index{gmtMirrors!stereoscopic\_edge\_sensors!cleanup}
+\index{gmtMirrors!stereoscopic\_edge\_sensors!data}
 <<stereoscopic edge sensors functions>>=
 void stereoscopic_edge_sensors::setup(gmt_m1 *_mirror_) 
 {
@@ -2072,10 +2072,10 @@ __global__ void edge_sensors_data_kernel(vector *d__dv,
 }
 @ 
 
-\subsubsection{Lateral displacement model}
+\subsection{Lateral displacement model}
 \label{sec:later-displ-model}
 
-\index{gmtMirrors!gmt\_m1!lateral\_edge\_sensors}
+\index{gmtMirrors!lateral\_edge\_sensors}
 
 <<lateral edge sensors structure>>=
 struct lateral_edge_sensors {
@@ -2085,9 +2085,9 @@ void cleanup(void);
 void data(void);
 };
 @  with
-\index{gmtMirrors!gmt\_m1!lateral\_edge\_sensors!setup}
-\index{gmtMirrors!gmt\_m1!lateral\_edge\_sensors!cleanup}
-\index{gmtMirrors!gmt\_m1!lateral\_edge\_sensors!data}
+\index{gmtMirrors!lateral\_edge\_sensors!setup}
+\index{gmtMirrors!lateral\_edge\_sensors!cleanup}
+\index{gmtMirrors!lateral\_edge\_sensors!data}
 <<lateral edge sensors functions>>=
 void lateral_edge_sensors::setup(gmt_m1 *_mirror_) 
 {
@@ -2611,7 +2611,7 @@ __global__ void laser_camera_intersection(rtd *x, rtd *y,
 {
   int i, i_cam, i_laser;
   rtd t;
-  vector w, Ilp, *_v0_, *_v_;
+  vector w, Ilp;
   i = threadIdx.x;
   if (i<N_OUT_SEGMENT)
     {
@@ -2635,22 +2635,12 @@ __global__ void laser_camera_intersection(rtd *x, rtd *y,
 }
 @ where
 <<laser intersection coordinates>>=
-_v0_ = &B[i_cam];
-_v_  = &A[i_laser];
-/* w.x = _v0_->x - _v_->x; */
-/* w.y = _v0_->y - _v_->y; */
-/* w.z = _v0_->z - _v_->z; */
 w = B[i_cam] - A[i_laser];
-t = k_cam[i_cam].dot( &w )/k_cam[i_cam].dot( k_laser+i_laser );
-Ilp.x =  k_laser[i_laser].x*t + _v_->x;
-Ilp.y =  k_laser[i_laser].y*t + _v_->y;
-Ilp.z =  k_laser[i_laser].z*t + _v_->z;
-/* w.x = Ilp.x - _v0_->x; */
-/* w.y = Ilp.y - _v0_->y; */
-/* w.z = Ilp.z - _v0_->z; */
+t = (k_cam[i_cam]*w)/(k_cam[i_cam]*k_laser[i_laser]);
+Ilp = k_laser[i_laser]*t + A[i_laser];
 w = Ilp - B[i_cam];
-x[i_cam] = w.dot( uP );
-y[i_cam] = w.dot( vP );
+x[i_cam] = w*uP[i_cam];
+y[i_cam] = w*vP[i_cam];
 @
 \end{enumerate}
 @
