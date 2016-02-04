@@ -99,6 +99,14 @@ ZernikeS
 .. autoclass:: ZernikeS
     :members:
 
+gmtMirrors
+----------
+
+GmtMirrors
+~~~~~~~~~~
+.. autoclass:: GmtMirrors 
+    :members:
+
 GMT M1
 ~~~~~~
 .. autoclass:: GMT_M1
@@ -109,8 +117,17 @@ GMT M2
 .. autoclass:: GMT_M2
     :members:
 
+StereoscopicEdgeSensors
+~~~~~~~~~~~~~~~~~~~~~~~
+.. autoclass:: StereoscopicEdgeSensors
+    :members:
 
-SegmentPistonSensor
+LateralEdgeSensors
+~~~~~~~~~~~~~~~~~~
+.. autoclass:: LateralEdgeSensors
+    :members:
+
+segmentPistonSensor
 -------------------
 .. autoclass:: SegmentPistonSensor
     :members:
