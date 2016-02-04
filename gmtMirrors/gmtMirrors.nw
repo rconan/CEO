@@ -22,6 +22,7 @@
 
 <<GMT M1 structure>>
 <<GMT M2 structure>>
+<<stereoscopic edge sensors structure>>
 <<lateral edge sensors structure>>
 
 #endif // __GMTMIRRORS_H_
@@ -36,8 +37,8 @@
 <<GMT ray tracing kernel>>
 <<GMT blocking kernel>>
 <<GMT track kernel>>
-<<M1 edge sensors initialization kernel>>
-<<M1 edge sensor data kernel>>
+<<stereoscopic edge sensors initialization kernel>>
+<<stereoscopic edge sensors data kernel>>
 <<lateral edge sensors: laser coordinates kernel>>
 <<lateral edge sensors: camera coordinates kernel>>
 <<lateral edge sensor camera vector kernel>>
@@ -47,6 +48,7 @@
 <<GMT M1 functions>>
 <<GMT M2 functions>>
 
+<<stereoscopic edge sensors functions>>
 <<lateral edge sensors functions>>
 @ 
 
@@ -72,14 +74,9 @@ cdef extern from "gmtMirrors.h":
 
 <<gmtMirrors.pxd contents>>=
     cdef cppclass gmt_m1:
-        vector *v0_EDGE_SENSOR
-        vector *dv0_EDGE_SENSOR
-        vector *v_EDGE_SENSOR
-        vector *dv_EDGE_SENSOR
         void test_ray_tracing()
         <<python GMT M12 functions>>
         void track(float *, float *, int, int)
-        void edge_sensors_data()
 @  where
 <<python GMT M12 functions>>=
 int M_ID
@@ -225,9 +222,6 @@ u
 cdef class GMT_M1:
     cdef:
         gmt_m1 *_c_gmt_m12
-        public Coordinates v0_EDGE_SENSOR, v_EDGE_SENSOR, \
-            dv0_EDGE_SENSOR, dv_EDGE_SENSOR
-        public Lateral_edge_sensors edge_sensors
     <<GMT M12 class properties>>    
 @
 <<gmtMirrors.pyx>>=
@@ -238,16 +232,6 @@ cdef class GMT_M1:
     def __cinit__(self, float D, int D_px, int radial_order=0, int N_SRC=1):
         self._c_gmt_m12 = new gmt_m1()
         <<GMT M12 constructor>>
-
-        self.v0_EDGE_SENSOR    = Coordinates((48,3))
-        self.v0_EDGE_SENSOR.v  = self._c_gmt_m12.v0_EDGE_SENSOR
-        self.dv0_EDGE_SENSOR   = Coordinates((24,3))
-        self.dv0_EDGE_SENSOR.v = self._c_gmt_m12.dv0_EDGE_SENSOR
-        self.v_EDGE_SENSOR     = Coordinates((48,3))
-        self.v_EDGE_SENSOR.v   = self._c_gmt_m12.v_EDGE_SENSOR
-        self.dv_EDGE_SENSOR   = Coordinates((24,3))
-        self.dv_EDGE_SENSOR.v = self._c_gmt_m12.dv_EDGE_SENSOR
-        self.edge_sensors = Lateral_edge_sensors(self)
 
     <<GMT M12 methods>>
 
@@ -263,18 +247,6 @@ cdef class GMT_M1:
                               gy._c_gpu.dev_data,
                               x.size, segId)
         return gx.host(), gy.host()
-
-    def edge_sensors_data(self):
-        self._c_gmt_m12.edge_sensors_data()
-
-    def reset(self):
-        """
-        Reset the segments to their original prescription
-        """
-        self.motion_CS.origin[:] = 0.0
-        self.motion_CS.euler_angles[:] = 0.0
-        self.motion_CS.update()
-        self.edge_sensors_data()
 @
 <<GMT M12 constructor>>=
 self.zernike = ZernikeS(radial_order,N_SURF=7)
@@ -358,6 +330,14 @@ def global_tiptilt(self, float tip, float tilt):
     """
     self._c_gmt_m12.global_tiptilt(tip, tilt);
 
+def reset(self):
+    """
+    Reset the segments to their original prescription
+    """
+    self.motion_CS.origin[:] = 0.0
+    self.motion_CS.euler_angles[:] = 0.0
+    self.motion_CS.update()
+        
 property D_assembly:
     def __get__(self):
         return self._c_gmt_m12.D_assembly
@@ -515,21 +495,55 @@ cdef class GMT_M2:
             The y axis angle
         """
         self._c_gmt_m12.coma_neutral(tip, tilt);
-
-    def reset(self):
-        """
-        Reset the segments to their original prescription
-        """
-        self.motion_CS.origin[:] = 0.0
-        self.motion_CS.euler_angles[:] = 0.0
-        self.motion_CS.update()
 @
-\subsubsection{Lateral edge sensor}
+\subsubsection{Stereoscopic edge sensors}
+\label{sec:ster-edge-sens}
+
+\index{gmtMirrors!python!stereoscopic\_edge\_sensors}
+<<gmtMirrors.pxd contents>>=
+    cdef cppclass stereoscopic_edge_sensors:
+        int N, N_DATA
+        vector *v0
+        vector *dv0
+        vector *v
+        vector *dv
+        void setup(gmt_m1 *)
+        void cleanup()
+        void data()
+@
+<<class definitions>>=
+cdef class StereoscopicEdgeSensors:
+    cdef:
+        stereoscopic_edge_sensors *_c_stereoscopic_edge_sensors
+        public Coordinates v0, v, dv0, dv
+@ 
+<<gmtMirrors.pyx>>=
+cdef class StereoscopicEdgeSensors:
+    def __cinit__(self,GMT_M1 mirror):
+        self._c_stereoscopic_edge_sensors = new stereoscopic_edge_sensors()
+        self._c_stereoscopic_edge_sensors.setup(mirror._c_gmt_m12)
+        self.v0    = Coordinates((self._c_stereoscopic_edge_sensors.N,3))
+        self.v0.v  = self._c_stereoscopic_edge_sensors.v0
+        self.dv0   = Coordinates((self._c_stereoscopic_edge_sensors.N_DATA,3))
+        self.dv0.v = self._c_stereoscopic_edge_sensors.dv0
+        self.v     = Coordinates((self._c_stereoscopic_edge_sensors.N,3))
+        self.v.v   = self._c_stereoscopic_edge_sensors.v
+        self.dv   = Coordinates((self._c_stereoscopic_edge_sensors.N_DATA,3))
+        self.dv.v = self._c_stereoscopic_edge_sensors.dv
+
+    def __dealloc__(self):
+        self._c_stereoscopic_edge_sensors.cleanup()
+
+    def data(self):
+        self._c_stereoscopic_edge_sensors.data()
+@
+\subsubsection{Lateral edge sensors}
 \label{sec:lateral-edge-sensor}
 
 \index{gmtMirrors!python!lateral\_edge\_sensors}
 <<gmtMirrors.pxd contents>>=
     cdef cppclass lateral_edge_sensors:
+        int N_DATA
         vector *A
         vector *B0
         vector *B
@@ -542,30 +556,30 @@ cdef class GMT_M2:
         void data()
 @
 <<class definitions>>=
-cdef class Lateral_edge_sensors:
+cdef class LateralEdgeSensors:
     cdef:
         lateral_edge_sensors *_c_lateral_edge_sensors
         public Coordinates A, B, B0, k_cam, k_laser
         public cuDoubleArray x, y
 @ 
 <<gmtMirrors.pyx>>=
-cdef class Lateral_edge_sensors:
+cdef class LateralEdgeSensors:
     def __cinit__(self,GMT_M1 mirror):
         self._c_lateral_edge_sensors = new lateral_edge_sensors()
         self._c_lateral_edge_sensors.setup(mirror._c_gmt_m12)
-        self.A = Coordinates((24,3))
+        self.A = Coordinates((self._c_lateral_edge_sensors.N_DATA,3))
         self.A.v = self._c_lateral_edge_sensors.A
-        self.B0 = Coordinates((24,3))
+        self.B0 = Coordinates((self._c_lateral_edge_sensors.N_DATA,3))
         self.B0.v = self._c_lateral_edge_sensors.B0
-        self.B = Coordinates((24,3))
+        self.B = Coordinates((self._c_lateral_edge_sensors.N_DATA,3))
         self.B.v = self._c_lateral_edge_sensors.B
-        self.k_cam = Coordinates((24,3))
+        self.k_cam = Coordinates((self._c_lateral_edge_sensors.N_DATA,3))
         self.k_cam.v = self._c_lateral_edge_sensors.k_cam
-        self.k_laser = Coordinates((24,3))
+        self.k_laser = Coordinates((self._c_lateral_edge_sensors.N_DATA,3))
         self.k_laser.v = self._c_lateral_edge_sensors.k_laser
-        self.x = cuDoubleArray(shape=(24,1),dev_malloc=False)
+        self.x = cuDoubleArray(shape=(self._c_lateral_edge_sensors.N_DATA,1),dev_malloc=False)
         self.x._c_gpu.dev_data = self._c_lateral_edge_sensors.d__x
-        self.y = cuDoubleArray(shape=(24,1),dev_malloc=False)
+        self.y = cuDoubleArray(shape=(self._c_lateral_edge_sensors.N_DATA,1),dev_malloc=False)
         self.y._c_gpu.dev_data = self._c_lateral_edge_sensors.d__y
 
     def __dealloc__(self):
@@ -734,7 +748,6 @@ void gmt_m1::setup(float _D_, int _D_px_)
   ZS = NULL;
   <<M1 parameters>>
   <<GMT setup common>>
-  <<M1 edge sensors>>
 }
 @ or
 \index{gmtMirrors!gmt\_m1!setup}
@@ -744,7 +757,6 @@ void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_)
   ZS = _ZS_;
   <<M1 parameters>>
   <<GMT setup common>>
-  <<M1 edge sensors>>
 }
 @ where
 <<M1 parameters>>=
@@ -774,7 +786,6 @@ void gmt_m1::setup(float _D_, int _D_px_, int N_SRC)
   ZS = NULL;
   <<M1 parameters>>
   <<GMT setup common>>
-  <<M1 edge sensors>>
 }
 @ or
 \index{gmtMirrors!gmt\_m1!setup}
@@ -784,7 +795,6 @@ void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
   ZS = _ZS_;
   <<M1 parameters>>
   <<GMT setup common>>
-  <<M1 edge sensors>>
 }
 @  where
 <<GMT setup common>>=
@@ -958,7 +968,6 @@ void gmt_m1::cleanup(void)
 {
   fprintf(stdout,"@(CEO)>gmt_m1: freeing memory!\n");
   <<GMT cleanup common>>
-  <<GMT M1 cleanup common>>
 }
 @ with
 <<GMT cleanup common>>=
@@ -1741,83 +1750,119 @@ The heights of the edge sensors are $z=0$ in the rigid body CS of the segment th
   \label{fig:edge_sensor}
 \end{figure}
 
+\subsubsection{Stereoscopic model}
+\label{sec:stereoscopic-model}
+
+\index{gmtMirrors!gmt\_m1!stereoscopic\_edge\_sensors}
+
+<<stereoscopic edge sensors structure>>=
+struct stereoscopic_edge_sensors {
+<<stereoscopic edge sensors parameters>>
+void setup(gmt_m1 *_mirror_);
+void cleanup(void);
+void data(void);
+};
+@  with
+\index{gmtMirrors!gmt\_m1!stereoscopic\_edge\_sensors!setup}
+\index{gmtMirrors!gmt\_m1!stereoscopic\_edge\_sensors!cleanup}
+\index{gmtMirrors!gmt\_m1!stereoscopic\_edge\_sensors!data}
+<<stereoscopic edge sensors functions>>=
+void stereoscopic_edge_sensors::setup(gmt_m1 *_mirror_) 
+{
+  <<stereoscopic edge sensors setup>>
+}
+void stereoscopic_edge_sensors::cleanup(void) 
+{
+  fprintf(stdout,"@(CEO)>stereoscopic_edge_sensors: freeing memory!\n");
+  <<stereoscopic edge sensors cleanup>>
+}
+void stereoscopic_edge_sensors::data(void) 
+{
+  <<stereoscopic edge sensors measurements>>
+}
+@ 
 The total number of unique edge sensors coordinates in the rigid body CS is 18 whose 12 are on the central segment and 6 on the peripheral segments leading to a total of 48 edge sensors coordinates in the GCS and 24 edge sensor mesurements.
-<<GMT M1 parameters>>=
-int N_EDGE_SENSOR, N_EDGE_SENSOR_DATA;
-<<M1 edge sensors>>=
-N_EDGE_SENSOR = 48;
-N_EDGE_SENSOR_DATA = 24;
-@ The $\alpha$ angle is set to 19.5degree
-<<GMT M1 parameters>>=
-rtd alpha;
-<<M1 edge sensors>>=
-alpha = 19.5;
-@
-The coordinates of the edge sensors in the GCS are saved in the vectors [[d__v0_EDGE_SENSOR]] for a perfectly aligned telescope and in the vectors [[d__v_EDGE_SENSOR]] for a perturbed telescope.
-<<GMT M1 parameters>>=
-vector *v0_EDGE_SENSOR, *v_EDGE_SENSOR, *d__v0_EDGE_SENSOR, *d__v_EDGE_SENSOR;
-<<M1 edge sensors>>=
+<<stereoscopic edge sensors parameters>>=
+int N, N_DATA;
 int n_byte, n_byte_DATA;
-n_byte      = sizeof(vector)*N_EDGE_SENSOR;
-n_byte_DATA = sizeof(vector)*N_EDGE_SENSOR_DATA;
-v0_EDGE_SENSOR = (vector *)malloc(n_byte);
-v_EDGE_SENSOR  = (vector *)malloc(n_byte);
-HANDLE_ERROR( cudaMalloc((void**)&d__v0_EDGE_SENSOR, n_byte ) );
-HANDLE_ERROR( cudaMalloc((void**)&d__v_EDGE_SENSOR,  n_byte ) );
-<<GMT M1 cleanup common>>=
-free( v0_EDGE_SENSOR );
-free( v_EDGE_SENSOR );
-HANDLE_ERROR( cudaFree( d__v0_EDGE_SENSOR ) );
-HANDLE_ERROR( cudaFree( d__v_EDGE_SENSOR ) );
+<<stereoscopic edge sensors setup>>=
+N = 48;
+N_DATA = 24;
+n_byte      = sizeof(vector)*N;
+n_byte_DATA = sizeof(vector)*N_DATA;
+@ The $\alpha$ angle is set to 19.5degree
+<<stereoscopic edge sensors parameters>>=
+rtd alpha;
+<<stereoscopic edge sensors setup>>=
+alpha = 19.5;
+@ The mirror the edge sensors are affected to is
+<<stereoscopic edge sensors parameters>>=
+gmt_m1 *mirror;
+<<stereoscopic edge sensors setup>>=
+mirror = _mirror_;
 @
-The edge sensor 24 measurements are saved in the vector [[d__dv0_EDGE_SENSOR]] and [[d__dv_EDGE_SENSOR]] for a perfectly aligned and perturbed telescope, respectively.
-<<GMT M1 parameters>>=
-vector *dv0_EDGE_SENSOR, *d__dv0_EDGE_SENSOR;
-vector *dv_EDGE_SENSOR, *d__dv_EDGE_SENSOR;
-<<M1 edge sensors>>=
-dv0_EDGE_SENSOR  = (vector *)malloc(n_byte_DATA);
-HANDLE_ERROR( cudaMalloc((void**)&d__dv0_EDGE_SENSOR, n_byte_DATA ) );
-dv_EDGE_SENSOR  = (vector *)malloc(n_byte_DATA);
-HANDLE_ERROR( cudaMalloc((void**)&d__dv_EDGE_SENSOR, n_byte_DATA ) );
-<<GMT M1 cleanup common>>=
-free( dv0_EDGE_SENSOR );
-HANDLE_ERROR( cudaFree( d__dv0_EDGE_SENSOR ) );
-free( dv_EDGE_SENSOR );
-HANDLE_ERROR( cudaFree( d__dv_EDGE_SENSOR ) );
+The coordinates of the edge sensors in the GCS are saved in the vectors [[d__v0]] for a perfectly aligned telescope and in the vectors [[d__v]] for a perturbed telescope.
+<<stereoscopic edge sensors parameters>>=
+vector *v0, *v, *d__v0, *d__v;
+<<stereoscopic edge sensors setup>>=
+v0 = (vector *)malloc(n_byte);
+v  = (vector *)malloc(n_byte);
+HANDLE_ERROR( cudaMalloc((void**)&d__v0, n_byte ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__v,  n_byte ) );
+<<stereoscopic edge sensors cleanup>>=
+free( v0 );
+free( v );
+HANDLE_ERROR( cudaFree( d__v0 ) );
+HANDLE_ERROR( cudaFree( d__v ) );
+@
+The edge sensor 24 measurements are saved in the vector [[d__dv0]] and [[d__dv]] for a perfectly aligned and perturbed telescope, respectively.
+<<stereoscopic edge sensors parameters>>=
+vector *dv0, *d__dv0;
+vector *dv, *d__dv;
+<<stereoscopic edge sensors setup>>=
+dv0  = (vector *)malloc(n_byte_DATA);
+HANDLE_ERROR( cudaMalloc((void**)&d__dv0, n_byte_DATA ) );
+dv  = (vector *)malloc(n_byte_DATA);
+HANDLE_ERROR( cudaMalloc((void**)&d__dv, n_byte_DATA ) );
+<<stereoscopic edge sensors cleanup>>=
+free( dv0 );
+HANDLE_ERROR( cudaFree( d__dv0 ) );
+free( dv );
+HANDLE_ERROR( cudaFree( d__dv ) );
 @
 The edge sensor coordinates in the GCS are computed with:
-<<M1 edge sensors>>=
+<<stereoscopic edge sensors setup>>=
 fprintf(stdout,"@(CEO)>gmt_m1: Initializing edge sensors coordinates!\n");
 dim3 blockDim(6,1);
 dim3 gridDim(1,1);
-edge_sensors_read LLL gridDim, blockDim RRR (d__v0_EDGE_SENSOR, N-1, D_full, alpha,
-					     rigid_body_CS.d__R,
-                                             rigid_body_CS.d__origin,
-                                             motion_CS.d__R,
-                                             motion_CS.d__origin);
-HANDLE_ERROR( cudaMemcpy( v0_EDGE_SENSOR, d__v0_EDGE_SENSOR, 
+edge_sensors_read LLL gridDim, blockDim RRR (d__v0, mirror->N-1, mirror->D_full, alpha,
+					     mirror->rigid_body_CS.d__R,
+                                             mirror->rigid_body_CS.d__origin,
+                                             mirror->motion_CS.d__R,
+                                             mirror->motion_CS.d__origin);
+HANDLE_ERROR( cudaMemcpy( v0, d__v0,
                           n_byte, cudaMemcpyDeviceToHost ) );
-HANDLE_ERROR( cudaMemcpy( d__v_EDGE_SENSOR, d__v0_EDGE_SENSOR, 
+HANDLE_ERROR( cudaMemcpy( d__v, d__v0,
                           n_byte, cudaMemcpyDeviceToDevice ) );
-HANDLE_ERROR( cudaMemcpy( v_EDGE_SENSOR, d__v_EDGE_SENSOR, 
+HANDLE_ERROR( cudaMemcpy( v, d__v,
                           n_byte, cudaMemcpyDeviceToHost ) );
 @  and the reference measurements with:
-<<M1 edge sensors>>=
-HANDLE_ERROR( cudaMemset(d__dv0_EDGE_SENSOR, 0, n_byte_DATA ) );
-edge_sensors_data_kernel LLL gridDim, blockDim RRR (d__dv_EDGE_SENSOR,
-                                                   d__v_EDGE_SENSOR,
-                                                   d__dv0_EDGE_SENSOR,
-                                                   N-1);
-HANDLE_ERROR( cudaMemcpy( d__dv0_EDGE_SENSOR, d__dv_EDGE_SENSOR, 
+<<stereoscopic edge sensors setup>>=
+HANDLE_ERROR( cudaMemset(d__dv0, 0, n_byte_DATA ) );
+edge_sensors_data_kernel LLL gridDim, blockDim RRR (d__dv,
+                                                   d__v,
+                                                   d__dv0,
+                                                   mirror->N-1);
+HANDLE_ERROR( cudaMemcpy( d__dv0, d__dv, 
                           n_byte_DATA, cudaMemcpyDeviceToDevice ) );
-HANDLE_ERROR( cudaMemcpy( dv0_EDGE_SENSOR, d__dv0_EDGE_SENSOR, 
+HANDLE_ERROR( cudaMemcpy( dv0, d__dv0, 
                           n_byte_DATA, cudaMemcpyDeviceToHost ) );
-HANDLE_ERROR( cudaMemset(d__dv_EDGE_SENSOR, 0, n_byte_DATA ) );
-HANDLE_ERROR( cudaMemcpy( dv_EDGE_SENSOR, d__dv_EDGE_SENSOR, 
+HANDLE_ERROR( cudaMemset(d__dv, 0, n_byte_DATA ) );
+HANDLE_ERROR( cudaMemcpy( dv, d__dv, 
                           n_byte_DATA, cudaMemcpyDeviceToHost ) );
 @ with
-<<M1 edge sensors initialization kernel>>=
- __global__ void edge_sensors_read(vector *v, const int N_OUT_SEGMENT, 
+<<stereoscopic edge sensors initialization kernel>>=
+__global__ void edge_sensors_read(vector *v, const int N_OUT_SEGMENT, 
 				   const rtd D, const rtd alpha,
 				   rtd *d__rigid_body_R, vector *d__rigid_body_origin,
 				   rtd *d__motion_R, vector *d__motion_origin)
@@ -1899,7 +1944,7 @@ backward_transform(v+k, v+k,
 		   d__rigid_body_origin+iCoordSys);
 @ 
 The edge sensor measurements consist in the coordinates of the vector joining pair of edge sensors.
-The edge sensors coordinates are stored in the [[d__v0_EDGE_SENSOR]] and  [[d__v0_EDGE_SENSOR]] arrays as shown in the diagram below.
+The edge sensors coordinates are stored in the [[d__v0]] and  [[d__v0]] arrays as shown in the diagram below.
 The vectors linking pairs of edge sensors are also drawn.
 
 \begin{tikzpicture}[>=stealth',node distance=2cm,edge sensor block/.style={draw, anchor=base, minimum height=7mm,minimum width=2cm}]
@@ -1919,51 +1964,48 @@ The vectors linking pairs of edge sensors are also drawn.
  \end{tikzpicture}
 
 They measurements are computed with
-<<GMT M1 functions>>=
-void gmt_m1::edge_sensors_data(void)
-{
-  dim3 blockDim(6,1);
-  dim3 gridDim(1,1);
-  edge_sensors_read LLL gridDim, blockDim RRR (d__v_EDGE_SENSOR, N-1, D_full, alpha,
-       					     rigid_body_CS.d__R,
-                                             rigid_body_CS.d__origin,
-                                             motion_CS.d__R,
-                                             motion_CS.d__origin);
-  edge_sensors_data_kernel LLL gridDim, blockDim RRR (d__dv_EDGE_SENSOR,
-						     d__v_EDGE_SENSOR,
-						     d__dv0_EDGE_SENSOR,
-						     N-1);
-  HANDLE_ERROR( cudaMemcpy( dv_EDGE_SENSOR, d__dv_EDGE_SENSOR,
-			    sizeof(vector)*N_EDGE_SENSOR_DATA, cudaMemcpyDeviceToHost ) );
-}
+<<stereoscopic edge sensors measurements>>=
+dim3 blockDim(6,1);
+dim3 gridDim(1,1);
+edge_sensors_read LLL gridDim, blockDim RRR (d__v, mirror->N-1, mirror->D_full, alpha,
+       					     mirror->rigid_body_CS.d__R,
+                                             mirror->rigid_body_CS.d__origin,
+                                             mirror->motion_CS.d__R,
+                                             mirror->motion_CS.d__origin);
+edge_sensors_data_kernel LLL gridDim, blockDim RRR (d__dv,
+						     d__v,
+						     d__dv0,
+						     mirror->N-1);
+HANDLE_ERROR( cudaMemcpy( dv, d__dv,
+			    sizeof(vector)*N_DATA, cudaMemcpyDeviceToHost ) );
 @  
 with the kernel
-<<M1 edge sensor data kernel>>=
-__global__ void edge_sensors_data_kernel(vector *d__dv_EDGE_SENSOR, 
-					vector *d__v_EDGE_SENSOR, 
-					vector *d__dv0_EDGE_SENSOR, 
+<<stereoscopic edge sensors data kernel>>=
+__global__ void edge_sensors_data_kernel(vector *d__dv, 
+					vector *d__v, 
+					vector *d__dv0, 
 					const int N_OUT_SEGMENT)
 {
   int k;
   k = threadIdx.x;
   if (k<N_OUT_SEGMENT)
     {
-      d__dv_EDGE_SENSOR[k]                 =
-      	d__v_EDGE_SENSOR[k+3*N_OUT_SEGMENT] - 
-        d__v_EDGE_SENSOR[k] - 
-        d__dv0_EDGE_SENSOR[k];
-      d__dv_EDGE_SENSOR[k+  N_OUT_SEGMENT] =
-      	d__v_EDGE_SENSOR[k+2*N_OUT_SEGMENT] - 
-        d__v_EDGE_SENSOR[k+  N_OUT_SEGMENT] - 
-        d__dv0_EDGE_SENSOR[k+N_OUT_SEGMENT];
-      d__dv_EDGE_SENSOR[k+2*N_OUT_SEGMENT] =
-      	d__v_EDGE_SENSOR[(k+1)%6+7*N_OUT_SEGMENT] - 
-        d__v_EDGE_SENSOR[k+4*N_OUT_SEGMENT] - 
-        d__dv0_EDGE_SENSOR[k+2*N_OUT_SEGMENT];
-      d__dv_EDGE_SENSOR[k+3*N_OUT_SEGMENT] =
-      	d__v_EDGE_SENSOR[(k+1)%6+6*N_OUT_SEGMENT] - 
-        d__v_EDGE_SENSOR[k+5*N_OUT_SEGMENT] - 
-        d__dv0_EDGE_SENSOR[k+3*N_OUT_SEGMENT];
+      d__dv[k]                 =
+      	d__v[k+3*N_OUT_SEGMENT] - 
+        d__v[k] - 
+        d__dv0[k];
+      d__dv[k+  N_OUT_SEGMENT] =
+      	d__v[k+2*N_OUT_SEGMENT] - 
+        d__v[k+  N_OUT_SEGMENT] - 
+        d__dv0[k+N_OUT_SEGMENT];
+      d__dv[k+2*N_OUT_SEGMENT] =
+      	d__v[(k+1)%6+7*N_OUT_SEGMENT] - 
+        d__v[k+4*N_OUT_SEGMENT] - 
+        d__dv0[k+2*N_OUT_SEGMENT];
+      d__dv[k+3*N_OUT_SEGMENT] =
+      	d__v[(k+1)%6+6*N_OUT_SEGMENT] - 
+        d__v[k+5*N_OUT_SEGMENT] - 
+        d__dv0[k+3*N_OUT_SEGMENT];
     }
 }
 @ 
@@ -1981,6 +2023,9 @@ void cleanup(void);
 void data(void);
 };
 @  with
+\index{gmtMirrors!gmt\_m1!lateral\_edge\_sensors!setup}
+\index{gmtMirrors!gmt\_m1!lateral\_edge\_sensors!cleanup}
+\index{gmtMirrors!gmt\_m1!lateral\_edge\_sensors!data}
 <<lateral edge sensors functions>>=
 void lateral_edge_sensors::setup(gmt_m1 *_mirror_) 
 {
