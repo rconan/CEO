@@ -14,7 +14,7 @@ optics_throughtput = 0.25
 
 # GMT
 entrance_pupil_size_meter = N_LENSLET*lenslet_pitch_meter
-M1_zernike_radial_order = 7
+M1_zernike_radial_order = 6
 M1_init = {"global tip-tilt [arcsec]": 0.0014*DEG2ARCSEC,
     "Tx [micron]": 20, 
     "Ty [micron]": 20,
@@ -31,7 +31,7 @@ M2_init = {"Tx [micron]": 400,
 
 # Science imager
 S_photometric_band = "R"
-detector_resolution = 81
+detector_resolution = 801
 nyquist_oversampling_factor = 2
 
 closed_loop = True

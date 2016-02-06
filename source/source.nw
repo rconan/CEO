@@ -256,9 +256,9 @@ cdef class Complex_amplitude:
         float
             the wavefront phase rms
         """
-        cdef np.ndarray[float,ndim=1] rms = np.zeros(self._c_complex_amplitude.N, dtype=np.single)
-        self._c_complex_amplitude.rms(<float *>rms.data)
-        return rms*10**-units_exponent
+        cdef float[::1] rms = np.zeros(self._c_complex_amplitude.N, dtype=np.single)
+        self._c_complex_amplitude.rms(&rms[0])
+        return np.array(rms)*10**-units_exponent
 
     def reset(self, cuFloatArray phase = None):
         """
@@ -482,14 +482,16 @@ cdef class Source:
         self._c_source.wavefront.reset()
         self._c_source.reset_rays()
         
-    def piston(self, where='pupil'):
+    def piston(self, where='pupil',int units_exponent=0):
         """
         Get the piston corresponding to either the pupil or the segments
 
         Parameters
         ----------
         where : string, optional
-            Either "pupil" for a piston on the full pupil or "segments" for pistons of each segment
+            Either "pupil" for a piston on the full pupil or "segments" for pistons of each segment; default: pupil
+        units_exponent : int, optional
+            Multiply the piston values by 10^-units_exponent; default: 0
 
         Returns
         -------
@@ -516,19 +518,57 @@ cdef class Source:
         GMT_MX : a class embedding GMT M1 and M2 classes 
         GMT_M1 : a class for GMT M1 model
         """
-        assert where=="pupil" or where=="segments", "where parameter is either ""pupil"" or ""segments"""        
-        amplitude = self.wavefront.amplitude.host()
+        assert where=="pupil" or where=="segments", "where parameter is either ""pupil"" or ""segments"""     
+        cdef:
+            int k
+            tuple shape
+            float[:,::1] amplitude, phase
+        shape = (self.size,self.n*self.m)
+        amplitude = self.wavefront.amplitude.host(shape=shape)
+        phase     = self.wavefront.phase.host(shape=shape)
         if where=='pupil':
-            return np.sum(self.wavefront.phase.host(),axis=1)/np.sum(amplitude,axis=1)
+            return np.sum(phase,axis=1)/np.sum(amplitude,axis=1)*10**-units_exponent
         if where=='segments':
 #            Q = mask*amplitude.T
 #            return np.dot(Q,np.reshape( self.wavefront.phase.host() , (-1,) ) ).flatten()/np.sum(Q,axis=1)    
-            ps = np.zeros((self.size,7))
+            ps = np.zeros((self.size,7),dtype=np.float32)
             for k in range(self.size):
-                Q = self.rays.piston_mask[k]*self.wavefront.amplitude.host()[k,:]
-                ps[k,:] = np.dot(Q,self.wavefront.phase.host()[k,:])/np.sum(Q,axis=1)
-            return ps
-                
+                Q = self.rays.piston_mask[k]*amplitude[k,:]
+                ps[k,:] = np.dot(Q,phase[k,:])/np.sum(Q,axis=1)
+            return np.array(ps)*10**-units_exponent
+        
+    def phaseRms(self,where='pupil',int units_exponent=0):
+        """
+        Get the phase rms corresponding to either the pupil or the segments
+
+        Parameters
+        ----------
+        where : string, optional
+            Either "pupil" for a piston on the full pupil or "segments" for pistons of each segment; default: pupil
+        units_exponent : int, optional
+            Multiply the rms phase values by 10^-units_exponent; default: 0
+        
+        Returns
+        -------
+        ndarray of float
+            The vector of phase rms values in meters as either an N_SRC vector for "pupil" or a N_SRCx7 array for "segments"
+        """
+        assert where=="pupil" or where=="segments", "where parameter is either ""pupil"" or ""segments"""     
+        cdef:
+            int k, s
+            tuple shape
+        shape = (self.size,self.n*self.m)
+        phase     = self.wavefront.phase.host(shape=shape)
+        if where=='pupil':
+            return self.wavefront.rms(units_exponent)
+        if where=='segments':
+            rms = np.zeros((self.size,7),dtype=np.float32)
+            for k in range(self.size):
+                Q = self.rays.piston_mask[k]
+                for s in range(7):
+                    rms[k,s] = np.std(phase[k,Q[s,:]])      
+        return np.array(rms)*10**-units_exponent
+            
 @
 \subsubsection{Ray tracing routines}
 \label{sec:ray-tracing-routines-1}
