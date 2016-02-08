@@ -744,24 +744,26 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
     /* 					L, N_L, W, N_W, field_size_ARCSEC/RADIAN2ARCSEC); */
     N_L = layers[i_LAYER].N_LENGTH_LAYER;
     N_W = layers[i_LAYER].N_WIDTH_LAYER;
+    fprintf(stdout,"N_L=%d,N_W=%d,",N_L,N_W);
+    
 
     gridDimLayers = dim3( 1+N_L/16 , 1+N_W/16);
-    /* square_plps_layers LLL gridDimLayers , blockDimLayers RRR (phase_screen_LAYER + N, */
-    /* 							       delta_W, N_L,  */
-    /* 							       delta_W, N_W,  */
-    /* 							       d__turbulence,  */
-    /* 							       wavenumber*powf(r0,-5.0/6.0), */
-    /* 							       d__layers, i_LAYER, */
-    /* 							       zeta1, eta1, zeta2, eta2, */
-    /* 							       src.dev_ptr, 0.0); */
-      square_plps LLL gridDimLayers , blockDimLayers RRR 
-        (phase_screen_LAYER + N,
-         delta_W, N_L, delta_W, N_W, 
-         d__turbulence, 
-         wavenumber*powf(r0,-5.0/6.0),
-         d__layers, N_LAYER,
-         zeta1, eta1, zeta2, eta2,
-         src.dev_ptr, 0.0);
+    square_plps_layers LLL gridDimLayers , blockDimLayers RRR (phase_screen_LAYER + N,
+    							       delta_W, N_L,
+    							       delta_W, N_W,
+    							       d__turbulence,
+    							       wavenumber*powf(r0,-5.0/6.0),
+    							       d__layers, i_LAYER,
+    							       zeta1, eta1, zeta2, eta2,
+    							       src.dev_ptr, 0.0);
+      /* square_plps LLL gridDimLayers , blockDimLayers RRR  */
+      /*   (phase_screen_LAYER + N, */
+      /*    delta_W, N_L, delta_W, N_W,  */
+      /*    d__turbulence,  */
+      /*    wavenumber*powf(r0,-5.0/6.0), */
+      /*    d__layers, N_LAYER, */
+      /*    zeta1, eta1, zeta2, eta2, */
+      /*    src.dev_ptr, 0.0); */
     N += N_L*N_W;
 
   }
@@ -1322,7 +1324,6 @@ void atmosphere::get_phase_screen(source *src, int N_SRC,
 		       source *src, float time)
 {
   <<declarations>>
-
   <<thread to coordinate index (layers)>>
   
   sum = 0;
@@ -1388,7 +1389,7 @@ Each thread is computing one value of the phase screen at the coordinate [[x_kl 
 i = blockIdx.x * blockDim.x + threadIdx.x;
 j = blockIdx.y * blockDim.y + threadIdx.y;
 i_source = blockIdx.z;
-kl = i * N_y + j + i_source*N_x*N_y;
+kl = i + j*N_x + i_source*N_x*N_y;
 x_kl0 = i*delta_x - (N_x-1)*delta_x*0.5;
 y_kl0 = j*delta_y - (N_y-1)*delta_y*0.5;
 @
@@ -1396,9 +1397,9 @@ y_kl0 = j*delta_y - (N_y-1)*delta_y*0.5;
 i = blockIdx.x * blockDim.x + threadIdx.x;
 j = blockIdx.y * blockDim.y + threadIdx.y;
 i_source = blockIdx.z;
-kl = i * N_y + j + i_source*N_x*N_y;
-x_kl0 = i*delta_x - (N_x-1)*delta_x*0.5;
-y_kl0 = j*delta_y - (N_y-1)*delta_y*0.5;
+kl = i + j*N_x + i_source*N_x*N_y;
+x_kl0 = delta_x*(i - (N_y-1)*0.5 - N_x + N_y);
+y_kl0 = delta_y*(j - (N_y-1)*0.5);
 @
 \subsection{Phase screen gradient}
 \label{sec:phase-scre-grad}
@@ -1898,7 +1899,7 @@ xi = x*c + y*s;
 yi = y*c - x*s;
 @ \item translation according to the wind speed [[mag_wind]] and time step [[tau]]; the phase screens are carried by the wind which is blowing along the x--axis in the phase screen frame of reference, the pupil plane coordinates in this frame are then translated along the phase screens x--axis
 <<coordinate transformation>>=
-xi += tau*layers[k_LAYER].wind_speed;
+xi -= tau*layers[k_LAYER].wind_speed;
 @ \end{enumerate}
 
 
@@ -1921,7 +1922,7 @@ pitch += N_L*N_W;
  The interpolation starts with normalizing the coordinates to the pixel size of the phase screen i.e.
 <<bilinear interpolation>>=
 s = (N_L - 1 )
-  *(xi + layers[k_LAYER].WIDTH_LAYER*0.5)/layers[k_LAYER].LENGTH_LAYER;
+  *(xi - layers[k_LAYER].WIDTH_LAYER*0.5 + layers[k_LAYER].LENGTH_LAYER)/layers[k_LAYER].LENGTH_LAYER;
 t = (N_W - 1 )
   *(yi/layers[k_LAYER].WIDTH_LAYER + 0.5);
 @  and taking the floor integer part to locate the bottom--left coordinate of the pixels surrounding [[xi]] and [[yi]]
@@ -1930,16 +1931,16 @@ if (s<0) { s=0.0; }
 fs  = floorf(s);
 if (t<0) { t=0.0; }
 ft  = floorf(t);
-ndx = __float2int_rd( ft + fs*N_W );
+ndx = __float2int_rd( ft*N_L + fs );
 @ Next, one checks if the edge of the phase screens have been reached
 <<bilinear interpolation>>=
-if (fs==(N_L-1)) { s += 1 - fs; ndx -= N_W; } else { s -= fs; }    
-if (ft==(N_W-1)) { t += 1 - ft; ndx -= 1; }   else { t -= ft; }
+if (fs==(N_L-1)) { s += 1 - fs; ndx -= 1; } else { s -= fs; }    
+if (ft==(N_W-1)) { t += 1 - ft; ndx -= N_L; }   else { t -= ft; }
 @ and finally the interpolation is computed as
 <<bilinear interpolation>>=	 
 onemt = 1 - t;
-zi = ( z[ndx]*onemt + z[ndx+1]*t )*(1-s) + 
-        ( z[ndx+N_W]*onemt + z[ndx+N_W+1]*t )*s;
+zi = ( z[ndx]*onemt + z[ndx+N_L]*t )*(1-s) + 
+        ( z[ndx+1]*onemt + z[ndx+N_L+1]*t )*s;
 
 
 @
@@ -1966,8 +1967,8 @@ pitch = 0;
 ix = blockIdx.x * blockDim.x + threadIdx.x;
 iy = blockIdx.y * blockDim.y + threadIdx.y;
 ij = iy * N_X + ix;
-xP = delta_x*( iy - (N_X-1)*0.5 );
-yP = delta_y*( ix - (N_Y-1)*0.5 );
+xP = delta_x*( ix - (N_Y-1)*0.5 );
+yP = delta_y*( iy - (N_Y-1)*0.5 );
 k_SOURCE = blockIdx.z;
 pitch = 0;
 int NXY_PUPIL = N_X*N_Y;
