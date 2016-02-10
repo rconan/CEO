@@ -66,6 +66,9 @@ struct atmosphere {
 	     float field_size_ARCSEC);
   void gmt_setup();
   void gmt_setup(float r0_, float L0);
+  void gmt_setup(float r0_, float L0,
+		 float _L_, int _NXY_PUPIL_,
+		 float field_size_ARCSEC);
 
   void cleanup(void);
 
@@ -158,6 +161,7 @@ struct atmosphere {
 <<atmosphere setup (ray tracing)>>
 <<atmosphere setup (GMT)>>
 <<atmosphere setup (GMT prm)>>
+<<atmosphere setup (GMT prm, ray tracing)>>
 
 <<cleanup>>
 
@@ -193,6 +197,7 @@ from centroiding cimport centroiding
 cdef extern from "atmosphere.h":
     cdef cppclass layer:
         int N_WIDTH_LAYER, N_LENGTH_LAYER
+        float WIDTH_LAYER, LENGTH_LAYER
     cdef cppclass atmosphere:
         int N_LAYER, N_PHASE_LAYER
         float *phase_screen_LAYER
@@ -201,6 +206,7 @@ cdef extern from "atmosphere.h":
         void setup(float , float, int, float *, float *, float *, float *, 
 		   float, int, float)
         void gmt_setup(float , float)
+        void gmt_setup(float, float, float, int, float)
         void cleanup()
         void info()
 	void reset()
@@ -259,6 +265,12 @@ cdef class Layer:
     property N_LENGTH:
         def __get__(self):
             return self._c_layer.N_LENGTH_LAYER
+    property WIDTH:
+        def __get__(self):
+            return self._c_layer.WIDTH_LAYER
+    property LENGTH:
+        def __get__(self):
+            return self._c_layer.LENGTH_LAYER
 cdef class AtmosphereAbstract:
 
     def __cinit__(self, float r0, float L0, 
@@ -355,9 +367,14 @@ cdef class Atmosphere(AtmosphereAbstract):
 
 cdef class GmtAtmosphere(AtmosphereAbstract):
 
-    def __cinit__(self, float r0, float L0):
+    def __cinit__(self, float r0, float L0,
+                  L=0.0,NXY_PUPIL=0,fov=0.0):
         AtmosphereAbstract.__init__(self,r0,L0)
-        self._c_atmosphere.gmt_setup(r0, L0)   
+        if NXY_PUPIL==0:
+            self._c_atmosphere.gmt_setup(r0, L0)   
+        else:
+            self._c_atmosphere.gmt_setup(r0, L0,
+                                         <float> L, <int> NXY_PUPIL, <float> fov)   
     
 @ 
 <<python atmosphere methods>>=
@@ -659,7 +676,6 @@ y_l &=& \left( 1 - {h_l\over z_\ast} \right)(y-v_yt) + h_l\theta_{\ast y}
 \subsubsection{Setup \& Cleanup}
 \label{sec:setup--cleanup}
 
-
 The above definitions call for the declarations of new variables:
 <<profile parameters>>=
 float l0, L, f, delta, N_k, N_a, kmin;
@@ -685,10 +701,6 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
 		   wind_speed, wind_direction, N_LAYER);
   field_size_ARCSEC = 0.0;
   N_PHASE_LAYER = 0;
-  float L, W;
-  int N_L, N_W;
-  L = W = 0.0;
-  N_L = N_W = 0;
   <<allocation>>
   phase_screen_LAYER = NULL;
 }
@@ -709,65 +721,9 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
 		   wind_speed, wind_direction, N_LAYER);
   field_size_ARCSEC = _field_size_ARCSEC_;
 
-  //  float L;
-  //int N_L;
-
-  int N_L, N_PHASE_LAYER;
-  float L, delta_W;
-  delta_W = W/(N_W-1);
-  /*
-  printf("\n@(CEO)>atmosphere: __ Layer Phase Screen __\n"); 
-  for (k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++) {
-    //    L = W + 2*altitude[k_LAYER]*tanf(0.5*field_size_ARCSEC/RADIAN2ARCSEC) + wind_speed[0];
-    //N_L = (int) ceilf( L/delta_W ) + 1;
-    // L = (N_L-1)*delta_W;
-    //N_PHASE_LAYER = N_W*N_L*sizeof(float);
-    // printf(" #%d: (%5.2fX%5.2f) meters & (%dX%d) pixels ==> %.2fMB \n",
-    //	   k_LAYER,L,W,N_L,N_W,N_PHASE_LAYER/powf(2,20));
-  }
-  */
   <<allocation>>
 
-  dim3 blockDimLayers(16,16);
-  dim3 gridDimLayers;
-  //  float delta = L/(NXY_PUPIL-1);
-  source src;
-  src.setup("V",0.0,0.0,INFINITY);
-  HANDLE_ERROR( cudaMalloc( (void**)&phase_screen_LAYER, N_PHASE_LAYER*sizeof(float) ) );
-  N_PHASE_LAYER = 0;
-  int N = 0, i_LAYER;
-  fprintf(stdout," . Computing layer phase screen: ");
-  for (i_LAYER=0;i_LAYER<N_LAYER;i_LAYER++) {
-    fprintf(stdout,"%d,",i_LAYER);
-    /* N_PHASE_LAYER += layers[i_LAYER].setup(altitude[i_LAYER], xi0[i_LAYER],  */
-    /* 					wind_speed[i_LAYER], wind_direction[i_LAYER], */
-    /* 					L, N_L, W, N_W, field_size_ARCSEC/RADIAN2ARCSEC); */
-    N_L = layers[i_LAYER].N_LENGTH_LAYER;
-    N_W = layers[i_LAYER].N_WIDTH_LAYER;
-    fprintf(stdout,"N_L=%d,N_W=%d,",N_L,N_W);
-    
-
-    gridDimLayers = dim3( 1+N_L/16 , 1+N_W/16);
-    square_plps_layers LLL gridDimLayers , blockDimLayers RRR (phase_screen_LAYER + N,
-    							       delta_W, N_L,
-    							       delta_W, N_W,
-    							       d__turbulence,
-    							       wavenumber*powf(r0,-5.0/6.0),
-    							       d__layers, i_LAYER,
-    							       zeta1, eta1, zeta2, eta2,
-    							       src.dev_ptr, 0.0);
-      /* square_plps LLL gridDimLayers , blockDimLayers RRR  */
-      /*   (phase_screen_LAYER + N, */
-      /*    delta_W, N_L, delta_W, N_W,  */
-      /*    d__turbulence,  */
-      /*    wavenumber*powf(r0,-5.0/6.0), */
-      /*    d__layers, N_LAYER, */
-      /*    zeta1, eta1, zeta2, eta2, */
-      /*    src.dev_ptr, 0.0); */
-    N += N_L*N_W;
-
-  }
-  fprintf(stdout,"\b\n");
+  <<layer to device>>
 
 }
 @ For the GMT simulations, the GMT standard atmosphere model is called with:
@@ -787,10 +743,6 @@ void atmosphere::gmt_setup() {
 		   wind_speed, wind_direction, N_LAYER);
   field_size_ARCSEC = 0.0;
   N_PHASE_LAYER = 0;
-  float L, W;
-  int N_L, N_W;
-  L = W = 0.0;
-  N_L = N_W = 0;
   <<allocation>>
   phase_screen_LAYER = NULL;
 }
@@ -809,17 +761,32 @@ void atmosphere::gmt_setup(float r0_, float L0) {
 		   wind_speed, wind_direction, N_LAYER);
   field_size_ARCSEC = 0.0;
   N_PHASE_LAYER = 0;
-  float L, W;
-  int N_L, N_W;
-  L = W = 0.0;
-  N_L = N_W = 0;
   <<allocation>>
   phase_screen_LAYER = NULL;
+}
+<<atmosphere setup (GMT prm, ray tracing)>>=
+void atmosphere::gmt_setup(float r0_, float L0,
+                           float W, int N_W,
+                           float _field_size_ARCSEC_) {
+  wavelength = 550e-9;
+  wavenumber = wavelength/2/PI;
+  r0 = r0_;
+  turbulence.L0 = L0;
+  N_LAYER = 7;
+  float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
+              xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
+              wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
+              wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+  turbulence.setup(altitude, xi0,
+		   wind_speed, wind_direction, N_LAYER);
+  field_size_ARCSEC = _field_size_ARCSEC_;
+  N_PHASE_LAYER = 0;
+  <<allocation>>
+  <<layer to device>>
 }
 
 <<allocation>>=
 info();
-<<layer to device>>
 HANDLE_ERROR( cudaMalloc( (void**)&d__turbulence, sizeof(profile) ) );
 HANDLE_ERROR( cudaMemcpy( d__turbulence, &turbulence,
 			  sizeof(profile), cudaMemcpyHostToDevice ) );
@@ -837,42 +804,6 @@ HANDLE_ERROR( cudaDeviceSynchronize() );
 generateVariates LLL gridDim,blockDim RRR (zeta1, eta1, zeta2, eta2, devStates, nel);
 HANDLE_ERROR( cudaDeviceSynchronize() );
 fprintf(stdout,"done!\n");
-/*
-dim3 blockDimLayers(16,16);
-dim3 gridDimLayers;
-  //  float delta = L/(NXY_PUPIL-1);
-  source src;
-src.setup("V",0.0,0.0,INFINITY);
-int  delta_W = W/(N_W-1);
-HANDLE_ERROR( cudaMalloc( (void**)&phase_screen_LAYER, N_PHASE_LAYER ) );
-int _N_, _N_L_, _N_W_;
-_N_ = 0;
-for (int i_LAYER=0; i_LAYER<N_LAYER; i_LAYER++) {
-  fprintf(stdout," #%d: ",i_LAYER);
-  N_PHASE_LAYER += layers[i_LAYER].setup(altitude[i_LAYER], xi0[i_LAYER], 
-					wind_speed[i_LAYER], wind_direction[i_LAYER],
-					L, N_L, W, N_W, field_size_ARCSEC/RADIAN2ARCSEC);
-  _N_L_ = layers[i_LAYER].N_LENGTH_LAYER;
-  _N_W_ = layers[i_LAYER].N_WIDTH_LAYER;
-  gridDimLayers = dim3(1+_N_L_/16,
-		       1+_N_W_/16);
-  //  N_PHASE_LAYER /= sizeof(float);
-  
-
-  square_plps_layers LLL gridDimLayers , blockDimLayers RRR (
-			phase_screen_LAYER + _N_,
-			delta_W, _N_L_, 
-			delta_W, _N_W_, 
-			d__turbulence, 
-			wavenumber*powf(r0,-5.0/6.0),
-			d__layers + i_LAYER, 1,
-			zeta1, eta1, zeta2, eta2,
-			src.dev_ptr, 0.0);
-  _N_   += _N_L_*_N_W_;
-HANDLE_ERROR( cudaDeviceSynchronize() );
-
-}
-*/
 @ 
 \index{atmosphere!profile!setup}
 <<profile setup>>=
@@ -927,17 +858,19 @@ int layer::setup(float _altitude, float _xi0,
 		  float L, int N_L, float W, int N_W,
 		  float field_size)
 {
+    float d = W/(N_W-1);
     altitude       = _altitude;
     xi0            = _xi0;
     wind_speed     = _wind_speed;
     wind_direction = _wind_direction;
     vx = wind_speed*cosf(wind_direction);
     vy = wind_speed*sinf(wind_direction);
-    WIDTH_LAYER    = W;
-    LENGTH_LAYER   = WIDTH_LAYER + 2*altitude*tanf(0.5*field_size) + wind_speed;
-    N_WIDTH_LAYER  = N_W;
-    N_LENGTH_LAYER = (int) ceilf( (N_WIDTH_LAYER-1)*LENGTH_LAYER/WIDTH_LAYER ) + 1;
-    LENGTH_LAYER   = (N_LENGTH_LAYER-1)*WIDTH_LAYER/(N_WIDTH_LAYER-1);
+    WIDTH_LAYER    = W*sqrtf(2) + 2*altitude*tanf(0.5*field_size);
+    LENGTH_LAYER   = WIDTH_LAYER + wind_speed;
+    N_WIDTH_LAYER  = (int) ceilf( WIDTH_LAYER/d ) + 1;
+    N_LENGTH_LAYER = (int) ceilf( LENGTH_LAYER/d ) + 1;
+    WIDTH_LAYER    = d*(N_WIDTH_LAYER-1);
+    LENGTH_LAYER   = d*(N_LENGTH_LAYER-1);
     int N = N_WIDTH_LAYER*N_LENGTH_LAYER;
     fprintf(stdout,"(%5.2fX%5.2f) meters & (%dX%d) pixels ==> %.2fMB \n",
 	   LENGTH_LAYER,WIDTH_LAYER,
@@ -946,6 +879,9 @@ int layer::setup(float _altitude, float _xi0,
 }
 @ The [[layer]] structures are filled with their parameters and copied to the device
 <<layer to device>>=
+int N_L, N_PHASE_LAYER;
+float L, delta_W;
+delta_W = W/(N_W-1);
 layers = (layer*) malloc( sizeof(layer)*N_LAYER );
 HANDLE_ERROR( cudaMalloc( (void**)&d__layers, sizeof(layer)*N_LAYER ) );
 //layer one_layer;
@@ -960,7 +896,32 @@ for (int i_LAYER=0; i_LAYER<N_LAYER; i_LAYER++) {
 			    sizeof(layer),
 			    cudaMemcpyHostToDevice ) );
 }
-fprintf(stdout," Total: %.2fMB\n",N_PHASE_LAYER/powf(2,20));
+fprintf(stdout," Total: %.2fMB\n",N_PHASE_LAYER*sizeof(float)/powf(2,20));
+  dim3 blockDimLayers(16,16);
+  dim3 gridDimLayers;
+  source src;
+  src.setup("V",0.0,0.0,INFINITY);
+  HANDLE_ERROR( cudaMalloc( (void**)&phase_screen_LAYER, N_PHASE_LAYER*sizeof(float) ) );
+  N_PHASE_LAYER = 0;
+  int N = 0, i_LAYER;
+  fprintf(stdout," . Computing layer phase screen: ");
+  for (i_LAYER=0;i_LAYER<N_LAYER;i_LAYER++) {
+    fprintf(stdout,"%d,",i_LAYER);
+    N_L = layers[i_LAYER].N_LENGTH_LAYER;
+    N_W = layers[i_LAYER].N_WIDTH_LAYER;
+
+    gridDimLayers = dim3( 1+N_L/16 , 1+N_W/16);
+    square_plps_layers LLL gridDimLayers , blockDimLayers RRR (phase_screen_LAYER + N,
+    							       delta_W, N_L,
+    							       delta_W, N_W,
+    							       d__turbulence,
+    							       wavenumber*powf(r0,-5.0/6.0),
+    							       d__layers, i_LAYER,
+    							       zeta1, eta1, zeta2, eta2,
+    							       src.dev_ptr, 0.0);
+    N += N_L*N_W;
+  }
+  fprintf(stdout,"\b\n");
 @ 
 The random generator is initialized within the following kernel:
 <<init random variates>>=
