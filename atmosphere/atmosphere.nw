@@ -36,7 +36,7 @@ struct layer {
 
   int setup(float _altitude, float _xi0,
 	    float _wind_speed_, float _wind_direction,
-	    float L, int N_L, float W, int N_W,
+	    float W, int N_W,
 	    float field_size);
 
 };
@@ -701,6 +701,10 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
 		   wind_speed, wind_direction, N_LAYER);
   field_size_ARCSEC = 0.0;
   N_PHASE_LAYER = 0;
+  float W;
+  int N_W;
+  W = 0.0;
+  N_W = 0;
   <<allocation>>
   phase_screen_LAYER = NULL;
 }
@@ -723,7 +727,7 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
 
   <<allocation>>
 
-  <<layer to device>>
+  <<layer to device (ray tracing)>>
 
 }
 @ For the GMT simulations, the GMT standard atmosphere model is called with:
@@ -743,6 +747,10 @@ void atmosphere::gmt_setup() {
 		   wind_speed, wind_direction, N_LAYER);
   field_size_ARCSEC = 0.0;
   N_PHASE_LAYER = 0;
+  float W;
+  int N_W;
+  W = 0.0;
+  N_W = 0;
   <<allocation>>
   phase_screen_LAYER = NULL;
 }
@@ -761,6 +769,10 @@ void atmosphere::gmt_setup(float r0_, float L0) {
 		   wind_speed, wind_direction, N_LAYER);
   field_size_ARCSEC = 0.0;
   N_PHASE_LAYER = 0;
+  float W;
+  int N_W;
+  W = 0.0;
+  N_W = 0;
   <<allocation>>
   phase_screen_LAYER = NULL;
 }
@@ -782,11 +794,12 @@ void atmosphere::gmt_setup(float r0_, float L0,
   field_size_ARCSEC = _field_size_ARCSEC_;
   N_PHASE_LAYER = 0;
   <<allocation>>
-  <<layer to device>>
+  <<layer to device (ray tracing)>>
 }
 
 <<allocation>>=
 info();
+<<layer to device (common)>>
 HANDLE_ERROR( cudaMalloc( (void**)&d__turbulence, sizeof(profile) ) );
 HANDLE_ERROR( cudaMemcpy( d__turbulence, &turbulence,
 			  sizeof(profile), cudaMemcpyHostToDevice ) );
@@ -855,7 +868,7 @@ An atmospheric layer parameters are set with:
 <<layer setup>>=
 int layer::setup(float _altitude, float _xi0,
 		  float _wind_speed, float _wind_direction,
-		  float L, int N_L, float W, int N_W,
+		  float W, int N_W,
 		  float field_size)
 {
     float d = W/(N_W-1);
@@ -878,10 +891,7 @@ int layer::setup(float _altitude, float _xi0,
     return N;
 }
 @ The [[layer]] structures are filled with their parameters and copied to the device
-<<layer to device>>=
-int N_L, N_PHASE_LAYER;
-float L, delta_W;
-delta_W = W/(N_W-1);
+<<layer to device (common)>>=
 layers = (layer*) malloc( sizeof(layer)*N_LAYER );
 HANDLE_ERROR( cudaMalloc( (void**)&d__layers, sizeof(layer)*N_LAYER ) );
 //layer one_layer;
@@ -891,37 +901,40 @@ for (int i_LAYER=0; i_LAYER<N_LAYER; i_LAYER++) {
   fprintf(stdout," #%d: ",i_LAYER);
   N_PHASE_LAYER += layers[i_LAYER].setup(altitude[i_LAYER], xi0[i_LAYER], 
 					wind_speed[i_LAYER], wind_direction[i_LAYER],
-					L, N_L, W, N_W, field_size_ARCSEC/RADIAN2ARCSEC);
+					W, N_W, field_size_ARCSEC/RADIAN2ARCSEC);
   HANDLE_ERROR( cudaMemcpy( d__layers + i_LAYER, layers + i_LAYER,
 			    sizeof(layer),
 			    cudaMemcpyHostToDevice ) );
 }
 fprintf(stdout," Total: %.2fMB\n",N_PHASE_LAYER*sizeof(float)/powf(2,20));
-  dim3 blockDimLayers(16,16);
-  dim3 gridDimLayers;
-  source src;
-  src.setup("V",0.0,0.0,INFINITY);
-  HANDLE_ERROR( cudaMalloc( (void**)&phase_screen_LAYER, N_PHASE_LAYER*sizeof(float) ) );
-  N_PHASE_LAYER = 0;
-  int N = 0, i_LAYER;
-  fprintf(stdout," . Computing layer phase screen: ");
-  for (i_LAYER=0;i_LAYER<N_LAYER;i_LAYER++) {
-    fprintf(stdout,"%d,",i_LAYER);
-    N_L = layers[i_LAYER].N_LENGTH_LAYER;
-    N_W = layers[i_LAYER].N_WIDTH_LAYER;
+@  The phase screen of each layer is computed with:
+<<layer to device (ray tracing)>>=
+dim3 blockDimLayers(16,16);
+dim3 gridDimLayers;
+source src;
+src.setup("V",0.0,0.0,INFINITY);
+HANDLE_ERROR( cudaMalloc( (void**)&phase_screen_LAYER, N_PHASE_LAYER*sizeof(float) ) );
+N_PHASE_LAYER = 0;
+int N = 0, i_LAYER, N_L;
+float delta_W = W/(N_W-1);
+fprintf(stdout," . Computing layer phase screen: ");
+for (i_LAYER=0;i_LAYER<N_LAYER;i_LAYER++) {
+  fprintf(stdout,"%d,",i_LAYER);
+  N_L = layers[i_LAYER].N_LENGTH_LAYER;
+  N_W = layers[i_LAYER].N_WIDTH_LAYER;
 
-    gridDimLayers = dim3( 1+N_L/16 , 1+N_W/16);
-    square_plps_layers LLL gridDimLayers , blockDimLayers RRR (phase_screen_LAYER + N,
-    							       delta_W, N_L,
-    							       delta_W, N_W,
-    							       d__turbulence,
-    							       wavenumber*powf(r0,-5.0/6.0),
-    							       d__layers, i_LAYER,
-    							       zeta1, eta1, zeta2, eta2,
-    							       src.dev_ptr, 0.0);
-    N += N_L*N_W;
-  }
-  fprintf(stdout,"\b\n");
+  gridDimLayers = dim3( 1+N_L/16 , 1+N_W/16);
+  square_plps_layers LLL gridDimLayers , blockDimLayers RRR (phase_screen_LAYER + N,
+							     delta_W, N_L,
+							     delta_W, N_W,
+							     d__turbulence,
+							     wavenumber*powf(r0,-5.0/6.0),
+							     d__layers, i_LAYER,
+							     zeta1, eta1, zeta2, eta2,
+							     src.dev_ptr, 0.0);
+  N += N_L*N_W;
+ }
+fprintf(stdout,"\b\n");
 @ 
 The random generator is initialized within the following kernel:
 <<init random variates>>=
@@ -985,10 +998,11 @@ void atmosphere::cleanup(void) {
   HANDLE_ERROR( cudaFree( eta1 ) );
   HANDLE_ERROR( cudaFree( zeta2 ) );
   HANDLE_ERROR( cudaFree( eta2 ) );
-  free( layers );
-  HANDLE_ERROR( cudaFree( d__layers ) );
-  if (phase_screen_LAYER!=NULL)
+  if (phase_screen_LAYER!=NULL) {
     HANDLE_ERROR( cudaFree( phase_screen_LAYER ) );
+    free( layers );
+    HANDLE_ERROR( cudaFree( d__layers ) );
+  }
 }
 @
 The phase screen are defined in the telescope pupil at the ground 
@@ -1179,7 +1193,8 @@ void atmosphere::get_phase_screen(source *src,
 {
   dim3 blockDim(16,16);
   dim3 gridDim( 1+N_x/16 , 1+N_y/16, src->N_SRC);
-  if (src->wavefront.M==NULL)
+  if (src->wavefront.M==NULL) {
+    fprintf(stdout,"M IS NULL!\n");
     square_plps LLL gridDim , blockDim RRR 
       (src->wavefront.phase,
        delta_x, N_x, delta_y, N_y, 
@@ -1188,7 +1203,8 @@ void atmosphere::get_phase_screen(source *src,
        d__layers, N_LAYER,
        zeta1, eta1, zeta2, eta2,
        src->dev_ptr, time);
-  else
+  } else {
+    fprintf(stdout,"M IS NOT NULL!\n");
     square_plps_masked LLL gridDim , blockDim RRR 
       (src->wavefront.phase, src->wavefront.M->m,
        delta_x, N_x, delta_y, N_y, 
@@ -1197,6 +1213,7 @@ void atmosphere::get_phase_screen(source *src,
        d__layers, N_LAYER,
        zeta1, eta1, zeta2, eta2,
        src->dev_ptr, time);
+  }
 }
 <<phase screen V.b>>=
 void atmosphere::get_phase_screen(source *src, float time)
