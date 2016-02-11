@@ -359,7 +359,7 @@ cdef class Atmosphere(AtmosphereAbstract):
             L = Layer()
             #L.init(self._c_atmosphere,0)
             L._c_layer = self._c_atmosphere.layers + k
-            L.phase_screen = cuFloatArray(shape=(L.N_WIDTH,L.N_LENGTH), dev_malloc=False)
+	    L.phase_screen = cuFloatArray(shape=(L.N_LENGTH,L.N_WIDTH), dev_malloc=False)
             L.phase_screen._c_gpu.dev_data = self._c_atmosphere.phase_screen_LAYER + N
             self.layers.append( L )
             N += L.N_WIDTH*L.N_LENGTH                
@@ -871,24 +871,27 @@ int layer::setup(float _altitude, float _xi0,
 		  float W, int N_W,
 		  float field_size)
 {
+  int N = 0;
+  altitude       = _altitude;
+  xi0            = _xi0;
+  wind_speed     = _wind_speed;
+  wind_direction = _wind_direction;
+  vx = wind_speed*cosf(wind_direction);
+  vy = wind_speed*sinf(wind_direction);
+  if (N_W>0) {
     float d = W/(N_W-1);
-    altitude       = _altitude;
-    xi0            = _xi0;
-    wind_speed     = _wind_speed;
-    wind_direction = _wind_direction;
-    vx = wind_speed*cosf(wind_direction);
-    vy = wind_speed*sinf(wind_direction);
     WIDTH_LAYER    = W*sqrtf(2) + 2*altitude*tanf(0.5*field_size);
     LENGTH_LAYER   = WIDTH_LAYER + wind_speed;
     N_WIDTH_LAYER  = (int) ceilf( WIDTH_LAYER/d ) + 1;
     N_LENGTH_LAYER = (int) ceilf( LENGTH_LAYER/d ) + 1;
     WIDTH_LAYER    = d*(N_WIDTH_LAYER-1);
     LENGTH_LAYER   = d*(N_LENGTH_LAYER-1);
-    int N = N_WIDTH_LAYER*N_LENGTH_LAYER;
+    N = N_WIDTH_LAYER*N_LENGTH_LAYER;
     fprintf(stdout,"(%5.2fX%5.2f) meters & (%dX%d) pixels ==> %.2fMB \n",
-	   LENGTH_LAYER,WIDTH_LAYER,
-	   N_LENGTH_LAYER,N_WIDTH_LAYER,N*sizeof(float)/powf(2,20));
-    return N;
+	    LENGTH_LAYER,WIDTH_LAYER,
+	    N_LENGTH_LAYER,N_WIDTH_LAYER,N*sizeof(float)/powf(2,20));
+  }
+  return N;
 }
 @ The [[layer]] structures are filled with their parameters and copied to the device
 <<layer to device (common)>>=
@@ -1194,7 +1197,6 @@ void atmosphere::get_phase_screen(source *src,
   dim3 blockDim(16,16);
   dim3 gridDim( 1+N_x/16 , 1+N_y/16, src->N_SRC);
   if (src->wavefront.M==NULL) {
-    fprintf(stdout,"M IS NULL!\n");
     square_plps LLL gridDim , blockDim RRR 
       (src->wavefront.phase,
        delta_x, N_x, delta_y, N_y, 
@@ -1204,7 +1206,6 @@ void atmosphere::get_phase_screen(source *src,
        zeta1, eta1, zeta2, eta2,
        src->dev_ptr, time);
   } else {
-    fprintf(stdout,"M IS NOT NULL!\n");
     square_plps_masked LLL gridDim , blockDim RRR 
       (src->wavefront.phase, src->wavefront.M->m,
        delta_x, N_x, delta_y, N_y, 
@@ -1367,7 +1368,7 @@ Each thread is computing one value of the phase screen at the coordinate [[x_kl 
 i = blockIdx.x * blockDim.x + threadIdx.x;
 j = blockIdx.y * blockDim.y + threadIdx.y;
 i_source = blockIdx.z;
-kl = i + j*N_x + i_source*N_x*N_y;
+kl = i * N_y + j + i_source*N_x*N_y;
 x_kl0 = i*delta_x - (N_x-1)*delta_x*0.5;
 y_kl0 = j*delta_y - (N_y-1)*delta_y*0.5;
 @
@@ -1375,7 +1376,7 @@ y_kl0 = j*delta_y - (N_y-1)*delta_y*0.5;
 i = blockIdx.x * blockDim.x + threadIdx.x;
 j = blockIdx.y * blockDim.y + threadIdx.y;
 i_source = blockIdx.z;
-kl = i + j*N_x + i_source*N_x*N_y;
+kl = i * N_y + j + i_source*N_x*N_y;
 x_kl0 = delta_x*(i - (N_y-1)*0.5 - N_x + N_y);
 y_kl0 = delta_y*(j - (N_y-1)*0.5);
 @
@@ -1909,16 +1910,16 @@ if (s<0) { s=0.0; }
 fs  = floorf(s);
 if (t<0) { t=0.0; }
 ft  = floorf(t);
-ndx = __float2int_rd( ft*N_L + fs );
+ndx = __float2int_rd( ft + fs*N_W );
 @ Next, one checks if the edge of the phase screens have been reached
 <<bilinear interpolation>>=
-if (fs==(N_L-1)) { s += 1 - fs; ndx -= 1; } else { s -= fs; }    
-if (ft==(N_W-1)) { t += 1 - ft; ndx -= N_L; }   else { t -= ft; }
+if (fs==(N_L-1)) { s += 1 - fs; ndx -= N_W; } else { s -= fs; }    
+if (ft==(N_W-1)) { t += 1 - ft; ndx -= 1; }   else { t -= ft; }
 @ and finally the interpolation is computed as
 <<bilinear interpolation>>=	 
 onemt = 1 - t;
-zi = ( z[ndx]*onemt + z[ndx+N_L]*t )*(1-s) + 
-        ( z[ndx+1]*onemt + z[ndx+N_L+1]*t )*s;
+zi = ( z[ndx]*onemt + z[ndx+1]*t )*(1-s) + 
+        ( z[ndx+N_W]*onemt + z[ndx+N_W+1]*t )*s;
 
 
 @
@@ -1944,7 +1945,7 @@ pitch = 0;
 <<threads to pupil and source mapping (regular)>>=
 ix = blockIdx.x * blockDim.x + threadIdx.x;
 iy = blockIdx.y * blockDim.y + threadIdx.y;
-ij = iy * N_X + ix;
+ij = iy + ix * N_Y;
 xP = delta_x*( ix - (N_Y-1)*0.5 );
 yP = delta_y*( iy - (N_Y-1)*0.5 );
 k_SOURCE = blockIdx.z;
@@ -2035,14 +2036,13 @@ void atmosphere::rayTracing(source *src,
 {
   dim3 blockDim(16,16);
   dim3 gridDim( 1+N_X/16 , 1+N_Y/16, src->N_SRC);
-  rayTracingKernReg LLL gridDim, blockDim RRR(
-  delta_x, N_X,
-  delta_y, N_Y,
-  src->wavefront.phase,
-  src->dev_ptr, src->N_SRC,
-  d__layers,
-  phase_screen_LAYER, 
-  N_LAYER, tau);
+  rayTracingKernReg LLL gridDim, blockDim RRR(delta_x, N_X,
+					      delta_y, N_Y,
+					      src->wavefront.phase,
+					      src->dev_ptr, src->N_SRC,
+					      d__layers,
+					      phase_screen_LAYER, 
+					      N_LAYER, tau);
 }
 @ 
 \section{Tests}
