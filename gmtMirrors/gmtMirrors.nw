@@ -44,6 +44,7 @@
 <<lateral edge sensor camera vector kernel>>
 <<lateral edge sensor laser vector kernel>>
 <<laser camera intersection kernel>>
+<<vignetting presetting kernel>>
 
 <<GMT M1 functions>>
 <<GMT M2 functions>>
@@ -76,6 +77,7 @@ cdef extern from "gmtMirrors.h":
     cdef cppclass gmt_m1:
         void test_ray_tracing()
         <<python GMT M12 functions>>
+        void preset(bundle *, rtd ) 
         void track(float *, float *, int, int)
 @  where
 <<python GMT M12 functions>>=
@@ -237,6 +239,9 @@ cdef class GMT_M1:
 
     def test(self):
         self._c_gmt_m12.test_ray_tracing();
+
+    def preset(self, Bundle rays, float margin):
+        self._c_gmt_m12.preset(rays._c_bundle, margin)
 
     def track(self, ndarray x, ndarray y, int segId):
 
@@ -660,6 +665,7 @@ struct gmt_m1 {
   <<GMT M12 parameters>>
   <<GMT M1 parameters>>
   <<GMT M12 functions>>
+  void preset(bundle *rays, rtd margin);
   void edge_sensors_data(void);
 };
 @  with
@@ -1072,6 +1078,43 @@ for (int k=0; k<N; k++)
    motion_CS.update( zero, zero, k);
 //motion_CS.info();
 @ 
+
+\subsection{Presetting rays vignetting}
+\label{sec:pres-rays-vign}
+\index{gmtMirrors!gmt\_m1!preset}
+
+The GMT have a sparse aperture.
+But presetting the vignetting of the rays of the source, the ray tracing routines will run much faster.
+The assumption is that all the rays outside a circle of diameter $[[D_assembly]]+[[margin]]$ are vignetted per default.
+<<GMT M1 functions>>=
+void gmt_m1::preset(bundle *rays, rtd margin) 
+{
+ dim3 blockDim(N_THREAD,N_THREAD);
+ dim3 gridDim(rays->N_L/N_THREAD+1,rays->N_L/N_THREAD+1, rays->N_BUNDLE);
+ m1_preset_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, 
+					      rays->L, rays->N_L, 
+					      0.5*(margin+D_assembly));
+}
+@ with the kernel
+<<vignetting presetting kernel>>=
+__global__ void m1_preset_kernel(ray *d__ray, int N_RAY,
+				 rtd L, int N_L, rtd R)
+{
+  int i, j, k, iSource;
+  rtd x, y, r;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  if ( (i<N_L) && (j<N_L) ) {
+    k = i + j*N_L + iSource*N_RAY;
+    x   = L*(i - (N_L-1)*0.5)/(N_L-1);
+    y   = L*(j - (N_L-1)*0.5)/(N_L-1);
+    r = hypot(x,y);
+    if (r>R) 
+      d__ray[k].v = 0;
+  }
+}
+@ 
 \subsection{Blocking}
 \label{sec:blocking}
 
@@ -1193,7 +1236,7 @@ void gmt_m1::trace(bundle *rays)
  HANDLE_ERROR( cudaMemset(V->m, 0, sizeof(char)*rays->N_RAY*rays->N_BUNDLE ) );
  HANDLE_ERROR( cudaMemset(rays->d__piston_mask, 0, 
 			  sizeof(int)*rays->N_RAY*rays->N_BUNDLE ) );
- m1_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY, 
+m1_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY, 
 					     Rri2, R2,
 					     aperture_CS.d__R,
 					     aperture_CS.d__origin,
