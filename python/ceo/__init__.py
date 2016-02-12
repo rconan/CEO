@@ -2,7 +2,7 @@ import constants
 import phaseStats
 from utilities import cuFloatArray, cuDoubleArray, cuIntArray, MaskAbstract, Mask, Telescope, GMT, StopWatch, SparseMatrix, SparseGradient, SparseInterpolation, wavefrontFiniteDifference
 from source import Complex_amplitude, Source
-from atmosphere import Atmosphere, GmtAtmosphere
+from atmosphere import AtmosphereAbstract, Atmosphere, GmtAtmosphere, Layer
 from centroiding import Centroiding
 from imaging import Imaging
 from shackHartmann import ShackHartmann
