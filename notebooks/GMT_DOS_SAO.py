@@ -1,8 +1,8 @@
 from ceo.constants import *
 # AGWS 
 N_GS = 3
-zenith_distance_arcmin = 9.5
-AGWS_magnitude = -5
+zenith_distance_arcmin = 6
+AGWS_magnitude = 10
 AGWS_photometric_band = "R"
 N_LENSLET = 26
 lenslet_pitch_meter = 1
@@ -14,7 +14,7 @@ optics_throughtput = 0.25
 
 # GMT
 entrance_pupil_size_meter = N_LENSLET*lenslet_pitch_meter
-M1_zernike_radial_order = 4
+M1_zernike_radial_order = 6
 M1_init = {"global tip-tilt [arcsec]": 0.0014*DEG2ARCSEC,
     "Tx [micron]": 20, 
     "Ty [micron]": 20,
@@ -31,7 +31,7 @@ M2_init = {"Tx [micron]": 400,
 
 # Science imager
 S_photometric_band = "R"
-detector_resolution = 81
+detector_resolution = 801
 nyquist_oversampling_factor = 2
 
 closed_loop = True

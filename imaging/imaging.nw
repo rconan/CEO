@@ -47,6 +47,7 @@ struct imaging {
   void propagateNoOverlapSPS(source *src, float d, float wavenumber);
   void propagateThroughFieldStop(source *src, float field_stop_diam);
   void propagateThroughPyramid(source *src);
+  void propagateThroughModulatedPyramid(source *src, float modulation);
 
   void readout(float exposureTime, float readOutNoiseRms);
   void readout(float exposureTime, float readOutNoiseRms, float nBackgroundPhoton);
@@ -96,6 +97,7 @@ struct imaging {
 <<propagation>>
 <<propagation through field stop>>
 <<propagation through pyramid>>
+<<propagation through modulated pyramid>>
 
 <<strehl ratio>>
 
@@ -113,6 +115,7 @@ struct imaging {
 from source cimport source, Source
 from utilities cimport cuFloatArray
 from shackHartmann cimport ShackHartmann
+from pyramid cimport Pyramid
 from segmentPistonSensor cimport SegmentPistonSensor
 cdef extern from "imaging.h":
     cdef cppclass imaging:
@@ -125,6 +128,7 @@ cdef extern from "imaging.h":
         void propagate(source *)
         void propagateThroughFieldStop(source *, float field_stop_diam)
         void propagateThroughPyramid(source *)
+        void propagateThroughModulatedPyramid(source *, float)
         void readout(float, float)
         void reset()
 <<class definitions>>
@@ -186,8 +190,10 @@ cdef class Imaging:
 
     def __cinit__(self, int N_SIDE_LENSLET, int N_PX_PUPIL, 
 		  DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, 
-		  N_SOURCE=1, ShackHartmann wfs=None,
-                  SegmentPistonSensor sps=None):
+		  N_SOURCE=1, 
+		  ShackHartmann wfs=None,
+                  SegmentPistonSensor sps=None,
+		  Pyramid pym=None):
 	self._c_imaging = new imaging()
         if N_PX_IMAGE is None:
             N_PX_IMAGE = N_PX_PUPIL;
@@ -204,6 +210,9 @@ cdef class Imaging:
         elif sps is not None: 
             self.isPtr = 1
             self._c_imaging = &(sps._c_segmentPistonSensor.camera)
+	elif pym is not None:
+            self.isPtr = 1
+            self._c_imaging = &(pym._c_pyramid.camera)
         else:
             self.isPtr = 0
             if N_PX_IMAGE is None:
@@ -225,8 +234,12 @@ cdef class Imaging:
     def propagateThroughFieldStop(self, Source src, float field_stop_diam):
         self._c_imaging.propagateThroughFieldStop(src._c_source, field_stop_diam)
 
-    def propagateThroughPyramid(self, Source src):
-        self._c_imaging.propagateThroughPyramid(src._c_source)
+    def propagateThroughPyramid(self, Source src, float modulation=0.0):
+        if modulation>0.0:           
+            self._c_imaging.propagateThroughModulatedPyramid(src._c_source,
+                                                             modulation)    
+        else:
+            self._c_imaging.propagateThroughPyramid(src._c_source)
 
     def readOut(self,float exposureTime, float readOutNoiseRms):
         self._c_imaging.readout(exposureTime,readOutNoiseRms)
@@ -751,8 +764,8 @@ For a complex amplitude $\Phi$, the camera image $I$ is given by
   \label{eq:5}
   I = \left| \mathcal F \left[ \mathcal F[\Phi] T_{pyr} \right] \right|^2.
 \end{equation}
-\index{imaging!imaging!propagateThroughPyramid}
 
+\index{imaging!imaging!propagateThroughPyramid}
 <<propagation through pyramid>>=
 void imaging::propagateThroughPyramid(source *src) {
   int M = N_PX_IMAGE/N_PX_CAMERA;
@@ -768,33 +781,32 @@ void imaging::propagateThroughPyramid(source *src) {
                                               pixel_scale, theta_x, theta_y,
 					      absolute_pointing,0);
   <<imaging CUFFT execution>>
- 
-  gridDim = dim3(1+N_DFT/16,1+N_DFT/16);
+
+  gridDim = dim3(1+N_DFT/16,1+N_DFT/16, N_SOURCE);
   apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL);
 
   <<propagation (FFT, intensity and binning)>>
 }
-@
+@ with
 <<apply pyramid>>=
 __global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL)
 {
-  int i, j, k, w, half;
+  int i, j, k, w, half, iSource;
   float xi, yj, c, s, phasor, a, b;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
   if ( (i<N_DFT) && (j<N_DFT) ) {
-    w = N_DFT & 1;
+    k = i*N_DFT + j + iSource*N_DFT*N_DFT;
+    w = N_PX_PUPIL & 1;
     half = (N_DFT-2+w)/2;
     if (i>half)
-      xi = (float) (i - N_DFT);
-    else
-      xi = (float) i;
+      i -= N_DFT;
     if (j>half)
-      yj = (float) (j - N_DFT);
-    else
-      yj = (float) j;
-    k = i*N_DFT + j;
-    phasor = -2.*(i+j)*(N_PX_PUPIL*1.5+1+w)/N_DFT;
+      j -= N_DFT;
+    xi = (float) i;
+    yj = (float) j; 
+    phasor = -2*(i+j)*(N_PX_PUPIL*1.5 + 1 - w*0.5)/N_DFT;
     phasor -= 0.5*(fabs(xi)+fabs(yj));
     sincospif(phasor,&s,&c);
     a = d__wave_PUPIL[k].x;
@@ -804,7 +816,38 @@ __global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL)
   } 
 }
 @
+In the case of modulation:
+\index{imaging!imaging!propagateThroughModulatedPyramid}
+<<propagation through modulated pyramid>>=
+void imaging::propagateThroughModulatedPyramid(source *src, float modulation) {
+  int M, nTheta, kTheta; 
+  float theta;
+  nTheta = (int) roundf(4*PI*modulation);
+  printf("nTheta=%d\n",nTheta);
+  M = N_PX_IMAGE/N_PX_CAMERA;
+  dim3 gridDim;
+  dim3 blockDim(16,16);
+  for (kTheta = 0;kTheta<nTheta;kTheta++) {
+  gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
+  theta = 2*PI*kTheta/nTheta;
+  complexAmplitudeWithModulation LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
+					      src->wavefront.amplitude,
+					      src->wavefront.phase,
+                                              src->wavenumber(),
+					      N_PX_PUPIL, N_PX_IMAGE, M,
+					      N_SIDE_LENSLET, src->dev_ptr,
+                                              pixel_scale, theta_x, theta_y,
+					      absolute_pointing,0,
+					      modulation,theta);
+  <<imaging CUFFT execution>>
+ 
+  gridDim = dim3(1+N_DFT/16,1+N_DFT/16,N_SOURCE);
+  apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL);
 
+  <<propagation (FFT, intensity and binning)>>
+      }
+}
+@
 \subsubsection{Imaging numerical model}
 \label{sec:imag-numer-model}
 
@@ -886,6 +929,24 @@ __global__ void complexAmplitude(float2 *wave_PUPIL, int N_DFT,
 <<imaging complex amplitude (1 pixel overlap)>>
 <<imaging complex amplitude (ii)>>
 }
+__global__ void complexAmplitudeWithModulation(float2 *wave_PUPIL, int N_DFT,
+                                 float *wavefront_amplitude,
+				 float *wavefront_phase,
+				 float wavenumber,
+				 int N_PX_PUPIL, int N_PX_IMAGE, int M,
+				 int N_SIDE_LENSLET, source *src,
+				 float pixel_scale,
+				 float theta_x, float theta_y,
+				 char absolute_pointing, char DFT_SHIFT,
+                                 float modulation_r, float modulation_o)
+{
+  int i, j, iLenslet, jLenslet, ij_PUPIL, ij_DFT, iSource;
+  float c ,s, phasor, dx, dy, dx_int, dy_int;
+  dx = dy = 0.0;
+<<imaging complex amplitude (i)>>
+<<imaging complex amplitude (1 pixel overlap)>>
+<<imaging complex amplitude (ii) with modulation>>
+}
 @ The source index is given by the third coordinates of the thread block
 <<imaging complex amplitude (i)>>=
   // source index
@@ -906,13 +967,26 @@ __global__ void complexAmplitude(float2 *wave_PUPIL, int N_DFT,
 ij_PUPIL = lenslet2array_overlap(i,j,N_PX_PUPIL,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
 @ The phase shift is applied on the wavefront
 <<imaging complex amplitude (ii)>>=
+<<imaging complex amplitude (ii.a)>>
+<<imaging complex amplitude (ii.b)>>
+<<imaging complex amplitude (ii.c)>>
+@ 
+<<imaging complex amplitude (ii.a)>>=
         phasor = (DFT_SHIFT==0) ? 0.0 : PI*(i+j)*(1-N_DFT + (N_PX_IMAGE & 1))/N_DFT;
         <<angular offset>>
 	phasor -= 2*PI*(i*dx+j*dy)/N_DFT;
+<<imaging complex amplitude (ii.b)>>=
         phasor += wavefront_phase[ij_PUPIL]*wavenumber;
         sincosf(phasor,&c,&s);
+@ In the case of a modulated PSF with amplitude [[modulation]]
+<<imaging complex amplitude (ii) with modulation>>=
+<<imaging complex amplitude (ii.a)>>
+        sincosf(modulation_o,&s,&c);
+        phasor -= 8*PI*modulation_r*(i*c+j*s)/N_DFT;
+<<imaging complex amplitude (ii.b)>>
+<<imaging complex amplitude (ii.c)>>
 @ The wavefront in the pupil plane is written in the complex amplitude array ready to be processed by CUFFT
-<<imaging complex amplitude (ii)>>=
+<<imaging complex amplitude (ii.c)>>=
   wave_PUPIL[ij_DFT].x = wave_PUPIL[ij_DFT].y = wavefront_amplitude[ij_PUPIL];
         wave_PUPIL[ij_DFT].x *= c;
         wave_PUPIL[ij_DFT].y *= s;

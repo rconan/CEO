@@ -1,9 +1,9 @@
 include common.mk
 
 #ls -d */ | sed -e 's,//$,,' -e 's,doc,,' -e 's,lib,,'  -e 's,include,,' | xargs
-SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE plotly rayTracing gmtMirrors segmentPistonSensor
+SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE plotly rayTracing gmtMirrors segmentPistonSensor pyramid
 TUTORIAL	= ngsao lgsao ltao ltaoVsAst geaos
-CYTHON_DIR	= utilities rayTracing source imaging centroiding shackHartmann atmosphere LMMSE aaStats gmtMirrors segmentPistonSensor
+CYTHON_DIR	= utilities rayTracing source imaging centroiding shackHartmann atmosphere LMMSE aaStats gmtMirrors segmentPistonSensor pyramid
 
 all: makefile jsmnlib
 ifeq ($(wildcard include/plotly.credentials), )
@@ -21,7 +21,7 @@ tex: makefile $(texsrc)
 	for i in $(SOURCE_DIR); do (make -C $$i tex); done
 	for i in $(TUTORIAL); do (make -C TUTORIAL $$i.tex); done
 	rm -f doc/ceo.manual.main.tex
-	for i in $(SOURCE_DIR); do (echo -e "\input{ceo.manual.$$i}\n">>doc/ceo.manual.main.tex); done
+	for i in $(SOURCE_DIR); do (echo -e "\include{ceo.manual.$$i}\n">>doc/ceo.manual.main.tex); done
 	for i in $(SOURCE_DIR); do (echo -n "\chapter" >doc/ceo.manual.$$i.tex; echo -e "{$$i}\n\label{sec:$$i}\n\n\input{../$$i/$$i}">>doc/ceo.manual.$$i.tex); done
 
 
@@ -32,8 +32,8 @@ cython: makefile
 doc: tex
 	make -C doc all
 
-pydoc:
-	make -C python/docs html
+pydoc: cython
+	make -C python/docs html 
 
 test:
 	make -C test all
@@ -62,6 +62,12 @@ jsmnlib:
 
 clean_makefile:
 	for i in $(SOURCE_DIR); do (rm -f $$i/Makefile); done
+
+cleanpython:
+	for i in $(SOURCE_DIR); do (make -C $$i cleanpython); done
+	rm -f python/ceo/*.so
+	rm -f python/ceo/*.pxd
+	rm -f python/ceo/*.pyx*
 
 clean:
 	for i in $(SOURCE_DIR); do (make -C $$i clean); done

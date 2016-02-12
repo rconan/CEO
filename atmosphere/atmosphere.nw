@@ -36,7 +36,7 @@ struct layer {
 
   int setup(float _altitude, float _xi0,
 	    float _wind_speed_, float _wind_direction,
-	    float L, int N_L, float W, int N_W,
+	    float W, int N_W,
 	    float field_size);
 
 };
@@ -66,6 +66,9 @@ struct atmosphere {
 	     float field_size_ARCSEC);
   void gmt_setup();
   void gmt_setup(float r0_, float L0);
+  void gmt_setup(float r0_, float L0,
+		 float _L_, int _NXY_PUPIL_,
+		 float field_size_ARCSEC);
 
   void cleanup(void);
 
@@ -158,6 +161,7 @@ struct atmosphere {
 <<atmosphere setup (ray tracing)>>
 <<atmosphere setup (GMT)>>
 <<atmosphere setup (GMT prm)>>
+<<atmosphere setup (GMT prm, ray tracing)>>
 
 <<cleanup>>
 
@@ -191,11 +195,18 @@ struct atmosphere {
 from source cimport source
 from centroiding cimport centroiding
 cdef extern from "atmosphere.h":
+    cdef cppclass layer:
+        int N_WIDTH_LAYER, N_LENGTH_LAYER
+        float WIDTH_LAYER, LENGTH_LAYER
     cdef cppclass atmosphere:
+        int N_LAYER, N_PHASE_LAYER
+        float *phase_screen_LAYER
+        layer *layers
         void setup(float , float, int, float *, float *, float *, float *)
         void setup(float , float, int, float *, float *, float *, float *, 
 		   float, int, float)
         void gmt_setup(float , float)
+        void gmt_setup(float, float, float, int, float)
         void cleanup()
         void info()
 	void reset()
@@ -223,20 +234,43 @@ from utilities cimport cuFloatArray
 from source cimport Source
 from centroiding cimport Centroiding
 from shackHartmann cimport ShackHartmann
+cdef class Layer:
+    cdef:
+        layer *_c_layer
+        readonly cuFloatArray phase_screen
+    cdef void init(Layer, atmosphere *, int)
 cdef class AtmosphereAbstract:
     cdef:
         atmosphere *_c_atmosphere
+        readonly list layers
         readonly float r0, L0
         readonly int N_LAYER
         readonly ndarray altitude, xi0, wind_speed, wind_direction
 @ 
 \index{atmosphere!python!AtmosphereAbstract}
 <<atmosphere.pyx>>=
-import numpy as np
 cimport cython
 cimport numpy as np
+import numpy as np
 @cython.boundscheck(False)
 @cython.wraparound(False)
+cdef class Layer:
+    def __cinit__(self):
+        self._c_layer = new layer()
+    cdef void init(self, atmosphere *atm, int i_LAYER):
+        self._c_layer = &(atm.layers[i_LAYER])
+    property N_WIDTH:
+        def __get__(self):
+            return self._c_layer.N_WIDTH_LAYER
+    property N_LENGTH:
+        def __get__(self):
+            return self._c_layer.N_LENGTH_LAYER
+    property WIDTH:
+        def __get__(self):
+            return self._c_layer.WIDTH_LAYER
+    property LENGTH:
+        def __get__(self):
+            return self._c_layer.LENGTH_LAYER
 cdef class AtmosphereAbstract:
 
     def __cinit__(self, float r0, float L0, 
@@ -312,14 +346,35 @@ cdef class Atmosphere(AtmosphereAbstract):
                                      <float *>self.xi0.data,
                                      <float *>self.wind_speed.data, 
                                      <float *>self.wind_direction.data,
-                                     <float> L, <int> NXY_PUPIL, <float> fov)            
+                                     <float> L, <int> NXY_PUPIL, <float> fov) 
+            self.init()
+
+    cdef init(self):
+        cdef:
+            int k, N
+            Layer L
+        N = 0
+        self.layers = []
+        for k in range(self.N_LAYER):
+            L = Layer()
+            #L.init(self._c_atmosphere,0)
+            L._c_layer = self._c_atmosphere.layers + k
+	    L.phase_screen = cuFloatArray(shape=(L.N_LENGTH,L.N_WIDTH), dev_malloc=False)
+            L.phase_screen._c_gpu.dev_data = self._c_atmosphere.phase_screen_LAYER + N
+            self.layers.append( L )
+            N += L.N_WIDTH*L.N_LENGTH                
 
 
 cdef class GmtAtmosphere(AtmosphereAbstract):
 
-    def __cinit__(self, float r0, float L0):
+    def __cinit__(self, float r0, float L0,
+                  L=0.0,NXY_PUPIL=0,fov=0.0):
         AtmosphereAbstract.__init__(self,r0,L0)
-        self._c_atmosphere.gmt_setup(r0, L0)   
+        if NXY_PUPIL==0:
+            self._c_atmosphere.gmt_setup(r0, L0)   
+        else:
+            self._c_atmosphere.gmt_setup(r0, L0,
+                                         <float> L, <int> NXY_PUPIL, <float> fov)   
     
 @ 
 <<python atmosphere methods>>=
@@ -337,8 +392,6 @@ def get_phase_screen(self, Source src,
     ----------
     src: Source object
         The light source 
-    N_SRC: int
-        The number of light sources contained in the Source object
     delta_x: float
         X-axis spacing
     N_x: int
@@ -382,8 +435,8 @@ def get_phase_values(self, cuFloatArray x,
                                         src._c_source, time)
     return ps
 
-"""
-def ray_tracing(self,
+
+def ray_tracing_values(self,
                 cuFloatArray x_PUPIL,cuFloatArray y_PUPIL, 
                 int NXY_PUPIL, 
                 Source src, float tau):
@@ -392,7 +445,7 @@ def ray_tracing(self,
                                   ps._c_gpu.dev_data, NXY_PUPIL,
                                   src._c_source, tau)
     return ps
-"""
+
 def ray_tracing(self, Source src, 
                 float delta_x, int N_X,
 		float delta_y, int N_Y,
@@ -505,7 +558,7 @@ int N_WIDTH_LAYER, N_LENGTH_LAYER;
 float *phase_screen_LAYER;
 @ \item the size in memory of all the phase screnn in the layers
 <<atmosphere parameters>>=
-int N_PHASE_LAYER_byte;
+int N_PHASE_LAYER;
 @ \end{itemize}
 
 
@@ -623,7 +676,6 @@ y_l &=& \left( 1 - {h_l\over z_\ast} \right)(y-v_yt) + h_l\theta_{\ast y}
 \subsubsection{Setup \& Cleanup}
 \label{sec:setup--cleanup}
 
-
 The above definitions call for the declarations of new variables:
 <<profile parameters>>=
 float l0, L, f, delta, N_k, N_a, kmin;
@@ -633,7 +685,7 @@ float *altitude, *xi0, *wind_speed, *wind_direction;
 float *zeta1, *eta1, *zeta2, *eta2;
 curandState *devStates;
 profile turbulence, *d__turbulence;
-layer *layers;
+layer *layers, *d__layers;
 @ This variables are defined in the setup routines:
 \index{atmosphere!atmosphere!setup}
 <<atmosphere setup>>=
@@ -648,11 +700,11 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
   turbulence.setup(altitude, xi0,
 		   wind_speed, wind_direction, N_LAYER);
   field_size_ARCSEC = 0.0;
-  N_PHASE_LAYER_byte = 0;
-  float L, W;
-  int N_L, N_W;
-  L = W = 0.0;
-  N_L = N_W = 0;
+  N_PHASE_LAYER = 0;
+  float W;
+  int N_W;
+  W = 0.0;
+  N_W = 0;
   <<allocation>>
   phase_screen_LAYER = NULL;
 }
@@ -673,53 +725,9 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
 		   wind_speed, wind_direction, N_LAYER);
   field_size_ARCSEC = _field_size_ARCSEC_;
 
-  //  float L;
-  //int N_L;
-
-  int N_L, N_PHASE_LAYER_byte;
-  float L, delta_W;
-  delta_W = W/(N_W-1);
-  /*
-  printf("\n@(CEO)>atmosphere: __ Layer Phase Screen __\n"); 
-  for (k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++) {
-    //    L = W + 2*altitude[k_LAYER]*tanf(0.5*field_size_ARCSEC/RADIAN2ARCSEC) + wind_speed[0];
-    //N_L = (int) ceilf( L/delta_W ) + 1;
-    // L = (N_L-1)*delta_W;
-    //N_PHASE_LAYER_byte = N_W*N_L*sizeof(float);
-    // printf(" #%d: (%5.2fX%5.2f) meters & (%dX%d) pixels ==> %.2fMB \n",
-    //	   k_LAYER,L,W,N_L,N_W,N_PHASE_LAYER_byte/powf(2,20));
-  }
-  */
   <<allocation>>
 
-  dim3 blockDimLayers(16,16);
-  dim3 gridDimLayers;
-  //  float delta = L/(NXY_PUPIL-1);
-  source src;
-  src.setup("V",0.0,0.0,INFINITY);
-  HANDLE_ERROR( cudaMalloc( (void**)&phase_screen_LAYER, N_PHASE_LAYER_byte ) );
-  N_PHASE_LAYER_byte = 0;
-  int N = 0, i_LAYER;
-  for (i_LAYER=0;i_LAYER<N_LAYER;i_LAYER++) {
-    fprintf(stdout," #%d: ",i_LAYER);
-    N_PHASE_LAYER_byte += one_layer.setup(altitude[i_LAYER], xi0[i_LAYER], 
-					wind_speed[i_LAYER], wind_direction[i_LAYER],
-					L, N_L, W, N_W, field_size_ARCSEC/RADIAN2ARCSEC);
-    N_L = one_layer.N_LENGTH_LAYER;
-    N_W = one_layer.N_WIDTH_LAYER;
-
-    gridDimLayers = dim3( 1+N_L/16 , 1+N_W/16);
-    square_plps_layers LLL gridDimLayers , blockDimLayers RRR (phase_screen_LAYER + N,
-							       delta_W, N_L, 
-							       delta_W, N_W, 
-							       d__turbulence, 
-							       wavenumber*powf(r0,-5.0/6.0),
-							       layers, i_LAYER,
-							       zeta1, eta1, zeta2, eta2,
-							       src.dev_ptr, 0.0);
-    N += N_L*N_W;
-
-  }
+  <<layer to device (ray tracing)>>
 
 }
 @ For the GMT simulations, the GMT standard atmosphere model is called with:
@@ -738,11 +746,11 @@ void atmosphere::gmt_setup() {
   turbulence.setup(altitude, xi0,
 		   wind_speed, wind_direction, N_LAYER);
   field_size_ARCSEC = 0.0;
-  N_PHASE_LAYER_byte = 0;
-  float L, W;
-  int N_L, N_W;
-  L = W = 0.0;
-  N_L = N_W = 0;
+  N_PHASE_LAYER = 0;
+  float W;
+  int N_W;
+  W = 0.0;
+  N_W = 0;
   <<allocation>>
   phase_screen_LAYER = NULL;
 }
@@ -760,18 +768,38 @@ void atmosphere::gmt_setup(float r0_, float L0) {
   turbulence.setup(altitude, xi0,
 		   wind_speed, wind_direction, N_LAYER);
   field_size_ARCSEC = 0.0;
-  N_PHASE_LAYER_byte = 0;
-  float L, W;
-  int N_L, N_W;
-  L = W = 0.0;
-  N_L = N_W = 0;
+  N_PHASE_LAYER = 0;
+  float W;
+  int N_W;
+  W = 0.0;
+  N_W = 0;
   <<allocation>>
   phase_screen_LAYER = NULL;
+}
+<<atmosphere setup (GMT prm, ray tracing)>>=
+void atmosphere::gmt_setup(float r0_, float L0,
+                           float W, int N_W,
+                           float _field_size_ARCSEC_) {
+  wavelength = 550e-9;
+  wavenumber = wavelength/2/PI;
+  r0 = r0_;
+  turbulence.L0 = L0;
+  N_LAYER = 7;
+  float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
+              xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
+              wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
+              wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+  turbulence.setup(altitude, xi0,
+		   wind_speed, wind_direction, N_LAYER);
+  field_size_ARCSEC = _field_size_ARCSEC_;
+  N_PHASE_LAYER = 0;
+  <<allocation>>
+  <<layer to device (ray tracing)>>
 }
 
 <<allocation>>=
 info();
-<<layer to device>>
+<<layer to device (common)>>
 HANDLE_ERROR( cudaMalloc( (void**)&d__turbulence, sizeof(profile) ) );
 HANDLE_ERROR( cudaMemcpy( d__turbulence, &turbulence,
 			  sizeof(profile), cudaMemcpyHostToDevice ) );
@@ -789,42 +817,6 @@ HANDLE_ERROR( cudaDeviceSynchronize() );
 generateVariates LLL gridDim,blockDim RRR (zeta1, eta1, zeta2, eta2, devStates, nel);
 HANDLE_ERROR( cudaDeviceSynchronize() );
 fprintf(stdout,"done!\n");
-/*
-dim3 blockDimLayers(16,16);
-dim3 gridDimLayers;
-  //  float delta = L/(NXY_PUPIL-1);
-  source src;
-src.setup("V",0.0,0.0,INFINITY);
-int  delta_W = W/(N_W-1);
-HANDLE_ERROR( cudaMalloc( (void**)&phase_screen_LAYER, N_PHASE_LAYER_byte ) );
-int _N_, _N_L_, _N_W_;
-_N_ = 0;
-for (int i_LAYER=0; i_LAYER<N_LAYER; i_LAYER++) {
-  fprintf(stdout," #%d: ",i_LAYER);
-  N_PHASE_LAYER_byte += one_layer.setup(altitude[i_LAYER], xi0[i_LAYER], 
-					wind_speed[i_LAYER], wind_direction[i_LAYER],
-					L, N_L, W, N_W, field_size_ARCSEC/RADIAN2ARCSEC);
-  _N_L_ = one_layer.N_LENGTH_LAYER;
-  _N_W_ = one_layer.N_WIDTH_LAYER;
-  gridDimLayers = dim3(1+_N_L_/16,
-		       1+_N_W_/16);
-  //  N_PHASE_LAYER_byte /= sizeof(float);
-  
-
-  square_plps_layers LLL gridDimLayers , blockDimLayers RRR (
-			phase_screen_LAYER + _N_,
-			delta_W, _N_L_, 
-			delta_W, _N_W_, 
-			d__turbulence, 
-			wavenumber*powf(r0,-5.0/6.0),
-			layers + i_LAYER, 1,
-			zeta1, eta1, zeta2, eta2,
-			src.dev_ptr, 0.0);
-  _N_   += _N_L_*_N_W_;
-HANDLE_ERROR( cudaDeviceSynchronize() );
-
-}
-*/
 @ 
 \index{atmosphere!profile!setup}
 <<profile setup>>=
@@ -876,44 +868,76 @@ An atmospheric layer parameters are set with:
 <<layer setup>>=
 int layer::setup(float _altitude, float _xi0,
 		  float _wind_speed, float _wind_direction,
-		  float L, int N_L, float W, int N_W,
+		  float W, int N_W,
 		  float field_size)
 {
-    altitude       = _altitude;
-    xi0            = _xi0;
-    wind_speed     = _wind_speed;
-    wind_direction = _wind_direction;
-    vx = wind_speed*cosf(wind_direction);
-    vy = wind_speed*sinf(wind_direction);
-    WIDTH_LAYER    = W;
-    LENGTH_LAYER   = WIDTH_LAYER + 2*altitude*tanf(0.5*field_size) + wind_speed;
-    N_WIDTH_LAYER  = N_W;
-    N_LENGTH_LAYER = (int) ceilf( (N_WIDTH_LAYER-1)*LENGTH_LAYER/WIDTH_LAYER ) + 1;
-    LENGTH_LAYER   = (N_LENGTH_LAYER-1)*WIDTH_LAYER/(N_WIDTH_LAYER-1);
-    int N = N_WIDTH_LAYER*N_LENGTH_LAYER*sizeof(float);
-    /*
+  int N = 0;
+  altitude       = _altitude;
+  xi0            = _xi0;
+  wind_speed     = _wind_speed;
+  wind_direction = _wind_direction;
+  vx = wind_speed*cosf(wind_direction);
+  vy = wind_speed*sinf(wind_direction);
+  if (N_W>0) {
+    float d = W/(N_W-1);
+    WIDTH_LAYER    = W*sqrtf(2) + 2*altitude*tanf(0.5*field_size);
+    LENGTH_LAYER   = WIDTH_LAYER + wind_speed;
+    N_WIDTH_LAYER  = (int) ceilf( WIDTH_LAYER/d ) + 1;
+    N_LENGTH_LAYER = (int) ceilf( LENGTH_LAYER/d ) + 1;
+    WIDTH_LAYER    = d*(N_WIDTH_LAYER-1);
+    LENGTH_LAYER   = d*(N_LENGTH_LAYER-1);
+    N = N_WIDTH_LAYER*N_LENGTH_LAYER;
     fprintf(stdout,"(%5.2fX%5.2f) meters & (%dX%d) pixels ==> %.2fMB \n",
-	   LENGTH_LAYER,WIDTH_LAYER,
-	   N_LENGTH_LAYER,N_WIDTH_LAYER,N/powf(2,20));
-    */
-    return N;
+	    LENGTH_LAYER,WIDTH_LAYER,
+	    N_LENGTH_LAYER,N_WIDTH_LAYER,N*sizeof(float)/powf(2,20));
+  }
+  return N;
 }
 @ The [[layer]] structures are filled with their parameters and copied to the device
-<<layer to device>>=
-HANDLE_ERROR( cudaMalloc( (void**)&layers, sizeof(layer)*N_LAYER ) );
-layer one_layer;
-N_PHASE_LAYER_byte = 0;
-//printf("\n@(CEO)>atmosphere: __ Layer Phase Screen __\n"); 
+<<layer to device (common)>>=
+layers = (layer*) malloc( sizeof(layer)*N_LAYER );
+HANDLE_ERROR( cudaMalloc( (void**)&d__layers, sizeof(layer)*N_LAYER ) );
+//layer one_layer;
+N_PHASE_LAYER = 0;
+fprintf(stdout,"\n@(CEO)>atmosphere: __ Layer Phase Screen __\n"); 
 for (int i_LAYER=0; i_LAYER<N_LAYER; i_LAYER++) {
-  //  fprintf(stdout," #%d: ",i_LAYER);
-  N_PHASE_LAYER_byte += one_layer.setup(altitude[i_LAYER], xi0[i_LAYER], 
+  fprintf(stdout," #%d: ",i_LAYER);
+  N_PHASE_LAYER += layers[i_LAYER].setup(altitude[i_LAYER], xi0[i_LAYER], 
 					wind_speed[i_LAYER], wind_direction[i_LAYER],
-					L, N_L, W, N_W, field_size_ARCSEC/RADIAN2ARCSEC);
-  HANDLE_ERROR( cudaMemcpy( layers + i_LAYER, &one_layer,
+					W, N_W, field_size_ARCSEC/RADIAN2ARCSEC);
+  HANDLE_ERROR( cudaMemcpy( d__layers + i_LAYER, layers + i_LAYER,
 			    sizeof(layer),
 			    cudaMemcpyHostToDevice ) );
 }
-//fprintf(stdout," Total: %.2fMB\n",N_PHASE_LAYER_byte/powf(2,20));
+fprintf(stdout," Total: %.2fMB\n",N_PHASE_LAYER*sizeof(float)/powf(2,20));
+@  The phase screen of each layer is computed with:
+<<layer to device (ray tracing)>>=
+dim3 blockDimLayers(16,16);
+dim3 gridDimLayers;
+source src;
+src.setup("V",0.0,0.0,INFINITY);
+HANDLE_ERROR( cudaMalloc( (void**)&phase_screen_LAYER, N_PHASE_LAYER*sizeof(float) ) );
+N_PHASE_LAYER = 0;
+int N = 0, i_LAYER, N_L;
+float delta_W = W/(N_W-1);
+fprintf(stdout," . Computing layer phase screen: ");
+for (i_LAYER=0;i_LAYER<N_LAYER;i_LAYER++) {
+  fprintf(stdout,"%d,",i_LAYER);
+  N_L = layers[i_LAYER].N_LENGTH_LAYER;
+  N_W = layers[i_LAYER].N_WIDTH_LAYER;
+
+  gridDimLayers = dim3( 1+N_L/16 , 1+N_W/16);
+  square_plps_layers LLL gridDimLayers , blockDimLayers RRR (phase_screen_LAYER + N,
+							     delta_W, N_L,
+							     delta_W, N_W,
+							     d__turbulence,
+							     wavenumber*powf(r0,-5.0/6.0),
+							     d__layers, i_LAYER,
+							     zeta1, eta1, zeta2, eta2,
+							     src.dev_ptr, 0.0);
+  N += N_L*N_W;
+ }
+fprintf(stdout,"\b\n");
 @ 
 The random generator is initialized within the following kernel:
 <<init random variates>>=
@@ -977,9 +1001,11 @@ void atmosphere::cleanup(void) {
   HANDLE_ERROR( cudaFree( eta1 ) );
   HANDLE_ERROR( cudaFree( zeta2 ) );
   HANDLE_ERROR( cudaFree( eta2 ) );
-  HANDLE_ERROR( cudaFree( layers ) );
-  if (phase_screen_LAYER!=NULL)
+  if (phase_screen_LAYER!=NULL) {
     HANDLE_ERROR( cudaFree( phase_screen_LAYER ) );
+    free( layers );
+    HANDLE_ERROR( cudaFree( d__layers ) );
+  }
 }
 @
 The phase screen are defined in the telescope pupil at the ground 
@@ -995,7 +1021,7 @@ void atmosphere::get_phase_screen(float *phase_screen,
 				   x, y, N_xy, 
 				   d__turbulence, 
 				   wavenumber*powf(r0,-5.0/6.0),
-				   layers, N_LAYER,
+				   d__layers, N_LAYER,
 				   zeta1, eta1, zeta2, eta2,
 				   src->dev_ptr, time);
 }
@@ -1011,7 +1037,7 @@ void atmosphere::get_phase_screen(float const *x, float const *y, int N_xy,
 				   x, y, N_xy, 
 				   d__turbulence, 
 				   wavenumber*powf(r0,-5.0/6.0),
-				   layers, N_LAYER,
+				   d__layers, N_LAYER,
 				   zeta1, eta1, zeta2, eta2,
 				   src->dev_ptr, time);
 }
@@ -1144,7 +1170,7 @@ void atmosphere::get_phase_screen(float const delta_x, int N_x, float const delt
 				   delta_x, N_x, delta_y, N_y, 
 				   d__turbulence, 
 				   wavenumber*powf(r0,-5.0/6.0),
-				   layers, N_LAYER,
+				   d__layers, N_LAYER,
 				   zeta1, eta1, zeta2, eta2,
 				   src->dev_ptr, time);
 }
@@ -1159,7 +1185,7 @@ void atmosphere::get_phase_screen(float *phase_screen,
 				   delta_x, N_x, delta_y, N_y, 
 				   d__turbulence, 
 				   wavenumber*powf(r0,-5.0/6.0),
-				   layers, N_LAYER,
+				   d__layers, N_LAYER,
 				   zeta1, eta1, zeta2, eta2,
 				   src->dev_ptr, time);
 }
@@ -1170,24 +1196,25 @@ void atmosphere::get_phase_screen(source *src,
 {
   dim3 blockDim(16,16);
   dim3 gridDim( 1+N_x/16 , 1+N_y/16, src->N_SRC);
-  if (src->wavefront.M==NULL)
+  if (src->wavefront.M==NULL) {
     square_plps LLL gridDim , blockDim RRR 
       (src->wavefront.phase,
        delta_x, N_x, delta_y, N_y, 
        d__turbulence, 
        wavenumber*powf(r0,-5.0/6.0),
-       layers, N_LAYER,
+       d__layers, N_LAYER,
        zeta1, eta1, zeta2, eta2,
        src->dev_ptr, time);
-  else
+  } else {
     square_plps_masked LLL gridDim , blockDim RRR 
       (src->wavefront.phase, src->wavefront.M->m,
        delta_x, N_x, delta_y, N_y, 
        d__turbulence, 
        wavenumber*powf(r0,-5.0/6.0),
-       layers, N_LAYER,
+       d__layers, N_LAYER,
        zeta1, eta1, zeta2, eta2,
        src->dev_ptr, time);
+  }
 }
 <<phase screen V.b>>=
 void atmosphere::get_phase_screen(source *src, float time)
@@ -1204,7 +1231,7 @@ void atmosphere::get_phase_screen(source *src, float time)
        wavefront->M->delta[1], wavefront->M->size_px[1], 
        d__turbulence, 
        wavenumber*powf(r0,-5.0/6.0),
-       layers, N_LAYER,
+       d__layers, N_LAYER,
        zeta1, eta1, zeta2, eta2,
        src->dev_ptr, time);
   else
@@ -1214,7 +1241,7 @@ void atmosphere::get_phase_screen(source *src, float time)
        wavefront->M->delta[1], wavefront->M->size_px[1], 
        d__turbulence, 
        wavenumber*powf(r0,-5.0/6.0),
-       layers, N_LAYER,
+       d__layers, N_LAYER,
        zeta1, eta1, zeta2, eta2,
        src->dev_ptr, time);
 }
@@ -1229,7 +1256,7 @@ void atmosphere::get_phase_screen(source *src, int N_SRC,
 				   delta_x, N_x, delta_y, N_y, 
 				   d__turbulence, 
 				   wavenumber*powf(r0,-5.0/6.0),
-                                   layers, N_LAYER,
+                                   d__layers, N_LAYER,
 				   zeta1, eta1, zeta2, eta2,
 				   src->dev_ptr, time);
 }
@@ -1276,7 +1303,6 @@ void atmosphere::get_phase_screen(source *src, int N_SRC,
 		       source *src, float time)
 {
   <<declarations>>
-
   <<thread to coordinate index (layers)>>
   
   sum = 0;
@@ -1291,7 +1317,7 @@ void atmosphere::get_phase_screen(source *src, int N_SRC,
           for (j=0;j<turb->N_a;j++)
 	    {
 	      <<frequency angle sum>>
-		//	      for (l=0;l<N_LAYER;l++)
+		// for (l=0;l<N_LAYER;l++)
 		l = n_LAYER;
 		{
 		  <<layer sum>>
@@ -1351,8 +1377,8 @@ i = blockIdx.x * blockDim.x + threadIdx.x;
 j = blockIdx.y * blockDim.y + threadIdx.y;
 i_source = blockIdx.z;
 kl = i * N_y + j + i_source*N_x*N_y;
-x_kl0 = i*delta_x - (N_y-1)*delta_x*0.5;
-y_kl0 = j*delta_y - (N_y-1)*delta_y*0.5;
+x_kl0 = delta_x*(i - (N_y-1)*0.5 - N_x + N_y);
+y_kl0 = delta_y*(j - (N_y-1)*0.5);
 @
 \subsection{Phase screen gradient}
 \label{sec:phase-scre-grad}
@@ -1409,7 +1435,7 @@ void atmosphere::get_phase_screen_gradient(float *sx, float *sy, int NL, float c
   dim3 gridDim( 1+NL/16 , 1+NL/16);
   plps_gradient LLL gridDim , blockDim RRR (sx, sy, NL, d,
 					    d__turbulence, wavelength, r0,
-					    layers, N_LAYER,
+					    d__layers, N_LAYER,
 					    zeta1, eta1, zeta2, eta2,
 					    src->dev_ptr, time);
 }
@@ -1423,13 +1449,13 @@ void atmosphere::get_phase_screen_gradient(centroiding *cog, int NL, float const
     plps_gradient_mask LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy, NL, 
 						   cog->lenslet_mask, d,
 						   d__turbulence, wavelength, r0,
-						   layers, N_LAYER,
+						   d__layers, N_LAYER,
 						   zeta1, eta1, zeta2, eta2,
 						   src->dev_ptr, time);
   else
     plps_gradient LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy, NL, d,
 					      d__turbulence, wavelength, r0,
-					      layers, N_LAYER,
+					      d__layers, N_LAYER,
 					      zeta1, eta1, zeta2, eta2,
 					      src->dev_ptr, time);
 }
@@ -1443,13 +1469,13 @@ void atmosphere::get_phase_screen_gradient(centroiding *cog, int NL, float const
     plps_gradient_mask LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy, NL, 
 						   cog->lenslet_mask, d,
 						   d__turbulence, wavelength, r0,
-						   layers, N_LAYER,
+						   d__layers, N_LAYER,
 						   zeta1, eta1, zeta2, eta2,
 						   src->dev_ptr, time);
   else
     plps_gradient LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy, NL, d,
 					      d__turbulence, wavelength, r0,
-					      layers, N_LAYER,
+					      d__layers, N_LAYER,
 					      zeta1, eta1, zeta2, eta2,
 					      src->dev_ptr, time);
 }
@@ -1462,7 +1488,7 @@ void atmosphere::get_phase_screen_gradient(centroiding *cog, int NL, char *valid
   plps_gradient_mask LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy, NL, 
 						 valid_lenslet, d,
 						 d__turbulence, wavelength, r0,
-						 layers, N_LAYER,
+						 d__layers, N_LAYER,
 						 zeta1, eta1, zeta2, eta2,
 						 src->dev_ptr, time);
 }
@@ -1518,7 +1544,7 @@ void atmosphere::get_phase_screen_gradient(float *sx, float *sy, int NL, char *v
   dim3 gridDim( 1+NL/16 , 1+NL/16);
   plps_gradient_mask LLL gridDim , blockDim RRR (sx, sy, NL, valid_lenslet, d,
 						 d__turbulence, wavelength, r0,
-						 layers, N_LAYER,
+						 d__layers, N_LAYER,
 						 zeta1, eta1, zeta2, eta2,
 						 src->dev_ptr, time);
 }
@@ -1620,7 +1646,7 @@ void atmosphere::get_phase_screen_circ_centroids(centroiding *cog, const float R
   circ_centroids_kernel LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy,  N_o, R,
 						    d__turbulence, 
 						    wavenumber*powf(r0,-5.0/6.0),
-						    layers, N_LAYER,
+						    d__layers, N_LAYER,
 						    zeta1, eta1, zeta2, eta2,
 						    src->dev_ptr, time);
 }
@@ -1694,14 +1720,14 @@ void atmosphere::get_phase_screen_circ_uplink_centroids(centroiding *cog, const 
     circ_focused_uplink_centroids_kernel LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy,  N_o, R,
 								     d__turbulence, 
 								     wavenumber*powf(r0,-5.0/6.0),
-								     layers, N_LAYER,
+								     d__layers, N_LAYER,
 								     zeta1, eta1, zeta2, eta2,
 								     src->dev_ptr, time);
   else
     circ_uplink_centroids_kernel LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy,  N_o, R,
 							     d__turbulence, 
 							     wavenumber*powf(r0,-5.0/6.0),
-							     layers, N_LAYER,
+							     d__layers, N_LAYER,
 							     zeta1, eta1, zeta2, eta2,
 							     src->dev_ptr, time);
 }
@@ -1852,7 +1878,7 @@ xi = x*c + y*s;
 yi = y*c - x*s;
 @ \item translation according to the wind speed [[mag_wind]] and time step [[tau]]; the phase screens are carried by the wind which is blowing along the x--axis in the phase screen frame of reference, the pupil plane coordinates in this frame are then translated along the phase screens x--axis
 <<coordinate transformation>>=
-xi += tau*layers[k_LAYER].wind_speed;
+xi -= tau*layers[k_LAYER].wind_speed;
 @ \end{enumerate}
 
 
@@ -1875,7 +1901,7 @@ pitch += N_L*N_W;
  The interpolation starts with normalizing the coordinates to the pixel size of the phase screen i.e.
 <<bilinear interpolation>>=
 s = (N_L - 1 )
-  *(xi + layers[k_LAYER].WIDTH_LAYER*0.5)/layers[k_LAYER].LENGTH_LAYER;
+  *(xi - layers[k_LAYER].WIDTH_LAYER*0.5 + layers[k_LAYER].LENGTH_LAYER)/layers[k_LAYER].LENGTH_LAYER;
 t = (N_W - 1 )
   *(yi/layers[k_LAYER].WIDTH_LAYER + 0.5);
 @  and taking the floor integer part to locate the bottom--left coordinate of the pixels surrounding [[xi]] and [[yi]]
@@ -1919,9 +1945,9 @@ pitch = 0;
 <<threads to pupil and source mapping (regular)>>=
 ix = blockIdx.x * blockDim.x + threadIdx.x;
 iy = blockIdx.y * blockDim.y + threadIdx.y;
-ij = iy * N_X + ix;
-xP = delta_x*( iy - (N_X-1)*0.5 );
-yP = delta_y*( ix - (N_Y-1)*0.5 );
+ij = iy + ix * N_Y;
+xP = delta_x*( ix - (N_Y-1)*0.5 );
+yP = delta_y*( iy - (N_Y-1)*0.5 );
 k_SOURCE = blockIdx.z;
 pitch = 0;
 int NXY_PUPIL = N_X*N_Y;
@@ -1996,7 +2022,7 @@ const source *src, const float tau)
   x_PUPIL, y_PUPIL, 
   phase_screen_PUPIL, NXY_PUPIL, 
   src->dev_ptr, src->N_SRC,
-  layers,
+  d__layers,
   phase_screen_LAYER, 
   N_LAYER, tau);
 }
@@ -2010,14 +2036,13 @@ void atmosphere::rayTracing(source *src,
 {
   dim3 blockDim(16,16);
   dim3 gridDim( 1+N_X/16 , 1+N_Y/16, src->N_SRC);
-  rayTracingKernReg LLL gridDim, blockDim RRR(
-  delta_x, N_X,
-  delta_y, N_Y,
-  src->wavefront.phase,
-  src->dev_ptr, src->N_SRC,
-  layers,
-  phase_screen_LAYER, 
-  N_LAYER, tau);
+  rayTracingKernReg LLL gridDim, blockDim RRR(delta_x, N_X,
+					      delta_y, N_Y,
+					      src->wavefront.phase,
+					      src->dev_ptr, src->N_SRC,
+					      d__layers,
+					      phase_screen_LAYER, 
+					      N_LAYER, tau);
 }
 @ 
 \section{Tests}

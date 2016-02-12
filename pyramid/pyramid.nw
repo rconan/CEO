@@ -1,0 +1,193 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+@
+\index{pyramid}
+\section{The files}
+\label{sec:files}
+
+\subsection{Header}
+\label{sec:header}
+
+<<pyramid.h>>=
+#ifndef __PYRAMID__
+#define __PYRAMID__
+
+#include "imaging.h"
+#include "centroiding.h"
+
+  struct pyramid {
+    <<parameters>>
+    void setup(int N_PX_PUPIL,
+	       int _N_PUPIL_SAMPLING_,
+               float _modulation_,
+	       int N_GS);
+    void cleanup(void);
+  };
+
+#endif // __PYRAMID__
+@ 
+\subsection{Source}
+\label{sec:source}
+
+<<pyramid.cu>>=
+#include "pyramid.h"
+
+<<setup>>
+<<cleanup>>
+@ 
+\subsection{Python}
+\label{sec:python}
+
+\index{pyramid!python}
+<<pyramid.pxd>>=
+from imaging cimport imaging, Imaging
+from centroiding cimport centroiding, Centroiding
+from source cimport Source
+cdef extern from "pyramid.h":
+    cdef cppclass pyramid:
+        float modulation
+        imaging camera
+        centroiding data
+        void setup(int, int, float, int)
+        void cleanup()
+<<class definitions>>
+@ 
+\index{pyramid!python!Pyramid}
+<<class definitions>>=
+cdef class Pyramid:
+    cdef:
+        pyramid *_c_pyramid
+        readonly Imaging camera
+        readonly Centroiding data
+@
+<<pyramid.pyx>>=
+cdef class Pyramid:
+    """
+    Creates a pyramid wavefront sensor object
+
+    Parameters
+    ----------
+    N_SIDE_LENSLET : int
+       The linear size of the equivalent lenslet array (>1).
+    N_PX_LENSLET : int
+       The sampling in pixel of the pupil plane.
+    modulation : float, optional
+       The modulation at the vertex of the pyramid in lambda/D units, defaults to 0
+    N_GS : int, optional
+       The number of guide stars, defaults to 1
+
+    Attributes
+    ----------
+    camera : Imaging, readonly
+       The detector object
+    data : Centroiding, readonly
+       The measurements container
+
+    See also
+    --------
+    Imaging : a class for a Fourier propagation model and for a detector model
+    Centroiding : a class for the data processing of wavefront sensor frames
+
+
+    Examples
+    --------
+    A 30x30 lenslet equivalent pyramid with a 240x240 pupil resolution is created with
+
+    >>> import ceo
+    >>> wfs = ceo.Pyramid(30,240)
+
+    The same pyramid as above but with a 5lambda/D modulation
+
+    >>> wfs = ceo.Pyramid(30,240,modulation=5)
+
+    For an asterism of 3 guide stars:
+
+    >>> wfs = ceo.Pyramid(30,240,modulation=5,N_GS=3)
+    """
+    def __cinit__(self,int N_SIDE_LENSLET,
+                  int N_PX_LENSLET,
+                  float modulation = 0.0,
+                  int N_GS=1):
+        self._c_pyramid = new pyramid()
+        self._c_pyramid.setup(N_SIDE_LENSLET,N_PX_LENSLET,modulation,N_GS)
+        self.camera = Imaging(1,N_PX_LENSLET-1,DFT_osf=4,N_PX_IMAGE=4*N_PX_LENSLET,
+                              BIN_IMAGE=N_PX_LENSLET/N_SIDE_LENSLET,
+                              N_SOURCE=N_GS,pym=self)
+        self.data = Centroiding(N_SIDE_LENSLET*2,N_GS,pym=self)
+
+    def __dealloc__(self):
+        self._c_pyramid.cleanup()
+
+    def propagate(self, Source gs):
+        """
+        Propagates the guide star to the WFS detector (noiseless)
+
+        Parameters
+        ----------
+        gs : Source
+            The WFS guide star
+
+        See also
+        --------
+        Source : a class for astronomical sources
+        """
+        self.camera.propagateThroughPyramid(gs,self._c_pyramid.modulation)
+@ 
+\section{Parameters}
+\label{sec:parameters}
+
+\index{pyramid!pyramid}
+The parameters of the [[pyramid]] structure are:
+\begin{itemize}
+\item the pupil sampling with the pyramid 
+<<parameters>>=
+int N_PX_LENSLET;
+@
+\item the pyramid modulation amplitude in units of $\lambda/D$
+<<parameters>>=
+float modulation;
+@ 
+\item the pyramid detector
+<<parameters>>=
+imaging camera;
+@
+\item the slopes container
+<<parameters>>=
+centroiding data;
+@ 
+\end{itemize}
+\section{Functions}
+\label{sec:functions}
+
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
+\index{pyramid!pyramid!setup}
+<<setup>>=
+void pyramid::setup(int N_SIDE_LENSLET,
+		    int _N_PX_LENSLET_,
+                    float _modulation_,
+		    int N_GS)
+{
+  N_PX_LENSLET = _N_PX_LENSLET_;
+  modulation = _modulation_;
+  camera.setup(N_PX_LENSLET-1,1,4,N_PX_LENSLET*4,N_PX_LENSLET/N_SIDE_LENSLET,N_GS);
+  data.setup(N_SIDE_LENSLET*2, N_GS);
+}
+@ 
+\index{pyramid!pyramid!cleanup}
+<<cleanup>>=
+void pyramid::cleanup(void)
+{
+  fprintf(stdout,"@(CEO)>pyramid: freeing memory!\n");
+  fprintf(stdout," |-");
+  camera.cleanup();
+  fprintf(stdout," |-");
+  data.cleanup();
+}
+@ 
+\subsection{Input/Output}
+\label{sec:inputoutput}
+
+\section{Tests}
+\label{sec:tests}
+

@@ -1,4 +1,4 @@
-% -*- mode: Noweb; noweb-code-mode: python-mode -*-
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
 @
 \index{LMMSE}
 \section{The files}
@@ -9,31 +9,17 @@
 #ifndef __LMMSE_H__
 #define __LMMSE_H__
 
-#ifndef __UTILITIES_H__
 #include "utilities.h"
-#endif
-
-#ifndef __AASTATS_H__
 #include "aaStats.h"
-#endif
-
-#ifndef __BTBT_H__
 #include "BTBT.h"
-#endif
-
-#ifndef __GBTBT_H__
 #include "GBTBT.h"
-#endif
-
-#ifndef __SHACKHARTMANN__
 #include "shackHartmann.h"
-#endif
-
-#ifndef __ITERATIVESOLVERS_H__
 #include "iterativeSolvers.h"
-#endif
 
 //#define MINRES_DEBUG
+
+
+<<bi-linear interpolation structure>>
 
 struct LMMSE {
 
@@ -76,6 +62,10 @@ struct LMMSE {
 <<zero padding solver solution>>
 <<sparse matrix kernel>>
 <<sparse matrix kernel with pupil mask>>
+<<bilinear interpolation sparse matrix kernel>>
+<<bilinear interpolation sparse matrix kernel with pupil mask>>
+
+<<bilinear interpolation methods>>
 
 <<setup>>
 <<setup with pupil>>
@@ -97,15 +87,16 @@ struct LMMSE {
 
 \index{LMMSE!python}
 <<LMMSE.pxd>>=
-from utilities cimport mask
-from atmosphere cimport atmosphere
-from source cimport source
-from centroiding cimport centroiding
-from shackHartmann cimport shackHartmann
+from utilities cimport mask, MaskAbstract, cuFloatArray, cuIntArray
+from atmosphere cimport atmosphere, AtmosphereAbstract
+from source cimport source, Source, Complex_amplitude
+from centroiding cimport centroiding, Centroiding
+from shackHartmann cimport shackHartmann, ShackHartmann
 cdef extern from "LMMSE.h":
     cdef cppclass LMMSE:
         int NP
-        float *d__phase_est, *d__x
+        float *d__phase_est
+        float *d__x
         void setup(atmosphere *, source *, source *, 
                    float , int , mask *, char *, int)
         void setup(atmosphere *, source *, source *, 
@@ -116,7 +107,6 @@ cdef extern from "LMMSE.h":
         void cleanup()
         void estimation(centroiding *)
         void estimation(shackHartmann *)
-<<class definitions>>
 @ 
 <<class definitions>>=
 cdef class Lmmse:
@@ -129,11 +119,6 @@ cdef class LmmseSH:
 @ 
 \index{LMMSE!python!Lmmse}
 <<LMMSE.pyx>>=
-from utilities cimport MaskAbstract, cuFloatArray
-from atmosphere cimport AtmosphereAbstract
-from source cimport Source
-from centroiding cimport Centroiding
-from shackHartmann cimport ShackHartmann
 cdef class Lmmse:
     """
     A class for LMMSE reconstructor
@@ -267,7 +252,67 @@ cdef class LmmseSH:
             x = cuFloatArray(shape=(self.N_slope,1))
             x._c_gpu.dev_data = self._c_LMMSE.d__x
             return x
+@
+\subsubsection{Bilinear interpolation}
+\label{sec:bilin-interp}
 
+\index{LMMSE!python!BilinearInterpolation}
+<<LMMSE.pxd>>=
+    cdef cppclass bilinearInterpolation:
+        int nnz, NI
+        int *csrColIndH
+        int *csrRowPtrH
+        float *csrValH
+        float *H
+        void setup(int,int)
+        void setup(int,int,mask *,float, float)
+        void cleanup()
+<<class definitions>>
+@ 
+<<class definitions>>=
+cdef class BilinearInterpolation:
+    cdef:
+        bilinearInterpolation *_c_bilinearInterpolation
+        readonly int nnz, NI
+        readonly cuFloatArray csrValH
+        readonly cuIntArray csrColIndH, csrRowPtrH
+cdef class BilinearInterpolation2:
+    cdef:
+        bilinearInterpolation *_c_bilinearInterpolation
+        readonly int NI
+@ 
+<<LMMSE.pyx>>=
+cdef class BilinearInterpolation:
+    def __cinit__(self,int NI, int NP, Complex_amplitude W=None, float i0=0.0, float j0=0.0):
+        self._c_bilinearInterpolation = new bilinearInterpolation()
+        if W is None:
+            self._c_bilinearInterpolation.setup(NI,NP)
+        else:
+            self._c_bilinearInterpolation.setup(NI,NP,W._c_complex_amplitude.M,i0,j0)
+        self.nnz        = self._c_bilinearInterpolation.nnz
+        self.NI         = self._c_bilinearInterpolation.NI
+        cdef int n = self.NI*self.NI
+        self.csrValH    = cuFloatArray(shape=(self.nnz,1))
+        self.csrValH._c_gpu.dev_data \
+                        = self._c_bilinearInterpolation.csrValH
+        self.csrColIndH = cuIntArray(shape=(self.nnz,1))
+        self.csrColIndH._c_gpu.dev_data \
+                        = self._c_bilinearInterpolation.csrColIndH
+        self.csrRowPtrH = cuIntArray(shape=(n+1,1))
+        self.csrRowPtrH._c_gpu.dev_data \
+                        = self._c_bilinearInterpolation.csrRowPtrH
+
+    def __dealloc__(self):
+        self._c_bilinearInterpolation.cleanup()
+
+    property H:
+        def __get__(self):
+            cdef int n = self.NI*self.NI
+            from scipy.sparse import csr_matrix
+            return csr_matrix((self.csrValH.host().ravel(),
+			       self.csrColIndH.host().ravel(),
+			       self.csrRowPtrH.host().ravel()),
+			      shape=(n,n))
 @ 
 
 \section{Parameters}
@@ -946,6 +991,9 @@ l = k-1;
 
 @ Lets define new parameters for the sparse matrix:
 <<parameters>>=
+<<sparse parameters>>
+@ 
+<<sparse parameters>>=
 int nnz, NI;
 float *csrValH;
 int *csrColIndH, *csrRowPtrH;
@@ -992,14 +1040,14 @@ dim3 blockDim(16,16);
 dim3 gridDim(NI/16+1,NI/16+1);
 bilinearSparseOperator LLL gridDim,blockDim RRR 
   (csrValH, csrColIndH, csrRowPtrH, paCov.d__MT, NI, 
-   atm->layers, atm->N_LAYER, guide_star[0].height);
+   atm->d__layers, atm->N_LAYER, guide_star[0].height);
 @ Creation of the sparse matrix with the pupil mask:
 <<sparse making with pupil mask>>=
 dim3 blockDim(16,16);
 dim3 gridDim(NI/16+1,NI/16+1);
 bilinearSparseOperatorMask LLL gridDim,blockDim RRR 
   (csrValH, csrColIndH, csrRowPtrH, paCov.d__MT, NI, 
-   atm->layers, atm->N_LAYER, guide_star[0].height, pupil->m, pupil->nnz);
+   atm->d__layers, atm->N_LAYER, guide_star[0].height, pupil->m, pupil->nnz);
 
 @ Conversion sparse to dense matrix:
 <<sparse to dense>>=
@@ -1030,6 +1078,192 @@ HANDLE_ERROR( cudaFree( csrValH ) );
 HANDLE_ERROR( cudaFree( csrColIndH ) );
 HANDLE_ERROR( cudaFree( csrRowPtrH ) );
 HANDLE_ERROR( cudaFree( d__phase_est_i ) );
+@
+\subsubsection{bilinear interpolation structure}
+\label{sec:bilin-interp-struct}
+
+\index{LMMSE!bilinearInterpolation}
+
+<<bi-linear interpolation parameters>>=
+float *d__phase_est_i;
+<<sparse parameters>>
+@ 
+<<bi-linear interpolation structure>>=
+struct bilinearInterpolation {
+<<bi-linear interpolation parameters>>
+void setup(int NI, int NP);
+void setup(int NI, int NP, mask *pupil,
+           float i0, float j0);
+void cleanup(void);
+};
+@
+\index{LMMSE!bilinearInterpolation!setup}
+<<bilinear interpolation methods>>=
+void bilinearInterpolation::setup(int _NI_, int NP)
+{
+NI = _NI_;
+nnz = 4*NI*NI;
+<<sparse memory allocation>>
+<<sparse building>>
+}
+@
+\index{LMMSE!bilinearInterpolation!setup}
+<<bilinear interpolation methods>>=
+void bilinearInterpolation::setup(int _NI_, int NP, mask *pupil,
+                                  float i0, float j0)
+{
+NI = _NI_;
+nnz = 4*pupil->nnz;
+<<sparse memory allocation>>
+<<sparse building with pupil mask>>
+}
+@ Creation of the sparse matrix:
+<<sparse building>>=
+dim3 blockDim(16,16);
+dim3 gridDim(NI/16+1,NI/16+1);
+bilinearInterpSparseOperator LLL gridDim,blockDim RRR 
+  (csrValH, csrColIndH, csrRowPtrH, NP, NI);
+@ Creation of the sparse matrix with the pupil mask:
+<<sparse building with pupil mask>>=
+dim3 blockDim(16,16);
+dim3 gridDim(NI/16+1,NI/16+1);
+bilinearInterpSparseOperatorMask LLL gridDim,blockDim RRR 
+  (csrValH, csrColIndH, csrRowPtrH, NP, NI, 
+  pupil->m, pupil->nnz, i0, j0);
+@ The sparse matrix is stored in the compressed sparse row format and it is computed with the kernel
+<<bilinear interpolation sparse matrix kernel>>=
+__global__ void bilinearInterpSparseOperator(float *csrValH, int *csrColIndH, 
+                                             int *csrRowPtrH, int NP, int NI)
+{
+  int i, j, k, idx, ndx, offset;
+  float scale, s, t, fs, ft, onemt, onems, delta, delta_p;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<NI) && (j<(NI)) ) {
+    delta   = 1.0;
+    k = i*NI + j;
+    idx = 4*k - 1;
+    offset = 0;
+
+    delta_p = delta;
+    <<bilinear interpolation modified>>
+
+    csrRowPtrH[k+1] = 4*(k+1);
+  }
+}
+@ The sparse matrix is modified to take into account the pupil mask.
+Where the pupil mask is zero, the corresponding row in the sparse matrix must be filled with zeros.
+<<bilinear interpolation sparse matrix kernel with pupil mask>>=
+__global__ void bilinearInterpSparseOperatorMask(float *csrValH, int *csrColIndH, 
+                                                  int *csrRowPtrH, int NP, int NI,
+                                                  const char *mask, int nnz,
+                                                  const float i0, const float j0)
+{
+  int ii, jj, k, idx, ndx, offset, l, pos;
+  float scale, s, t, fs, ft, onemt, onems, delta, delta_p, i, j;
+  ii = blockIdx.x * blockDim.x + threadIdx.x;
+  jj = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (ii<NI) && (jj<(NI)) ) {
+    delta   = 1.0;
+    k = ii*NI + jj;
+    if (mask[k]>0) {
+       i = ii - i0;
+       j = jj - j0;
+       <<nnz position>>
+       idx =  4*(pos-1) - 1;
+       offset = 0;
+
+         delta_p = delta;
+
+         <<bilinear interpolation modified>>
+         offset += NP*NP;
+
+       csrRowPtrH[k] = 4*(pos-1);
+       <<csrRowPtrH for empty rows>>
+       if ( k==(NI*NI-1) )
+          csrRowPtrH[k+1] = 4*nnz;
+    } else { 
+         if ( k==(NI*NI-1) ) {
+           ++k;
+           csrRowPtrH[k] = 4*nnz;
+           <<csrRowPtrH for empty rows>>
+        } 
+     }
+   }
+ }
+@ 
+
+\paragraph{Sparse bi--linear interpolation}
+\label{sec:sparse-bi-linear-1}
+
+
+A wavefront $\hat\varphi$ is sampled on a $N_p\times N_p$ square grid with sampling step $\delta_p$.
+The wavefront $\varphi_{bli}$, sampled on a square grid $N\times N$ with sampling step $\delta$ is derived from a bi--linear interpolation of $\hat\varphi$.
+The coordinates of $\hat\varphi$ samples are given by
+\begin{equation}
+  \label{eq:9}
+  \left(
+    \begin{array}{c}
+      x_{i_p} \\
+      y_{j_p}
+    \end{array}
+  \right) = \delta_p \left[ \left(
+    \begin{array}{c}
+      i_p \\
+      j_p
+    \end{array}
+    \right) + {1-N_p \over 2} \right], \forall i,j \in [0,\dots,N_p-1]
+\end{equation}
+and the samples of $\varphi_{bli}$ are located at
+\begin{equation}
+  \label{eq:10}
+  \left(
+    \begin{array}{c}
+      x_i \\
+      y_j
+    \end{array}
+  \right) = \delta \left[ \left(
+    \begin{array}{c}
+      i \\
+      j
+    \end{array}
+    \right) + {1-N \over 2} \right], \forall i,j \in [0,\dots,N-1]  
+\end{equation}
+
+@ The interpolation starts with normalizing the coordinates $(x_i,y_j)$ with respect to the coordinates $(x_{i_p},y_{j_p})$
+<<bilinear interpolation modified>>=
+scale = delta/(delta_p*(NP-1));
+s = (scale*(i + (1-NI)/2) + 0.5)*(NP-1);
+t = (scale*(j + (1-NI)/2) + 0.5)*(NP-1);
+@  and taking the floor integer part to locate the bottom--left coordinate of the pixels surrounding [[xi]] and [[yi]]
+<<bilinear interpolation modified>>=
+fs  = floorf(s);
+ft  = floorf(t);
+ndx = __float2int_rd( ft + fs*NP );
+@ Next, one checks if the edges of the array have been reached
+<<bilinear interpolation modified>>=
+if (s==(NP-1)) { s += 1 - fs; ndx -= NP; } else { s -= fs; }    
+if (t==(NP-1)) { t += 1 - ft; ndx -= 1; }   else { t -= ft; }
+@ and finally the interpolation is computed as
+<<bilinear interpolation modified>>=	 
+onems = 1 - s;
+onemt = 1 - t;
+ndx += offset;
+csrValH[++idx]  = onems*onemt;
+csrColIndH[idx] = ndx;
+csrValH[++idx]  = onems*t;
+csrColIndH[idx] = ndx + 1;
+csrValH[++idx]  = s*onemt;
+csrColIndH[idx] = ndx + NP;
+csrValH[++idx]  = s*t;
+csrColIndH[idx] = ndx + NP + 1;
+@
+\index{LMMSE!bilinearInterpolation!cleanup}
+<<bilinear interpolation methods>>=
+void bilinearInterpolation::cleanup(void)
+{
+<<sparse cleanup>>
+}
 @
 \subsection{Input/Output}
 \label{sec:inputoutput}

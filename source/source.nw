@@ -145,6 +145,7 @@ cdef extern from "source.h":
         int N_PX
         float *phase
         float *amplitude
+        mask *M
         void reset()
         void reset_phase()
         void masked(mask *)
@@ -255,9 +256,9 @@ cdef class Complex_amplitude:
         float
             the wavefront phase rms
         """
-        cdef np.ndarray[float,ndim=1] rms = np.zeros(self._c_complex_amplitude.N, dtype=np.single)
-        self._c_complex_amplitude.rms(<float *>rms.data)
-        return rms*10**-units_exponent
+        cdef float[::1] rms = np.zeros(self._c_complex_amplitude.N, dtype=np.single)
+        self._c_complex_amplitude.rms(&rms[0])
+        return np.array(rms)*10**-units_exponent
 
     def reset(self, cuFloatArray phase = None):
         """
@@ -481,14 +482,16 @@ cdef class Source:
         self._c_source.wavefront.reset()
         self._c_source.reset_rays()
         
-    def piston(self, where='pupil'):
+    def piston(self, where='pupil',int units_exponent=0):
         """
         Get the piston corresponding to either the pupil or the segments
 
         Parameters
         ----------
         where : string, optional
-            Either "pupil" for a piston on the full pupil or "segments" for pistons of each segment
+            Either "pupil" for a piston on the full pupil or "segments" for pistons of each segment; default: pupil
+        units_exponent : int, optional
+            Multiply the piston values by 10^-units_exponent; default: 0
 
         Returns
         -------
@@ -515,19 +518,57 @@ cdef class Source:
         GMT_MX : a class embedding GMT M1 and M2 classes 
         GMT_M1 : a class for GMT M1 model
         """
-        assert where=="pupil" or where=="segments", "where parameter is either ""pupil"" or ""segments"""        
-        amplitude = self.wavefront.amplitude.host()
+        assert where=="pupil" or where=="segments", "where parameter is either ""pupil"" or ""segments"""     
+        cdef:
+            int k
+            tuple shape
+            float[:,::1] amplitude, phase
+        shape = (self.size,self.n*self.m)
+        amplitude = self.wavefront.amplitude.host(shape=shape)
+        phase     = self.wavefront.phase.host(shape=shape)
         if where=='pupil':
-            return np.sum(self.wavefront.phase.host(),axis=1)/np.sum(amplitude,axis=1)
+            return np.sum(phase,axis=1)/np.sum(amplitude,axis=1)*10**-units_exponent
         if where=='segments':
 #            Q = mask*amplitude.T
 #            return np.dot(Q,np.reshape( self.wavefront.phase.host() , (-1,) ) ).flatten()/np.sum(Q,axis=1)    
-            ps = np.zeros((self.size,7))
+            ps = np.zeros((self.size,7),dtype=np.float32)
             for k in range(self.size):
-                Q = self.rays.piston_mask[k]*self.wavefront.amplitude.host()[k,:]
-                ps[k,:] = np.dot(Q,self.wavefront.phase.host()[k,:])/np.sum(Q,axis=1)
-            return ps
-                
+                Q = self.rays.piston_mask[k]*amplitude[k,:]
+                ps[k,:] = np.dot(Q,phase[k,:])/np.sum(Q,axis=1)
+            return np.array(ps)*10**-units_exponent
+        
+    def phaseRms(self,where='pupil',int units_exponent=0):
+        """
+        Get the phase rms corresponding to either the pupil or the segments
+
+        Parameters
+        ----------
+        where : string, optional
+            Either "pupil" for a piston on the full pupil or "segments" for pistons of each segment; default: pupil
+        units_exponent : int, optional
+            Multiply the rms phase values by 10^-units_exponent; default: 0
+        
+        Returns
+        -------
+        ndarray of float
+            The vector of phase rms values in meters as either an N_SRC vector for "pupil" or a N_SRCx7 array for "segments"
+        """
+        assert where=="pupil" or where=="segments", "where parameter is either ""pupil"" or ""segments"""     
+        cdef:
+            int k, s
+            tuple shape
+        shape = (self.size,self.n*self.m)
+        phase     = self.wavefront.phase.host(shape=shape)
+        if where=='pupil':
+            return self.wavefront.rms(units_exponent)
+        if where=='segments':
+            rms = np.zeros((self.size,7),dtype=np.float32)
+            for k in range(self.size):
+                Q = self.rays.piston_mask[k]
+                for s in range(7):
+                    rms[k,s] = np.std(phase[k,Q[s,:]])      
+        return np.array(rms)*10**-units_exponent
+            
 @
 \subsubsection{Ray tracing routines}
 \label{sec:ray-tracing-routines-1}
@@ -814,6 +855,10 @@ void source::reset_rays(void)
                                                   dev_ptr,
                                                   rays.L, rays.N_L, 
                                                   rays.d__origin);    
+  blockDim = dim3(256);
+  gridDim  = dim3(rays.V.nel/256+1);
+  fill_ones_char LLL gridDim,blockDim RRR (rays.V.m,rays.V.nel);  
+  rays.V.set_filter_quiet();
 }
 @ and
 <<bundle coordinates kernel>>=
@@ -822,7 +867,7 @@ __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
                                 vector *origin)
 {
   int i, j, k, iSource;
-  rtd rho, theta;
+  rtd rho, theta, s;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
@@ -839,24 +884,28 @@ __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
     theta = 2*PI*j/N_THETA; 
     d__ray[k].coordinates.x = rho*cos(theta) + origin->x; 
     d__ray[k].coordinates.y = rho*sin(theta) + origin->y; 
-    d__ray[k].coordinates.z = origin->z;
-    d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
-    d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
-    d__ray[k].directions.z  = -cos(src[iSource].zenith);
-    d__ray[k].optical_path_length = 0.0;
-    d__ray[k].optical_path_difference = 0.0;
-    d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
-    d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
-    d__ray[k].v = 1;
+    <<bundle coordinates kernel (common)>>
   }
 }
+@ where
+<<bundle coordinates kernel (common)>>=
+d__ray[k].coordinates.z = origin->z;
+d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
+d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
+d__ray[k].directions.z  = -cos(src[iSource].zenith);
+d__ray[k].optical_path_length = 0.0;
+d__ray[k].optical_path_difference = 0.0;
+s = -origin->z/d__ray[k].directions.z;
+d__ray[k].coordinates.x -= s*d__ray[k].directions.x;
+d__ray[k].coordinates.y -= s*d__ray[k].directions.y;
+d__ray[k].v = 1;
 @ and
 <<bundle coordinates kernel (box)>>=
 __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
                                     rtd L, int N_L, vector *origin)
 {
   int i, j, k, iSource;
-  rtd x, y;
+  rtd x, y, s;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
@@ -866,15 +915,7 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
     k = i + j*N_L + iSource*N_RAY;
     d__ray[k].coordinates.x = x + origin->x; 
     d__ray[k].coordinates.y = y + origin->y; 
-    d__ray[k].coordinates.z = origin->z;
-    d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
-    d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
-    d__ray[k].directions.z  = -cos(src[iSource].zenith);
-    d__ray[k].optical_path_length = 0.0;
-    d__ray[k].optical_path_difference = 0.0;
-    d__ray[k].coordinates.x -= d__ray[k].coordinates.z*d__ray[k].directions.x;
-    d__ray[k].coordinates.y -= d__ray[k].coordinates.z*d__ray[k].directions.y;
-    d__ray[k].v = 1;
+    <<bundle coordinates kernel (common)>>
   }
 }
 @ with
@@ -1138,7 +1179,7 @@ void complex_amplitude::rms(float *rms)
   int n_data = N_PX/N, idx, k;
   cublasHandle_t handle;
   cublasCreate(&handle);
-   for (k=0;k<N;k++) {
+  for (k=0;k<N;k++) {
     idx = k*n_data;
     CUBLAS_ERROR( cublasSdot(handle, n_data, phase + idx, 1, M->f + idx, 1, &mean_data) );
     CUBLAS_ERROR( cublasSasum(handle, n_data, M->f + idx, 1, &nnz) );

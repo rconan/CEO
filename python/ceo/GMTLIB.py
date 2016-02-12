@@ -236,7 +236,7 @@ u
                     sys.stdout.write("Segment #%d: "%kSeg)
                     for kMode in range(first_mode, n_mode):
                         sys.stdout.write("%d "%(kMode+1))
-                        D[:,idx] = pushpull( M1_zernike_update )
+                        D[:,idx] = np.ravel( pushpull( M1_zernike_update ) )
                         idx += 1
                     sys.stdout.write("\n")
 	    if mode=="segment piston":
@@ -347,7 +347,7 @@ u
                     sys.stdout.write("Segment #%d: "%kSeg)
                     for kMode in range(first_mode,n_mode):
                         sys.stdout.write("%d "%(kMode+1))
-                        D[:,idx] = pushpull( M2_zernike_update )
+                        D[:,idx] = np.ravel( pushpull( M2_zernike_update ) )
                         idx += 1
                     sys.stdout.write("\n")
             if mode=="TT7 segment tip-tilt":
