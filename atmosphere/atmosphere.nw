@@ -585,6 +585,9 @@ float WIDTH_LAYER, LENGTH_LAYER;
 @ \item the width and length of the phase screen in pixel
 <<layer parameters>>=
 int N_WIDTH_LAYER, N_LENGTH_LAYER;
+@ \item the oversampling factor [[OSF]] of the phase screen in the layers 
+<<layer parameters>>=
+int OSF;
 @ \item layers phase screen
 <<atmosphere parameters>>=
 float *phase_screen_LAYER;
@@ -904,6 +907,7 @@ int layer::setup(float _altitude, float _xi0,
 		  float field_size)
 {
   int N = 0;
+  OSF            = 2;
   altitude       = _altitude;
   xi0            = _xi0;
   wind_speed     = _wind_speed;
@@ -912,8 +916,9 @@ int layer::setup(float _altitude, float _xi0,
   vy = wind_speed*sinf(wind_direction);
   if (N_W>0) {
     float d = W/(N_W-1);
+    d /= OSF;
     WIDTH_LAYER    = W*sqrtf(2) + 2*altitude*tanf(0.5*field_size);
-    LENGTH_LAYER   = WIDTH_LAYER + wind_speed;
+    LENGTH_LAYER   = WIDTH_LAYER + wind_speed*30;
     N_WIDTH_LAYER  = (int) ceilf( WIDTH_LAYER/d ) + 1;
     N_LENGTH_LAYER = (int) ceilf( LENGTH_LAYER/d ) + 1;
     WIDTH_LAYER    = d*(N_WIDTH_LAYER-1);
@@ -952,6 +957,7 @@ HANDLE_ERROR( cudaMalloc( (void**)&phase_screen_LAYER, N_PHASE_LAYER*sizeof(floa
 N_PHASE_LAYER = 0;
 int N = 0, i_LAYER, N_L;
 float delta_W = W/(N_W-1);
+delta_W /= layers[0].OSF;
 fprintf(stdout," . Computing layer phase screen: ");
 for (i_LAYER=0;i_LAYER<N_LAYER;i_LAYER++) {
   fprintf(stdout,"%d,",i_LAYER);
@@ -1978,7 +1984,7 @@ pitch = 0;
 ix = blockIdx.x * blockDim.x + threadIdx.x;
 iy = blockIdx.y * blockDim.y + threadIdx.y;
 ij = iy + ix * N_Y;
-xP = delta_x*( ix - (N_Y-1)*0.5 );
+xP = delta_x*( ix - (N_X-1)*0.5 );
 yP = delta_y*( iy - (N_Y-1)*0.5 );
 k_SOURCE = blockIdx.z;
 pitch = 0;
