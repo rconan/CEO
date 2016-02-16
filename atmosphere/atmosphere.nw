@@ -918,7 +918,7 @@ int layer::setup(float _altitude, float _xi0,
     float d = W/(N_W-1);
     d /= OSF;
     WIDTH_LAYER    = W*sqrtf(2) + 2*altitude*tanf(0.5*field_size);
-    LENGTH_LAYER   = WIDTH_LAYER + wind_speed*30;
+    LENGTH_LAYER   = WIDTH_LAYER + wind_speed;
     N_WIDTH_LAYER  = (int) ceilf( WIDTH_LAYER/d ) + 1;
     N_LENGTH_LAYER = (int) ceilf( LENGTH_LAYER/d ) + 1;
     WIDTH_LAYER    = d*(N_WIDTH_LAYER-1);
@@ -2089,9 +2089,16 @@ void atmosphere::rayTracing(source *src,
 \subsection{C tests}
 \label{sec:c-tests}
 
-This test compares the centroids derived from an image through a circular aperture for both the geometric model and the diffractive model.
 <<atmosphere.bin>>=
-#ifndef __CEO_H__
+<<benchmark I>>
+@ 
+\subsubsection{Centroids from a circular aperture}
+\label{sec:centr-from-circ}
+
+
+This test compares the centroids derived from an image through a circular aperture for both the geometric model and the diffractive model.
+<<circular centroids>>=
+ #ifndef __CEO_H__
 #include "h"
 #endif
 int main(int argc,char *argv[]) {
@@ -2226,6 +2233,145 @@ wfs.calibrate(&gs,1.0);
 telescope.cleanup();
 @ \end{itemize}
 
+\subsubsection{Benchmark I}
+\label{sec:benchmark-i}
+
+<<benchmark I>>=
+#include <iostream>
+#include <fstream>
+#include "ceo.h"
+using namespace std;
+
+int main(int argc,char *argv[]) {
+  int N_GS, nPx, k, k_GS;
+  float elapsedTime, r0, L0,fov_arcmin,d,tau;
+  float *zen,*azi;
+  rtd D;
+  ofstream f;
+
+  D  = 25.5;
+  r0 = 15e-2;
+  L0 = 60;
+  fov_arcmin = 10;
+  nPx = 469;
+  float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
+              xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
+              wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
+              wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+
+  stopwatch tid;
+  atmosphere atm;
+  source src;
+  
+  N_GS = 1;
+  zen = (float *) malloc( sizeof(float)*N_GS );
+  azi = (float *) malloc( sizeof(float)*N_GS );
+  for (k_GS=0;k_GS<N_GS;k_GS++) {
+    zen[k_GS] = 6*0/RADIAN2ARCSEC;
+    azi[k_GS] = 2*k_GS*PI/N_GS;
+  }    
+  src.setup("R",zen,azi,INFINITY,N_GS,nPx*nPx);
+
+  d = D/(nPx-1);
+  tau = 0.0;
+
+  f.open("bench_phaseScreen_cmp.txt");
+  f.precision(3);
+  f << "NL\t" << "On-the-fly\t" << "Ray tracing" << endl;
+
+  for (k=1;k<=7;k++) {
+    f << k;
+    atm.setup(r0,L0,k,altitude,xi0,wind_speed,wind_direction,D,nPx,60.0*fov_arcmin);
+    
+    tid.tic();
+    atm.get_phase_screen(&src,d,nPx,d,nPx,tau);
+    tid.toc(&elapsedTime);
+    f << "\t" << elapsedTime;
+    
+    tid.tic();
+    atm.rayTracing(&src,d,nPx,d,nPx,tau);
+    tid.toc(&elapsedTime);
+    f << "\t" << elapsedTime << endl;
+      
+    atm.cleanup();
+  }
+
+  src.cleanup();
+  free(zen);
+  free(azi);
+}
+@ 
+
+\subsubsection{Benchmark II}
+\label{sec:benchmark-ii}
+
+<<benchmark II>>=
+#include <iostream>
+#include <fstream>
+#include "ceo.h"
+using namespace std;
+
+int main(int argc,char *argv[]) {
+  int N_GS, N_GS_MAX, nPx, k, k_GS;
+  float elapsedTime, r0, L0,fov_arcmin,d,tau;
+  float *zen,*azi;
+  rtd D;
+  ofstream f;
+
+  D  = 25.5;
+  r0 = 15e-2;
+  L0 = 60;
+  fov_arcmin = 10;
+  nPx = 469;
+  float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
+              xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
+              wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
+              wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+
+  stopwatch tid;
+  atmosphere atm;
+  source src;
+  
+  N_GS_MAX = 6;
+  d = D/(nPx-1);
+  tau = 0.0;
+
+  f.open("bench_rayTracingVsGs.txt");
+  f.precision(3);
+  f << "NL\t";
+  for (N_GS=1;N_GS<=N_GS_MAX;N_GS++) {
+    f << "\t" << N_GS << "GS";
+  }
+  f << endl;
+
+  for (k=1;k<=7;k++) {
+    f << k;
+    atm.setup(r0,L0,k,altitude,xi0,wind_speed,wind_direction,D,nPx,60.0*fov_arcmin);
+    
+    for (N_GS=1;N_GS<=N_GS_MAX;N_GS++) {
+
+      zen = (float *) malloc( sizeof(float)*N_GS );
+      azi = (float *) malloc( sizeof(float)*N_GS );
+      for (k_GS=0;k_GS<N_GS;k_GS++) {
+	zen[k_GS] = 60/RADIAN2ARCSEC;
+	azi[k_GS] = 2*k_GS*PI/N_GS;
+      }    
+      src.setup("R",zen,azi,INFINITY,N_GS,nPx*nPx);
+
+      tid.tic();
+      atm.rayTracing(&src,d,nPx,d,nPx,tau);
+      tid.toc(&elapsedTime);
+      f << "\t" << elapsedTime;
+
+      src.cleanup();
+      free(zen);
+      free(azi);
+    }
+    f << endl;
+    atm.cleanup();
+  }
+}
+@ 
 \subsection{Python tests}
 \label{sec:python-test}
 
