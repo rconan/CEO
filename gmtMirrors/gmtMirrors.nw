@@ -673,9 +673,11 @@ cdef class LateralEdgeSensors:
 <<class definitions>>=
 cdef class DistanceEdgeSensors(LateralEdgeSensors):
     cdef:
-        public cuDoubleArray d
+        cuDoubleArray _d_
+        readonly double[:,::1] d0
 @ 
 <<gmtMirrors.pyx>>=
+import numpy as np
 cdef class DistanceEdgeSensors(LateralEdgeSensors):
     """
     A class for the GMT distance edge sensors.
@@ -700,8 +702,18 @@ cdef class DistanceEdgeSensors(LateralEdgeSensors):
     """
     def __init__(self,GMT_M1 mirror, rtd height=0.25):
         super().__init__(mirror, height)
-        self.d = cuDoubleArray(shape=(self._c_lateral_edge_sensors.N_DATA,1),dev_malloc=False)
-        self.d._c_gpu.dev_data = self._c_lateral_edge_sensors.d__d
+        self._d_ = cuDoubleArray(shape=(self._c_lateral_edge_sensors.N_DATA,1),dev_malloc=False)
+        self._d_._c_gpu.dev_data = self._c_lateral_edge_sensors.d__d
+        self.d0 = np.zeros((self._c_lateral_edge_sensors.N_DATA,1))
+
+    def calibration(self):
+        self.data()
+        self.d0 = self._d_.host()
+
+    property d:
+        def __get__(self):
+            self.data()
+            return self._d_.host()-self.d0
         
 @
 \section{GMT M1}
@@ -2495,6 +2507,7 @@ __global__ void laser_coordinates_to_GCS(vector *v0, vector *v, const int N_OUT_
                        d__rigid_body_origin+i);
     __syncthreads();
     k = 2*N_OUT_SEGMENT + i + 24*j;
+    i = (i+1)%N_OUT_SEGMENT;
     // RIGID_BODY <<<
     backward_transform(v0+k, v+k,
                        d__rigid_body_R+i*9,
