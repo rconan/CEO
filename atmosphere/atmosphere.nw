@@ -911,6 +911,25 @@ void profile::cleanup(void) {
   free(wind_direction);
 }
 @ 
+The phase screens of the layers are defined such as the x--axis of the screens are aligned with the wind direction $\theta$.
+The sketch below shows a phase screen in blue and inside, the location of the telescope pupil in green at W at time $t=0$..
+For a layer at altitude $h$ and a field--of--view $\mathrm{fov}$, the pupil projected onto the layer is given by the pink square.
+\begin{center}
+\begin{tikzpicture}[>=stealth']
+  \begin{scope}[rotate=30]
+  \fill[blue!20] ($(-2*1.45,-2*1.45)-(7.5,0.5)$) rectangle ($(2*1.45,2*1.45)+(0.5,0.5)$);
+  \draw[<->]  ($(2*1.45,-2*1.45)+(0.5,-0.5)$) --  ($(2*1.45,2*1.45)+(0.5,0.5)$) node[midway,right] {$\left(W+h\tan(\mathrm{fov})\right){\tan(\theta)+1\over\sqrt{\tan(\theta)^2+1}}$};
+  \draw[->,ultra thick] (-6,0) -- (-3,0) node[midway,above] {wind};
+  \end{scope}
+  \fill[red!20] ($(-2,-2)-(0.5,0.5)$) rectangle ($(2,2)+(0.5,0.5)$);
+  \fill[green!10] (-2,-2) rectangle (2,2);
+  \draw[<->] (-2,0) -- (2,0) node[midway,above] {[[W]]};
+  \draw[->] ($(2,-1)-(0.25,0)$) -- (2,-1);
+  \draw (2,-1) -- (2.5,-1);
+  \draw[<-] (2.5,-1) -- (3.5,-1) node[above] {$h\tan(\mathrm{fov})$};
+\end{tikzpicture}
+\end{center}
+
 An atmospheric layer parameters are set with:
 \index{atmosphere!layer!setup}
 <<layer setup>>=
@@ -932,9 +951,8 @@ int layer::setup(float _altitude, float _xi0,
     d = W/(N_W-1);
     d /= OSF;
     tan_wind = tanf(wind_direction);
-    c = fabsf( tan_wind + 1.0)/sqrtf(tan_wind*tan_wind + 1.0);
-    fprintf(stdout,"c=%.2f\n",c);
-    WIDTH_LAYER    = W*c + 2*altitude*tanf(0.5*field_size);
+    c = ( fabsf(tan_wind) + 1.0)/sqrtf(tan_wind*tan_wind + 1.0);
+    WIDTH_LAYER    = (W + 2*altitude*tanf(0.5*field_size))*c;
     LENGTH_LAYER   = WIDTH_LAYER + wind_speed*duration;
     N_WIDTH_LAYER  = (int) ceilf( WIDTH_LAYER/d ) + 1;
     N_LENGTH_LAYER = (int) ceilf( LENGTH_LAYER/d ) + 1;
