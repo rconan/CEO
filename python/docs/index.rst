@@ -24,12 +24,34 @@ The C++ API is compiled with `make all`, the Python interface with `make cython`
 
 .. automodule:: ceo
 
+atmosphere
+----------
+
+AtmosphereAbstract
+~~~~~~~~~~~~~~~~~~
+.. autoclass:: AtmosphereAbstract
+    :members:
+
+Atmosphere
+~~~~~~~~~~
+.. autoclass:: Atmosphere
+    :members:
+
+GmtAtmosphere
+~~~~~~~~~~~~~
+.. autoclass:: GmtAtmosphere
+    :members:
+
+Layer
+~~~~~
+.. autoclass:: Layer
+    :members:
+
 source
 ------
 
 Complex_amplitude
 ~~~~~~~~~~~~~~~~~
-
 .. autoclass:: Complex_amplitude
     :members:
 

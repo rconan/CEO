@@ -96,13 +96,16 @@ void CUBLAS_ERROR(cublasStatus_t status);
 __global__ void fill_ones_char(char *ones, int n_data) ;
 __global__ void circular_pupil(char *pupil, int N);
 __global__ void square_pupil(char *pupil, int N, int N_S, int I_S, int J_S);
-__global__ void rot_square_pupil(char *pupil, int N, float N_S, float I_0, float J_0, float theta, float I_S, float J_S);
-__global__ void GMT_pupil(char *pupil, const int N, const float S, float Dsh, const float c, const char v);
+__global__ void rot_square_pupil(char *pupil, int N, float N_S, 
+				 float I_0, float J_0, float theta, float I_S, float J_S);
+__global__ void GMT_pupil(char *pupil, int *piston_mask , const int N, 
+			  const float S, float Dsh, const float c, const char v);
 //__global__ void valid_lenslet(char *mask, int N_pupil, float threshold);
 __global__ void fried_geometry(char *lenslet_mask, char *actuator_mask, 
                                int NL, int n, float threshold);
 __global__ void fried_geometry_vs_pupil(char *lenslet_mask, char *actuator_mask, 
-                                        const int NL, const int n, const float threshold, const char *pupil);
+                                        const int NL, const int n, 
+					const float threshold, const char *pupil);
 __global__ void wavefront_finite_difference_kernel(float *sx, float *sy, int NL, 
                                                    float *phi, int n, float d);
 __global__ void wavefront_finite_difference_kernel_masked(
@@ -114,6 +117,9 @@ __global__ void wavefront_finite_difference_sparse_matrix_kernel(
                                                    int *csrColIndH, 
                                                    int *csrRowPtrH, 
                                                    const int NL, const int n, const float d);
+__global__ void set_gmt_piston_kernel(float *phase, float *p, 
+				      char *m, int *piston_mask,
+				      const int N);
 
 char fried_geometry_setup(char *lenslet_mask, char *actuator_mask, 
                           int NL, int n, float threshold);
@@ -184,6 +190,7 @@ int round_up_to_nhp2(int n) {
 <<circular pupil>>
 <<square pupil>>
 <<GMT pupil>>
+<<GMT segment piston kernel>>
 
 <<Fried geometry masks>>
 <<Fried geometry>>
@@ -962,7 +969,8 @@ The six other segments are evenly located around the center one and tilted of $\
 The distance from the optical axis to the center of an off--axis segment is $L=8.774$m.
 The ASM and the FSM off--axis segments have a central hole of diameter $D_{sh}=0.559m$ and $D_{sh}=0.07$m, respectively.
 <<GMT pupil>>=
-__global__ void GMT_pupil(char *pupil, const int N, const float S, float _Dsh, const float c, const char v)
+__global__ void GMT_pupil(char *pupil, int *piston_mask, const int N, 
+			  const float S, float _Dsh, const float c, const char v)
 {
   int i, j, k, seg;
   float h,x,y,xp,yp, co_seg, so_seg, cOs, Dh, Dsca, Ds, Dsh, L;
@@ -977,7 +985,7 @@ __global__ void GMT_pupil(char *pupil, const int N, const float S, float _Dsh, c
     Ds   = c*8.417;
     L    = c*8.774;
     <<GMT pupil coordinates>>
-    if (seg==0) {
+    if (seg==6) {
       <<GMT pupil definition 0>>
     } else {
       <<GMT pupil definition>>
@@ -1000,6 +1008,7 @@ The center segment is defined with
 h = (x*x + y*y)*4.0;
 Dh   *= Dh;
 if ( (h>=Dh) && (h<=Dsca) ) {
+  piston_mask[k] = seg+1;
   pupil[k] = v;
 }
 @ For the off--axis segments, the coordinates need to be projected on the tilted-planes of the segments.
@@ -1011,9 +1020,9 @@ The coordinate transformations are the following
     x^{\prime} &=& x\cos(\theta_k) - y\sin(\theta_k) \\
     y^{\prime} &=& x\sin(\theta_k) + y\cos(\theta_k) 
   \end{eqnarray*}
-where $$\theta_k=\left(k-{1\over 2}\right){\pi\over 3},\quad\forall k=1,\dots,6$$ is the angle between the X--axis and the line joining the center of the $k$th segment,
+where $$\theta_k=\left(2k-3\right){\pi\over 6},\quad\forall k=1,\dots,6$$ is the angle between the X--axis and the line joining the center of the $k$th segment,
 <<GMT pupil definition>>=
-sincospif( (seg-0.5)/3.0, &so_seg, &co_seg);
+sincospif( (2*seg-3)/6.0, &so_seg, &co_seg);
 xp = x*co_seg - y*so_seg;
 yp = x*so_seg + y*co_seg;
 @ \item the origin of coordinates is moved to the rotation point:
@@ -1046,6 +1055,7 @@ and the off--axis segment is given with
 h = (xp*xp + yp*yp)*4.0;
 Dsh *= Dsh;
 if ( (h>=Dsh) && (h<=Dsca) ) {
+  piston_mask[k] = seg+1;
   pupil[k] = v;
  }
 @
@@ -1086,6 +1096,9 @@ float delta[2];
 @ \item the CUBLAS handle
 <<mask parameters>>=
 cublasHandle_t handle;
+@ \item the GMT segment pupil mask
+<<mask parameters>>=
+int *d__piston_mask;
 @ \end{itemize}
 
 The mask structure definition is:
@@ -1103,6 +1116,7 @@ struct mask {
   void set_filter(void);
   void set_filter_quiet(void);
   void set_index(void);
+  void set_gmt_piston(float *phase, float *d__p);
   void alter(float *filter);
   void add(mask *other);
   void add(char *other, int other_nel);
@@ -1134,6 +1148,7 @@ HANDLE_ERROR( cudaMalloc((void**)&f, sizeof(float)*nel ) );
 HANDLE_ERROR( cudaMemset( m, 0, sizeof(char)*nel) );
 HANDLE_ERROR( cudaMemset( f, 0, sizeof(float)*nel) );
 HANDLE_ERROR( cudaMalloc((void**)&idx, sizeof(int)*nel ) );
+d__piston_mask = NULL;
 cublasCreate(&handle);
 @ \item with a square mask of [[n]] pixel across and [[L]] meter width:
 \index{utilities!mask!setup}
@@ -1220,12 +1235,14 @@ void mask::setup_GMT(int n, float S) {
   nel = n*n;
   area = 368.0;
   <<setup common>>
+  HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*nel ) );
+  HANDLE_ERROR( cudaMemset( d__piston_mask, 0, sizeof(int)*nel) );
   dim3 blockDim(16,16);
   dim3 gridDim(n/16+1,n/16+1,7);
   // PRIMARY + ASM
-  GMT_pupil LLL gridDim,blockDim RRR ( m , n, S, 0.559 , 1.0        , 1);
+  GMT_pupil LLL gridDim,blockDim RRR ( m, d__piston_mask , n, S, 0.559 , 1.0        , 1);
   // ASM SHADOW
-  GMT_pupil LLL gridDim,blockDim RRR ( m , n, S, 0.000 , 1.042/8.365, 0);
+  GMT_pupil LLL gridDim,blockDim RRR ( m, d__piston_mask , n, S, 0.000 , 1.042/8.365, 0);
   /*
   // PRIMARY + FSM
   GMT_pupil LLL gridDim,blockDim RRR ( m , n, S, 0.070 , 1.0        , 1);
@@ -1233,6 +1250,30 @@ void mask::setup_GMT(int n, float S) {
   GMT_pupil LLL gridDim,blockDim RRR ( m , n, S, 0.000 , 1.049/8.365, 0);
   */
   set_filter();
+}
+@ \item
+A wavefront with a different piston for each GMT segment is set with
+<<mask functions>>=
+void mask::set_gmt_piston(float *phase, float *d__p) {
+  int n = size_px[0];
+  dim3 blockDim(16,16);
+  dim3 gridDim(n/16+1,n/16+1,7);
+  set_gmt_piston_kernel LLL gridDim,blockDim RRR (phase, d__p, m, d__piston_mask, n);
+}
+@  with
+<<GMT segment piston kernel>>=
+__global__ void set_gmt_piston_kernel(float *phase, float *p, 
+				      char *m, int *piston_mask,
+				      const int N)
+{
+  int i, j, k, seg;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = i*N + j;
+  seg = blockIdx.z;
+    if ( ( (i<N) && (j<N) ) && (m[k] && (piston_mask[k]==(seg+1)) ) ) {
+    phase[k] += p[seg];
+  }
 }
 @
 \end{itemize}
@@ -1272,6 +1313,8 @@ void mask::cleanup(void) {
   HANDLE_ERROR( cudaFree( m ) );
   HANDLE_ERROR( cudaFree( f ) );
   HANDLE_ERROR( cudaFree( idx ) );
+  if (d__piston_mask!=NULL)
+    HANDLE_ERROR( cudaFree( d__piston_mask ) );
 }
 @  with the kernels
 <<fill ones filtered>>=
@@ -1383,6 +1426,7 @@ The python wrapper is
         char *m
         float *f
         float area
+	int *d__piston_mask
         void setup(int)
         void setup(int, float)
         void setup(int, float, int, int, int)
@@ -1390,6 +1434,7 @@ The python wrapper is
                    float , float , float , int)
         void setup_circular(int, float)
         void setup_GMT(int, float)
+        void set_gmt_piston(float *, float *)
         void alter(float *)
         void cleanup()
 @ 
@@ -1400,6 +1445,7 @@ cdef class MaskAbstract:
     cdef mask *_c_mask
     cdef readonly int n    
     cdef readonly cuFloatArray f
+    cdef cuIntArray _piston_mask_
 <<utilities.pyx>>=
 ## mask structure
 cdef class MaskAbstract:
@@ -1522,6 +1568,11 @@ cdef class GMT(MaskAbstract):
     S : float
        The size of the pupil in meter.
 
+    Attributes
+    ----------
+    piston_mask : list
+        A list of piston mask, one per segment
+
     See also
     --------
     MaskAbstract
@@ -1532,8 +1583,32 @@ cdef class GMT(MaskAbstract):
 	self.f = cuFloatArray(shape=(self.n,1))
         self.f._c_gpu.dev_data = self._c_mask.f
 
+        self._piston_mask_ = cuIntArray(shape=(1,self.n))
+        self._piston_mask_._c_gpu.dev_data = self._c_mask.d__piston_mask;
+
     def __dealloc__(self):
         self._c_mask.cleanup()
+
+    def set_gmt_piston(self, cuFloatArray phase, float[::1] value):
+        """
+        Adds segment piston to the phase
+
+        Parameters
+        ----------
+        phase : cuFloatArray
+            The source wavefront phase.
+        value : float[::1]
+            The 1D array of segment piston in meter
+        """
+        cdef cuFloatArray p
+        p = cuFloatArray(host_data=value)
+        self._c_mask.set_gmt_piston(phase._c_gpu.dev_data, p._c_gpu.dev_data)
+
+    property piston_mask:
+       def __get__(self):
+           P = self._piston_mask_.host()
+           F = self.f.host()
+           return [ np.array( [(P[kk,:]*F.ravel())==k for k in range(1,8)] ) for kk in range(self._piston_mask_.shape[0])]
 @ 
 
 \subsection{Input/Output}
