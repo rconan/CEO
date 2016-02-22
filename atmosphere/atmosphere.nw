@@ -64,12 +64,14 @@ struct atmosphere {
 	     float *altitude, float *xi0,
 	     float *wind_speed, float *wind_direction,
 	     float _L_, int _NXY_PUPIL_,
-	     float field_size_ARCSEC);
+	     float field_size_ARCSEC,
+	     float duration);
   void gmt_setup();
   void gmt_setup(float r0_, float L0);
   void gmt_setup(float r0_, float L0,
 		 float _L_, int _NXY_PUPIL_,
-		 float field_size_ARCSEC);
+		 float field_size_ARCSEC,
+		 float duration);
 
   void cleanup(void);
 
@@ -205,9 +207,9 @@ cdef extern from "atmosphere.h":
         layer *layers
         void setup(float , float, int, float *, float *, float *, float *)
         void setup(float , float, int, float *, float *, float *, float *, 
-		   float, int, float)
+		   float, int, float, float)
         void gmt_setup(float , float)
-        void gmt_setup(float, float, float, int, float)
+        void gmt_setup(float, float, float, int, float, float)
         void cleanup()
         void info()
 	void reset()
@@ -278,7 +280,7 @@ cdef class AtmosphereAbstract:
                   N_LAYER=1,
                   altitude=0.0, xi0=1.0, 
                   wind_speed=0.0, wind_direction=0.0,
-		  L=0.0, NXY_PUPIL=0, fov=0.0):
+		  L=0.0, NXY_PUPIL=0, fov=0.0, duration=1.0):
 	self._c_atmosphere = new atmosphere()
         self.r0 = r0
         self.L0 = L0
@@ -328,7 +330,7 @@ cdef class Atmosphere(AtmosphereAbstract):
                   N_LAYER=1,
                   altitude=0.0, xi0=1.0, 
                   wind_speed=0.0, wind_direction=0.0,
-                  L=0.0, NXY_PUPIL=0, fov=0.0):
+                  L=0.0, NXY_PUPIL=0, fov=0.0, duration=1.0):
         AtmosphereAbstract.__init__(self,r0,L0,
                                     N_LAYER=N_LAYER,
                                     altitude=altitude, 
@@ -347,7 +349,8 @@ cdef class Atmosphere(AtmosphereAbstract):
                                      <float *>self.xi0.data,
                                      <float *>self.wind_speed.data, 
                                      <float *>self.wind_direction.data,
-                                     <float> L, <int> NXY_PUPIL, <float> fov) 
+                                     <float> L, <int> NXY_PUPIL, <float> fov,
+                                     <float> duration) 
             self.init()
 
     cdef init(self):
@@ -369,13 +372,14 @@ cdef class Atmosphere(AtmosphereAbstract):
 cdef class GmtAtmosphere(AtmosphereAbstract):
 
     def __cinit__(self, float r0, float L0,
-                  L=0.0,NXY_PUPIL=0,fov=0.0):
+                  L=0.0,NXY_PUPIL=0,fov=0.0, duration=1.0):
         AtmosphereAbstract.__init__(self,r0,L0)
         if NXY_PUPIL==0:
             self._c_atmosphere.gmt_setup(r0, L0)   
         else:
             self._c_atmosphere.gmt_setup(r0, L0,
-                                         <float> L, <int> NXY_PUPIL, <float> fov)   
+                                         <float> L, <int> NXY_PUPIL, 
+                                         <float> fov, <float> duration)   
     
 @ 
 <<python atmosphere methods>>=
@@ -746,6 +750,9 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
   N_PHASE_LAYER = 0;
   W = 0.0;
   N_W = 0;
+  layers_OSF            = 2;
+  layers_duration       = 0.0;
+  layers_tau0           = 0.0;
   <<allocation>>
   phase_screen_LAYER = NULL;
 }
@@ -756,7 +763,8 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
 		       float *altitude, float *xi0,
 		       float *wind_speed, float *wind_direction,
                        float _W_, int _N_W_,
-		       float _field_size_ARCSEC_) {
+		       float _field_size_ARCSEC_,
+		       float duration) {
   wavelength = 550e-9;
   wavenumber = wavelength/2/PI;
   r0 = r0_;
@@ -767,6 +775,9 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
   field_size_ARCSEC = _field_size_ARCSEC_;
   W = _W_;
   N_W = _N_W_;
+  layers_OSF            = 2;
+  layers_duration       = duration;
+  layers_tau0           = 0.0;
   <<allocation>>
 
   HANDLE_ERROR( cudaMalloc( (void**)&phase_screen_LAYER, N_PHASE_LAYER*sizeof(float) ) );
@@ -792,6 +803,9 @@ void atmosphere::gmt_setup() {
   N_PHASE_LAYER = 0;
   W = 0.0;
   N_W = 0;
+  layers_OSF            = 2;
+  layers_duration       = 0.0;
+  layers_tau0           = 0.0;
   <<allocation>>
   phase_screen_LAYER = NULL;
 }
@@ -812,13 +826,17 @@ void atmosphere::gmt_setup(float r0_, float L0) {
   N_PHASE_LAYER = 0;
   W = 0.0;
   N_W = 0;
+  layers_OSF            = 2;
+  layers_duration       = 0.0;
+  layers_tau0           = 0.0;
   <<allocation>>
   phase_screen_LAYER = NULL;
 }
 <<atmosphere setup (GMT prm, ray tracing)>>=
 void atmosphere::gmt_setup(float r0_, float L0,
                            float _W_, int _N_W_,
-                           float _field_size_ARCSEC_) {
+                           float _field_size_ARCSEC_,
+			   float duration) {
   wavelength = 550e-9;
   wavenumber = wavelength/2/PI;
   r0 = r0_;
@@ -834,6 +852,9 @@ void atmosphere::gmt_setup(float r0_, float L0,
   W = _W_;
   N_W = _N_W_;
   N_PHASE_LAYER = 0;
+  layers_OSF            = 2;
+  layers_duration       = duration;
+  layers_tau0           = 0.0;
   <<allocation>>
   HANDLE_ERROR( cudaMalloc( (void**)&phase_screen_LAYER, N_PHASE_LAYER*sizeof(float) ) );
   <<layer to device (ray tracing)>>
@@ -841,9 +862,6 @@ void atmosphere::gmt_setup(float r0_, float L0,
 
 <<allocation>>=
 info();
-layers_OSF            = 2;
-layers_duration       = 1.0;
-layers_tau0           = 0.0;
 <<layer to device (common)>>
 HANDLE_ERROR( cudaMalloc( (void**)&d__turbulence, sizeof(profile) ) );
 HANDLE_ERROR( cudaMemcpy( d__turbulence, &turbulence,
@@ -918,7 +936,7 @@ For a layer at altitude $h$ and a field--of--view $\mathrm{fov}$, the pupil proj
 \begin{tikzpicture}[>=stealth']
   \begin{scope}[rotate=30]
   \fill[blue!20] ($(-2*1.45,-2*1.45)-(7.5,0.5)$) rectangle ($(2*1.45,2*1.45)+(0.5,0.5)$);
-  \draw[<->]  ($(2*1.45,-2*1.45)+(0.5,-0.5)$) --  ($(2*1.45,2*1.45)+(0.5,0.5)$) node[midway,right] {$\left(W+h\tan(\mathrm{fov})\right){\tan(\theta)+1\over\sqrt{\tan(\theta)^2+1}}$};
+  \draw[<->]  ($(2*1.45,-2*1.45)+(0.5,-0.5)$) --  ($(2*1.45,2*1.45)+(0.5,0.5)$) node[midway,right] {$\left(W+h\tan(\mathrm{fov/2})\right){\tan(\theta)+1\over\sqrt{\tan(\theta)^2+1}}$};
   \draw[->,ultra thick] (-6,0) -- (-3,0) node[midway,above] {wind};
   \end{scope}
   \fill[red!20] ($(-2,-2)-(0.5,0.5)$) rectangle ($(2,2)+(0.5,0.5)$);
@@ -926,7 +944,7 @@ For a layer at altitude $h$ and a field--of--view $\mathrm{fov}$, the pupil proj
   \draw[<->] (-2,0) -- (2,0) node[midway,above] {[[W]]};
   \draw[->] ($(2,-1)-(0.25,0)$) -- (2,-1);
   \draw (2,-1) -- (2.5,-1);
-  \draw[<-] (2.5,-1) -- (3.5,-1) node[above] {$h\tan(\mathrm{fov})$};
+  \draw[<-] (2.5,-1) -- (3.5,-1) node[above] {$h\tan(\mathrm{fov/2})$};
 \end{tikzpicture}
 \end{center}
 
@@ -2097,6 +2115,33 @@ const int N_LAYER, const float tau)
     }
   }
 }
+__global__ void rayTracingKernReg_masked(
+const float delta_x, const int N_X,
+const float delta_y, const int N_Y,
+float* phase_screen_PUPIL, char *mask,
+const source* src, const int N_SOURCE,
+const layer* layers,
+float* phase_screen_LAYER, 
+const int N_LAYER, const float tau)
+{
+
+  <<ray tracing variables>>
+
+ <<threads to pupil and source mapping (regular)>>
+
+    if ( (ix<N_X) && (iy<N_Y) && (mask[ij+k_SOURCE*NXY_PUPIL]) )
+  {
+    for (k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++)
+    {
+
+      <<coordinate transformation>>
+
+      <<bilinear interpolation>>
+
+	phase_screen_PUPIL[ij+k_SOURCE*NXY_PUPIL] += zi;
+    }
+  }
+}
 @
 The kernel is called with
 <<ray tracing>>=
@@ -2135,6 +2180,7 @@ void atmosphere::rayTracing(source *src,
   float new_tau = tau-layers_tau0;
   dim3 blockDim(16,16);
   dim3 gridDim( 1+N_X/16 , 1+N_Y/16, src->N_SRC);
+  if (src->wavefront.M==NULL) {
   rayTracingKernReg LLL gridDim, blockDim RRR(delta_x, N_X,
 					      delta_y, N_Y,
 					      src->wavefront.phase,
@@ -2142,6 +2188,16 @@ void atmosphere::rayTracing(source *src,
 					      d__layers,
 					      phase_screen_LAYER, 
 					      N_LAYER, new_tau);
+  } else {
+  rayTracingKernReg_masked LLL gridDim, blockDim RRR(delta_x, N_X,
+					      delta_y, N_Y,
+					      src->wavefront.phase,
+                                              src->wavefront.M->m,
+					      src->dev_ptr, src->N_SRC,
+					      d__layers,
+					      phase_screen_LAYER, 
+					      N_LAYER, new_tau);
+  }
 }
 @ 
 \section{Tests}
