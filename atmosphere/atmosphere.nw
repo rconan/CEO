@@ -78,9 +78,6 @@ struct atmosphere {
   void info(void);
 
   void reset(void);
-  
-  void precompute(float W, int N_W, float field_size_ARCSEC,
-		  int layers_OSF, float layers_duration);
 
   void get_phase_screen(float *phase_screen,
 			float const *x, float const *y, int N_xy, 
@@ -173,8 +170,6 @@ struct atmosphere {
 
 <<info>>
 
-<<phase screen precomputing>>
-
 <<phase screen I>>
 <<phase screen II>>
 <<phase screen III>>
@@ -217,7 +212,6 @@ cdef extern from "atmosphere.h":
         void gmt_setup(float, float, float, int, float, float)
         void cleanup()
         void info()
-        void precompute(float, int, float, int, float)
 	void reset()
         void get_phase_screen(source *, float , int , float , int , float )
         void get_phase_screen(source *, float )
@@ -391,11 +385,6 @@ cdef class GmtAtmosphere(AtmosphereAbstract):
 <<python atmosphere methods>>=
 def reset(self):
     self._c_atmosphere.reset()
-
-def precompute(self,float W, int N_W, float field_size_ARCSEC,
-               int layers_OSF, float layers_duration):
-    self._c_atmosphere.precompute(W, N_W, field_size_ARCSEC,
-                                  layers_OSF, layers_duration)
 
 def get_phase_screen(self, Source src, 
 		     float delta_x, int N_x, 
@@ -938,21 +927,6 @@ void profile::cleanup(void) {
   free(xi0);
   free(wind_speed);
   free(wind_direction);
-}
-@ 
-<<phase screen precomputing>>=
-void atmosphere::precompute(float W, int N_W, float field_size_ARCSEC,
-			    int layers_OSF, float layers_duration)
-{
-  layer one_layer;
-  for (int i_LAYER=0; i_LAYER<N_LAYER; i_LAYER++) {
-    fprintf(stdout," #%d: ",i_LAYER);
-    N_PHASE_LAYER += one_layer.setup(layers[i_LAYER].altitude, layers[i_LAYER].xi0, 
-					   layers[i_LAYER].wind_speed, layers[i_LAYER].wind_direction,
-					   W, N_W, field_size_ARCSEC/RADIAN2ARCSEC,
-					   layers_OSF, layers_duration);
-  }
-  fprintf(stdout," Total: %.2fMB\n",N_PHASE_LAYER*sizeof(float)/powf(2,20));
 }
 @ 
 The phase screens of the layers are defined such as the x--axis of the screens are aligned with the wind direction $\theta$.
@@ -2155,7 +2129,7 @@ const int N_LAYER, const float tau)
 
  <<threads to pupil and source mapping (regular)>>
 
-    if ( (ix<N_X) && (iy<N_Y) )// && (mask[ij+k_SOURCE*NXY_PUPIL]) )
+    if ( (ix<N_X) && (iy<N_Y) && (mask[ij+k_SOURCE*NXY_PUPIL]) )
   {
     for (k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++)
     {
@@ -2215,7 +2189,6 @@ void atmosphere::rayTracing(source *src,
 					      phase_screen_LAYER, 
 					      N_LAYER, new_tau);
   } else {
-
   rayTracingKernReg_masked LLL gridDim, blockDim RRR(delta_x, N_X,
 					      delta_y, N_Y,
 					      src->wavefront.phase,
