@@ -9,4 +9,6 @@ setup(name='ceo',
       author_email='conan.rod@gmail.com',
       url='http://rconan.github.io/CEO/',
       packages=['python.ceo'],
-     )
+      install_requires=[
+          'numpy',
+      ])
