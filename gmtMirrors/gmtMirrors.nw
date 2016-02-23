@@ -1584,8 +1584,7 @@ for (j=0; j<SNELL_N_ITERATION; j++)
   xyz.x = x1 + k*s0;
   xyz.y = y1 + l*s0;
   xyz.z = m*s0;
-  <<aspheric surface>>
-  <<aspheric surface derivatives>>
+  <<aspheric surface and derivatives (3 steps)>>
   dSds = K*k + L*l + M*m;
   if (dSds==0) { break; }
   s1 = s0 - S/dSds;
@@ -1612,6 +1611,29 @@ K = partial_x_aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n,
 L = partial_y_aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n, 
                                d__cy + iCoordSys*b_n_mode, R);
 M = partial_z_aspheric_surface();
+@ 
+<<aspheric surface and derivatives (3 steps)>>=
+<<aspheric surface>>
+<<aspheric surface derivatives>>
+@ 
+<<aspheric surface and derivatives (1 step, initialization)>>=
+rtd red,rsqrt_red;
+<<aspheric surface and derivatives (1 step)>>=
+zernike_surface_and_partials(&S, &K, &L,
+			     xyz.mag(R), xyz.angle(), max_n,
+			     d__a + iCoordSys*n_mode,
+			     d__cx + iCoordSys*n_mode,
+			     d__cy + iCoordSys*n_mode);
+S = xyz.z - d__origin.z - S;
+K = -K;
+L = -L;
+M = 1.0;
+rho2 = Fc*xyz.rho2_shift(d__origin.x,d__origin.y);
+red = 1 - Fk*Fc*rho2;
+rsqrt_red = rsqrt(red);
+S -= rho2/( 1 + sqrt(red) );
+K -= (xyz.x - d__origin.x)*Fc*rsqrt_red;
+L -= (xyz.y - d__origin.y)*Fc*rsqrt_red;
 @
 <<GMT intersection with conic>>=
 k  = klm.x;

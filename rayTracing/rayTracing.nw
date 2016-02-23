@@ -45,6 +45,9 @@ The ray tracing method involves 4 steps \cite{}:
 __host__ __device__  rtd zernike_surface(rtd r, rtd o, int max_n, rtd *a);
 __host__ __device__  rtd zernike_surface_x_derivative(rtd r, rtd o, int max_n, rtd *a);
 __host__ __device__  rtd zernike_surface_y_derivative(rtd r, rtd o, int max_n, rtd *a);
+__host__ __device__ void zernike_surface_and_partials(rtd *ZS, rtd *dZSdx, rtd *dZSdy,
+						      rtd r, rtd o, int max_n, 
+						      rtd *a, rtd *ax, rtd *ay);
 int zern_dx_coef(rtd *b, int j, int n, int m, int jp, int np, int mp);
 int zern_dy_coef(rtd *b,int j, int n, int m, int jp, int np, int mp);
 
@@ -81,6 +84,7 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 <<ray bundle kernels>>
 <<bundle reset kernel>>
 <<zernike surface kernel>>
+<<zernike surface and derivatives kernel>>
 <<zernike projection kernel>>
 <<aperture intersection>>
 
@@ -95,6 +99,7 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 <<zernike surface equation>>
 <<zernike derivative x coefficient>>
 <<zernike derivative y coefficient>>
+<<zernike surface and partial derivatives equation>>
 
 <<vignetting kernel>>
 <<aperture functions>>
@@ -773,6 +778,8 @@ cdef class Aperture:
           void update(rtd *)
           void surface_derivatives(rtd *, rtd *, 
                                    rtd *, rtd *, int )
+          void surface_and_derivatives(rtd *, rtd *, rtd *, 
+                                       rtd *, rtd *, int);
           void projection(float *, rtd *, rtd *, int)
 
     rtd zernike_surface(rtd , rtd , unsigned int , rtd *)
@@ -914,6 +921,7 @@ cdef class ZernikeS:
         S : cuDoubleArray
             The Zernike surface
         """
+        cdef cuDoubleArray S
         S = cuDoubleArray(shape=r.shape, dev_malloc = True)
         self._c_zernikeS.surface(S._c_gpu.dev_data, 
                                  r._c_gpu.dev_data, o._c_gpu.dev_data, 
@@ -938,11 +946,46 @@ cdef class ZernikeS:
         dSdy : cuDoubleArray
             The Zernike surface y derivative
         """
+        cdef cuDoubleArray dSdx, dSdy
         dSdx = cuDoubleArray(shape=r.shape, dev_malloc = True)
         dSdy = cuDoubleArray(shape=r.shape, dev_malloc = True)
-        self._c_zernikeS.surface_derivatives(dSdx._c_gpu.dev_data, dSdy._c_gpu.dev_data, 
-                                             r._c_gpu.dev_data, o._c_gpu.dev_data, r._c_gpu.N)
+        self._c_zernikeS.surface_derivatives(dSdx._c_gpu.dev_data, 
+                                             dSdy._c_gpu.dev_data, 
+                                             r._c_gpu.dev_data, o._c_gpu.dev_data, 
+                                             r._c_gpu.N)
         return dSdx,dSdy
+
+    def surface_and_derivatives(self, cuDoubleArray r, cuDoubleArray o):
+        """
+        Computes the Zernike surface x and y derivatives in polar coordinates
+
+        Parameters
+        ----------
+        r : cuDoubleArray
+            The normalized radius
+        o : cuDoubleArray
+            The azimuth
+
+        Returns
+        -------
+        S : cuDoubleArray
+            The Zernike surface
+        dSdx : cuDoubleArray
+            The Zernike surface x derivative
+        dSdy : cuDoubleArray
+            The Zernike surface y derivative
+        """
+        cdef cuDoubleArray S, dSdx, dSdy
+        S    = cuDoubleArray(shape=r.shape, dev_malloc = True)
+        dSdx = cuDoubleArray(shape=r.shape, dev_malloc = True)
+        dSdy = cuDoubleArray(shape=r.shape, dev_malloc = True)
+        self._c_zernikeS.surface_and_derivatives(S._c_gpu.dev_data,
+                                                 dSdx._c_gpu.dev_data, 
+                                                 dSdy._c_gpu.dev_data, 
+                                                 r._c_gpu.dev_data, 
+                                                 o._c_gpu.dev_data, 
+                                                 r._c_gpu.N)
+        return S,dSdx,dSdy
 
     def projection(self, cuFloatArray phase, cuDoubleArray r, cuDoubleArray o):
         """
@@ -2557,7 +2600,41 @@ __device__ inline rtd partial_z_aspheric_surface(void)
 }
 @
 \end{itemize}
-
+@
+Aspheric surface and partial derivatives:
+<<conic equations (opt-out)>>=
+__device__ void aspheric_surface_and_partials(rtd *S, rtd *dSdx, rtd *dSdy, rtd *dSdz, 
+						       vector *v, vector *v0, 
+						       const rtd k, const rtd c,
+						       const int max_n, 
+						       rtd *a, rtd *cx, rtd *cy,
+						       const rtd R)
+{
+  zernike_surface_and_partials(S, dSdx, dSdy,
+  			       v->mag(R), v->angle(), max_n,
+  			       a, cx, cy);
+  S[0] = v->z - v0->z - S[0];
+  dSdx[0] = -dSdx[0];
+  dSdy[0] = -dSdy[0];
+  dSdz[0] = 1.0;
+  if (c!=0) {
+    rtd rho2;
+    rho2 = c*v->rho2_shift(v0->x,v0->y);
+    if (k==0) {
+      S[0]    -= rho2*0.5;
+      dSdx[0] -= (v->x - v0->x)*c;
+      dSdy[0] -= (v->y - v0->y)*c;
+    } else {
+      rtd red,rsqrt_red;
+      red = 1 - k*c*rho2;
+      rsqrt_red = rsqrt(red);
+      S[0]    -= rho2/( 1 + sqrt(red) );
+      dSdx[0] -= (v->x - v0->x)*c*rsqrt_red;
+      dSdy[0] -= (v->y - v0->y)*c*rsqrt_red;
+    }
+  }
+}
+@ 
 \subsection{Setup \& Cleanup}
 \label{sec:surf-setup--cleanup}
 
@@ -2667,6 +2744,10 @@ struct zernikeS {
   void update(rtd *a);
   void surface_derivative_coefs(void);
   void surface_derivatives(rtd *d__dSdx, rtd *d__dSdy, rtd *d__r, rtd *d__o, const int N);
+  void surface_and_derivatives(rtd *d__S, rtd *d__dSdx, rtd *d__dSdy, 
+			       rtd *d__r, rtd *d__o, const int N);
+  void surface_and_derivatives(rtd *d__S, rtd *d__dSdx, rtd *d__dSdy, 
+			       rtd *d__r, rtd *d__o, const int N, int surf_id);
   void projection(float *d__phase, rtd *d__r, rtd *d__o, const int N);
 };
 @ 
@@ -3049,6 +3130,30 @@ __host__ __device__ rtd zernike_surface(rtd r, rtd o, int max_n, rtd *a)
   return S;
 }
 @ 
+The Zernike surface and its partial derivatives with respect to x and y can be computed simultaneously with
+<<zernike surface and partial derivatives equation>>=
+__host__ __device__ void zernike_surface_and_partials(rtd *ZS, rtd *dZSdx, rtd *dZSdy,
+						     rtd r, rtd o, int max_n, 
+						     rtd *a, rtd *ax, rtd *ay)
+{
+  int n, m, mH, a_idx,j;
+  rtd R, R2, R4, A, Ax, Ay, S_n, Sx_n, Sy_n, S, Sx, Sy, 
+    H1, H2, H3, sm, cm, s2, c2, s ,c, sqrt2;
+  if (max_n==0) {//( (r>1.0) || (max_n<0) ) 
+    S = a[0]; 
+    Sx = Sy = 0.0;
+  } else {
+    R = 1.0;
+    S =  a[0]*R;
+    Sx = ax[0]*R;
+    Sy = ay[0]*R;
+    <<zernike surface and partial derivatives: radial order sum>>
+    }
+  ZS[0]    = S;
+  dZSdx[0] = Sx;
+  dZSdy[0] = Sy;
+}
+@ 
 The Zernike surface is computed by summing all the azimuthal order of a each radial order from the highest to the lowest azimuthal order.
 The Zernike coefficients [[a]] are ordered by increasing azimuthal order.
 <<zernike surface: radial order sum>>=
@@ -3169,7 +3274,153 @@ and
 <<H3>>=
 H3 = -4.0*(mH-2.0)*(mH-3.0)/((n+mH-2.0)*(n-mH+4.0));
 @
+A modification of the above algorithm to compute simultaneously the surface and its partial derivatives:
+<<zernike surface and partial derivatives: radial order sum>>=
+sqrt2 = sqrt(2.0);
+sincos(2*o,&s2,&c2);
+for (n=1;n<=max_n-1;n++) {
+  j = (n+1)*(n+2)/2;
+  a_idx = j - 1;
 
+  m = n;
+  R = pow(r,n);
+  sincos(m*o, &sm, &cm);
+  if (j%2) {
+    Ax = ax[a_idx]*sm;
+    Ay = ay[a_idx]*sm;
+    A  = a[a_idx--]*sm;
+    Ax += ax[a_idx]*cm;
+    Ay += ay[a_idx]*cm;
+    A  += a[a_idx--]*cm;
+  } else {
+    Ax = ax[a_idx]*cm;
+    Ay = ay[a_idx]*cm;
+    A  = a[a_idx--]*cm;
+    Ax += ax[a_idx]*sm;
+    Ay += ay[a_idx]*sm;
+    A  += a[a_idx--]*sm;
+  }
+  j -= 2;
+  Ax *= sqrt2;
+  Ay *= sqrt2;
+  A *= sqrt2;
+  Sx_n = R*Ax;
+  Sy_n = R*Ay;
+  S_n  = R*A;
+
+  m -= 2;
+  if (m>=0) {
+    R2 = n*R - (n-1.0)*pow(r,m);
+    <<azimuth II>>
+    Sx_n += R2*Ax;
+    Sy_n += R2*Ay;
+    S_n  += R2*A;
+  }
+
+  m -= 2;
+  while (m>=0) {
+    mH = m + 4;
+    if (r>0) {
+      <<H3>>
+      <<H2>>
+      <<H1>>
+      <<R recurrence>>
+      <<azimuth II>>
+    } else {
+      R4 = (m==0) ? pow(-1.0,0.5*n) : 0.0;
+      Ax = 1.0;
+      Ay = 1.0;
+      A  = 1.0;
+    }
+    Sx_n += R4*Ax;
+    Sy_n += R4*Ay;
+    S_n  += R4*A;
+    R  = R2;
+    R2 = R4;
+    m -= 2;
+  }
+  Sx += sqrt(n+1.0)*Sx_n;
+  Sy += sqrt(n+1.0)*Sy_n;
+  S  += sqrt(n+1.0)*S_n;
+}
+
+n = max_n;
+j = (n+1)*(n+2)/2;
+a_idx = j - 1;
+
+m = n;
+R = pow(r,n);
+sincos(m*o, &sm, &cm);
+if (j%2) {
+  A = a[a_idx--]*sm;
+  A += a[a_idx--]*cm;
+ } else {
+  A = a[a_idx--]*cm;
+  A += a[a_idx--]*sm;
+ }
+j -= 2;
+A *= sqrt2;
+S_n = R*A;
+
+m -= 2;
+if (m>=0) {
+  R2 = n*R - (n-1.0)*pow(r,m);
+  <<azimuth>>
+      S_n += R2*A;
+ }
+
+m -= 2;
+while (m>=0) {
+  mH = m + 4;
+  if (r>0) {
+    <<H3>>
+    <<H2>>
+    <<H1>>
+    <<R recurrence>>
+    <<azimuth>>
+  } else {
+    R4 = (m==0) ? pow(-1.0,0.5*n) : 0.0;
+    A = 1.0;
+  }
+  S_n += R4*A;
+  R  = R2;
+  R2 = R4;
+  m -= 2;
+ }
+S += sqrt(n+1.0)*S_n;
+@  with
+<<azimuth II>>=
+  if (m>0) {
+    c = cm*c2 + sm*s2;
+    s = sm*c2 - cm*s2;
+    if (j%2) {
+      Ax = ax[a_idx]*s;
+      Ay = ay[a_idx]*s;
+      A  = a[a_idx--]*s;
+      Ax += ax[a_idx]*c;
+      Ay += ay[a_idx]*c;
+      A  += a[a_idx--]*c;
+    } else {
+      Ax = ax[a_idx]*c;
+      Ay = ay[a_idx]*c;
+      A  = a[a_idx--]*c;
+      Ax += ax[a_idx]*s;
+      Ay += ay[a_idx]*s;
+      A  += a[a_idx--]*s;
+    }
+    j -= 2;
+    Ax *= sqrt2;
+    Ay *= sqrt2;
+    A  *= sqrt2;
+    cm = c;
+    sm = s;
+  } else {
+    Ax = ax[a_idx];
+    Ay = ay[a_idx];
+    A  = a[a_idx--];
+    --j;
+  }
+@
 \subsection{Zernike surface derivative}
 \label{sec:zern-surf-deriv}
 
@@ -3247,6 +3498,52 @@ int zern_dy_coef(rtd *b, int j, int n, int m, int jp, int np, int mp)
   return 1;
 }
 @
+\subsection{Zernike surface and derivatives}
+\label{sec:zern-surf-deriv-1}
+
+\index{rayTracing!zernikeS!surface\_and\_derivatives}
+<<zernikeS functions>>=
+void zernikeS::surface_and_derivatives(rtd *d__S, rtd *d__dSdx, rtd *d__dSdy, 
+                                       rtd *d__r, rtd *d__o, const int N)
+{
+    dim3 blockDim(N_THREAD,N_THREAD);
+    dim3 gridDim(N/N_THREAD2+1,1);
+    surface_and_derivatives_kern LLL gridDim, blockDim RRR (d__S, d__dSdx, d__dSdy,
+                                                            d__r, d__o, N, max_n, 
+                                                            d__a, d__cx, d__cy);
+}
+@ 
+\index{rayTracing!zernikeS!surface}
+<<zernikeS functions>>=
+void zernikeS::surface_and_derivatives(rtd *d__S, rtd *d__dSdx, rtd *d__dSdy, 
+                                       rtd *d__r, rtd *d__o, const int N, int surf_id)
+{
+  //fprintf(stdout,"a offset = %d\n",surf_id*n_mode);
+    dim3 blockDim(N_THREAD,N_THREAD);
+    dim3 gridDim(N/N_THREAD2+1,1);
+    surface_and_derivatives_kern LLL gridDim, blockDim RRR (d__S, d__dSdx, d__dSdy,
+                                                            d__r, d__o, N, max_n, 
+                                                            d__a + surf_id*n_mode, 
+                                                            d__cx + surf_id*n_mode, 
+                                                            d__cy + surf_id*n_mode);
+
+}
+@ with
+<<zernike surface and derivatives kernel>>=
+__global__ void surface_and_derivatives_kern(rtd *S, rtd *dSdx, rtd *dSdy, 
+                                             rtd *r, rtd *o, const int N, 
+                                             int max_n, rtd *a, rtd *ax, rtd *ay)
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if (k<N) {
+    zernike_surface_and_partials(S+k, dSdx+k, dSdy+k, r[k], o[k], max_n, a, ax, ay);
+  }
+}
+@
+
 \subsection{Projection}
 \label{sec:projection}
 
