@@ -690,8 +690,6 @@ class DispersedFringeSensor(SegmentPistonSensor):
 	"""
 	Processes the Dispersed Fringe Sensor detector frame
 	"""
-	self.fftlet.reset()
-	self.fft()
 	dataCube = self.get_data_cube(data_type='fftlet')
         self.measurement = np.zeros(self._N_SRC*12)
 
@@ -733,7 +731,9 @@ class DispersedFringeSensor(SegmentPistonSensor):
         src : Source
             The piston sensing guide star object
 	"""
+	self.reset()
 	self.propagate(src)
+	self.fft()
 	self.process(**kwargs)	
 
     def piston(self, src, segment='edge', **kwargs):
