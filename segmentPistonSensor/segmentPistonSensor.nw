@@ -69,7 +69,7 @@ from source cimport complex_amplitude, Complex_amplitude, source, Source
 from imaging cimport imaging, Imaging
 cdef extern from "segmentPistonSensor.h":
     cdef cppclass segmentPistonSensor:
-        int N_LENSLET, N_PX_LENSLET, N_PX, N_PX_IMAGE
+        int N_LENSLET, N_PX_LENSLET, N_PX, N_PX_IMAGE, N_LAMBDA
         complex_amplitude lenslet
         imaging camera, FFT
         void setup(gmt_m1 *, source *, float, float, float)
@@ -115,6 +115,8 @@ cdef class SegmentPistonSensor:
         The detector of the segment piston sensor
     fftlet : cuFloatArray
         The Fourier trasform of the detector framelet
+    N_LAMBDA : int
+        The number of spectral element
 
     See also
     --------
@@ -178,7 +180,10 @@ cdef class SegmentPistonSensor:
         Fourier transforms the detector framelets
         """
         self._c_segmentPistonSensor.fft();
-    
+
+    property N_LAMBDA:
+        def __get__(self):
+            return self._c_segmentPistonSensor.N_LAMBDA
 @ 
 
 \section{The model}
@@ -483,7 +488,7 @@ lenslet_trim LLL gridDim, blockDim RRR (lenslet.phase,
 					gs->dev_ptr, m2px);
 lenslet_mask.set_filter_quiet();
 lenslet_mask.area = gs->N_SRC*lenslet_mask.nnz*
-  gs->wavefront.M->area/gs->wavefront.M->nnz;
+  gs->wavefront.M->area/gs->wavefront.M->nnz/N_LAMBDA;
 @ 
 Second, the piecewise wavefront are propagated through the lenslets and to the focal plane on the detector, one wavelength at a time.
 <<propagation content>>= 
