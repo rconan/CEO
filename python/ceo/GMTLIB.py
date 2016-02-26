@@ -582,15 +582,19 @@ class DispersedFringeSensor(SegmentPistonSensor):
 	data_type : string
 		Set to "camera" to return fringes; set to "fftlet" to return fftlet images; default: fftlet
 	"""
-	assert data_type == 'fftlet' or data_type == 'camera', "data_type should be either 'fftlet' or 'camera'"  
+	assert data_type == 'fftlet' or data_type == 'camera' or data_type == 'pupil_masks', "data_type should be either 'fftlet', 'camera', or 'pupil_masks'"  
+	
+	n_lenslet = self.camera.N_SIDE_LENSLET
 	if data_type == 'fftlet':
 	    data = self.fftlet.host()
 	    n_px = self.camera.N_PX_IMAGE
 	elif data_type == 'camera':
 	    data = self.camera.frame.host()
  	    n_px = self.camera.N_PX_IMAGE/2
+	elif data_type == 'pupil_masks':
+	    data = self.W.amplitude.host()
+	    n_px = (data.shape)[0] / n_lenslet
 	
-	n_lenslet = self.camera.N_SIDE_LENSLET
     	dataCube = np.zeros((n_px, n_px, self._N_SRC*12))
     	k = 0
     	for j in range(n_lenslet):
