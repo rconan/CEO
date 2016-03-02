@@ -15,5 +15,5 @@ setup(name='ceo',
       url='http://rconan.github.io/CEO/',
       packages=['python.ceo'],
       install_requires=[
-          'numpy',
+          'numpy','scipy',
       ])
