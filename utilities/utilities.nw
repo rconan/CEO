@@ -1464,11 +1464,12 @@ cdef class MaskAbstract:
     cuFloatArray : an interface for GPU host and device float data
     """
 
-    def __cinit__(self,int n, float S=0.0, float i_s=0.0, float j_s=0.0, 
-                  float n_s=0.0, float theta=0.0):
+    def __cinit__(self, *args, **kwargs):
+ 	self._c_mask = new mask()
+
+    def __init__(self, int n):
         self.n = n
-	self._c_mask = new mask()
-	self.f = cuFloatArray(shape=(self.n,1))
+        self.f = cuFloatArray(shape=(self.n,1))
         self.f._c_gpu.dev_data = self._c_mask.f
 
     def alter(self, cuFloatArray filter):
@@ -1512,16 +1513,17 @@ cdef class Mask(MaskAbstract):
     MaskAbstract
     """
 
-    def __cinit__(self,int n, float L=0.0, float i_0=0.0, float j_0=0.0, 
+    def __init__(self,int n, float L=0.0, float i_0=0.0, float j_0=0.0, 
                   float n_s=0.0, float theta=0.0, float i_s=0.0, float j_s=0.0):
         if n_s==0:
             if (L>0):
-                self.n = n*n
+                super(Mask,self).__init__(n*n)
                 self._c_mask.setup(n,L)
             else:
-                self.n = n
+                super(Mask,self).__init__(n)
                 self._c_mask.setup(n)
         else:
+            super(Mask,self).__init__(n_s*n_s)
             self._c_mask.setup(n_s,L,i_0,j_0,theta,i_s,j_s,n)
 	self.f = cuFloatArray(shape=(self.n,1))
         self.f._c_gpu.dev_data = self._c_mask.f
@@ -1546,8 +1548,8 @@ cdef class Telescope(MaskAbstract):
     --------
     MaskAbstract
     """ 
-    def __cinit__(self, int n, float D):
-        self.n = n*n
+    def __init__(self, int n, float D):
+        super(Telescope,self).__init__(n*n)
         self._c_mask.setup_circular(n,D)    
 	self.f = cuFloatArray(shape=(self.n,1))
         self.f._c_gpu.dev_data = self._c_mask.f
@@ -1577,8 +1579,8 @@ cdef class GMT(MaskAbstract):
     --------
     MaskAbstract
     """
-    def __cinit__(self, int n, float S=25.5):
-        self.n = n*n
+    def __init__(self, int n, float S=25.5):
+        super(GMT,self).__init__(n*n)
  	self._c_mask.setup_GMT(n,S)    
 	self.f = cuFloatArray(shape=(self.n,1))
         self.f._c_gpu.dev_data = self._c_mask.f
