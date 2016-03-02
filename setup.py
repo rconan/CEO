@@ -1,9 +1,11 @@
 #!/usr/bin/env python
 
+import os
 import sys
 from distutils.core import setup
 
-sys.path.append("python")
+sys.path.append(os.path.dirname(__file__)+"/python")
+print sys.path
 
 setup(name='ceo',
       version='1.0',
