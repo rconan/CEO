@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 
+import sys
 from distutils.core import setup
+
+sys.path.append("python")
 
 setup(name='ceo',
       version='1.0',

@@ -19,9 +19,9 @@ The source structure contains all the data associated with a remote optical emit
 #include "plotly.h"
 #endif
 
-#ifndef __RAYTRACING_H__
-#include "rayTracing.h"
-#endif
+<<ray data type>>
+
+<<ray bundle structure>>
 
 <<complex amplitude structure>>
 
@@ -65,12 +65,14 @@ struct source {
   float n_photon(void);
   float wavenumber(void);
 
+  /*
   void transform_to_S(source *src, conic *F);
   void transform_to_S(source *src, aperture *A);
   void transform_to_R(source *src, conic *F);
   void transform_to_R(source *src, aperture *A);
   void intersect(source *src, conic *F);
   void reflect(source *src);
+  */
 };
 #endif // __SOURCE_H__
 @
@@ -78,6 +80,13 @@ struct source {
 
 <<source.cu>>=
 #include "source.h"
+
+<<to z plane kernel>>
+<<to sphere kernel>>
+<<reference sphere origin from chief ray>>
+<<ray bundle kernels>>
+<<bundle reset kernel>>
+<<ray bundle functions>>
 
 <<square geometry>>
 <<apply mask>>
@@ -137,9 +146,303 @@ struct source {
 \index{source!python}
 
 <<source.pxd>>=
-from utilities cimport mask
-from rayTracing cimport bundle, vector, rtd, aperture, conic
+from numpy cimport ndarray
+from utilities cimport mask, cuFloatArray, cuDoubleArray, cuIntArray, MaskAbstract
+cdef extern from "utilities.h":
+    ctypedef double rtd
+    ctypedef struct vector:
+        rtd x
+        rtd y
+        rtd z
 cdef extern from "source.h":
+    ctypedef struct ray:
+        vector coordinates
+        vector directions
+        vector surface_normal
+        rtd optical_path_length
+<<source.pxd contents>>
+<<class definitions>>
+@
+\subsubsection{Ray bundle}
+\label{sec:ray-bundle-1}
+
+\index{source!python!Bundle}
+
+<<source.pxd contents>>=
+    cdef cppclass bundle:
+        int N_RAY, N_BUNDLE
+	int *d__piston_mask
+        rtd *d__sphere_radius
+        rtd *d__sphere_distance
+        vector *d__sphere_origin
+        ray *d__ray
+	ray *d__chief_ray
+        void setup(rtd, int, int , vector, int)
+        void setup(rtd, int , vector, int)
+        void cleanup()
+        void to_z_plane(rtd)
+        void to_sphere(vector)
+        void to_sphere(rtd , rtd)
+        void get_coordinates(double *)
+        void get_chief_coordinates(double *)
+        void get_directions(double *)
+        void get_chief_directions(double *)
+        void get_optical_path_length(double *)
+        void get_chief_optical_path_length(double *)
+        void get_optical_path_difference(double *)
+        void get_optical_path_difference(double *,
+					 float , int , 
+					 float , int )
+        void get_vignetting(double *)
+	void get_n_iteration(int *)
+@
+<<class definitions>>=
+# Bundle
+cdef class Bundle:
+    cdef bundle *_c_bundle
+    cdef cuDoubleArray _coordinates_
+    cdef cuDoubleArray _chief_coordinates_
+    cdef cuDoubleArray _directions_
+    cdef cuDoubleArray _chief_directions_
+    cdef cuDoubleArray _optical_path_length_
+    cdef cuDoubleArray _chief_optical_path_length_
+    cdef cuDoubleArray _optical_path_difference_
+    cdef cuDoubleArray _vignetting_
+    cdef cuIntArray _n_iteration_
+    cdef public cuDoubleArray sphere_radius
+    cdef public cuDoubleArray sphere_distance
+    cdef double[:,::1] _d__sphere_origin_
+    cdef cuIntArray _piston_mask_
+@ 
+<<source.pyx>>=
+# polar bundle
+from scipy.optimize import brentq
+from ceo.constants import ARCSEC2RAD
+cdef class Bundle:
+    """
+    A class to represent a bundle of rays    
+
+    This class is usually instanciated by the Source class
+
+    Parameters
+    ----------
+    src : Source
+        The Source object that contains the pointer to CEO bundle structure
+
+    Attributes
+    ----------
+    N_BUNDLE : int, read only
+        The number of ray bundle
+    coordinates : cuDoubleArray, read only
+        The coordinate vectors of the rays as a (N_RAYxN_BUNDLE)x3 array
+    chief_coordinates : cuDoubleArray, read only
+        The coordinate vector of the chief ray
+    directions : cuDoubleArray, read only
+        The direction vectors of the rays as a (N_RAYxN_BUNDLE)x3 array
+    chief_directions : cuDoubleArray, read only
+        The direction vector of the chief ray
+    optical_path_length : cuDoubleArray, read only
+        The optical path lengths of the rays as a N_BUNDLExN_RAY array
+    chief_optical_path_length : cuDoubleArray, read only
+        The optical path length  of the chief ray
+    optical_path_difference : cuDoubleArray, read only
+        The optical path differences of the rays as a N_BUNDLExN_RAY array
+    vignetting : cuDoubleArray, read only
+        The vignetting flag of the rays as a N_BUNDLExN_RAY array
+    sphere_radius : cuDoubleArray, read only
+        The radius of the reference sphere used to compute the optical path difference
+    sphere_distance : cuDoubleArray, read only
+        The distance from the last surface to the reference sphere used to compute the optical path difference
+    piston_mask : numpy ndarray
+        A 7 columns array where each column is a mask corresponding to 1 segment
+    """
+
+    def __cinit__(self, Source src):
+        self._c_bundle = new bundle()
+        self._c_bundle = &(src._c_source.rays)
+
+        self._coordinates_               = cuDoubleArray(
+            shape=(self._c_bundle.N_RAY*self._c_bundle.N_BUNDLE,3),dev_malloc=True)
+        self._chief_coordinates_         = cuDoubleArray(
+            shape=(self._c_bundle.N_BUNDLE,3),dev_malloc=True)
+        self._directions_                = cuDoubleArray(
+            shape=(self._c_bundle.N_RAY*self._c_bundle.N_BUNDLE,3),dev_malloc=True)
+        self._chief_directions_          = cuDoubleArray(
+            shape=(self._c_bundle.N_BUNDLE,3),dev_malloc=True)
+        self._optical_path_length_       = cuDoubleArray(
+            shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
+        self._chief_optical_path_length_ = cuDoubleArray(
+            shape=(self._c_bundle.N_BUNDLE,1),dev_malloc=True)
+        self._optical_path_difference_   = cuDoubleArray(
+            shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
+        self._vignetting_                = cuDoubleArray(
+            shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
+        self._n_iteration_                = cuIntArray(
+            shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
+
+        self.sphere_radius = cuDoubleArray( shape=(self._c_bundle.N_BUNDLE,1),dev_malloc=False)
+        self.sphere_radius._c_gpu.dev_data = self._c_bundle.d__sphere_radius
+        self.sphere_distance = cuDoubleArray( shape=(self._c_bundle.N_BUNDLE,1),dev_malloc=False)
+        self.sphere_distance._c_gpu.dev_data = self._c_bundle.d__sphere_distance
+
+        self._piston_mask_ = cuIntArray(shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY))
+        self._piston_mask_._c_gpu.dev_data = self._c_bundle.d__piston_mask;
+
+    <<bundle common>>
+@ 
+<<bundle common>>=
+"""
+def __dealloc__(self):
+    self._c_bundle.cleanup()
+"""
+
+def to_z_plane(self,rtd z_plane):
+    """
+    Propagates the rays to a given plane
+
+    Parameters
+    ----------
+    z_plane : double
+        The z coordinates of the plane
+    """
+    self._c_bundle.to_z_plane(z_plane)
+
+def to_sphere(self, sphere_origin=None,
+              rtd focal_plane_distance=0.0, 
+              rtd focal_plane_radius=0.0):
+    """
+    Computes the optical path difference with respect to the reference sphere
+
+    Parameters
+    ----------
+    sphere_origin : list of double, optional
+        A 3 elements list containing the x,y and z coordinates of the sphere center; default: None
+    focal_plane_distance : double, optional
+        The location of the focal plane on the optical axis; default: 0.0
+    focal_plane_radius : double, optional
+        The radius of curvature of the focal plane; default: 0.0
+
+    """
+    cdef vector origin
+    if sphere_origin is not None:
+        origin.x = <double>sphere_origin[0]
+        origin.y = <double>sphere_origin[1]
+        origin.z = <double>sphere_origin[2]
+        self._c_bundle.to_sphere(origin)
+
+    if focal_plane_distance!=0.0:
+        self._c_bundle.to_sphere(focal_plane_distance, focal_plane_radius)
+
+def to_focal_plane(self, rtd focal_plane_distance):
+    self._c_bundle.to_z_plane(focal_plane_distance)
+
+def get_optical_path_difference(self,
+                                float delta_x, int N_x,
+                                float delta_y, int N_y):
+    opd = cuDoubleArray(shape=(N_x,N_y),dev_malloc=True)
+    self._c_bundle.get_optical_path_difference(opd._c_gpu.dev_data,
+                                               delta_x, N_x,
+                                               delta_y, N_y)
+    return opd
+
+def ee80(self,spaxel="circle"):
+    """
+    Computes the size of the geometric EE80 square 
+
+    Parameters
+    ----------
+    spaxel : char, optional
+        The spaxel geometry, square or circle; default: circle
+
+    Returns
+    -------
+    float
+        The size of the geometric EE80 square in radian
+    """
+    assert(spaxel=="circle" or spaxel=="square","spaxel is either a circle or a square!")
+    V = self.vignetting.host().flatten()==1
+    xyz = self.coordinates.host()
+    x = np.abs( xyz[V,0] )
+    y = np.abs( xyz[V,1] )
+    r = np.hypot(x,y)
+    def ensquared(hd):
+        idx = np.logical_and(x<=hd , y<=hd)
+        return float(idx.sum())/V.sum()
+    def encircled(hd):
+        idx = r<=hd
+        return float(idx.sum())/V.sum()
+    if spaxel=="circle":
+        f = lambda x: encircled(x)-0.8
+	b = r.max()
+    else:
+        f = lambda x: ensquared(x)-0.8
+	b = np.maximum(x.max(),y.max())
+    try:
+        return 2*brentq(f,0,b)*(ARCSEC2RAD/1e-3)
+    except ValueError:
+        return np.float('inf')
+
+
+property N_BUNDLE:
+    def __get__(self):
+        return self._c_bundle.N_BUNDLE
+
+property coordinates:
+    def __get__(self):
+        self._c_bundle.get_coordinates(self._coordinates_._c_gpu.dev_data)
+        return self._coordinates_
+
+property chief_coordinates:
+    def __get__(self):
+        self._c_bundle.get_chief_coordinates(self._chief_coordinates_._c_gpu.dev_data)
+        return self._chief_coordinates_
+
+property directions:
+    def __get__(self):
+        self._c_bundle.get_directions(self._directions_._c_gpu.dev_data)
+        return self._directions_
+
+property chief_directions:
+    def __get__(self):
+        self._c_bundle.get_chief_directions(self._chief_directions_._c_gpu.dev_data)
+        return self._chief_directions_
+
+property optical_path_length:
+    def __get__(self):
+        self._c_bundle.get_optical_path_length(self._optical_path_length_._c_gpu.dev_data)
+        return self._optical_path_length_
+
+property chief_optical_path_length:
+    def __get__(self):
+        self._c_bundle.get_chief_optical_path_length(self._chief_optical_path_length_._c_gpu.dev_data)
+        return self._chief_optical_path_length_
+
+property optical_path_difference:
+    def __get__(self):
+        self._c_bundle.get_optical_path_difference(self._optical_path_difference_._c_gpu.dev_data)
+        return self._optical_path_difference_
+
+property vignetting:
+    def __get__(self):
+        self._c_bundle.get_vignetting(self._vignetting_._c_gpu.dev_data)
+        return self._vignetting_
+
+property n_iteration:
+    def __get__(self):
+        self._c_bundle.get_n_iteration(self._n_iteration_._c_gpu.dev_data)
+        return self._n_iteration_
+
+property piston_mask:
+    def __get__(self):
+        P = self._piston_mask_.host()
+        return [ np.array( [P[kk,:].flatten()==k for k in range(1,8)] ) for kk in range(self._piston_mask_.shape[0])]
+@
+
+\subsubsection{Complex amplitude}
+\label{sec:complex-amplitude-1}
+
+\index{source!python!Complex\_amplitude}
+<<source.pxd contents>>=
     cdef cppclass complex_amplitude:
         int N
         int N_PX
@@ -152,56 +455,17 @@ cdef extern from "source.h":
         void masked()
         void add_phase(float , float *)
         void rms(float *)
-    cdef cppclass source:
-        int N_SRC
-        const char *photometric_band
-        float fwhm, magnitude
-        complex_amplitude wavefront
-        bundle rays
-        void setup(const char *,float , float , float )
-	void setup(const char *,float , float , float , int )
-        void setup(const char *,float *, float *, float , int , int )
-        void setup(const char *,float *, float *, float , int , rtd, int, vector)
-        void cleanup()
-        void reset_rays()
-        void opd2phase()
-        void info()
-        float n_photon()
-        float wavelength()
-        float spectral_bandwidth()
 @
 <<class definitions>>= 
-from numpy cimport ndarray
-from utilities cimport cuFloatArray, MaskAbstract
-from rayTracing cimport Bundle
 cdef class Complex_amplitude:
     cdef:
         complex_amplitude *_c_complex_amplitude
         readonly cuFloatArray phase
         readonly cuFloatArray amplitude
-cdef class Source:
-    cdef:
-        source *_c_source
-        readonly int N_SRC
-        readonly int n, m
-        readonly int size
-        readonly ndarray zenith, azimuth
-        readonly float height
-        readonly Bundle rays
-        readonly Complex_amplitude wavefront
-        readonly sphere_distance
-@
-\subsubsection{Complex amplitude}
-\label{sec:complex-amplitude-1}
-
-\index{source!python!Complex\_amplitude}
-
+@  
 <<source.pyx>>=
 import numpy as np
 cimport cython
-cimport numpy as np
-from utilities cimport cuFloatArray, MaskAbstract
-from rayTracing cimport Bundle
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -284,7 +548,38 @@ cdef class Complex_amplitude:
 \label{sec:source}
 
 \index{source!python!Source}
-
+<<source.pxd contents>>=
+    cdef cppclass source:
+        int N_SRC
+        const char *photometric_band
+        float fwhm, magnitude
+        complex_amplitude wavefront
+        bundle rays
+        void setup(const char *,float , float , float )
+	void setup(const char *,float , float , float , int )
+        void setup(const char *,float *, float *, float , int , int )
+        void setup(const char *,float *, float *, float , int , rtd, int, vector)
+        void cleanup()
+        void reset_rays()
+        void opd2phase()
+        void info()
+        float n_photon()
+        float wavelength()
+        float spectral_bandwidth()
+@
+<<class definitions>>= 
+cdef class Source:
+    cdef:
+        source *_c_source
+        readonly int N_SRC
+        readonly int n, m
+        readonly int size
+        readonly ndarray zenith, azimuth
+        readonly float height
+        readonly Bundle rays
+        readonly Complex_amplitude wavefront
+        readonly sphere_distance
+@ 
 <<source.pyx>>=
 cdef class Source:
     """ 
@@ -581,8 +876,6 @@ cdef class Source:
     cdef void intersect(source *, conic *)
     cdef void reflect(source *)
     cdef void thin_lens(source *)
-<<source.pxd>>=
-<<class definitions>>
 @ 
 <<source.pyx (opt-out)>>=
 # ray tracing
@@ -666,8 +959,998 @@ bundle rays;
 \section{Functions}
 \label{sec:functions}
 
+
+\subsection{Ray}
+\label{sec:ray}
+
+\index{source!ray}
+
+A type for the rays is also defined:
+<<ray data type>>=
+typedef struct {
+  <<ray data>>
+} ray;
+@ 
+It contains the ray coordinates:
+<<ray data>>=
+vector coordinates;
+@ 
+the direction cosines of the ray:
+<<ray data>>=
+vector directions;
+@ 
+the [[surface_normal]] at the surface it intersected with the last time:
+<<ray data>>=
+vector surface_normal;
+@ 
+the optical path length:
+<<ray data>>=
+rtd optical_path_length;
+@ 
+the optical path difference
+<<ray data>>=
+rtd optical_path_difference;
+@ the vignetting flag [[v]], $[[v]]=0$ means the ray is vignetted:
+<<ray data>>=
+char v;
+@ and the number of iterative steps for the Raphson--Newton method:
+<<ray data>>=
+int n_iteration;
+
 @
-\subsection{Setup \& cleanup}
+\subsection{Ray bundle}
+\label{sec:ray-bundle}
+
+\index{source!bundle}
+
+Collections of rays are gathered into bundles:
+<<ray bundle structure>>=
+struct bundle {
+  <<ray bundle parameters>>
+  void setup(rtd RADIUS, int N_RADIUS, int N_THETA, vector origin, int N_SRC);
+  void setup(rtd L, int N_L, vector origin, int N_SRC);
+  void cleanup(void);
+  void to_z_plane(rtd z_in);
+  void to_sphere(vector sphere_origin);
+  void to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane);
+  void get_coordinates(double *d__coord);
+  void get_chief_coordinates(double *d__coord);
+  void get_directions(double *d__dir);
+  void get_chief_directions(double *d__dir);
+  void get_chief_optical_path_length(double *d__opl);
+  void get_optical_path_length(double *d__opl);
+  void get_optical_path_difference(double *d__opd);
+  void get_optical_path_difference(double *d__opd,
+				   float const delta_x, int N_x, 
+				   float const delta_y, int N_y);
+  void get_vignetting(double *d__v);
+  void get_n_iteration(int *n_iteration);
+};
+@ 
+A bundle allocates an array of [[N_RAY]] rays on the device
+<<ray bundle parameters>>=
+int N_RAY;
+ray *d__ray;
+@ 
+The structure may contain several bundle of rays, each associated to a different source but with the same number of rays
+<<ray bundle parameters>>=
+int N_BUNDLE;
+@
+The x and y coordinates of the [[origin]] vector specifies the location of the center of the ray bundle when it crosses the (x,y) plane of the first surface.
+The z coordinate specifies the height of the ray bundle with respect to the first surface.
+<<ray bundle parameters>>=
+vector *d__origin;
+@ 
+The chief ray is defined with
+<<ray bundle parameters>>=
+ray *d__chief_ray; 
+vector *d__chief_origin;
+@ 
+The vignetting mask is defined with
+<<ray bundle parameters>>=
+mask V;
+@
+The ray geometry is defined either in polar coordinates (\textit{fan} mode)
+<<ray bundle parameters>>=
+char geom[8];
+@ where the radius and azimuth angle are sampled with [[N_RADIUS]] and [[N_THETA]] rays,
+<<ray bundle parameters>>=
+int N_RADIUS, N_THETA;
+@ 
+or in cartesian coordinates (\textit{box} mode) where the rays sample a [[N_L]]$\times$[[N_L]] square
+<<ray bundle parameters>>=
+int N_L;
+@
+In \textit{fan} mode, the radius is saved in [[L]] and in \textit{box} mode the side of the box is saved in [[L]]:
+<<ray bundle parameters>>=
+rtd L;
+@ 
+The optical path difference is computed with respect to a reference sphere which is centered on the object in the image plane and which is tangent to the exit pupil.
+<<ray bundle parameters>>=
+rtd *d__sphere_distance, *d__sphere_radius;
+vector *d__sphere_origin;
+@ The GMT segment piston mask:
+<<ray bundle parameters>>=
+int *d__piston_mask;
+@
+\subsubsection{Setup \& Cleanup}
+\label{sec:bundle-setup--cleanup}
+
+A ray bundle is specified with either the polar or cartesian coordinates of the rays at a given origin.
+The direction cosine are derived from the coordinates of a source object.
+
+The polar coordinates are defined with the sampling of the radius [[N_RADIUS]] from 0 to [[RADIUS]] and with the sampling of the azimuth [[N_THETA]].
+\index{source!bundle!setup}
+<<ray bundle functions>>=
+void bundle::setup(rtd RADIUS, int _N_RADIUS_, 
+		   int _N_THETA_, vector origin, int N_SRC)
+{
+  strcpy(geom,"fan");
+  N_RADIUS = _N_RADIUS_;
+  N_THETA  = _N_THETA_;
+  L        = RADIUS;
+  N_BUNDLE = N_SRC;
+  N_RAY = (N_RADIUS-1)*N_THETA + 1;
+  V.setup(N_RAY*N_BUNDLE);
+  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY*N_BUNDLE ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
+  HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
+			    sizeof(vector), cudaMemcpyHostToDevice ) );
+  <<chief ray allocation>>
+}
+@ 
+The direction cosines $(k,l,m)$ of the rays are defined from the source zenith $\zeta$ and azimuth $\xi$ angles as
+\begin{eqnarray}
+  \label{eq:2}
+  k &=& \sin(\zeta)\cos(\xi) \\
+  l &=& \sin(\zeta)\sin(\xi) \\
+  k &=& \cos(\zeta)
+\end{eqnarray}
+The polar coordinates $\rho$ and $\theta$ of the rays are given by
+\begin{equation}
+  \rho = [[RADIUS]] {k \over [[N_RADIUS]] - 1 } \forall k \in [0,[[N_RADIUS]] - 1]
+\end{equation}
+and
+\begin{equation}
+  \theta = 2\pi {k \over [[N_THETA]] } \forall k \in [0,[[N_THETA-1]]]
+\end{equation}
+<<bundle coordinates>>=
+<<chief ray init>>
+blockDim = dim3(N_THREAD,N_THREAD);
+gridDim  = dim3(N_RADIUS/N_THREAD+1,N_THETA/N_THREAD+1, N_BUNDLE);
+ray_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
+                                            L, N_RADIUS, N_THETA, d__origin);
+@ 
+<<bundle coordinates kernel>>=
+__global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
+                            rtd RADIUS, int N_RADIUS, int N_THETA, vector *origin)
+{
+  int i, j, k, iSource;
+  rtd rho, theta, s;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  //k = j * gridDim.x * blockDim.x + i;
+  if ( (i<N_RADIUS) && (j<N_THETA) )
+  {
+    rho   = RADIUS*i/(N_RADIUS-1);
+    if (i==0) {
+      j = 0;
+      k = 0;
+    } else
+      k = j + (i - 1)*N_THETA + 1;
+    k += iSource*N_RAY;
+    theta = 2*PI*j/N_THETA; 
+    d__ray[k].coordinates.x = rho*cos(theta) + origin->x; 
+    d__ray[k].coordinates.y = rho*sin(theta) + origin->y; 
+    <<bundle coordinates kernel (common)>>
+  }
+}
+@ where
+<<bundle coordinates kernel (common)>>=
+d__ray[k].coordinates.z = origin->z;
+d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
+d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
+d__ray[k].directions.z  = -cos(src[iSource].zenith);
+d__ray[k].optical_path_length = 0.0;
+d__ray[k].optical_path_difference = 0.0;
+s = -origin->z/d__ray[k].directions.z;
+d__ray[k].coordinates.x -= s*d__ray[k].directions.x;
+d__ray[k].coordinates.y -= s*d__ray[k].directions.y;
+d__ray[k].v = 1;
+@
+The chief ray is defined with
+<<chief ray allocation>>=
+vector chief_origin;
+chief_origin.x = 0.0;
+chief_origin.y = 0.0;
+chief_origin.z = origin.z;
+HANDLE_ERROR( cudaMalloc((void**)&d__chief_ray, sizeof(ray)*N_BUNDLE ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__chief_origin, sizeof(vector) ) );
+HANDLE_ERROR( cudaMemcpy( d__chief_origin, &chief_origin, 
+                         sizeof(vector), cudaMemcpyHostToDevice ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin,   sizeof(vector)*N_BUNDLE ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__sphere_radius,   sizeof(rtd)*N_BUNDLE ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__sphere_distance, sizeof(rtd)*N_BUNDLE ) );
+@
+ and is initialized with
+<<chief ray init>>= 
+ray_coordinates LLL gridDim , blockDim RRR (d__chief_ray, 1, src->dev_ptr,
+					    0.0, 2, 1, d__origin);
+
+@
+The cartesian coordinates are defined with the sampling of the square box length [[N_L]] from $-[[L]]$ to [[L]].
+\index{source!bundle!setup}
+<<ray bundle functions>>=
+  void bundle::setup(rtd _L_, int _N_L_, vector origin, int N_SRC)
+{
+  strcpy(geom,"box");
+  N_L = _N_L_;
+  L = _L_;
+  N_BUNDLE = N_SRC;
+  N_RAY = N_L*N_L;
+  V.setup(N_RAY*N_BUNDLE);
+  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY*N_BUNDLE ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
+  HANDLE_ERROR( cudaMemcpy( d__origin, &origin, 
+			    sizeof(vector), cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY*N_BUNDLE ) );
+  <<chief ray allocation>>
+}
+@ 
+The direction cosines $(k,l,m)$ of the rays are defined from the source zenith $\zeta$ and azimuth $\xi$ angles as
+\begin{eqnarray}
+  \label{eq:2}
+  k &=& \sin(\zeta)\cos(\xi) \\
+  l &=& \sin(\zeta)\sin(\xi) \\
+  k &=& \cos(\zeta)
+\end{eqnarray}
+The cartesian coordinates $x$ and $y$ of the rays are given by
+\begin{eqnarray}
+  x &=& L*(i-([[N_L]]-1)/2)/([[N_L]]-1) \\
+  y &=& L*(j-([[N_L]]-1)/2)/([[N_L]]-1)
+\end{eqnarray}
+<<bundle coordinates (box)>>=
+<<chief ray init>>
+blockDim = dim3(N_THREAD,N_THREAD);
+gridDim  = dim3(N_L/N_THREAD+1,N_L/N_THREAD+1, N_BUNDLE);
+ray_coordinates_box LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
+                                                            L, N_L, d__origin);
+@ 
+<<bundle coordinates kernel (box)>>=
+__global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
+                                    rtd L, int N_L, vector *origin)
+{
+  int i, j, k, iSource;
+  rtd x, y, s;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  if ( (i<N_L) && (j<N_L) )
+  {
+    <<rays box coordinates definition>>
+    k = i + j*N_L + iSource*N_RAY;
+    d__ray[k].coordinates.x = x + origin->x; 
+    d__ray[k].coordinates.y = y + origin->y; 
+    <<bundle coordinates kernel (common)>>
+  }
+}
+@ with
+<<rays box coordinates definition>>=
+x   = L*(i - (N_L-1)*0.5)/(N_L-1);
+y   = L*(j - (N_L-1)*0.5)/(N_L-1);
+@
+Memory is freed with
+\index{source!bundle!cleanup}
+<<ray bundle functions>>=
+void bundle::cleanup(void) 
+{
+  fprintf(stdout,"@(CEO)>bundle: freeing memory!\n");
+  HANDLE_ERROR( cudaFree( d__ray ) );
+  HANDLE_ERROR( cudaFree( d__chief_ray ) );
+  HANDLE_ERROR( cudaFree( d__origin ) );
+  HANDLE_ERROR( cudaFree( d__chief_origin ) );
+  HANDLE_ERROR( cudaFree( d__piston_mask ) );
+  HANDLE_ERROR( cudaFree( d__sphere_origin ) );
+  HANDLE_ERROR( cudaFree( d__sphere_radius ) );
+  HANDLE_ERROR( cudaFree( d__sphere_distance ) );
+}
+@
+
+\subsubsection{Propagation parametric geometric equation}
+\label{sec:prop-param-geom}
+
+The rays are propagated to the plane $z=[[z__plane]]$ with
+\begin{eqnarray}
+  \label{eq:26}
+  s &=& { [[z_plane]] - z \over m} \\\nonumber
+  x &=& x + s k \\\nonumber
+  y &=& y + s l \\\nonumber
+  z &=& [[z_plane]]
+\end{eqnarray}
+\index{source!bundle!to\_z\_plane}
+<<ray bundle functions>>= 
+void bundle::to_z_plane(rtd z_plane)
+{
+  to_z_plane_chief_kernel LLL 1, 1, N_BUNDLE RRR (d__chief_ray, 1, z_plane);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
+  to_z_plane_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, z_plane, d__chief_ray);
+}
+@ where
+<<to z plane kernel>>=
+  __global__ void to_z_plane_kernel(ray *d__ray, int N_RAY, rtd z_plane, ray *d__chief_ray)
+{
+  int i, j, k0, k, iSource;
+  rtd s;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  k = j * gridDim.x * blockDim.x + i;
+  k0 = k;
+  k += iSource*N_RAY;
+  if ( (k0<N_RAY ) && (d__ray[k].v) )
+  {
+    if (d__ray[k].directions.z==0)
+       return;
+    s = (z_plane - d__ray[k].coordinates.z)/d__ray[k].directions.z;
+    d__ray[k].coordinates.x = d__ray[k].coordinates.x + s*d__ray[k].directions.x;
+    d__ray[k].coordinates.y = d__ray[k].coordinates.y + s*d__ray[k].directions.y;
+    d__ray[k].coordinates.z = z_plane;
+    d__ray[k].optical_path_length = s;
+    d__ray[k].optical_path_difference += 
+      d__ray[k].optical_path_length - d__chief_ray->optical_path_length;
+  }
+}
+__global__ void to_z_plane_chief_kernel(ray *d__ray, int N_RAY, rtd z_plane)
+{
+  int k, iSource;
+  rtd s;
+  iSource = blockIdx.z;
+  k = iSource;
+  if (d__ray[k].directions.z==0)
+    return;
+  s = (z_plane - d__ray[k].coordinates.z)/d__ray[k].directions.z;
+  d__ray[k].coordinates.x = d__ray[k].coordinates.x + s*d__ray[k].directions.x;
+  d__ray[k].coordinates.y = d__ray[k].coordinates.y + s*d__ray[k].directions.y;
+  d__ray[k].coordinates.z = z_plane;
+  d__ray[k].optical_path_length = s;
+}
+@ 
+
+\subsubsection{Reference sphere}
+\label{sec:reference-sphere}
+
+\paragraph{Spherical focal plane}
+\label{sec:spher-focal-plane}
+
+\index{source!bundle!to\_sphere}
+
+<<ray bundle functions>>= 
+void bundle::to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  <<reference sphere distance>>
+  <<reference sphere origin>>
+  <<reference sphere radius>>
+  <<chief ray optical path length>>
+  <<rays optical path difference>>
+}
+@
+Given the $z$ location of the focal plane on axis [[z_chief_on_axis]] and the radius of curvature of the focal plane [[rho_focal_plane]], the distance to the object from the last surface for the chief ray is given by
+<<reference sphere distance>>= 
+to_focal_surface_chief_kernel LLL gridDim , blockDim RRR (d__sphere_distance, d__chief_ray, 1, 
+                                                          z_chief_on_axis, 
+							  rho_focal_plane);
+@  with
+<<to sphere kernel>>=
+__global__ void to_focal_surface_chief_kernel(rtd *s, ray *d__ray, int N_RAY, 
+                                              rtd z_chief_on_axis, rtd rho_focal_plane)
+{
+  int k, iSource;
+  rtd x, y, z, g, rho2;
+  iSource = blockIdx.z;
+  k = iSource;
+  x = d__ray[k].coordinates.x;
+  y = d__ray[k].coordinates.y;
+  z = d__ray[k].coordinates.z - z_chief_on_axis + rho_focal_plane;
+  g = x*d__ray[k].directions.x + y*d__ray[k].directions.y + z*d__ray[k].directions.z;
+  rho2 = x*x + y*y + z*z;
+  s[k] = -1.0*sqrt( g*g - (rho2-rho_focal_plane*rho_focal_plane) ) - g;
+}
+@
+The origin of the reference sphere is computed next 
+<<reference sphere origin>>= 
+chief_parametric_equation LLL gridDim , blockDim RRR (d__sphere_origin, 
+						      d__chief_ray, 1, 
+						      d__sphere_distance);
+@ 
+The chief ray defines the location of the object and the reference sphere is centered on the object e.g. the origin of the reference sphere is on the chief ray.
+If the distance from the last surface to the object is known for the chief ray, then the origin of the reference sphere is given by:
+<<reference sphere origin from chief ray>>=
+__global__ void chief_parametric_equation(vector *d__v, ray *d__ray, int N_RAY, rtd *s)
+{
+  int k, iSource;
+  iSource = blockIdx.z;
+  k = iSource;
+  d__v[k].x = d__ray[k].coordinates.x + d__ray[k].directions.x*s[k];
+  d__v[k].y = d__ray[k].coordinates.y + d__ray[k].directions.y*s[k];
+  d__v[k].z = d__ray[k].coordinates.z + d__ray[k].directions.z*s[k];
+}
+@ The computation of the radius of the reference sphere, which must be tangent to the exit pupil, is:
+<<reference sphere radius>>= 
+sphere_radius_kernel LLL gridDim , blockDim RRR (d__sphere_radius, d__chief_ray, 1, 
+						 d__sphere_origin);
+@ 
+To compute the reference sphere radius, one must know the location of the exit pupil.
+The location of the exit pupil is given by the intersection of the chief ray with the optical axis after the last surface of the system.
+Remembering the rays parametric equation:
+\begin{eqnarray}
+  \label{eq:60}
+  x &=& x_{-1} + k_{-1}s \\
+  y &=& y_{-1} + l_{-1}s \\
+  z &=& z_{-1} + m_{-1}s \\
+\end{eqnarray}
+and noting that, at the intersection $x=y=0$, the distance $s$ from the last surface to the exit pupil is given by
+\begin{equation}
+  \label{eq:61}
+  s = \sqrt{  x_{-1}^2 + y_{-1}^2 \over k_{-1}^2 + l_{-1}^2 }
+\end{equation}
+Given the origin of the reference sphere $\left( x_{s,0},y_{s,0},z_{s,0} \right)$, the radius $\varrho_s$ is written
+\begin{equation}
+  \label{eq:62}
+  \varrho_s = \sqrt{ x_{s,0}^2 + y_{s,0}^2 + \left( z_{s,0} - z_E \right) },
+\end{equation}
+where $z_E$ is the exit pupil coordinate on the z--axis,
+\begin{equation}
+  \label{eq:63}
+  z_E = z_{-1} + m_{-1}s.
+\end{equation}
+In the case of an on--axis source, $k_{-1}=l_{-1}=0$ and $s=\infty$ so the radius is set to $\varrho_s=23.772110269559725$m.
+<<to sphere kernel>>=
+__global__ void sphere_radius_kernel(rtd *radius, ray *d__ray, int N_RAY, 
+				     vector *sphere_origin)
+{
+  int k, iSource;
+  rtd rho2_xy, rho2_kl, buf, s, z;
+  iSource = blockIdx.z;
+  k = iSource;
+
+  buf =  d__ray[k].coordinates.x;
+  buf *= buf;
+  rho2_xy = buf;
+  buf =  d__ray[k].coordinates.y;
+  buf *= buf;
+  rho2_xy += buf;
+
+  buf =  d__ray[k].directions.x;
+  buf *= buf;
+  rho2_kl = buf;
+  buf =  d__ray[k].directions.y;
+  buf *= buf;
+  rho2_kl += buf;
+  
+  if (rho2_kl<1E-24)
+    radius[k] = 23.772110269559725;
+  else {
+    s = sqrt(rho2_xy/rho2_kl);
+    z = d__ray[k].coordinates.z + d__ray[k].directions.z*s;
+
+    buf = sphere_origin[k].x;
+    buf *= buf;
+    radius[k] = buf;
+
+    buf = sphere_origin[k].y;
+    buf *= buf;
+    radius[k] += buf;
+
+    buf = sphere_origin[k].z - z;
+    buf *= buf;
+    radius[k] += buf;
+    radius[k] = sqrt( radius[k] );
+  }
+}
+@ The optical path length of the chief ray from the last surface to the reference sphere is computed with
+<<chief ray optical path length>>= 
+to_sphere_chief_kernel LLL gridDim , blockDim RRR (d__chief_ray, 1, 
+                                                   d__sphere_origin, d__sphere_radius);
+@ with
+<<to sphere kernel>>=
+__global__ void to_sphere_chief_kernel(ray *d__ray, int N_RAY, 
+                                       vector *sphere_origin, rtd *sphere_radius)
+{
+  int k, iSource;
+  rtd s, x, y, z, g, rho2;
+  iSource = blockIdx.z;
+  k = iSource;
+  <<to sphere kernel common>>
+}
+@
+The optical path difference (OPD) is usually computed with respect to a reference sphere centered on the object.
+The OPD is given by the difference between the rays optical path length (OPL) to the sphere and the OPL of the chief ray to the sphere.
+The OPL $s$ is used to compute the intersection of a ray with the sphere from the parametric equation:
+\begin{eqnarray}
+  \label{eq:27}
+  x &=& x_{-1} + s k_{-1} \\\nonumber
+  y &=& y_{-1} + s l_{-1} \\\nonumber
+  z &=& z_{-1} + s m_{-1} 
+\end{eqnarray}
+where $(x_{-1},y_{-1},z_{-1})$ and  $(k_{-1},l_{-1},m_{-1})$ are the coordinates at and direction cosines from the last surface.
+Inserting $x$, $y$ and $z$ in the sphere equation,
+\begin{equation}
+  \label{eq:28}
+  (x - x_O)^2 + (y-y_O)^2 + (z-z_O)^2 = R^2 
+\end{equation}
+where $(x_O,y_O,z_O)$ is the object coordinate and $R$ the sphere radius, and solving for $S$ lead to
+\begin{equation}
+  \label{eq:29}
+  s = - \gamma - \sqrt{\gamma^2  - (\rho^2 - R^2)}
+\end{equation}
+with
+\begin{equation}
+  \label{eq:30}
+  \gamma = (x_{-1} - x_O)k_{-1} + (y_{-1} - y_O)l_{-1} + (z_{-1} - z_O)m_{-1} 
+\end{equation}
+and
+\begin{equation}
+  \label{eq:31}
+  \rho^2 = (x_{-1} - x_O)^2 + (y_{-1} - y_O)^2 + (z_{-1} - z_O)^2. 
+\end{equation}
+@ 
+The code corresponding to the above equation is:
+<<to sphere kernel common>>=
+x = d__ray[k].coordinates.x - sphere_origin[iSource].x;
+y = d__ray[k].coordinates.y - sphere_origin[iSource].y;
+z = d__ray[k].coordinates.z - sphere_origin[iSource].z;
+g = x*d__ray[k].directions.x + y*d__ray[k].directions.y + z*d__ray[k].directions.z;
+rho2 = x*x + y*y + z*z;
+s = -sqrt( g*g - (rho2-sphere_radius[iSource]*sphere_radius[iSource]) ) - g;
+d__ray[k].optical_path_length = s;
+d__ray[k].coordinates.x += s*d__ray[k].directions.x; 
+d__ray[k].coordinates.y += s*d__ray[k].directions.y;
+d__ray[k].coordinates.z += s*d__ray[k].directions.z;
+@
+The optical path difference of the source rays is computed last
+<<rays optical path difference>>= 
+blockDim = dim3(N_THREAD,N_THREAD);
+gridDim  = dim3(N_RAY/N_THREAD2+1,1, N_BUNDLE);
+to_sphere_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, 
+                                             d__sphere_origin, d__sphere_radius, 
+                                             d__chief_ray);
+@ with
+<<to sphere kernel>>=
+__global__ void to_sphere_kernel(ray *d__ray, int N_RAY, 
+				 vector *sphere_origin, rtd *sphere_radius,
+				 ray *d__chief_ray)
+{
+  int i, j, k0, k, iSource;
+  rtd s, x, y, z, g, rho2;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
+  k0 = k;
+  k += iSource*N_RAY;
+  if ( (k0<N_RAY ) && (d__ray[k].v) )
+  {
+    <<to sphere kernel common>>
+    d__ray[k].optical_path_difference += 
+      d__ray[k].optical_path_length - d__chief_ray[iSource].optical_path_length;
+  }
+}
+
+@
+\paragraph{Reference sphere origin}
+\label{sec:refer-sphere-orig}
+
+Given the origin and the radius of the reference sphere, the optical path difference is computed with
+\index{source!bundle!to\_sphere}
+<<ray bundle functions>>= 
+void bundle::to_sphere(vector sphere_origin)
+{
+  HANDLE_ERROR( cudaMemcpy( d__sphere_origin, &sphere_origin, 
+			    sizeof(vector), cudaMemcpyHostToDevice ) );
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  <<reference sphere radius>>
+  <<chief ray optical path length>>
+  <<rays optical path difference>>
+}
+@ 
+<<ray bundle functions (opt-out)>>= 
+void bundle::to_sphere(rtd *s, rtd sphere_radius)
+{
+  <<ray bundle functions: from distance>>
+}
+@  
+
+\subsubsection{Gathering data}
+\label{sec:gathering-data}
+
+The coordinates, directions, optical path length and vignetting map are copied into arrays with the following functions:
+<<ray bundle functions>>= 
+<<gathering ray coordinates>>
+<<gathering ray directions>>
+<<gathering ray optical path length>>
+<<gathering ray optical path difference>>
+<<gathering ray vignetting map>>
+<<gathering ray number of iterative steps>>
+<<OPD nearest neighbor interpolation>>
+@ 
+<<ray bundle kernels>>= 
+<<gathering ray coordinates kernel>>
+<<gathering ray directions kernel>>
+<<gathering ray optical path length kernel>>
+<<gathering ray optical path difference kernel>>
+<<gathering ray vignetting map kernel>>
+<<gathering ray number of iterative steps kernel>>
+<<OPD nearest neighbor interpolation kernel>>
+@ 
+\index{source!bundle!get\_coordinates}
+<<gathering ray coordinates>>=
+void bundle::get_coordinates(double *d__coord)
+{
+  HANDLE_ERROR( cudaMemset( d__coord, 0, sizeof(double)*N_RAY*3 ) );  
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1, N_BUNDLE);
+  get_coordinates_kernel LLL gridDim , blockDim RRR (d__coord, d__ray, N_RAY);
+}
+@ 
+\index{source!bundle!get\_chief\_coordinates}
+<<gathering ray coordinates>>=
+void bundle::get_chief_coordinates(double *d__coord)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  get_coordinates_kernel LLL gridDim, blockDim RRR (d__coord, d__chief_ray, 1);
+}
+@ 
+<<gathering ray coordinates kernel>>=
+__global__ void get_coordinates_kernel(double *d__coord, ray *d__ray, int N_RAY)
+{
+  int i, j, k0, k, l, iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
+  k0 = k;
+  k += iSource*N_RAY;
+  if ( ( k0<N_RAY ) && (d__ray[k].v==1) )
+  {
+    l = k*3;
+    d__coord[l++] = d__ray[k].coordinates.x;
+    d__coord[l++] = d__ray[k].coordinates.y;
+    d__coord[l]   = d__ray[k].coordinates.z;
+  }
+}
+@ 
+\index{source!bundle!get\_directions}
+<<gathering ray directions>>=
+void bundle::get_directions(double *d__dir)
+{
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
+  get_directions_kernel LLL gridDim , blockDim RRR (d__dir, d__ray, N_RAY);
+}
+@ 
+\index{source!bundle!get\_chief\_directions}
+<<gathering ray directions>>=
+void bundle::get_chief_directions(double *d__dir)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1,N_BUNDLE);
+  get_directions_kernel LLL gridDim , blockDim RRR (d__dir, d__chief_ray, 1);
+}
+@ 
+<<gathering ray directions kernel>>=
+__global__ void get_directions_kernel(double *d__dir, ray *d__ray, int N_RAY)
+{
+  int i, j, k, l, iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
+  if ( k<N_RAY )
+  {
+    k += iSource*N_RAY;
+    l = k*3;
+    d__dir[l++] = d__ray[k].directions.x;
+    d__dir[l++] = d__ray[k].directions.y;
+    d__dir[l]   = d__ray[k].directions.z;
+  }
+}
+@ 
+\index{source!bundle!get\_optical\_path\_length}
+<<gathering ray optical path length>>=
+void bundle::get_optical_path_length(double *d__opl)
+{
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
+  get_optical_path_length_kernel LLL gridDim , blockDim RRR (d__opl, d__ray, N_RAY);
+}
+@ 
+\index{source!bundle!get\_chief\_optical\_path\_length}
+<<gathering ray optical path length>>=
+void bundle::get_chief_optical_path_length(double *d__opl)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1,N_BUNDLE);
+  get_optical_path_length_kernel LLL gridDim , blockDim RRR (d__opl, d__chief_ray, 1);
+}
+@ 
+<<gathering ray optical path length kernel>>=
+__global__ void get_optical_path_length_kernel(double *d__opl, ray *d__ray, int N_RAY)
+{
+  int i, j, k, iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
+  if ( k<N_RAY )
+    {
+      k += iSource*N_RAY;
+      d__opl[k]   = d__ray[k].optical_path_length;
+    }
+}
+@ 
+\index{source!bundle!get\_optical\_path\_difference}
+<<gathering ray optical path difference>>=
+void bundle::get_optical_path_difference(double *d__opd)
+{
+  HANDLE_ERROR( cudaMemset(d__opd, 0, sizeof(double)*N_RAY*N_BUNDLE ) );
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
+  get_optical_path_difference_kernel LLL gridDim , blockDim RRR (d__opd, d__ray, N_RAY);
+}
+@ 
+<<gathering ray optical path difference kernel>>=
+__global__ void get_optical_path_difference_kernel(double *d__opd, ray *d__ray, int N_RAY)
+{
+  int i, j, k, iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
+  j = k;
+  k += iSource*N_RAY;
+  if ( (j<N_RAY) && (d__ray[k].v) )
+    {
+      d__opd[k]   = d__ray[k].optical_path_difference;
+    }
+}
+@ 
+\index{source!bundle!get\_n\_iteration}
+<<gathering ray number of iterative steps>>=
+void bundle::get_n_iteration(int *n_iteration)
+{
+  HANDLE_ERROR( cudaMemset(n_iteration, 0, sizeof(int)*N_RAY*N_BUNDLE ) );
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
+  get_n_iteration_kernel LLL gridDim , blockDim RRR (n_iteration, d__ray, N_RAY);
+}
+@ 
+<<gathering ray number of iterative steps kernel>>=
+__global__ void get_n_iteration_kernel(int *n_iteration, ray *d__ray, int N_RAY)
+{
+  int i, j, k, iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
+  j = k;
+  k += iSource*N_RAY;
+  if ( (j<N_RAY) && (d__ray[k].v) )
+    {
+      n_iteration[k]   = d__ray[k].n_iteration;
+    }
+}
+@ 
+The OPD is interpolated on a $N_x\times N_y$ grid with respective sampling $\delta_x$ and $\delta_y$.
+The $x_i$ and $y_i$ interpolation coordinates are written:
+\begin{eqnarray}
+  \label{eq:32}
+  x_i &=& \delta_x(i -(N_x-1)/2),\quad \forall 0\leq i \leq N_x-1 \\\nonumber
+  y_i &=& \delta_y(j -(N_y-1)/2),\quad \forall 0\leq j \leq N_y-1 
+\end{eqnarray}
+The coordinates are re--centered with respect to the original coordinate grid
+\begin{eqnarray} 
+  \label{eq:33}
+  x_i &\rightarrow& x_i + L/2 \\\nonumber
+  y_i &\rightarrow& y_i + L/2
+\end{eqnarray}
+and scale to that grid
+\begin{eqnarray}
+  \label{eq:34}
+  x_i &\rightarrow& x_i{N_L-1 \over L} \\\nonumber
+  y_i &\rightarrow& y_i{N_L-1 \over L}
+\end{eqnarray}
+<<OPD nearest neighbor interpolation>>=
+void bundle::get_optical_path_difference(double *d__opd,
+					 float const delta_x, int N_x, 
+					 float const delta_y, int N_y)
+{
+  /* cublasHandle_t handle; */
+  /* cublasStatus_t status; */
+  /* double *d__coord; */
+  /* int N, idx; */
+
+  /* cublasCreate(&handle); */
+
+  /* N = N_RAY*3; */
+  /* HANDLE_ERROR( cudaMalloc((void**)&d__coord, sizeof(double)*N ) ); */
+  /* get_coordinates(d__coord); */
+
+  /* CUBLAS_ERROR( cublasIdamin(handle, N_RAY, d__coord, 3, &idx) ); */
+  /* printf("x min idx = %d\n",idx); */
+  /* CUBLAS_ERROR( cublasIdamax(handle, N_RAY, d__coord, 3, &idx) ); */
+  /* printf("x max idx = %d\n",idx); */
+  /* CUBLAS_ERROR( cublasIdamin(handle, N_RAY, d__coord+1, 3, &idx) ); */
+  /* printf("y min idx = %d\n",idx); */
+  /* CUBLAS_ERROR( cublasIdamax(handle, N_RAY, d__coord+1, 3, &idx) ); */
+  /* printf("y max idx = %d\n",idx); */
+
+  HANDLE_ERROR( cudaMemset(d__opd, 0, sizeof(double)*N_x*N_y ) );
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1);
+  get_optical_path_difference_interp_kernel LLL gridDim , blockDim RRR (d__opd, d__ray, N_RAY,
+  									delta_x, N_x,
+  									delta_y, N_y,
+  									L, N_L);
+  /* cublasDestroy(handle); */
+  /* HANDLE_ERROR( cudaFree( d__coord) ); */
+}
+@ with
+<<OPD nearest neighbor interpolation kernel>>=
+__global__ void get_optical_path_difference_interp_kernel(double *d__opd,
+                                                     ray* d__ray, int N_RAY,
+						     float const delta_x, int N_x, 
+						     float const delta_y, int N_y,
+						     float const L, int const N_L)
+{
+  /*
+  int i, j, k, kl;
+  float x, y;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( (k<N_RAY) && (d__ray[k].v) )
+    {
+      x = d__ray[k].coordinates.x;
+      y = d__ray[k].coordinates.y;
+      x /= delta_x;
+      y /= delta_y;
+      x += (N_x - 1)*0.5;
+      y += (N_y - 1)*0.5;
+      i = (int) roundf( x );
+      j = (int) roundf( y );
+      kl = i + N_x*j;
+      if ( (i<0) || (i>=N_x) )
+	{
+	  d__opd[kl] = 0;
+	  return;
+	}  
+      if ( (j<0) || (j>=N_y) )
+	{
+	  d__opd[kl] = 0;
+	  return;
+	}  
+      d__opd[k] = d__ray[k].optical_path_difference;
+    }
+  */
+  int i, j, k, l;
+  rtd x, y;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( (k<N_RAY) && (d__ray[k].v) )
+    {
+      x = d__ray[k].coordinates.x;
+      y = d__ray[k].coordinates.y;
+      x /= delta_x;
+      y /= delta_y;
+      x += (N_x - 1)*0.5;
+      y += (N_y - 1)*0.5;
+      i = (int) rint( x );
+      j = (int) rint( y );
+      l = i + N_x*j;
+      if ( ( (i>=0) && (i<N_x) ) && ( (i>=0) && (i<N_y) ) )
+	d__opd[l]   = d__ray[k].optical_path_difference;
+    }
+}
+@ 
+\index{source!bundle!get\_vignetting}
+<<gathering ray vignetting map>>=
+void bundle::get_vignetting(double *d__v)
+{
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
+  get_vignetting_kernel LLL gridDim , blockDim RRR (d__v, d__ray, N_RAY);
+}
+@ 
+<<gathering ray vignetting map kernel>>=
+  __global__ void get_vignetting_kernel(double *d__v, ray *d__ray, int N_RAY)
+{
+  int i, j, k, iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
+  if ( k<N_RAY )
+    k += iSource*N_RAY;
+    d__v[k]   = (d__ray[k].v==1) ? 1.0 : 0.0;
+}
+@ 
+<<gathering wavefront>>=
+void bundle::get_wavefront(source *src)
+{
+//  printf("Setting wavefront!\n");
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY/N_THREAD2+1,1, N_BUNDLE);
+  get_wavefront_kernel LLL gridDim , blockDim RRR (src->wavefront.amplitude, 
+                                                   src->wavefront.phase,
+						   V.m,
+                                                   d__ray, N_RAY);
+  V.set_filter();
+  src->wavefront.masked(&V);
+}
+@ 
+<<gathering wavefront kernel>>=
+__global__ void get_wavefront_kernel(float *amplitude, float *phase,
+                                     char *m, ray *d__ray, int N_RAY)
+{
+  int i, j, k, iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( k<N_RAY )
+    k += iSource*N_RAY;
+    if (d__ray[k].v==1)
+      {
+	m[k]         = 1;
+	amplitude[k] = 1.0;
+	phase[k]     = d__ray[k].optical_path_difference;
+      } else {
+	m[k]         = 0;
+	amplitude[k] = 0.0;
+	phase[k]     = 0.0;
+    }
+}
+@ 
+
+\subsubsection{Resetting}
+\label{sec:resetting}
+
+The ray vignetting is reset with
+\index{source!bundle!reset}
+<<ray bundle functions (opt-out)>>= 
+void bundle::reset(source *src) 
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  if (strcmp(geom,"box")==0)
+     <<bundle coordinates (box)>>
+  if (strcmp(geom,"fan")==0)
+     <<bundle coordinates>>
+}
+@ with 
+<<bundle reset kernel>>=
+__global__ void reset_kernel(ray *d__ray, int N_RAY)
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if ( k<N_RAY )
+    d__ray[k].v = 0;
+}
+@
+
+\subsection{source}
+\label{sec:source-1}
+
+\subsubsection{Setup \& cleanup}
 \label{sec:setup--cleanup}
 
 \index{source!source!setup}
@@ -861,7 +2144,7 @@ void source::reset_rays(void)
   rays.V.set_filter_quiet();
 }
 @ and
-<<bundle coordinates kernel>>=
+<<bundle coordinates kernel (opt-out)>>=
 __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
                                 rtd RADIUS, int N_RADIUS, int N_THETA, 
                                 vector *origin)
@@ -900,7 +2183,7 @@ d__ray[k].coordinates.x -= s*d__ray[k].directions.x;
 d__ray[k].coordinates.y -= s*d__ray[k].directions.y;
 d__ray[k].v = 1;
 @ and
-<<bundle coordinates kernel (box)>>=
+<<bundle coordinates kernel (box) (opt-out)>>=
 __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
                                     rtd L, int N_L, vector *origin)
 {
@@ -918,79 +2201,8 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
     <<bundle coordinates kernel (common)>>
   }
 }
-@ with
-<<rays box coordinates definition>>=
-x   = L*(i - (N_L-1)*0.5)/(N_L-1);
-y   = L*(j - (N_L-1)*0.5)/(N_L-1);
 @ \end{itemize}
-@
-\subsubsection{Complex amplitude}
-\label{sec:complex-amplitude}
-
-\index{source!complex\_amplitude}
-
-The complex amplitude structure is initialized with
-\index{source!complex\_amplitude!setup}
-<<complex amplitude setup I>>=
-void complex_amplitude::setup(int n_pixel) {
-  N = 1;
-  <<complex amplitude setup common>>
-}
-<<complex amplitude setup II>>=
-void complex_amplitude::setup(int n_pixel, int n_src) {
-  N = n_src;
-  <<complex amplitude setup common>>
-}
-<<complex amplitude setup common>>=
-N_PX = n_pixel*N;
-M = NULL;
-if (N_PX>0) {
-  HANDLE_ERROR( cudaMalloc( (void**)&amplitude,  sizeof(float)*N_PX ) );
-  HANDLE_ERROR( cudaMalloc( (void**)&phase,      sizeof(float)*N_PX ) );
-  reset();
-} else {
-  amplitude  = NULL;
-  phase      = NULL;
-}
-
-@ and memory is de--allocated with:
-\index{source!complex\_amplitude!cleanup}
-<<complex amplitude cleanup>>=
-void complex_amplitude::cleanup(void) {
-  if (amplitude!=NULL)          
-    HANDLE_ERROR( cudaFree( amplitude ) );
-  if (phase!=NULL)
-    HANDLE_ERROR( cudaFree( phase ) );
-}
-@ Allocated variable are freed with the [[cleanup]] routine
-\index{source!source!cleanup}
-<<cleanup>>=
-void source::cleanup(void) {
-  fprintf(stdout,"@(CEO)>%s: freeing memory!\n",tag);
-//  fprintf(stdout," |-");
-  wavefront.cleanup();
-  if (rays_exist==1) {
-    fprintf(stdout," |-");
-    rays.cleanup();
-  }
-  HANDLE_ERROR( cudaFree( dev_ptr) );
-}
-
-@ 
-The amplitude and phase are initialized to respectively 1 and 0:
-<<square geometry>>=
-__global__ void squarePupil(float* amplitude, float *phase, const int N) {
-  int id;
-  id = blockIdx.x * blockDim.x + threadIdx.x;
-  if (id<N) {
-    amplitude[id] = 1.0;
-    phase[id]     = 0.0;
-  }
-}
-
-@
-
-\subsection{Photometry}
+\subsubsection{Photometry}
 \label{sec:photometry}
 
 The [[wavelength]] in meter corresponding to the photometric band is given by
@@ -1084,12 +2296,141 @@ float source::wavenumber(void) {
     lambda = 2.157;
   return 1E6*2*PI/lambda;
 }
+@
+\subsubsection{Trace}
+\label{sec:trace}
+
+The ray tracing data are transferred to the wavefront structure with
+\index{source!source!opd2phase}
+<<ray tracing>>=
+void source::opd2phase(void)
+{
+//  printf("Setting wavefront!\n");
+  HANDLE_ERROR( cudaMemset(rays.V.m, 0, sizeof(char)*rays.N_RAY*rays.N_BUNDLE ) ); 
+  dim3 blockDim(16,16);
+  dim3 gridDim(rays.N_L/16+1, rays.N_L/16+1, rays.N_BUNDLE);
+  opd2phase_kernel LLL gridDim , blockDim RRR (wavefront.amplitude, 
+                                                   wavefront.phase,
+						   rays.V.m,
+                                                   rays.d__ray, rays.N_RAY,
+                                                   rays.L, rays.N_L,
+                                                   dev_ptr);
+  wavefront.masked(&(rays.V));
+  rays.V.set_filter_quiet();
+  /* wavefront.M = &(rays.V); */
+}
+@ 
+<<gathering wavefront kernel>>=
+__global__ void opd2phase_kernel(float *amplitude, float *phase,
+				 char *m, ray *d__ray,  int N_RAY,
+				 rtd L,  int N_L,
+				 source *src)
+{
+  int i, j, k, iSource;
+  rtd x, y;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  k = i + j*N_L + iSource*N_RAY;
+  if ( ( (i<N_L) && (j<N_L) ) &&  (d__ray[k].v==1) ) {
+    <<rays box coordinates definition>>
+    m[k]         = 1;
+    phase[k]     += d__ray[k].optical_path_difference +
+      x*src[iSource].theta_x +
+      y*src[iSource].theta_y;
+  }
+}
+@ 
+\subsubsection{Input/Output}
+\label{sec:inputoutput}
+
+The main parameters of the source are displayed with the [[info]] routine:
+\index{source!source!info}
+<<info>>=
+void source::info(void)
+{
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
+	  zenith*RADIAN2ARCSEC,
+	  azimuth*180.0/PI,height,wavelength_micron(),
+	  magnitude);
+  if (wavefront.N_PX>0)
+    fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+}
+
+@ 
+\subsection{Complex amplitude}
+\label{sec:complex-amplitude}
+
+\index{source!complex\_amplitude}
+
+The complex amplitude structure is initialized with
+\index{source!complex\_amplitude!setup}
+<<complex amplitude setup I>>=
+void complex_amplitude::setup(int n_pixel) {
+  N = 1;
+  <<complex amplitude setup common>>
+}
+<<complex amplitude setup II>>=
+void complex_amplitude::setup(int n_pixel, int n_src) {
+  N = n_src;
+  <<complex amplitude setup common>>
+}
+<<complex amplitude setup common>>=
+N_PX = n_pixel*N;
+M = NULL;
+if (N_PX>0) {
+  HANDLE_ERROR( cudaMalloc( (void**)&amplitude,  sizeof(float)*N_PX ) );
+  HANDLE_ERROR( cudaMalloc( (void**)&phase,      sizeof(float)*N_PX ) );
+  reset();
+} else {
+  amplitude  = NULL;
+  phase      = NULL;
+}
+
+@ and memory is de--allocated with:
+\index{source!complex\_amplitude!cleanup}
+<<complex amplitude cleanup>>=
+void complex_amplitude::cleanup(void) {
+  if (amplitude!=NULL)          
+    HANDLE_ERROR( cudaFree( amplitude ) );
+  if (phase!=NULL)
+    HANDLE_ERROR( cudaFree( phase ) );
+}
+@ Allocated variable are freed with the [[cleanup]] routine
+\index{source!source!cleanup}
+<<cleanup>>=
+void source::cleanup(void) {
+  fprintf(stdout,"@(CEO)>%s: freeing memory!\n",tag);
+//  fprintf(stdout," |-");
+  wavefront.cleanup();
+  if (rays_exist==1) {
+    fprintf(stdout," |-");
+    rays.cleanup();
+  }
+  HANDLE_ERROR( cudaFree( dev_ptr) );
+}
+
+@ 
+The amplitude and phase are initialized to respectively 1 and 0:
+<<square geometry>>=
+__global__ void squarePupil(float* amplitude, float *phase, const int N) {
+  int id;
+  id = blockIdx.x * blockDim.x + threadIdx.x;
+  if (id<N) {
+    amplitude[id] = 1.0;
+    phase[id]     = 0.0;
+  }
+}
 
 @
-\subsection{Wavefront manipulation}
+
+\subsubsection{Wavefront manipulation}
 \label{sec:wavefr-manip}
 
-\subsubsection{Resetting the wavefront}
+\paragraph{Resetting the wavefront}
 \label{sec:resetting-wavefront}
 The following resets the wavefront amplitude to zero and phase to 1:
 \index{source!complex\_amplitude!reset}
@@ -1120,7 +2461,7 @@ HANDLE_ERROR( cudaMemset( phase, 0, sizeof(float)*N_PX ) );
 }
 
 @ 
-\subsubsection{Adding wavefront phase}
+\paragraph{Adding wavefront phase}
 \label{sec:adding-wavefr-phase}
 The following adds a phase aberration to the wavefront phase $$\varphi = \varphi + \alpha \varphi^\prime$$:
 \index{source!complex\_amplitude!add\_phase}
@@ -1134,7 +2475,7 @@ void complex_amplitude::add_phase(float alpha, float *phase_prime)
 }
 
 @
-\subsubsection{Masking wavefront amplitude}
+\paragraph{Masking wavefront amplitude}
 \label{sec:mask-wavefr-ampl}
 The following applies the pupil mask to the wavefront:
 \index{source!complex\_amplitude!masked}
@@ -1168,7 +2509,7 @@ __global__ void apply_mask(float* amplitude, float* phase, const int N,
   }
 }
 @
-\subsubsection{Wavefront rms}
+\paragraph{Wavefront rms}
 \label{sec:wavefront-rms}
 
 \index{source!complex\_amplitude!rms}
@@ -1192,6 +2533,131 @@ void complex_amplitude::rms(float *rms)
   cublasDestroy(handle);
 }
 @ 
+\subsubsection{Input/Output}
+\label{sec:inputoutput-1}
+The wavefront phase is save to a file with
+\index{source!source!phase2file}
+<<phase to file>>=
+void source::phase2file(const char *filename) {
+  dev2file(filename,wavefront.phase,wavefront.N_PX,wavefront.N_PX/N_SRC,N_SRC);
+}
+
+@ The wavefront phase is plotted with the plot.ly
+<<plot phase>>=
+void complex_amplitude::show_phase(char *filename)
+{
+  char title[1024];
+  float *data, *d__data, alpha, piston;
+  plotly_properties prop;
+  stats S;
+
+  HANDLE_ERROR( cudaMalloc((void**)&d__data, sizeof(float)*N_PX) );
+  HANDLE_ERROR( cudaMemcpy( d__data, phase,
+			    sizeof(float)*N_PX,
+			    cudaMemcpyDeviceToDevice ) );
+
+  S.setup();
+  alpha = 1E9;
+  CUBLAS_ERROR( cublasSscal(S.handle, N_PX, &alpha, d__data, 1) );
+  
+  
+  if (M!=NULL) {
+
+    int k, nel;
+    char rms[32];
+    nel = N_PX/N;
+    dim3 blockDim(256);
+    dim3 gridDim(N_PX/256+1);
+    sprintf(title,"RMS=");
+
+    for (k=0;k<N;k++) {
+      piston = S.mean(d__data + k*nel, M, nel);
+      
+      remove_piston LLL gridDim,blockDim RRR (d__data + k*nel,
+					      M->m, nel, piston);
+      
+      sprintf(rms,"%.2fnm ",S.std(d__data+ k*nel,M,nel));
+      strcat(title,rms);
+    }
+    prop.set("title",title);
+  }
+  
+
+  S.cleanup();
+ 
+  HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
+			       cudaHostAllocDefault) );
+  HANDLE_ERROR( cudaMemcpy( data, d__data, sizeof(float)*N_PX,
+			    cudaMemcpyDeviceToHost ) );
+
+  prop.set("xtitle","X");
+  prop.set("ytitle","Y");
+  prop.set("ztitle","[nm]");
+  prop.set("filename",filename);
+  int n = (int) sqrtf(N_PX/N);
+  prop.aspect_ratio = N;
+  prop.set("zdata",data,n,n*N);
+  prop.set("colorscale","Portland");
+  imagesc(&prop); 
+
+  HANDLE_ERROR( cudaFree( d__data ) );
+  HANDLE_ERROR( cudaFreeHost( data ) );
+}
+@  with the kernel
+<<piston removal>>=
+__global__ void remove_piston(float *data, const char* mask, int n_data, float p) 
+{
+int i;
+i = blockIdx.x * blockDim.x + threadIdx.x;
+ if ( (i<n_data) && (mask[i]>0) )
+       data[i] -= p;
+}
+
+@ The wavefront amplitude is plotted with the plot.ly
+<<plot amplitude I>>=
+void complex_amplitude::show_amplitude(char *filename)
+{
+  float *data;
+  plotly_properties prop;
+
+  HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
+			       cudaHostAllocDefault) );
+  HANDLE_ERROR( cudaMemcpy( data, amplitude, sizeof(float)*N_PX,
+			    cudaMemcpyDeviceToHost ) );
+
+  prop.set("xtitle","X");
+  prop.set("ytitle","Y");
+  prop.set("ztitle","[au]");
+  prop.set("filename",filename);
+  int n = (int) sqrtf(N_PX/N);
+  prop.aspect_ratio = N;
+  prop.set("zdata",data,n,n*N);
+  imagesc(&prop); 
+
+  HANDLE_ERROR( cudaFreeHost( data ) );
+}
+<<plot amplitude II>>=
+  void complex_amplitude::show_amplitude(char *filename, int N, int M)
+{
+  float *data;
+  plotly_properties prop;
+
+  HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
+			       cudaHostAllocDefault) );
+  HANDLE_ERROR( cudaMemcpy( data, amplitude, sizeof(float)*N_PX,
+			    cudaMemcpyDeviceToHost ) );
+
+  prop.set("xtitle","X");
+  prop.set("ytitle","Y");
+  prop.set("ztitle","[au]");
+  prop.set("filename",filename);
+  prop.aspect_ratio = M/N;
+  prop.set("zdata",data,N,M);
+  imagesc(&prop); 
+
+  HANDLE_ERROR( cudaFreeHost( data ) );
+}
+@
 \subsection{Ray tracing}
 \label{sec:ray-tracing}
 
@@ -1725,189 +3191,3 @@ void thin_lens(source *src)
   }
 }
 @
-\subsubsection{Trace}
-\label{sec:trace}
-
-The ray tracing data are transferred to the wavefront structure with
-\index{source!source!opd2phase}
-<<ray tracing>>=
-void source::opd2phase(void)
-{
-//  printf("Setting wavefront!\n");
-  HANDLE_ERROR( cudaMemset(rays.V.m, 0, sizeof(char)*rays.N_RAY*rays.N_BUNDLE ) ); 
-  dim3 blockDim(16,16);
-  dim3 gridDim(rays.N_L/16+1, rays.N_L/16+1, rays.N_BUNDLE);
-  opd2phase_kernel LLL gridDim , blockDim RRR (wavefront.amplitude, 
-                                                   wavefront.phase,
-						   rays.V.m,
-                                                   rays.d__ray, rays.N_RAY,
-                                                   rays.L, rays.N_L,
-                                                   dev_ptr);
-  wavefront.masked(&(rays.V));
-  rays.V.set_filter_quiet();
-  /* wavefront.M = &(rays.V); */
-}
-@ 
-<<gathering wavefront kernel>>=
-__global__ void opd2phase_kernel(float *amplitude, float *phase,
-				 char *m, ray *d__ray,  int N_RAY,
-				 rtd L,  int N_L,
-				 source *src)
-{
-  int i, j, k, iSource;
-  rtd x, y;
-  i = blockIdx.x * blockDim.x + threadIdx.x;
-  j = blockIdx.y * blockDim.y + threadIdx.y;
-  iSource = blockIdx.z;
-  k = i + j*N_L + iSource*N_RAY;
-  if ( ( (i<N_L) && (j<N_L) ) &&  (d__ray[k].v==1) ) {
-    <<rays box coordinates definition>>
-    m[k]         = 1;
-    phase[k]     += d__ray[k].optical_path_difference +
-      x*src[iSource].theta_x +
-      y*src[iSource].theta_y;
-  }
-}
-
-@ 
-\subsection{Input/Output}
-\label{sec:inputoutput}
-
-The main parameters of the source are displayed with the [[info]] routine:
-\index{source!source!info}
-<<info>>=
-void source::info(void)
-{
-  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
-  fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
-  fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
-	  zenith*RADIAN2ARCSEC,
-	  azimuth*180.0/PI,height,wavelength_micron(),
-	  magnitude);
-  if (wavefront.N_PX>0)
-    fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
-  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
-}
-
-@ The wavefront phase is save to a file with
-\index{source!source!phase2file}
-<<phase to file>>=
-void source::phase2file(const char *filename) {
-  dev2file(filename,wavefront.phase,wavefront.N_PX,wavefront.N_PX/N_SRC,N_SRC);
-}
-
-@ The wavefront phase is plotted with the plot.ly
-<<plot phase>>=
-void complex_amplitude::show_phase(char *filename)
-{
-  char title[1024];
-  float *data, *d__data, alpha, piston;
-  plotly_properties prop;
-  stats S;
-
-  HANDLE_ERROR( cudaMalloc((void**)&d__data, sizeof(float)*N_PX) );
-  HANDLE_ERROR( cudaMemcpy( d__data, phase,
-			    sizeof(float)*N_PX,
-			    cudaMemcpyDeviceToDevice ) );
-
-  S.setup();
-  alpha = 1E9;
-  CUBLAS_ERROR( cublasSscal(S.handle, N_PX, &alpha, d__data, 1) );
-  
-  
-  if (M!=NULL) {
-
-    int k, nel;
-    char rms[32];
-    nel = N_PX/N;
-    dim3 blockDim(256);
-    dim3 gridDim(N_PX/256+1);
-    sprintf(title,"RMS=");
-
-    for (k=0;k<N;k++) {
-      piston = S.mean(d__data + k*nel, M, nel);
-      
-      remove_piston LLL gridDim,blockDim RRR (d__data + k*nel,
-					      M->m, nel, piston);
-      
-      sprintf(rms,"%.2fnm ",S.std(d__data+ k*nel,M,nel));
-      strcat(title,rms);
-    }
-    prop.set("title",title);
-  }
-  
-
-  S.cleanup();
- 
-  HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
-			       cudaHostAllocDefault) );
-  HANDLE_ERROR( cudaMemcpy( data, d__data, sizeof(float)*N_PX,
-			    cudaMemcpyDeviceToHost ) );
-
-  prop.set("xtitle","X");
-  prop.set("ytitle","Y");
-  prop.set("ztitle","[nm]");
-  prop.set("filename",filename);
-  int n = (int) sqrtf(N_PX/N);
-  prop.aspect_ratio = N;
-  prop.set("zdata",data,n,n*N);
-  prop.set("colorscale","Portland");
-  imagesc(&prop); 
-
-  HANDLE_ERROR( cudaFree( d__data ) );
-  HANDLE_ERROR( cudaFreeHost( data ) );
-}
-@  with the kernel
-<<piston removal>>=
-__global__ void remove_piston(float *data, const char* mask, int n_data, float p) 
-{
-int i;
-i = blockIdx.x * blockDim.x + threadIdx.x;
- if ( (i<n_data) && (mask[i]>0) )
-       data[i] -= p;
-}
-
-@ The wavefront amplitude is plotted with the plot.ly
-<<plot amplitude I>>=
-void complex_amplitude::show_amplitude(char *filename)
-{
-  float *data;
-  plotly_properties prop;
-
-  HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
-			       cudaHostAllocDefault) );
-  HANDLE_ERROR( cudaMemcpy( data, amplitude, sizeof(float)*N_PX,
-			    cudaMemcpyDeviceToHost ) );
-
-  prop.set("xtitle","X");
-  prop.set("ytitle","Y");
-  prop.set("ztitle","[au]");
-  prop.set("filename",filename);
-  int n = (int) sqrtf(N_PX/N);
-  prop.aspect_ratio = N;
-  prop.set("zdata",data,n,n*N);
-  imagesc(&prop); 
-
-  HANDLE_ERROR( cudaFreeHost( data ) );
-}
-<<plot amplitude II>>=
-  void complex_amplitude::show_amplitude(char *filename, int N, int M)
-{
-  float *data;
-  plotly_properties prop;
-
-  HANDLE_ERROR( cudaHostAlloc( (void**)&data, sizeof(float)*N_PX,
-			       cudaHostAllocDefault) );
-  HANDLE_ERROR( cudaMemcpy( data, amplitude, sizeof(float)*N_PX,
-			    cudaMemcpyDeviceToHost ) );
-
-  prop.set("xtitle","X");
-  prop.set("ytitle","Y");
-  prop.set("ztitle","[au]");
-  prop.set("filename",filename);
-  prop.aspect_ratio = M/N;
-  prop.set("zdata",data,N,M);
-  imagesc(&prop); 
-
-  HANDLE_ERROR( cudaFreeHost( data ) );
-}
