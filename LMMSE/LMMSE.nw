@@ -47,6 +47,8 @@ struct LMMSE {
   void estimation(const centroiding *cog);
   void estimation(shackHartmann *wfs);
 
+  void reset(void);
+
   void set_phase_est_ptr(float *data_ptr);
   void toFile(const char *filename);
 };
@@ -78,6 +80,8 @@ struct LMMSE {
 <<wavefront estimation>>
 <<wavefront estimation (shackHartmann)>>
 
+<<reset solver>>
+
 <<phase estimate pointer>>
 <<phase estimate to file>>
 @
@@ -107,6 +111,7 @@ cdef extern from "LMMSE.h":
         void cleanup()
         void estimation(centroiding *)
         void estimation(shackHartmann *)
+        void reset()
 @ 
 <<class definitions>>=
 cdef class Lmmse:
@@ -167,6 +172,12 @@ cdef class Lmmse:
         Computes an estimate of the wavefront corresponding to the centroids in the Centroiding object
         """
         self._c_LMMSE.estimation(cog._c_centroiding)
+
+    def reset(self):
+        """
+        Reset the solver vector to zero
+        """
+        self._c_LMMSE.reset()
 
     property phase:
         def __get__(self):
@@ -850,6 +861,16 @@ if ( (i<N_SIDE_LENSLET) && (j<N_SIDE_LENSLET) ){
 }
 }
 @ 
+
+\subsection{Reset solver}
+\label{sec:reset-solver}
+<<reset solver>>=
+void LMMSE::reset(void)
+{
+  HANDLE_ERROR( cudaMemset(d__x, 0, 
+                           sizeof(float)*N_SIDE_LENSLET_*N_SIDE_LENSLET_*2*N_guide_star ) );
+}
+@
 \subsection{Sparse bi--linear interpolation}
 \label{sec:sparse-bi-linear}
 
