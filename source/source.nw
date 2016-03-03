@@ -1120,44 +1120,6 @@ blockDim = dim3(N_THREAD,N_THREAD);
 gridDim  = dim3(N_RADIUS/N_THREAD+1,N_THETA/N_THREAD+1, N_BUNDLE);
 ray_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
                                             L, N_RADIUS, N_THETA, d__origin);
-@ 
-<<bundle coordinates kernel>>=
-__global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
-                            rtd RADIUS, int N_RADIUS, int N_THETA, vector *origin)
-{
-  int i, j, k, iSource;
-  rtd rho, theta, s;
-  i = blockIdx.x * blockDim.x + threadIdx.x;
-  j = blockIdx.y * blockDim.y + threadIdx.y;
-  iSource = blockIdx.z;
-  //k = j * gridDim.x * blockDim.x + i;
-  if ( (i<N_RADIUS) && (j<N_THETA) )
-  {
-    rho   = RADIUS*i/(N_RADIUS-1);
-    if (i==0) {
-      j = 0;
-      k = 0;
-    } else
-      k = j + (i - 1)*N_THETA + 1;
-    k += iSource*N_RAY;
-    theta = 2*PI*j/N_THETA; 
-    d__ray[k].coordinates.x = rho*cos(theta) + origin->x; 
-    d__ray[k].coordinates.y = rho*sin(theta) + origin->y; 
-    <<bundle coordinates kernel (common)>>
-  }
-}
-@ where
-<<bundle coordinates kernel (common)>>=
-d__ray[k].coordinates.z = origin->z;
-d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
-d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
-d__ray[k].directions.z  = -cos(src[iSource].zenith);
-d__ray[k].optical_path_length = 0.0;
-d__ray[k].optical_path_difference = 0.0;
-s = -origin->z/d__ray[k].directions.z;
-d__ray[k].coordinates.x -= s*d__ray[k].directions.x;
-d__ray[k].coordinates.y -= s*d__ray[k].directions.y;
-d__ray[k].v = 1;
 @
 The chief ray is defined with
 <<chief ray allocation>>=
@@ -1216,29 +1178,6 @@ blockDim = dim3(N_THREAD,N_THREAD);
 gridDim  = dim3(N_L/N_THREAD+1,N_L/N_THREAD+1, N_BUNDLE);
 ray_coordinates_box LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
                                                             L, N_L, d__origin);
-@ 
-<<bundle coordinates kernel (box)>>=
-__global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
-                                    rtd L, int N_L, vector *origin)
-{
-  int i, j, k, iSource;
-  rtd x, y, s;
-  i = blockIdx.x * blockDim.x + threadIdx.x;
-  j = blockIdx.y * blockDim.y + threadIdx.y;
-  iSource = blockIdx.z;
-  if ( (i<N_L) && (j<N_L) )
-  {
-    <<rays box coordinates definition>>
-    k = i + j*N_L + iSource*N_RAY;
-    d__ray[k].coordinates.x = x + origin->x; 
-    d__ray[k].coordinates.y = y + origin->y; 
-    <<bundle coordinates kernel (common)>>
-  }
-}
-@ with
-<<rays box coordinates definition>>=
-x   = L*(i - (N_L-1)*0.5)/(N_L-1);
-y   = L*(j - (N_L-1)*0.5)/(N_L-1);
 @
 Memory is freed with
 \index{source!bundle!cleanup}
@@ -2144,7 +2083,7 @@ void source::reset_rays(void)
   rays.V.set_filter_quiet();
 }
 @ and
-<<bundle coordinates kernel (opt-out)>>=
+<<bundle coordinates kernel>>=
 __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
                                 rtd RADIUS, int N_RADIUS, int N_THETA, 
                                 vector *origin)
@@ -2183,7 +2122,7 @@ d__ray[k].coordinates.x -= s*d__ray[k].directions.x;
 d__ray[k].coordinates.y -= s*d__ray[k].directions.y;
 d__ray[k].v = 1;
 @ and
-<<bundle coordinates kernel (box) (opt-out)>>=
+<<bundle coordinates kernel (box)>>=
 __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
                                     rtd L, int N_L, vector *origin)
 {
@@ -2201,6 +2140,10 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
     <<bundle coordinates kernel (common)>>
   }
 }
+@ with
+<<rays box coordinates definition>>=
+x   = L*(i - (N_L-1)*0.5)/(N_L-1);
+y   = L*(j - (N_L-1)*0.5)/(N_L-1);
 @ \end{itemize}
 \subsubsection{Photometry}
 \label{sec:photometry}
