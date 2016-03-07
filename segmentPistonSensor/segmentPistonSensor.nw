@@ -136,7 +136,7 @@ cdef class SegmentPistonSensor:
                                           field_of_view*ARCSEC2RAD,
                                           nyquist_factor)
 
-        self.lenslet_mask = MaskAbstract(self._c_segmentPistonSensor.N_PX2, SPS=self)
+        self.lenslet_mask = MaskAbstract(self._c_segmentPistonSensor.N_PX2, SPS_lenslet_mask=self)
 
         self.W = Complex_amplitude()
         self.W._c_complex_amplitude = &(self._c_segmentPistonSensor.lenslet)
@@ -147,7 +147,7 @@ cdef class SegmentPistonSensor:
                               N_PX_IMAGE = self._c_segmentPistonSensor.N_PX_IMAGE,
                               BIN_IMAGE = 2, sps=self)
 
-        self.fft_mask = MaskAbstract( self.camera.N_PX_FRAME**2, SPS=self)
+        self.fft_mask = MaskAbstract( self.camera.N_PX_FRAME**2, SPS_fft_mask=self)
 
         cdef int n
         n = self._c_segmentPistonSensor.FFT.N_SIDE_LENSLET*self._c_segmentPistonSensor.FFT.N_PX_CAMERA
@@ -398,6 +398,7 @@ N_PX2 =  N_PX = N_PX_LENSLET*N_LENSLET;
 N_PX2 *= N_PX;
 lenslet.setup(N_PX2, 1);
 lenslet_mask.setup(N_PX2);
+HANDLE_ERROR( cudaMemset(lenslet_mask.m,  0, sizeof(char)*N_PX2 ) );
 lenslet.M = &lenslet_mask;
 HANDLE_ERROR( cudaMemset( lenslet.amplitude, 0 , sizeof(float)*lenslet.N_PX) );
 @
@@ -629,7 +630,8 @@ void segmentPistonSensor::readout(float exposureTime, float readOutNoiseRms,
   p2 *= p2;
   lenslet_src.magnitude = backgroundMagnitude;
   nBackgroundPhoton = p2*lenslet_src.n_photon();
-  nBackgroundPhoton *= backgroundNoiseEffectiveArea;
+  //nBackgroundPhoton *= backgroundNoiseEffectiveArea;
+  nBackgroundPhoton *= lenslet_mask.area*N_LAMBDA;
   nBackgroundPhoton *= exposureTime*camera.photoelectron_gain;
   fprintf(stdout,"nBackgroundPhoton=%g\n",nBackgroundPhoton);
   camera.readout(exposureTime, readOutNoiseRms, nBackgroundPhoton);
