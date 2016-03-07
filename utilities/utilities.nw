@@ -232,6 +232,11 @@ int round_up_to_nhp2(int n) {
 
 <<utilities.pxd>>=
 cdef extern from "utilities.h":
+    ctypedef double rtd
+    ctypedef struct vector:
+        rtd x
+        rtd y
+        rtd z
 @ 
 <<utilities.pyx>>=
 import numpy as np
@@ -1604,6 +1609,7 @@ The python wrapper is
 @ 
 \index{utilities!python!MaskAbstract}
 <<class definitions>>=
+from segmentPistonSensor cimport SegmentPistonSensor
 # MaskAbstract
 cdef class MaskAbstract:
     cdef mask *_c_mask
@@ -1635,8 +1641,10 @@ cdef class MaskAbstract:
     def __cinit__(self, *args, **kwargs):
  	self._c_mask = new mask()
 
-    def __init__(self, int n):
+    def __init__(self, int n, SegmentPistonSensor SPS=None):
         self.n = n
+        if SPS is not None:
+            self._c_mask = &(SPS._c_segmentPistonSensor.fft_mask)
         self.f = cuFloatArray(shape=(self.n,1))
         self.f._c_gpu.dev_data = self._c_mask.f
 

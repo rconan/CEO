@@ -64,13 +64,14 @@ struct segmentPistonSensor {
 
 \index{segmentPistonSensor!python}
 <<segmentPistonSensor.pxd>>=
-from utilities cimport cuFloatArray
+from utilities cimport cuFloatArray, mask, MaskAbstract
 from gmtMirrors cimport gmt_m1, GMT_M1
 from source cimport complex_amplitude, Complex_amplitude, source, Source
 from imaging cimport imaging, Imaging
 cdef extern from "segmentPistonSensor.h":
     cdef cppclass segmentPistonSensor:
-        int N_LENSLET, N_PX_LENSLET, N_PX, N_PX_IMAGE, N_LAMBDA
+        int N_LENSLET, N_PX_LENSLET, N_PX, N_PX2, N_PX_IMAGE, N_LAMBDA
+        mask lenslet_mask, fft_mask
         complex_amplitude lenslet
         imaging camera, FFT
         void setup(gmt_m1 *, source *, float, float, float)
@@ -85,6 +86,7 @@ cdef extern from "segmentPistonSensor.h":
 cdef class SegmentPistonSensor:
     cdef:
         segmentPistonSensor *_c_segmentPistonSensor
+        readonly MaskAbstract lenslet_mask, fft_mask
         readonly Complex_amplitude W
         readonly Imaging camera
         readonly cuFloatArray fftlet
@@ -133,7 +135,9 @@ cdef class SegmentPistonSensor:
                                           dispersion*ARCSEC2RAD*1e6,
                                           field_of_view*ARCSEC2RAD,
                                           nyquist_factor)
-        
+
+        self.lenslet_mask = MaskAbstract(self._c_segmentPistonSensor.N_PX2, SPS=self)
+
         self.W = Complex_amplitude()
         self.W._c_complex_amplitude = &(self._c_segmentPistonSensor.lenslet)
         self.W.__alloc__((self._c_segmentPistonSensor.N_PX,
@@ -142,6 +146,9 @@ cdef class SegmentPistonSensor:
                               self._c_segmentPistonSensor.N_PX_LENSLET,
                               N_PX_IMAGE = self._c_segmentPistonSensor.N_PX_IMAGE,
                               BIN_IMAGE = 2, sps=self)
+
+        self.fft_mask = MaskAbstract( self.camera.N_PX_FRAME**2, SPS=self)
+
         cdef int n
         n = self._c_segmentPistonSensor.FFT.N_SIDE_LENSLET*self._c_segmentPistonSensor.FFT.N_PX_CAMERA
         self.fftlet = cuFloatArray(shape=(n,n))
@@ -162,7 +169,7 @@ cdef class SegmentPistonSensor:
         self._c_segmentPistonSensor.propagate(gs._c_source)
      
     def readOut(self, float exposureTime, float readOutNoiseRms, 
-                float backgroundMagnitude, float backgroundNoiseEffectiveArea):
+                float backgroundMagnitude, float backgroundNoiseEffectiveArea=2.25):
         """
         Reads-out the detector applying photon noise, read-out noise and background noise
 
@@ -187,7 +194,11 @@ cdef class SegmentPistonSensor:
     property N_LAMBDA:
         def __get__(self):
             return self._c_segmentPistonSensor.N_LAMBDA
-@ 
+
+    property N_PX:
+        def __get__(self):
+            return self._c_segmentPistonSensor.N_PX
+@
 
 \section{The model}
 \label{sec:model}

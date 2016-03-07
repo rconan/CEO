@@ -76,6 +76,7 @@ clean:
 	rm -f python/ceo/*.so
 	rm -f python/ceo/*.pxd
 	rm -f python/ceo/*.pyx*
+	rm -f python/ceo/*.pyc
 
 cleanbins: makefile
 	for i in $(SOURCE_DIR); do (make -C $$i cleanbins); done
