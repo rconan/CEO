@@ -36,7 +36,8 @@ struct segmentPistonSensor {
 	     float _nyquist_factor_);
   void cleanup(void);
   void propagate(source *src);
-  void readout(float exposureTime, float readoutNoiseRms, float nBackgroundPhoton);
+  void readout(float exposureTime, float readoutNoiseRms, 
+	       float nBackgroundPhoton, float backgroundNoiseEffectiveArea);
   void fft(void);
   void info(void);
 };
@@ -75,7 +76,7 @@ cdef extern from "segmentPistonSensor.h":
         void setup(gmt_m1 *, source *, float, float, float)
         void cleanup()
         void propagate(source *)
-        void readout(float, float, float)
+        void readout(float, float, float, float)
         void fft()
 <<class definition>>
 @ 
@@ -160,7 +161,8 @@ cdef class SegmentPistonSensor:
         """
         self._c_segmentPistonSensor.propagate(gs._c_source)
      
-    def readOut(self, float exposureTime, float readOutNoiseRms, float backgroundMagnitude):
+    def readOut(self, float exposureTime, float readOutNoiseRms, 
+                float backgroundMagnitude, float backgroundNoiseEffectiveArea):
         """
         Reads-out the detector applying photon noise, read-out noise and background noise
 
@@ -173,7 +175,8 @@ cdef class SegmentPistonSensor:
         backgroundMagnitude : float
             The background magnitude per arcsec square
         """
-        self._c_segmentPistonSensor.readout(exposureTime, readOutNoiseRms, backgroundMagnitude)
+        self._c_segmentPistonSensor.readout(exposureTime, readOutNoiseRms, 
+                                            backgroundMagnitude, backgroundNoiseEffectiveArea)
 
     def fft(self):
         """
@@ -603,17 +606,20 @@ m[k_out]                   = (piecewise_amplitude[k_out]==1) ? 1 : 0;
 \subsection{Read--out}
 \label{sec:read-out}
 
+The detector readout routine adds photon, read--out and background noise to the frame using the [[exposureTime]] in second, the [[readOutNoiseRms]] in photo--electron per pixel and the [[backgroundMagnitude]] in arcsec$^2$:
 \index{segmentPistonSensor!segmentPistonSensor!readout}
 <<read-out>>=
-void segmentPistonSensor::readout(float exposureTime, float readOutNoiseRms, float backgroundMagnitude)
+void segmentPistonSensor::readout(float exposureTime, float readOutNoiseRms, 
+				  float backgroundMagnitude,
+				  float backgroundNoiseEffectiveArea)
 {
   float p2, nBackgroundPhoton;
   p2 = pixel_scale*camera.BIN_IMAGE/ARCSEC(1);
   p2 *= p2;
   lenslet_src.magnitude = backgroundMagnitude;
   nBackgroundPhoton = p2*lenslet_src.n_photon();
-  nBackgroundPhoton *= lenslet_size/camera.N_PX_CAMERA;
-  nBackgroundPhoton *= camera.photoelectron_gain*lenslet_size/camera.N_PX_CAMERA;
+  nBackgroundPhoton *= backgroundNoiseEffectiveArea;
+  nBackgroundPhoton *= exposureTime*camera.photoelectron_gain;
   fprintf(stdout,"nBackgroundPhoton=%g\n",nBackgroundPhoton);
   camera.readout(exposureTime, readOutNoiseRms, nBackgroundPhoton);
 }

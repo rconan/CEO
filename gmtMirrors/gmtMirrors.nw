@@ -14,7 +14,7 @@
 
 #ifndef __RAYTRACING_H__
 #include "rayTracing.h"
-#endif 
+#endif
 
 #ifndef __SOURCE_H__
 #include "source.h"
@@ -52,7 +52,7 @@
 
 <<stereoscopic edge sensors functions>>
 <<lateral edge sensors functions>>
-@ 
+@
 
 \subsection{Python}
 \label{sec:python}
@@ -67,7 +67,7 @@ from source cimport Source
 cdef extern from "gmtMirrors.h":
 <<gmtMirrors.pxd contents>>
 <<class definitions>>
-@ 
+@
 
 \subsubsection{GMT mirrors}
 \label{sec:gmt-mirrors}
@@ -78,7 +78,7 @@ cdef extern from "gmtMirrors.h":
     cdef cppclass gmt_m1:
         void test_ray_tracing()
         <<python GMT M12 functions>>
-        void preset(bundle *, rtd ) 
+        void preset(bundle *, rtd )
         void track(float *, float *, int, int)
 @  where
 <<python GMT M12 functions>>=
@@ -105,8 +105,8 @@ cdef class GmtMirrors:
     cdef:
         readonly float D, D_px, focal_plane_distance, focal_plane_radius
         readonly GMT_M1 M1
-        readonly GMT_M2 M2   
-@ 
+        readonly GMT_M2 M2
+@
 <<gmtMirrors.pyx>>=
 cdef class GmtMirrors:
     """
@@ -160,7 +160,7 @@ cdef class GmtMirrors:
     >>> gmt = ceo.GMT_MX(25.5,256, M1_radial_order=8, M2_radial_order=14)
 
     A source is propagated (geometrically) through the telescope with the following procedure:
-u
+
     >>> src = ceo.Source("R",rays_box_size=25.5,rays_box_sampling=256,rays_origin=[0.0,0.0,25])
     >>> gmt.propagate(src)
 
@@ -168,11 +168,11 @@ u
 
     >>> gpu_ps2d = src.phase()
 
-    or as a 1D vector with 
+    or as a 1D vector with
 
     >>> gpu_ps1d = src.wavefront.phase()
     """
-    def __cinit__(self, float D, float D_px, 
+    def __init__(self, float D, float D_px,
                  int M1_radial_order=0, int M2_radial_order=0):
         self.D = D
         self.D_px = D_px
@@ -225,7 +225,7 @@ u
 cdef class GMT_M1:
     cdef:
         gmt_m1 *_c_gmt_m12
-    <<GMT M12 class properties>>    
+    <<GMT M12 class properties>>
 @
 <<gmtMirrors.pyx>>=
 # GMT M1
@@ -270,7 +270,7 @@ self.motion_CS.init(     &(self._c_gmt_m12.motion_CS)     )
 self.rigid_body_CS.init( &(self._c_gmt_m12.rigid_body_CS) )
 self.TT_CS.init(         &(self._c_gmt_m12.TT_CS)         )
 
-@ 
+@
 <<GMT M12 methods>>=
 def __dealloc__(self):
     self._c_gmt_m12.cleanup()
@@ -343,7 +343,7 @@ def reset(self):
     self.motion_CS.origin[:] = 0.0
     self.motion_CS.euler_angles[:] = 0.0
     self.motion_CS.update()
-        
+
 property D_assembly:
     def __get__(self):
         return self._c_gmt_m12.D_assembly
@@ -451,7 +451,7 @@ cdef:
     public Coordinate_system rigid_body_CS
     public Coordinate_system motion_CS
     public Coordinate_system TT_CS
-@ 
+@
 
 \subsubsection{GMT M2}
 \label{sec:gmt-m2-1}
@@ -468,8 +468,8 @@ cdef:
 cdef class GMT_M2:
     <<GMT M12 docstring>>
     cdef gmt_m2 *_c_gmt_m12
-    <<GMT M12 class properties>>    
-    
+    <<GMT M12 class properties>>
+
     def __cinit__(self, float D, int D_px, radial_order=0, int N_SRC=1):
         self._c_gmt_m12 = new gmt_m2()
         <<GMT M12 constructor>>
@@ -522,7 +522,7 @@ cdef class StereoscopicEdgeSensors:
     cdef:
         stereoscopic_edge_sensors *_c_stereoscopic_edge_sensors
         public Coordinates v0, v, dv0, dv
-@ 
+@
 <<gmtMirrors.pyx>>=
 cdef class StereoscopicEdgeSensors:
     """
@@ -597,19 +597,19 @@ cdef class LateralEdgeSensors:
         lateral_edge_sensors *_c_lateral_edge_sensors
         public Coordinates A, A0, B, B0, k_cam, k_laser
         public cuDoubleArray x, y
-@ 
+@
 <<gmtMirrors.pyx>>=
 cdef class LateralEdgeSensors:
     """
     A class for the GMT lateral displacement edge sensors.
     It applies to the case of a laser aiming at a camera.
     The measurements are the laser spot location within the frame of the camera.
-    
+
     Parameters
     ----------
     mirror : GMT_M1
         The GMT M1 mirror
-    
+
     Attributes
     ----------
     A : Coordinates
@@ -626,7 +626,7 @@ cdef class LateralEdgeSensors:
         The x-axis coordinates of the laser spot
     y : cuDoubleArray
         The y-axis coordinates of the laser spot
-    
+
     See also
     --------
     Coordinates : an interface between an array of device vectors and an array of host coordinates
@@ -675,7 +675,7 @@ cdef class DistanceEdgeSensors(LateralEdgeSensors):
     cdef:
         cuDoubleArray _d_
         readonly double[:,::1] d0
-@ 
+@
 <<gmtMirrors.pyx>>=
 import numpy as np
 cdef class DistanceEdgeSensors(LateralEdgeSensors):
@@ -683,19 +683,19 @@ cdef class DistanceEdgeSensors(LateralEdgeSensors):
     A class for the GMT distance edge sensors.
     It applies to the case of a laser aiming at a retroreflector.
     The measurements are the distances between the laser spot and the retroreflector.
-    
+
     Parameters
     ----------
     mirror : GMT_M1
         The GMT M1 mirror
     height : rtd
         The laser and retroreflector are placed at a distance of +/- height from the z=0 plane of the segments
-    
+
     Attributes
     ----------
     d : cuDoubleArray
         The distance between the laser and the retroreflector
-    
+
     See also
     --------
     cuDoubleArray : an interface class between GPU host and device data for doubles
@@ -714,7 +714,7 @@ cdef class DistanceEdgeSensors(LateralEdgeSensors):
         def __get__(self):
             self.data()
             return self._d_.host()-self.d0
-        
+
 @
 \section{GMT M1}
 \label{sec:gmt-m1}
@@ -743,7 +743,7 @@ void blocking(bundle *rays);
 void global_tiptilt(float tip, float tilt);
 void test_ray_tracing(void);
 void track(float *x, float *y, int N, int idx);
-@ 
+@
 The GMT M12 parameters are:
 \begin{itemize}
 \item the mirror ID:
@@ -783,7 +783,7 @@ int D_px;
 <<GMT M12 parameters>>=
 rtd area0;
 float area0_px;
-@ 
+@
 \item the mirror total area as seen by the star propagating through the telescope
 <<GMT M12 parameters>>=
 rtd area;
@@ -902,7 +902,7 @@ conic_k = 1-0.9982857;
 height  = 0.0;
 idx_offset = 0;
 V = NULL;
-@  
+@
 If an array of sources is propagated through the telescope then
 \index{gmtMirrors!gmt\_m1!setup}
 <<GMT M1 functions>>=
@@ -928,7 +928,7 @@ vector __v0(0.0,0.0,0.0),
        origin[12],
        euler_angles[12];
 rtd D_c, o, zo;
- int k, idx;    
+ int k, idx;
 char tag[16];
 
 depth = conic_equation(&__v,&__v0,conic_k,conic_c);
@@ -950,7 +950,7 @@ zo = conic_equation(&__v,&__v0,conic_k,conic_c);
 \label{sec:rigid-body-coord}
 
 The rigid body coordinate systems are aligned with the segment coordinate systems.
-The origins $[x_O, y_O, z_O]$ of the segment coordinate systems are given with respect to the global coordinate system which origin is at the vertex of M1 conic surface: 
+The origins $[x_O, y_O, z_O]$ of the segment coordinate systems are given with respect to the global coordinate system which origin is at the vertex of M1 conic surface:
 \begin{eqnarray}
   \label{eq:1}
   x_{O,k} &=& L\cos(\theta_{O,k}), \\
@@ -993,7 +993,7 @@ idx = (k + idx_offset)%6;
 
 
 The coordinate systems of the segment apertures are defined with respect to the coordinate systems of the rigid body motions.
-The apertures are directly above the segments such as they rest on the rim of the segments. 
+The apertures are directly above the segments such as they rest on the rim of the segments.
 <<M12 aperture definition>>=
 origin[N-1].x = origin[N-1].y = 0.0;
 origin[N-1].z = depth;
@@ -1033,14 +1033,14 @@ The origins of the segment conics are also given in the coordinate systems of th
     \draw[->,thick,red] ($(O)+(-5mm,0)$) -- ($(O)+(5mm,0)$) node[below] {$\check x$};
     \draw[->,thick,red] ($(O)+(0,-5mm)$) -- ($(O)+(0,5mm)$) node[right] {$\check y$};
 
-  }    
-\end{tikzpicture}  
+  }
+\end{tikzpicture}
 \end{center}
 <<M12 conic definition>>=
 origin[N-1].x = origin[N-1].y = origin[N-1].z = 0.0;
 euler_angles[N-1].x = euler_angles[N-1].y = 0.0;
 euler_angles[N-1].z = (idx_offset/2)*PI;
-conic_origin[N-1].x = conic_origin[N-1].y = conic_origin[N-1].z = 0.0; 
+conic_origin[N-1].x = conic_origin[N-1].y = conic_origin[N-1].z = 0.0;
 for (k=0; k<N-1; k++)
 {
   <<segment index offset>>
@@ -1059,7 +1059,7 @@ for (k=0; k<N-1; k++)
 sprintf(tag,"M%d CONIC",M_ID);
 conic_CS.setup(origin, euler_angles, N, tag);
 HANDLE_ERROR( cudaMalloc((void**)&d__conic_origin, sizeof(vector)*N ) );
-HANDLE_ERROR( cudaMemcpy( d__conic_origin, conic_origin, 
+HANDLE_ERROR( cudaMemcpy( d__conic_origin, conic_origin,
 			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
 @
 \subsubsection{Segment motion coordinate systems}
@@ -1080,7 +1080,7 @@ for (k=0; k<N; k++)
 }
 sprintf(tag,"M%d MOTION",M_ID);
 motion_CS.setup(origin, euler_angles, N, tag);
-@ 
+@
 
 \subsubsection{Cleanup, update \& reset}
 \label{sec:cleanup-update-reset}
@@ -1120,7 +1120,7 @@ void gmt_m1::update(vector _origin_, vector _euler_angles_,int idx)
   //fprintf(stdout,"\n\x1B[31m");
 motion_CS.update( _origin_, _euler_angles_, --idx);
 //motion_CS.info();
-@ 
+@
 The rigid body motion are reset to 0 with:
 \index{gmtMirrors!gmt\_m1!reset}
 <<GMT M1 functions>>=
@@ -1138,7 +1138,7 @@ zero.z = 0.0;
 for (int k=0; k<N; k++)
    motion_CS.update( zero, zero, k);
 //motion_CS.info();
-@ 
+@
 
 \subsection{Presetting rays vignetting}
 \label{sec:pres-rays-vign}
@@ -1148,12 +1148,12 @@ The GMT have a sparse aperture.
 But presetting the vignetting of the rays of the source, the ray tracing routines will run much faster.
 The assumption is that all the rays outside a circle of diameter $[[D_assembly]]+[[margin]]$ are vignetted per default.
 <<GMT M1 functions>>=
-void gmt_m1::preset(bundle *rays, rtd margin) 
+void gmt_m1::preset(bundle *rays, rtd margin)
 {
  dim3 blockDim(N_THREAD,N_THREAD);
  dim3 gridDim(rays->N_L/N_THREAD+1,rays->N_L/N_THREAD+1, rays->N_BUNDLE);
- m1_preset_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, 
-					      rays->L, rays->N_L, 
+ m1_preset_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+					      rays->L, rays->N_L,
 					      0.5*(margin+D_assembly));
 }
 @ with the kernel
@@ -1171,11 +1171,11 @@ __global__ void m1_preset_kernel(ray *d__ray, int N_RAY,
     x   = L*(i - (N_L-1)*0.5)/(N_L-1);
     y   = L*(j - (N_L-1)*0.5)/(N_L-1);
     r = hypot(x,y);
-    if (r>R) 
+    if (r>R)
       d__ray[k].v = 0;
   }
 }
-@ 
+@
 \subsection{Blocking}
 \label{sec:blocking}
 
@@ -1192,7 +1192,7 @@ void gmt_m1::blocking(bundle *rays)
  R2 = D_clear*D_clear*0.25;
  Rri2 = R2*ri*ri;
  V = &(rays->V);
- // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
+ // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);
  // printf("N_BUNDLE=%d\n",rays->N_BUNDLE);
  int nel = rays->N_RAY*rays->N_BUNDLE;
  dim3 blockDim(N_THREAD2);
@@ -1200,7 +1200,7 @@ void gmt_m1::blocking(bundle *rays)
  fill_ones_char LLL gridDim,blockDim RRR (V->m,nel);
  blockDim = dim3(N_THREAD,N_THREAD);
  gridDim  = dim3(rays->N_RAY/N_THREAD2+1,1,rays->N_BUNDLE);
- m1_blocking_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY, 
+ m1_blocking_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY,
 					     Rri2, R2,
 					     aperture_CS.d__R,
 					     aperture_CS.d__origin,
@@ -1211,7 +1211,7 @@ void gmt_m1::blocking(bundle *rays)
  intersection LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY);
 @ and with the kernel
 <<GMT blocking kernel>>=
-__global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY, 
+__global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY,
 				rtd inner2, rtd outer2,
 				rtd *d__aperture_R, vector *d__aperture_origin,
 				rtd *d__rigid_body_R, vector *d__rigid_body_origin,
@@ -1251,7 +1251,7 @@ __global__ void m1_blocking_kernel(char *mask, ray *d__ray, int N_RAY,
 \label{sec:ray-tracing}
 
   \begin{figure}
-    \centering    
+    \centering
     \input{raytracingWorkflow.tex}
     \caption{Ray tracing flowchart for GMT M1 and M2 mirrors.}
     \label{fig:1}
@@ -1277,10 +1277,10 @@ void gmt_m1::trace(bundle *rays)
  /*    intersection LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY); */
  /* } */
  V = &(rays->V);
- // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);  
+ // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);
  blockDim = dim3(1,1);
  gridDim  = dim3(1,1,rays->N_BUNDLE);
- m1_trace_chief_kernel LLL gridDim , blockDim RRR (V->m, rays->d__chief_ray, 1, 
+ m1_trace_chief_kernel LLL gridDim , blockDim RRR (V->m, rays->d__chief_ray, 1,
 						   conic_CS.d__R,
 						   conic_CS.d__origin,
 						   conic_k, conic_c,
@@ -1295,9 +1295,9 @@ void gmt_m1::trace(bundle *rays)
  blockDim = dim3(N_THREAD,N_THREAD);
  gridDim  = dim3(rays->N_RAY/N_THREAD2+1,1,rays->N_BUNDLE);
  HANDLE_ERROR( cudaMemset(V->m, 0, sizeof(char)*rays->N_RAY*rays->N_BUNDLE ) );
- HANDLE_ERROR( cudaMemset(rays->d__piston_mask, 0, 
+ HANDLE_ERROR( cudaMemset(rays->d__piston_mask, 0,
 			  sizeof(int)*rays->N_RAY*rays->N_BUNDLE ) );
-m1_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY, 
+m1_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY,
 					     Rri2, R2,
 					     aperture_CS.d__R,
 					     aperture_CS.d__origin,
@@ -1324,7 +1324,7 @@ if (previous_nnz<rays->N_RAY)
 //fprintf(stdout,"M%d current area: %f\n",M_ID,rays->V.area);
 @ and with the kernel
 <<GMT ray tracing kernel>>=
-__global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY, 
+__global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 				rtd inner2, rtd outer2,
 				rtd *d__aperture_R, vector *d__aperture_origin,
 				rtd *d__conic_R, vector *d__conic_origin,
@@ -1370,7 +1370,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 	    d__piston_mask[ij] = iCoordSys + 1;
 
             <<from motion CS to conic intersection and back to global CS>>
-	    d__ray[ij].optical_path_difference += 
+	    d__ray[ij].optical_path_difference +=
 		d__ray[ij].optical_path_length - d__chief_ray[iSource].optical_path_length;
 	    return;
 	  }
@@ -1379,7 +1379,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 }
 @ and the chief ray kernel
 <<GMT chief ray tracing kernel>>=
-__global__ void m1_trace_chief_kernel(char *mask, ray *d__ray, int N_RAY, 
+__global__ void m1_trace_chief_kernel(char *mask, ray *d__ray, int N_RAY,
 				      rtd *d__conic_R, vector *d__conic_origin,
 				      const rtd Fk, const rtd Fc,
 				      vector *d__conic_self_origin,
@@ -1452,23 +1452,23 @@ void gmt_m1::test_ray_tracing(void)
                           rigid_body_CS.origin+iCoordSys);
         printf(". x = %.2e ; y = %.2e ; z = %.2e\n",out.x-in.x,out.y-in.y,out.z-in.z);
     }
-    
+
 }
-@ 
-The transformation of the coordinates and directions of the rays is performed in 3 steps, 
+@
+The transformation of the coordinates and directions of the rays is performed in 3 steps,
 <<from global CS to motion CS>>=
 <<from global CS to rigid body CS>>
 <<from rigid body CS to motion CS>>
 @ (i) the rays are transformed into the CS of the segment,
 <<from global CS to rigid body CS>>=
-// RIGID BODY >>> 
+// RIGID BODY >>>
 forward_transform(&xyz_GS, &(d__ray[ij].coordinates),
 		  d__rigid_body_R+iCoordSys*9, d__rigid_body_origin+iCoordSys);
 forward_transform_centered(&klm_GS, &(d__ray[ij].directions),
 			   d__rigid_body_R+iCoordSys*9);
 @ (ii) the segments are perturbed
 <<from rigid body CS to motion CS>>=
-// MOTION >>>  
+// MOTION >>>
 forward_transform(&xyz_GS, &xyz_GS,
 		  d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
 forward_transform_centered(&klm_GS, &klm_GS,
@@ -1481,7 +1481,7 @@ forward_transform(&xyz, &xyz_GS,
 		  d__aperture_origin+iCoordSys);
 forward_transform_centered(&klm, &klm_GS,
 			   d__aperture_R+iCoordSys*9);
- 
+
 	x = xyz.x;
 	y = xyz.y;
 	z = xyz.z;
@@ -1505,14 +1505,14 @@ The intersection with and reflection from the surface is done with
 <<from conic CS to motion CS>>
 <<from motion CS to rigid body CS>>
 <<from rigid body CS to global CS>>
-@ 
+@
 <<from motion CS to conic CS>>=
 // CONIC >>>
 backward_transform_centered(&xyz, &xyz_GS,
 			    d__conic_R+iCoordSys*9);
 backward_transform_centered(&klm, &klm_GS,
 			    d__conic_R+iCoordSys*9);
-@ 
+@
 <<reflection from the surface>>=
 G2 = K*K + L*L + M*M;
 a  = k*K + l*L + m*M;
@@ -1521,21 +1521,21 @@ a *= -2.0/G2;
 klm.x += a*K;
 klm.y += a*L;
 klm.z += a*M;
-@ 
+@
 <<from conic CS to motion CS>>=
  // CONIC <<<
  forward_transform_centered(&xyz_GS, &xyz,
 			    d__conic_R+iCoordSys*9);
  forward_transform_centered(&klm_GS, &klm,
 			    d__conic_R+iCoordSys*9);
-@ 
+@
 <<from motion CS to rigid body CS>>=
  // MOTION <<<
  backward_transform(&xyz_GS, &xyz_GS,
 		    d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
  backward_transform_centered(&klm_GS, &klm_GS,
 			     d__motion_R+iCoordSys*9);
-@ 
+@
 <<from rigid body CS to global CS>>=
  // RIGID_BODY <<<
  backward_transform(&(d__ray[ij].coordinates), &xyz_GS,
@@ -1545,7 +1545,7 @@ klm.z += a*M;
 			     d__rigid_body_R+iCoordSys*9);
 
 @
-The vignetting by the aperture is computed as the intersection between the aperture mask and the ray vignetting flags: 
+The vignetting by the aperture is computed as the intersection between the aperture mask and the ray vignetting flags:
 <<aperture intersection>>=
 __global__ void intersection(char *mask, ray *d__ray, int N_RAY)
 {
@@ -1567,8 +1567,8 @@ if (m==0) { return; }
 s0 = -z/m;
 x1 = x + k*s0;
 y1 = y + l*s0;
-@ 
-The intersection with the plane $z=0$ in the conic coordinate transformed is computed with  
+@
+The intersection with the plane $z=0$ in the conic coordinate transformed is computed with
 <<GMT intersection with aspheric>>=
 k  = klm.x;
 l  = klm.y;
@@ -1600,22 +1600,22 @@ for (j=0; j<SNELL_N_ITERATION; j++)
     }
   s0 = s1;
 }
-@ 
+@
 <<aspheric surface>>=
-S = aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n, 
+S = aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n,
                      d__a + iCoordSys*n_mode, R);
 @
 <<aspheric surface derivatives>>=
-K = partial_x_aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n, 
+K = partial_x_aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n,
                                d__cx + iCoordSys*b_n_mode, R);
-L = partial_y_aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n, 
+L = partial_y_aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n,
                                d__cy + iCoordSys*b_n_mode, R);
 M = partial_z_aspheric_surface();
-@ 
+@
 <<aspheric surface and derivatives (3 steps)>>=
 <<aspheric surface>>
 <<aspheric surface derivatives>>
-@ 
+@
 <<aspheric surface and derivatives (1 step, initialization)>>=
 rtd red,rsqrt_red;
 <<aspheric surface and derivatives (1 step)>>=
@@ -1667,7 +1667,7 @@ for (j=0; j<SNELL_N_ITERATION; j++)
     }
   s0 = s1;
 }
-@ 
+@
 <<conic surface>>=
 S = conic_surface(&xyz, &d__origin, Fk, Fc);
 @
@@ -1698,7 +1698,7 @@ track_kernel LLL gridDim, blockDim RRR (d__x, d__y, N,
 					motion_CS.d__R,
 					motion_CS.d__origin);
 @ and
-<<GMT track kernel>>= 
+<<GMT track kernel>>=
 __global__ void track_kernel(float *x, float *y, const int N,
 			     const int iCoordSys,
 			     rtd *d__rigid_body_R, vector *d__rigid_body_origin,
@@ -1723,7 +1723,7 @@ __global__ void track_kernel(float *x, float *y, const int N,
    }
 }
 
-@ 
+@
 \subsection{Global tip--tilt}
 \label{sec:global-tip-tilt}
 
@@ -1777,9 +1777,9 @@ From Eq.~(\ref{eq:4}) and Eq.~(\ref{eq:5}), the 3D rotation matrix of each segme
 	     &beta,
 	     motion_CS.d__R+k9, 3);
 
- HANDLE_ERROR( cudaMemcpy( motion_CS.R+k9, motion_CS.d__R+k9, 
+ HANDLE_ERROR( cudaMemcpy( motion_CS.R+k9, motion_CS.d__R+k9,
 			   sizeof(double)*9, cudaMemcpyDeviceToHost ) );
- /* 
+ /*
  int i, j, idx = 0;
 for (i=0;i<3;i++)
    {
@@ -1798,7 +1798,7 @@ From \RM, the Euler angles corresponding to the 3 rotations of each segment are 
   \label{eq:7}
   \alpha &=& \arctan\left( \RM(32) \over \RM(33) \right) \\\nonumber
   \beta  &=& \arcsin\left( -\RM(31) \right) \\\nonumber
-  \gamma &=& \arctan\left( \RM(21) \over \RM(11) \right) 
+  \gamma &=& \arctan\left( \RM(21) \over \RM(11) \right)
 \end{eqnarray}
 <<global tip-tilt transformation>>=
 motion_CS.euler_angles[k].x = atan2(motion_CS.R[7+k9],motion_CS.R[8+k9]);
@@ -1818,7 +1818,7 @@ where $\vec O_R$ is the rotation point.
  motion_CS.origin[k].y = rigid_body_CS.origin[k].y - TT_CS.origin->y - motion_CS.origin[k].y;
  motion_CS.origin[k].z = rigid_body_CS.origin[k].z - TT_CS.origin->z - motion_CS.origin[k].z;
  forward_transform_centered(motion_CS.origin + k, motion_CS.origin + k, rigid_body_CS.R + k9);
- HANDLE_ERROR( cudaMemcpy( motion_CS.d__origin+k, motion_CS.origin+k, 
+ HANDLE_ERROR( cudaMemcpy( motion_CS.d__origin+k, motion_CS.origin+k,
 			   sizeof(vector), cudaMemcpyHostToDevice ) );
 
 /*
@@ -1834,13 +1834,13 @@ where $\vec O_R$ is the rotation point.
 	 r2d*motion_CS.euler_angles[k].y,
 	 r2d*motion_CS.euler_angles[k].z);
 */
-@ 
+@
 \index{gmtMirrors!gmt\_m1!global\_tiptilt}
 <<GMT M1 functions>>=
 void gmt_m1::global_tiptilt(float tip, float tilt)
 {
   <<GMT global tip-tilt common>>
-}    
+}
 @  with
 <<GMT global tip-tilt setup>>=
 sprintf(tag,"GLOBAL TIP-TILT");
@@ -1855,7 +1855,7 @@ HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
 TT_CS.cleanup();
 cublasDestroy(handle);
 HANDLE_ERROR( cudaFree( d__C ) );
-@  and 
+@  and
 <<GMT global tip-tilt common>>=
 double alpha, beta;
 alpha = 1.0;
@@ -1872,7 +1872,7 @@ for (k=0;k<N;k++)
     k9 = k*9;
     <<global tip-tilt transformation>>
   }
-@ 
+@
 @
 \section{Edge sensors}
 \label{sec:edge-sensors}
@@ -1909,7 +1909,7 @@ The coordinates of the edge sensors of a peripheral segment in the rigid body CS
     r_{k,5}
   \end{array}
   \right|
-   &=& {1\over 2}[[D_full]]\exp\left(i  \left( -{5\pi\over 6} \pm \alpha \right) \right). 
+   &=& {1\over 2}[[D_full]]\exp\left(i  \left( -{5\pi\over 6} \pm \alpha \right) \right).
 \end{eqnarray}
 Each peripheral segment has also a pair of edge sensor facing the central segment whose coordinates, in the rigid body CS, are:
 \begin{equation}
@@ -1920,14 +1920,14 @@ Each peripheral segment has also a pair of edge sensor facing the central segmen
     r_{k,4}
   \end{array}
   \right|
-   = {1\over 2}[[D_full]]\exp\left(i \left( -{\pi\over 2} \pm \alpha \right) \right).  
+   = {1\over 2}[[D_full]]\exp\left(i \left( -{\pi\over 2} \pm \alpha \right) \right).
 \end{equation}
 The heights of the edge sensors are $z=0$ in the rigid body CS of the segment they belong to.
 
 \begin{figure}
 \begin{center}
 \input{edgeSensor.tex}
-\end{center}  
+\end{center}
   \caption{Edge sensor layout.}
   \label{fig:edge_sensor}
 \end{figure}
@@ -1949,20 +1949,20 @@ void data(void);
 \index{gmtMirrors!stereoscopic\_edge\_sensors!cleanup}
 \index{gmtMirrors!stereoscopic\_edge\_sensors!data}
 <<stereoscopic edge sensors functions>>=
-void stereoscopic_edge_sensors::setup(gmt_m1 *_mirror_) 
+void stereoscopic_edge_sensors::setup(gmt_m1 *_mirror_)
 {
   <<stereoscopic edge sensors setup>>
 }
-void stereoscopic_edge_sensors::cleanup(void) 
+void stereoscopic_edge_sensors::cleanup(void)
 {
   fprintf(stdout,"@(CEO)>stereoscopic_edge_sensors: freeing memory!\n");
   <<stereoscopic edge sensors cleanup>>
 }
-void stereoscopic_edge_sensors::data(void) 
+void stereoscopic_edge_sensors::data(void)
 {
   <<stereoscopic edge sensors measurements>>
 }
-@ 
+@
 The total number of unique edge sensors coordinates in the rigid body CS is 18 whose 12 are on the central segment and 6 on the peripheral segments leading to a total of 48 edge sensors coordinates in the GCS and 24 edge sensor mesurements.
 <<stereoscopic edge sensors parameters>>=
 int N, N_DATA;
@@ -2035,16 +2035,16 @@ edge_sensors_data_kernel LLL gridDim, blockDim RRR (d__dv,
                                                    d__v,
                                                    d__dv0,
                                                    mirror->N-1);
-HANDLE_ERROR( cudaMemcpy( d__dv0, d__dv, 
+HANDLE_ERROR( cudaMemcpy( d__dv0, d__dv,
                           n_byte_DATA, cudaMemcpyDeviceToDevice ) );
-HANDLE_ERROR( cudaMemcpy( dv0, d__dv0, 
+HANDLE_ERROR( cudaMemcpy( dv0, d__dv0,
                           n_byte_DATA, cudaMemcpyDeviceToHost ) );
 HANDLE_ERROR( cudaMemset(d__dv, 0, n_byte_DATA ) );
-HANDLE_ERROR( cudaMemcpy( dv, d__dv, 
+HANDLE_ERROR( cudaMemcpy( dv, d__dv,
                           n_byte_DATA, cudaMemcpyDeviceToHost ) );
 @ with
 <<stereoscopic edge sensors initialization kernel>>=
-__global__ void edge_sensors_read(vector *v, const int N_OUT_SEGMENT, 
+__global__ void edge_sensors_read(vector *v, const int N_OUT_SEGMENT,
 				   const rtd D, const rtd alpha,
 				   rtd *d__rigid_body_R, vector *d__rigid_body_origin,
 				   rtd *d__motion_R, vector *d__motion_origin)
@@ -2065,7 +2065,7 @@ __global__ void edge_sensors_read(vector *v, const int N_OUT_SEGMENT,
 
   }
 }
-@ 
+@
 First the coordinates $l_{7,k}$ are computed,
 <<central segment edge sensors new>>=
 iCoordSys = 6;
@@ -2104,27 +2104,27 @@ offset_angle = -5.0/6.0 + a;
 k += 6;
 offset_angle = -5.0/6.0 - a;
 <<edge sensor coordinates>>
-@ 
+@
 The coordinates are first calculated in the motion CS,
 <<edge sensor coordinates>>=
 sincospi( offset_angle, &(v[k].y), &(v[k].x) );
 v[k].x       *= R;
 v[k].y       *= R;
 v[k].z       = 0.0;
-@ 
+@
 then they are transformed from the motion CS to the rigid body CS,
 <<edge sensor coordinates>>=
 // MOTION <<<
 backward_transform(v+k, v+k,
 		   d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
-@ 
+@
 and finally, they are transformed from the rigid body CS to the GCS.
 <<edge sensor coordinates>>=
 // RIGID_BODY <<<
 backward_transform(v+k, v+k,
 		   d__rigid_body_R+iCoordSys*9,
 		   d__rigid_body_origin+iCoordSys);
-@ 
+@
 The edge sensor measurements consist in the coordinates of the vector joining pair of edge sensors.
 The edge sensors coordinates are stored in the [[d__v0]] and  [[d__v0]] arrays as shown in the diagram below.
 The vectors linking pairs of edge sensors are also drawn.
@@ -2160,12 +2160,12 @@ edge_sensors_data_kernel LLL gridDim, blockDim RRR (d__dv,
 						     mirror->N-1);
 HANDLE_ERROR( cudaMemcpy( dv, d__dv,
 			    sizeof(vector)*N_DATA, cudaMemcpyDeviceToHost ) );
-@  
+@
 with the kernel
 <<stereoscopic edge sensors data kernel>>=
-__global__ void edge_sensors_data_kernel(vector *d__dv, 
-					vector *d__v, 
-					vector *d__dv0, 
+__global__ void edge_sensors_data_kernel(vector *d__dv,
+					vector *d__v,
+					vector *d__dv0,
 					const int N_OUT_SEGMENT)
 {
   int k;
@@ -2173,24 +2173,24 @@ __global__ void edge_sensors_data_kernel(vector *d__dv,
   if (k<N_OUT_SEGMENT)
     {
       d__dv[k]                 =
-      	d__v[k+3*N_OUT_SEGMENT] - 
-        d__v[k] - 
+      	d__v[k+3*N_OUT_SEGMENT] -
+        d__v[k] -
         d__dv0[k];
       d__dv[k+  N_OUT_SEGMENT] =
-      	d__v[k+2*N_OUT_SEGMENT] - 
-        d__v[k+  N_OUT_SEGMENT] - 
+      	d__v[k+2*N_OUT_SEGMENT] -
+        d__v[k+  N_OUT_SEGMENT] -
         d__dv0[k+N_OUT_SEGMENT];
       d__dv[k+2*N_OUT_SEGMENT] =
-      	d__v[(k+1)%6+7*N_OUT_SEGMENT] - 
-        d__v[k+4*N_OUT_SEGMENT] - 
+      	d__v[(k+1)%6+7*N_OUT_SEGMENT] -
+        d__v[k+4*N_OUT_SEGMENT] -
         d__dv0[k+2*N_OUT_SEGMENT];
       d__dv[k+3*N_OUT_SEGMENT] =
-      	d__v[(k+1)%6+6*N_OUT_SEGMENT] - 
-        d__v[k+5*N_OUT_SEGMENT] - 
+      	d__v[(k+1)%6+6*N_OUT_SEGMENT] -
+        d__v[k+5*N_OUT_SEGMENT] -
         d__dv0[k+3*N_OUT_SEGMENT];
     }
 }
-@ 
+@
 
 \subsection{Lateral displacement model}
 \label{sec:later-displ-model}
@@ -2210,31 +2210,31 @@ void data(void);
 \index{gmtMirrors!lateral\_edge\_sensors!cleanup}
 \index{gmtMirrors!lateral\_edge\_sensors!data}
 <<lateral edge sensors functions>>=
-void lateral_edge_sensors::setup(gmt_m1 *_mirror_) 
+void lateral_edge_sensors::setup(gmt_m1 *_mirror_)
 {
   N_HEIGHT = 1;
   height = 0.0;
   <<lateral edge sensors setup>>
 }
-void lateral_edge_sensors::setup(gmt_m1 *_mirror_, rtd _height_) 
+void lateral_edge_sensors::setup(gmt_m1 *_mirror_, rtd _height_)
 {
   N_HEIGHT = 2;
   height = _height_;
   <<lateral edge sensors setup>>
 }
-void lateral_edge_sensors::cleanup(void) 
+void lateral_edge_sensors::cleanup(void)
 {
   fprintf(stdout,"@(CEO)>lateral_edge_sensors: freeing memory!\n");
   <<lateral edge sensors cleanup>>
 }
-void lateral_edge_sensors::data(void) 
+void lateral_edge_sensors::data(void)
 {
   <<lateral edge sensors measurements>>
 }
-@ 
+@
 The lateral displacement model represents the case where a laser on one segment is aimed to a camera on an adjacent segment.
 The camera returns the position of the laser beam in the detector frame.
-%The difference between the current position of the laser beam and the position of the laser beam for a perfectly aligned telescope gives 
+%The difference between the current position of the laser beam and the position of the laser beam for a perfectly aligned telescope gives
 
 Looking at Fig.~\ref{fig:edge_sensor}, each vector between pairs of edge sensors is a laser.
 The tail of the vector corresponds to the location where the laser is fired from and the head of the vector corresponds to the center of the camera.
@@ -2263,7 +2263,7 @@ mirror = _mirror_;
 The edge sensors have two components: a laser on one segment edge and a camera on another segment edge.
 The location of the lasers are given by the vectors $l_{7,k}$, $r_{7,k}$, $l_{k,3}$ and $r_{k,3}$.
 The location of the cameras are given by the vectors $l_{k,4}$, $r_{k,4}$, $l_{k,5}$ and $r_{k,5}$.
- 
+
 The coordinates of the vectors joining pairs of edge sensors are saved in the vector [[d__k0_cam]] and [[d__k0_laser]] for a perfectly aligned telescope in the rigid body CS of their segments.
 <<lateral edge sensors parameters>>=
 int n_byte_DATA;
@@ -2377,12 +2377,12 @@ $X\equiv R$ for the rigid body CS [[rigid_body_CS]] and $X\equiv M$ for the moti
   \draw[->] (lk3.north) to (rk5.south);
   \draw[->] (rk3.north) to (lk5.south);
   \begin{scope}[on background layer]
-    \fill[black!10] ($(B.south west)-(2mm,4mm)$) rectangle ($(lk5.north east)+(4mm,4mm)$);    
-    \fill[black!10] ($(A.south west)-(2mm,4mm)$) rectangle ($(rk3.north east)+(4mm,4mm)$);    
+    \fill[black!10] ($(B.south west)-(2mm,4mm)$) rectangle ($(lk5.north east)+(4mm,4mm)$);
+    \fill[black!10] ($(A.south west)-(2mm,4mm)$) rectangle ($(rk3.north east)+(4mm,4mm)$);
   \end{scope}
   \node[right of=lk5] {Cameras};
   \node[right of=rk3] {Lasers};
-\end{tikzpicture}  
+\end{tikzpicture}
   \caption{[[A]] and [[B]] vector arrays with $k=\left[1,\dots,6\right]$.}
   \label{fig:lateral-edge-sensors-1}
 \end{figure}
@@ -2426,24 +2426,24 @@ HANDLE_ERROR( cudaFree( d__B0 ) );
 fprintf(stdout,"@(CEO)>gmt_m1: Initializing edge sensors coordinates!\n");
 dim3 blockDim(6,N_HEIGHT);
 dim3 gridDim(1,1);
-laser_coordinates LLL gridDim, blockDim RRR (d__A, mirror->N-1, mirror->D_full, 
+laser_coordinates LLL gridDim, blockDim RRR (d__A, mirror->N-1, mirror->D_full,
 					     alpha, height,
 					     mirror->rigid_body_CS.d__R,
                                              mirror->rigid_body_CS.d__origin,
                                              mirror->motion_CS.d__R,
                                              mirror->motion_CS.d__origin);
-HANDLE_ERROR( cudaMemcpy( A, d__A, 
+HANDLE_ERROR( cudaMemcpy( A, d__A,
                           n_byte_DATA, cudaMemcpyDeviceToHost ) );
-laser_coordinates_to_GCS LLL gridDim, blockDim RRR (d__A0, d__A, mirror->N-1, 
+laser_coordinates_to_GCS LLL gridDim, blockDim RRR (d__A0, d__A, mirror->N-1,
                                                     mirror->rigid_body_CS.d__R,
                                                     mirror->rigid_body_CS.d__origin);
-HANDLE_ERROR( cudaMemcpy( A0, d__A0, 
+HANDLE_ERROR( cudaMemcpy( A0, d__A0,
                           n_byte_DATA, cudaMemcpyDeviceToHost ) );
-@ 
+@
  with
 <<lateral edge sensors: laser coordinates kernel>>=
-__global__ void laser_coordinates(vector *v, const int N_OUT_SEGMENT, 
-				  const rtd D, 
+__global__ void laser_coordinates(vector *v, const int N_OUT_SEGMENT,
+				  const rtd D,
 				  const rtd alpha,
 				  const rtd height,
 				  rtd *d__rigid_body_R, vector *d__rigid_body_origin,
@@ -2482,7 +2482,7 @@ offset_angle = -1.0/6.0 + a;
 k += 6;
 offset_angle = -1.0/6.0 - a;
 <<from motion CS to motion CS>>
-@ 
+@
 <<polar to cartesian>>=
 sincospi( offset_angle, &(v[k].y), &(v[k].x) );
 v[k].x      *= R;
@@ -2490,7 +2490,7 @@ v[k].y      *= R;
 v[k].z       = height;
 <<from motion CS to motion CS>>=
 <<polar to cartesian>>
-v[k].z      *= (j==0) ? 1 : -1; 
+v[k].z      *= (j==0) ? 1 : -1;
 // MOTION <<<
 backward_transform(v+k, v+k,
 		   d__motion_R+iCoordSys_laser*9,
@@ -2499,17 +2499,17 @@ backward_transform(v+k, v+k,
 backward_transform(v+k, v+k,
 		   d__rigid_body_R+iCoordSys_laser*9,
 		   d__rigid_body_origin+iCoordSys_laser);
-// RIGID BODY >>> 
+// RIGID BODY >>>
 forward_transform(v+k, v+k,
 		  d__rigid_body_R+iCoordSys_cam*9,
                   d__rigid_body_origin+iCoordSys_cam);
-// MOTION >>>  
+// MOTION >>>
 forward_transform(v+k, v+k,
 		  d__motion_R+iCoordSys_cam*9,
                   d__motion_origin+iCoordSys_cam);
 @ and
 <<lateral edge sensors: laser coordinates to GCS kernel>>=
-__global__ void laser_coordinates_to_GCS(vector *v0, vector *v, const int N_OUT_SEGMENT, 
+__global__ void laser_coordinates_to_GCS(vector *v0, vector *v, const int N_OUT_SEGMENT,
 				  rtd *d__rigid_body_R, vector *d__rigid_body_origin)
 {
   int i, j, k;
@@ -2544,19 +2544,19 @@ __global__ void laser_coordinates_to_GCS(vector *v0, vector *v, const int N_OUT_
 @
 \item Lets compute the coordinates of $\bOj$ ([[B]]) in the rigid body CS of segment \# j and the coordinates of $\bO$ ([[B0]]) in the GCS:
 <<lateral edge sensors setup>>=
-camera_coordinates LLL gridDim, blockDim RRR (d__B, d__B0, mirror->N-1, 
+camera_coordinates LLL gridDim, blockDim RRR (d__B, d__B0, mirror->N-1,
                                               mirror->D_full, alpha, height,
 					      mirror->rigid_body_CS.d__R,
 					      mirror->rigid_body_CS.d__origin);
-HANDLE_ERROR( cudaMemcpy(B , d__B, 
+HANDLE_ERROR( cudaMemcpy(B , d__B,
                           n_byte_DATA, cudaMemcpyDeviceToHost ) );
-HANDLE_ERROR( cudaMemcpy(B0 , d__B0, 
+HANDLE_ERROR( cudaMemcpy(B0 , d__B0,
                           n_byte_DATA, cudaMemcpyDeviceToHost ) );
 @ with
 <<lateral edge sensors: camera coordinates kernel>>=
 __global__ void camera_coordinates(vector *v, vector *v0,
-                                   const int N_OUT_SEGMENT, 
-				   const rtd D, 
+                                   const int N_OUT_SEGMENT,
+				   const rtd D,
 				   const rtd alpha,
 				   const rtd height,
 				   rtd *d__rigid_body_R,
@@ -2591,10 +2591,10 @@ offset_angle = -5.0/6.0 - a;
 k += N_OUT_SEGMENT;
 offset_angle = -5.0/6.0 + a;
 <<from rigid body CS to GCS>>
-@ 
+@
 <<from rigid body CS to GCS>>=
 <<polar to cartesian>>
-v[k].z      *= (j==0) ? -1 : 1; 
+v[k].z      *= (j==0) ? -1 : 1;
 // RIGID_BODY <<<
 backward_transform(v0+k, v+k,
 		   d__rigid_body_R+i*9,
@@ -2629,11 +2629,11 @@ backward_transform(v0+k, v+k,
 edge_sensors_camera_vector_kernel LLL gridDim, blockDim RRR (d__k_cam, d__A, d__B,
                                                            d__uP, d__vP,
                                                            mirror->N-1);
-HANDLE_ERROR( cudaMemcpy(k_cam , d__k_cam, 
+HANDLE_ERROR( cudaMemcpy(k_cam , d__k_cam,
                           n_byte_DATA, cudaMemcpyDeviceToHost ) );
 @ with the kernel
 <<lateral edge sensor camera vector kernel>>=
-__global__ void edge_sensors_camera_vector_kernel(vector *d__k, 
+__global__ void edge_sensors_camera_vector_kernel(vector *d__k,
                                                 vector *d__A, vector*d__B,
                                                 vector *d__uP, vector *d__vP,
                                                 const int N_OUT_SEGMENT)
@@ -2647,7 +2647,7 @@ __global__ void edge_sensors_camera_vector_kernel(vector *d__k,
   if (i<N_OUT_SEGMENT)
     {
       k = i + j;
-      d__k[k] = d__B[k] - d__A[k];      
+      d__k[k] = d__B[k] - d__A[k];
       <<u and v derivation>>
 
       k += N_OUT_SEGMENT;
@@ -2671,7 +2671,7 @@ d__k[k].left_cross(&d__uP[k],&n);
 d__uP[k].unit();
 d__uP[k].left_cross(&d__vP[k], &d__k[k]);
 d__vP[k].unit();
-@ 
+@
   \end{enumerate}
 \end{enumerate}
 
@@ -2685,15 +2685,15 @@ The next step consists in deriving, for given displacements of segment \# $i$ an
 <<lateral edge sensors measurements>>=
 dim3 blockDim(6,N_HEIGHT);
 dim3 gridDim(1,1);
-edge_sensors_laser_vector_kernel LLL gridDim, blockDim RRR (d__k_laser, d__k_cam, 
+edge_sensors_laser_vector_kernel LLL gridDim, blockDim RRR (d__k_laser, d__k_cam,
                                                             mirror->N-1,
 							    mirror->rigid_body_CS.d__R,
 							    mirror->motion_CS.d__R);
-HANDLE_ERROR( cudaMemcpy(k_laser , d__k_laser, 
+HANDLE_ERROR( cudaMemcpy(k_laser , d__k_laser,
                           N_DATA*sizeof(vector), cudaMemcpyDeviceToHost ) );
 @ with the kernel
 <<lateral edge sensor laser vector kernel>>=
-__global__ void edge_sensors_laser_vector_kernel(vector *d__k_laser, 
+__global__ void edge_sensors_laser_vector_kernel(vector *d__k_laser,
                                                 vector *d__k_cam,
                                                 const int N_OUT_SEGMENT,
 						 rtd *d__rigid_body_R,
@@ -2724,19 +2724,19 @@ __global__ void edge_sensors_laser_vector_kernel(vector *d__k_laser,
 // RIGID_BODY <<<
 backward_transform_centered(d__k_laser+k, d__k_cam+k,
 			    d__rigid_body_R+iCoordSys_cam*9);
-// RIGID BODY >>> 
+// RIGID BODY >>>
 forward_transform_centered(d__k_laser+k, d__k_laser+k,
-			   d__rigid_body_R+iCoordSys_laser*9);    
+			   d__rigid_body_R+iCoordSys_laser*9);
 // MOTION <<<
 backward_transform_centered(d__k_laser+k, d__k_laser+k,
 			    d__motion_R+iCoordSys_laser*9);
 // RIGID_BODY <<<
 backward_transform_centered(d__k_laser+k, d__k_laser+k,
 			    d__rigid_body_R+iCoordSys_laser*9);
-// RIGID BODY >>> 
+// RIGID BODY >>>
 forward_transform_centered(d__k_laser+k, d__k_laser+k,
 			   d__rigid_body_R+iCoordSys_cam*9);
-// MOTION >>>  
+// MOTION >>>
 forward_transform_centered(d__k_laser+k, d__k_laser+k,
 			   d__motion_R+iCoordSys_cam*9);
 @
@@ -2746,7 +2746,7 @@ forward_transform_centered(d__k_laser+k, d__k_laser+k,
     \aj = \tocs{M}{j}{\tocs{R}{j}{\itocs{R}{i}{\itocs{M}{i}{\aOi}}}}
   \end{equation}
 <<lateral edge sensors measurements>>=
-laser_coordinates LLL gridDim, blockDim RRR (d__A, mirror->N-1, mirror->D_full, 
+laser_coordinates LLL gridDim, blockDim RRR (d__A, mirror->N-1, mirror->D_full,
 					     alpha, height,
 					     mirror->rigid_body_CS.d__R,
                                              mirror->rigid_body_CS.d__origin,
@@ -2754,7 +2754,7 @@ laser_coordinates LLL gridDim, blockDim RRR (d__A, mirror->N-1, mirror->D_full,
                                              mirror->motion_CS.d__origin);
 int n_byte_DATA;
 n_byte_DATA = sizeof(vector)*N_DATA;
-HANDLE_ERROR( cudaMemcpy( A, d__A, 
+HANDLE_ERROR( cudaMemcpy( A, d__A,
                           n_byte_DATA, cudaMemcpyDeviceToHost ) );
 @
 \item Lets define the line $\mathcal{L}_j$ with the equation: $\forall t \in [-\infty,+\infty]$,
@@ -2784,11 +2784,11 @@ laser_camera_intersection LLL gridDim, blockDim RRR (d__x, d__y, d__d,
 						     d__k_cam, d__k_laser,
 						     d__uP, d__vP,
 						     mirror->N-1);
-HANDLE_ERROR( cudaMemcpy( x, d__x, 
+HANDLE_ERROR( cudaMemcpy( x, d__x,
                           sizeof(rtd)*N_DATA, cudaMemcpyDeviceToHost ) );
-HANDLE_ERROR( cudaMemcpy( y, d__y, 
+HANDLE_ERROR( cudaMemcpy( y, d__y,
                           sizeof(rtd)*N_DATA, cudaMemcpyDeviceToHost ) );
-HANDLE_ERROR( cudaMemcpy( d, d__d, 
+HANDLE_ERROR( cudaMemcpy( d, d__d,
                           sizeof(rtd)*N_DATA, cudaMemcpyDeviceToHost ) );
 @
 with
@@ -2815,14 +2815,14 @@ with
 
       __syncthreads();
 
-      i_cam   = 2*N_OUT_SEGMENT + (i+1)%6 + j; 
+      i_cam   = 2*N_OUT_SEGMENT + (i+1)%6 + j;
       i_laser = 2*N_OUT_SEGMENT + i + j;
       <<laser intersection coordinates>>
 
       i_cam   += N_OUT_SEGMENT;
       i_laser += N_OUT_SEGMENT;
       <<laser intersection coordinates>>
-    }  
+    }
 }
 @ where
 <<laser intersection coordinates>>=
@@ -2875,7 +2875,7 @@ void gmt_m2::setup(float _D_, int _D_px_)
  conic_k = 1-0.71692784;
  height  = 20.26247614;
  idx_offset = 3;
-@  
+@
 If an array of sources is propagated through the telescope then
 \index{gmtMirrors!gmt\_m2!setup}
 <<GMT M2 functions>>=
@@ -2886,7 +2886,7 @@ void gmt_m2::setup(float _D_, int _D_px_, int N_SRC)
   <<M2 parameters>>
   <<GMT setup common>>
 }
-@ 
+@
 \index{gmtMirrors!gmt\_m2!setup}
 <<GMT M2 functions>>=
 void gmt_m2::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
@@ -2896,7 +2896,7 @@ void gmt_m2::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
   <<M2 parameters>>
   <<GMT setup common>>
 }
-@ 
+@
 Memory is freed with
 \index{gmtMirrors!gmt\_m2!cleanup}
 <<GMT M2 functions>>=
@@ -2924,7 +2924,7 @@ The rays propagation through M1 is computed with
 \index{gmtMirrors!gmt\_m2!trace}
 <<GMT M2 functions>>=
 void gmt_m2::trace(bundle *rays)
-{ 
+{
   <<GMT trace common>>
 }
 @
@@ -2935,7 +2935,7 @@ void gmt_m2::update(vector _origin_, vector _euler_angles_,int idx)
 {
     <<GMT M12 update>>
 }
-@ 
+@
 The rigid body motion are reset to 0 with:
 \index{gmtMirrors!gmt\_m2!reset}
 <<GMT M2 functions>>=
@@ -2955,7 +2955,7 @@ void gmt_m2::reset(void)
 void gmt_m2::global_tiptilt(float tip, float tilt)
 {
   <<GMT global tip-tilt common>>
-}    
+}
 @
 \subsubsection{Tip--tilt neutral}
 \label{sec:tip-tilt-neutral}
@@ -3029,4 +3029,3 @@ void gmt_m2::coma_neutral(float tip, float tilt)
   HANDLE_ERROR( cudaFree( d__C ) );
 }
 @
-

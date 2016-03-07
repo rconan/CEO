@@ -65,18 +65,18 @@ u
 
     >>> gpu_ps2d = src.phase()
 
-    or as a 1D vector with 
+    or as a 1D vector with
 
     >>> gpu_ps1d = src.wavefront.phase()
     """
     def __init__(self, D, D_px, M1_radial_order=0, M2_radial_order=0):
-        GmtMirrors.__init__(self,D,D_px,
+        super(GMT_MX,self).__init__(D,D_px,
                             M1_radial_order=M1_radial_order,
                             M2_radial_order=M2_radial_order)
 
     def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,agws=None,recmat=None,first_mode=3):
         """
-        Calibrate the different degrees of freedom of the  mirrors 
+        Calibrate the different degrees of freedom of the  mirrors
 
         Parameters
         ----------
@@ -145,7 +145,7 @@ u
 
         def FDSP_pushpull(action):
 	    def close_M2_segTT_loop():
-		niter = 7 
+		niter = 7
 		myTTest1 = np.zeros(14)
 		for ii in range(niter):
         	    gs.reset()
@@ -244,11 +244,11 @@ u
 		    n_meas = 12
 		elif segment=="full":
 		    n_meas = 7
-		else : 
+		else :
 		    sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
 		n_mode = 6
 		D = np.zeros((n_meas*gs.N_SRC,n_mode))
-		idx = 0	
+		idx = 0
                 Tz = lambda x : self.M1.update(origin=[0,0,x],euler_angles=[0,0,0],idx=kSeg)
                 sys.stdout.write("Segment #:")
                 for kSeg in range(1,7):
@@ -258,12 +258,12 @@ u
                 if segment=="full":
 		    D = D[0:6,:]
 		sys.stdout.write("\n")
-	    if mode=="FDSP":	
+	    if mode=="FDSP":
 		if segment=="edge":
 		    n_meas = 12
 		elif segment=="full":
 		    n_meas = 7
-		else : 
+		else :
 		    sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
 		D = np.zeros((n_meas*gs.N_SRC,2*6))
                 idx = 0
@@ -293,7 +293,7 @@ u
             if mode=="coma neutral":
                 D = np.zeros((wfs.valid_lenslet.nnz*2,2))
                 D[:,0] = pushpull( lambda x : self.M2.coma_neutral(x,0) )
-                D[:,1] = pushpull( lambda x : self.M2.coma_neutral(0,x) )                
+                D[:,1] = pushpull( lambda x : self.M2.coma_neutral(0,x) )
             if mode=="Txyz":
                 D = np.zeros((wfs.valid_lenslet.nnz*2,3*7))
                 idx = 0
@@ -368,11 +368,11 @@ u
 		    n_meas = 12
 		elif segment=="full":
 		    n_meas = 7
-		else : 
+		else :
 		    sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
 		n_mode = 6
 		D = np.zeros((n_meas*gs.N_SRC,n_mode))
-		idx = 0	
+		idx = 0
                 Tz = lambda x : self.M2.update(origin=[0,0,x],euler_angles=[0,0,0],idx=kSeg)
                 sys.stdout.write("Segment #:")
                 for kSeg in range(1,7):
@@ -385,7 +385,7 @@ u
 	    if mode=="geometric segment tip-tilt":
                 n_meas = 14
 		D = np.zeros((n_meas*gs.N_SRC,14))
-		idx = 0	
+		idx = 0
                 Rx = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
                 Ry = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
                 sys.stdout.write("Segment #:")
@@ -400,18 +400,26 @@ u
 
         return D
 
+class JGMT_MX(GMT_MX):
+    def __init__(self, json):
+        super(JGMT_MX,self).__init__(json["pupil size"],
+                                    json["pupil sampling"],
+                                    M1_radial_order=json["M1"]["Zernike radial order"],
+                                    M2_radial_order=json["M2"]["Zernike radial order"])
+
+
 class TT7(ShackHartmann):
 
     def __init__(self, N_SIDE_LENSLET, N_PX_LENSLET, d,
 	          DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, N_GS=1):
         ShackHartmann.__init__(self,N_SIDE_LENSLET, N_PX_LENSLET, d,
-                                DFT_osf=DFT_osf, 
-                                N_PX_IMAGE=N_PX_IMAGE, 
-                                BIN_IMAGE=BIN_IMAGE, 
+                                DFT_osf=DFT_osf,
+                                N_PX_IMAGE=N_PX_IMAGE,
+                                BIN_IMAGE=BIN_IMAGE,
                                 N_GS=N_GS)
 
-    def calibrate(self, gs, gmt, 
-                  stroke_pixel=2, 
+    def calibrate(self, gs, gmt,
+                  stroke_pixel=2,
                   slopes_threshold=0.95):
 
         gs.reset()
@@ -456,7 +464,7 @@ class TT7(ShackHartmann):
 
 class DispersedFringeSensor(SegmentPistonSensor):
     """
-    A class for the GMT Dispersed Fringe Sensor. 
+    A class for the GMT Dispersed Fringe Sensor.
     This class inherits from the SegmentPistonSensor class.
 
     Parameters
@@ -466,22 +474,20 @@ class DispersedFringeSensor(SegmentPistonSensor):
     Attributes
     ----------
     INIT_ALL_ATTRIBUTES : bool ; Default: False
-	If True, additional attributes (mainly for display and debugging) will be created. See list of Additional Attributes below.        
-    fftlet_rotation : float ; vector with 12xN_SRC elements 
+	If True, additional attributes (mainly for display and debugging) will be created. See list of Additional Attributes below.
+    fftlet_rotation : float ; vector with 12xN_SRC elements
         The angle of the line joining the center of the three lobes of the fftlet image. Init by calibrate() method.
-
     lobe_detection : string  ; default: 'gaussfit'
 	Algorithm for lobe detection, either 'gaussfit' for 2D gaussian fit, or 'peak_value' for peak detection.
-
-    spsmask : bool 
+    spsmask : bool
 	Data cube containing the masks (one for each fftlet) required to isolate the "detection blob", i.e. the upper-most lobe from which the measurement will be computed. Init by calibrate() method.
 
     measurement : float
 	Dispersed Fringe Sensor output measurement vector; y-coordinate of the detection blob in the rotated reference frame (i.e. the reference frame having the x-axis passing through the three lobe peaks on a fftlet image, and the y-axis perpendicular to it. Units: pixels in the fftlet image plane.
- 
+
     Attributes (Additional)
     -----------------------
-    blob_data : float 
+    blob_data : float
 	fftlet peak detection data; blob_data is a matrix containing the (x,y,radius) of the three lobes on each fftlet image. Init by calibrate() method.
 
     pl_m, pl_b : float
@@ -497,8 +503,8 @@ class DispersedFringeSensor(SegmentPistonSensor):
 	Data cube containing best-fit 2D gaussians of detection blobs. Init by process() method.
 
     measurement_ortho : float
-	x-coordinate of the detection blob in the rotated reference frame (i.e. the reference frame having the x-axis passing through the three lobe peaks on a fftlet image, and the y-axis perpendicular to it. Init by process() method. 
- 
+	x-coordinate of the detection blob in the rotated reference frame (i.e. the reference frame having the x-axis passing through the three lobe peaks on a fftlet image, and the y-axis perpendicular to it. Init by process() method.
+
     See also
     --------
     SegmentPistonSensor : the super class
@@ -508,8 +514,8 @@ class DispersedFringeSensor(SegmentPistonSensor):
     cuFloatArray : an interface class between GPU host and device data for floats
     """
     def __init__(self, M1, src, dispersion=5.0, field_of_view=3.0,nyquist_factor=1.0):
-        SegmentPistonSensor.__init__(self, M1, src, 
-                                     dispersion=dispersion, 
+        SegmentPistonSensor.__init__(self, M1, src,
+                                     dispersion=dispersion,
                                      field_of_view=field_of_view,
                                      nyquist_factor=nyquist_factor)
 	self._N_SRC = src.N_SRC
@@ -519,7 +525,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
     def gaussian_func(self, height, center_x, center_y, width_x, width_y, rotation):
     	"""
 	Returns a gaussian function G(x,y) to produce a 2D Gaussian with the given parameters
-	
+
 	Parameters
 	----------
 	height : float
@@ -550,7 +556,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
     def fitgaussian(self, data):
     	"""
 	Fits a 2D Gaussian to the input data, and returns the Gaussian fit parameters: (amplidute, x, y, width_x, width_y, rotation)
-	
+
 	Parameters
 	----------
 	data : numpy 2D ndarray
@@ -567,7 +573,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
     	    width_y = np.sqrt(abs((np.arange(row.size)-x)**2*row).sum()/row.sum())
     	    height = data.max()
     	    return height, x, y, width_x, width_y, 0.0
-    	
+
 	params = moments()
     	errorfunction = lambda p: np.ravel(self.gaussian_func(*p)(*np.indices(data.shape)) - data)
     	p, success = leastsq(errorfunction, params)
@@ -582,9 +588,11 @@ class DispersedFringeSensor(SegmentPistonSensor):
 	data_type : string
 		Set to "camera" to return fringes; set to "fftlet" to return fftlet images; default: fftlet
 	"""
+
 	assert data_type == 'fftlet' or data_type == 'camera' or data_type == 'pupil_masks', "data_type should be either 'fftlet', 'camera', or 'pupil_masks'"  
 	
 	n_lenslet = self.camera.N_SIDE_LENSLET
+
 	if data_type == 'fftlet':
 	    data = self.fftlet.host()
 	    n_px = self.camera.N_PX_IMAGE
@@ -608,7 +616,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
     def calibrate(self, src, gmt):
 	"""
 	Calibrates the lobe detection masks (spsmask).
- 
+
     	Parameters
     	----------
     	src : Source
@@ -625,7 +633,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
 	dataCube = self.get_data_cube(data_type='fftlet')
 
 	### Essential data
-	self.fftlet_rotation = np.zeros(src.N_SRC*12) 
+	self.fftlet_rotation = np.zeros(src.N_SRC*12)
 	self.spsmask = np.zeros((self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE,src.N_SRC*12), dtype='bool')
 	### Additional data for visualization and debugging
 	if self.INIT_ALL_ATTRIBUTES == True:
@@ -637,11 +645,11 @@ class DispersedFringeSensor(SegmentPistonSensor):
 
 	for k in range(src.N_SRC*12):
 	    ### Find center coordinates of three lobes (i.e. central and two lateral ones) on each imagelet.
-	    blob_data = blob_log(dataCube[:,:,k], min_sigma=5, max_sigma=10, overlap=1, 
+	    blob_data = blob_log(dataCube[:,:,k], min_sigma=5, max_sigma=10, overlap=1,
 				 threshold=0.005*np.max(dataCube[:,:,k]))
-	    assert blob_data.shape == (3,3), "lobe detection failed" 
+	    assert blob_data.shape == (3,3), "lobe detection failed"
     	    blob_data = blob_data[np.argsort(blob_data[:,0])]  #order data in asceding y-coord
-	    
+
 	    ### The code below does the following:
 	    ### 1) Fit a line passing through the centers of the three lobes (aka pl line).
 	    ###    y = pl_m * x + pl_b
@@ -651,7 +659,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
 
 	    ### BORDER POINT coordinates (pp_x, pp,y)
 	    ### separation tweaking: 0.5 will select BORDER POINT equidistant to the two lobes.
-	    separation_tweaking = 0.6	    
+	    separation_tweaking = 0.6
 	    pp_py, pp_px = blob_data[1,0:2] + separation_tweaking*(blob_data[2,0:2] - blob_data[1,0:2])
 
     	    if np.all(blob_data[:,1] == blob_data[0,1]):    # pl line is VERTICAL
@@ -667,8 +675,8 @@ class DispersedFringeSensor(SegmentPistonSensor):
 		fftlet_rotation = (math.pi/180)*min(apriori_angles, key=lambda aa:abs(aa-fftlet_rotation*180/math.pi))
 		self.fftlet_rotation[k] = fftlet_rotation
 		pp_m = -1.0/ np.tan(fftlet_rotation)
-		
-    	    pp_b = pp_py - pp_m * pp_px  
+
+    	    pp_b = pp_py - pp_m * pp_px
 
 	    ### Define the SPS masks as the region y > pp line
 	    u = np.arange(self.camera.N_PX_IMAGE)
@@ -685,7 +693,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
 
     def reset(self):
 	"""
-	Resets both the SPS detector frame and the fftlet buffer to zero. 
+	Resets both the SPS detector frame and the fftlet buffer to zero.
 	"""
 	self.camera.reset()
 	self.fftlet.reset()
@@ -724,7 +732,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
 		self.fftlet_fit_params[:,k] = (height / centralpeak, y, x, width_y, width_x, rot)
 		if self.lobe_detection == 'gaussfit':
 		    fftlet_shape = (self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE)
-		    self.fftlet_fit_images[:,:,k] = self.gaussian_func(*params)(*np.indices(fftlet_shape)) 
+		    self.fftlet_fit_images[:,:,k] = self.gaussian_func(*params)(*np.indices(fftlet_shape))
 
     def analyze(self, src, **kwargs):
 	"""
@@ -778,7 +786,7 @@ class IdealSegmentPistonSensor:
     W : float, optional
         The width of the lenslet; default: 1.5m
     L : float, optional
-        The length of the lenslet; default: 1.5m 
+        The length of the lenslet; default: 1.5m
 
     Attributes
     ----------
@@ -827,7 +835,7 @@ class IdealSegmentPistonSensor:
         R = gmt.D/2
         u = np.linspace(-1,1,n)*R
         x,y = np.meshgrid(u,u)
-        xy = np.array( [ x.flatten(), y.flatten()] )        
+        xy = np.array( [ x.flatten(), y.flatten()] )
         self.rc = 4.387
         xy_rc = np.array([[0],[self.rc]])
         #print xy_rc
@@ -873,7 +881,7 @@ class IdealSegmentPistonSensor:
         p : numpy ndarray
             A 6 element piston vector for segment="full" or a 12 element differential piston vector for segment="edge"
         """
-        
+
         assert segment=="full" or segment=="edge", "segment parameter is either ""full"" or ""edge"""
         if segment=="full":
             p = src.piston(where='segments')
@@ -934,7 +942,7 @@ class EdgeSensors:
     def __init__(self, mirror):
 
         self.M = mirror
-        
+
         def conic(r):
             c = mirror.conic_c
             k = mirror.conic_k
@@ -944,7 +952,7 @@ class EdgeSensors:
             L = mirror.D_assembly/2
             q = mirror.D_full**2 - (L-x)**2 - (conic(L)-conic(x))**2
             return q
-    
+
         p = mirror.M_ID - 1
         print p
 

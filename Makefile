@@ -38,14 +38,14 @@ pydoc: cython
 test:
 	make -C test all
 
-ripython:
-	env PYTHONPATH="$(CEOPATH)/python" ipython notebook --no-browser
+rjupyter:
+	env PYTHONPATH="$(CEOPATH)/python" jupyter notebook --no-browser
 
-ipythonserver:
-	env PYTHONPATH="$(CEOPATH)/python" ipython notebook --profile=nbserver
+jupyterserver:
+	env PYTHONPATH="$(CEOPATH)/python" jupyter notebook --profile=nbserver
 
-ipython:
-	env PYTHONPATH="$(CEOPATH)/python" ipython #notebook
+jupyter:
+	env PYTHONPATH="$(CEOPATH)/python" jupyter #notebook
 
 touch: 
 	find . -name \*.nw -exec touch {} \;
