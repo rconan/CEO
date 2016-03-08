@@ -477,7 +477,8 @@ class DispersedFringeSensor(SegmentPistonSensor):
 	If True, additional attributes (mainly for display and debugging) will be created. See list of Additional Attributes below.
     fftlet_rotation : float ; vector with 12xN_SRC elements
         The angle of the line joining the center of the three lobes of the fftlet image. Init by calibrate() method.
-
+    lobe_detection : string  ; default: 'gaussfit'
+	Algorithm for lobe detection, either 'gaussfit' for 2D gaussian fit, or 'peak_value' for peak detection.
     spsmask : bool
 	Data cube containing the masks (one for each fftlet) required to isolate the "detection blob", i.e. the upper-most lobe from which the measurement will be computed. Init by calibrate() method.
 
@@ -519,6 +520,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
                                      nyquist_factor=nyquist_factor)
 	self._N_SRC = src.N_SRC
 	self.INIT_ALL_ATTRIBUTES = False
+	self.lobe_detection = 'gaussfit'
 
     def gaussian_func(self, height, center_x, center_y, width_x, width_y, rotation):
     	"""
@@ -586,15 +588,21 @@ class DispersedFringeSensor(SegmentPistonSensor):
 	data_type : string
 		Set to "camera" to return fringes; set to "fftlet" to return fftlet images; default: fftlet
 	"""
-	assert data_type == 'fftlet' or data_type == 'camera', "data_type should be either 'fftlet' or 'camera'"
+
+	assert data_type == 'fftlet' or data_type == 'camera' or data_type == 'pupil_masks', "data_type should be either 'fftlet', 'camera', or 'pupil_masks'"  
+	
+	n_lenslet = self.camera.N_SIDE_LENSLET
+
 	if data_type == 'fftlet':
 	    data = self.fftlet.host()
 	    n_px = self.camera.N_PX_IMAGE
 	elif data_type == 'camera':
 	    data = self.camera.frame.host()
  	    n_px = self.camera.N_PX_IMAGE/2
-
-	n_lenslet = self.camera.N_SIDE_LENSLET
+	elif data_type == 'pupil_masks':
+	    data = self.W.amplitude.host()
+	    n_px = (data.shape)[0] / n_lenslet
+	
     	dataCube = np.zeros((n_px, n_px, self._N_SRC*12))
     	k = 0
     	for j in range(n_lenslet):
@@ -690,34 +698,26 @@ class DispersedFringeSensor(SegmentPistonSensor):
 	self.camera.reset()
 	self.fftlet.reset()
 
-    def process(self, lobe_detection='gaussfit'):
+    def process(self):
 	"""
 	Processes the Dispersed Fringe Sensor detector frame
-
-	Parameters
-	----------
-	lobe_detection : string ; default: 'gaussfit'
-		Algorithm for lobe detection, either 'gaussfit' for 2D gaussian fit, or 'peak_value' for peak detection.
 	"""
-	assert lobe_detection == 'gaussfit' or lobe_detection == 'peak_value', "lobe_detection must be either 'gaussfit' or 'peak_value."
-	self.fftlet.reset()
-	self.fft()
 	dataCube = self.get_data_cube(data_type='fftlet')
         self.measurement = np.zeros(self._N_SRC*12)
 
 	if self.INIT_ALL_ATTRIBUTES == True:
             self.fftlet_fit_params = np.zeros((6,self._N_SRC*12))
 	    self.measurement_ortho = np.zeros(self._N_SRC*12)
-	    if lobe_detection == 'gaussfit':
+	    if self.lobe_detection == 'gaussfit':
 	        self.fftlet_fit_images = np.zeros((self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE,self._N_SRC*12))
 
         for k in range(self._N_SRC*12):
     	    mylobe = dataCube[:,:,k] * self.spsmask[:,:,k]
     	    centralpeak = np.max(dataCube[:,:,k])
-    	    if lobe_detection == 'gaussfit':
+    	    if self.lobe_detection == 'gaussfit':
 		params = self.fitgaussian(mylobe)
         	(height, y, x, width_y, width_x, rot) = params
-    	    elif lobe_detection == 'peak_value':
+    	    elif self.lobe_detection == 'peak_value':
         	height = np.max(mylobe)
         	height_pos = np.argmax(mylobe)
         	y = height_pos / mylobe.shape[0]
@@ -730,7 +730,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
 	    if self.INIT_ALL_ATTRIBUTES == True:
 		self.measurement_ortho[k] = x1
 		self.fftlet_fit_params[:,k] = (height / centralpeak, y, x, width_y, width_x, rot)
-		if lobe_detection == 'gaussfit':
+		if self.lobe_detection == 'gaussfit':
 		    fftlet_shape = (self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE)
 		    self.fftlet_fit_images[:,:,k] = self.gaussian_func(*params)(*np.indices(fftlet_shape))
 
@@ -743,8 +743,10 @@ class DispersedFringeSensor(SegmentPistonSensor):
         src : Source
             The piston sensing guide star object
 	"""
+	self.reset()
 	self.propagate(src)
-	self.process(**kwargs)
+	self.fft()
+	self.process(**kwargs)	
 
     def piston(self, src, segment='edge', **kwargs):
         """
