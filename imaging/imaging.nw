@@ -147,6 +147,8 @@ cdef class Imaging:
 @
 \index{imaging!python!Imaging}
 <<imaging.pyx>>=
+from scipy.optimize import bisect
+import numpy as np
 cdef class Imaging:
     """
     Creates an imaging object.
@@ -313,6 +315,25 @@ cdef class Imaging:
         Resets the random number generator
         """
         self._c_imaging.reset_rng()
+
+    def ee80(self):
+        cdef:
+            int n, m
+            float[:] u, v
+        psf   = self.frame.host()
+        n,m   = psf.shape
+        u     = np.linspace(-1.0,1.0,n)*(n/2.0)
+        v     = np.linspace(-1.0,1.0,m)*(m/2.0)
+        x,y   = np.meshgrid(u,v)
+        def ee80_fun(float ee_Delta):
+            _ee_Delta_ = ee_Delta/2.0
+            gate = np.logical_and(np.abs(x)<=_ee_Delta_,np.abs(y)<=_ee_Delta_)
+            return np.sum(psf*gate)/psf.sum() - 0.8
+        try:
+            q = bisect(ee80_fun,3,n)
+        except ValueError:
+            q = np.float('inf')
+        return q
 
     property photoelectron_gain:
         def __get__(self):
@@ -1279,7 +1300,7 @@ __global__ void noisify(curandState *state, float *frame, const int n_frame,
            frame[id] += (readOutNoiseRms>0) ?
     	 curand_normal(&localState)*readOutNoiseRms : 0;
        frame[id] -= nBackgroundPhoton;
-       frame[id] = floorf(frame[id]);
+       frame[id] = (frame[id]>0) ? floorf(frame[id]) : ceilf(frame[id]);
        state[id] = localState;
          }
      }
