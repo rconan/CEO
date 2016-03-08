@@ -2,7 +2,7 @@ import constants
 from utilities import cuFloatArray, cuDoubleArray, cuIntArray, MaskAbstract, Mask, Telescope, GMT, StopWatch, SparseMatrix, SparseGradient, wavefrontFiniteDifference
 from source import Bundle, Complex_amplitude, Source, JSource
 from rayTracing import ZernikeS, Coordinates, Quaternion
-from atmosphere import AtmosphereAbstract, Atmosphere, GmtAtmosphere, Layer
+from atmosphere import AtmosphereAbstract, Atmosphere, GmtAtmosphere, Layer, JGmtAtmosphere
 from centroiding import Centroiding
 from imaging import Imaging, JImaging
 from shackHartmann import ShackHartmann
