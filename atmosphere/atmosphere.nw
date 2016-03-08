@@ -538,7 +538,7 @@ cdef class JGmtAtmosphere(GmtAtmosphere):
                                         NXY_PUPIL = json["pupil sampling"],
                                         fov = json["field-of-view [arcmin]"]*ARCMIN2RAD,
                                         duration = json["duration"],
-                                        filename = json["filename"],
+                                        filename = str( json["filename"] ),
                                         N_DURATION=json["time sampling"])
 @
 <<python atmosphere methods>>=
@@ -1173,6 +1173,9 @@ void atmosphere::save_layer_phasescreens(const char* _fullpath_to_phasescreens, 
   int k_DURATION;
   size_t N_WRITE, N_DATA;
   stopwatch tid;
+  time_t now;
+  struct tm beg;
+  char buff[128];
 
   FILE *fid;
   fid = fopen(_fullpath_to_phasescreens,"wb");
@@ -1182,6 +1185,9 @@ void atmosphere::save_layer_phasescreens(const char* _fullpath_to_phasescreens, 
   phase_screen_LAYER = (float*)malloc(sizeof(float)*N_DATA);
 
   for (k_DURATION=0;k_DURATION<_N_DURATION;k_DURATION++) {
+
+    time(&now);
+    beg = *localtime(&now);
 
     fprintf(stdout,"\n * LAYER PHASE SCREENS COMPUTING: %d/%d *\n",k_DURATION+1,_N_DURATION);
     layers_tau0 = k_DURATION*layers_duration;
@@ -1197,7 +1203,10 @@ void atmosphere::save_layer_phasescreens(const char* _fullpath_to_phasescreens, 
 	    N_WRITE,N_PHASE_LAYER,_fullpath_to_phasescreens);
     if (N_WRITE<N_PHASE_LAYER) { break; }
 
-    fprintf(stdout,"\n * ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ *\n");
+    beg.tm_sec += tid.elapsedTime*1e-3*(_N_DURATION-k_DURATION-1);
+    strftime(buff, sizeof buff, "%c", &beg);
+
+    fprintf(stdout,"\n * ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ * ETA: %s\n",buff);
   }
   fclose(fid);
 
