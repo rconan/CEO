@@ -868,22 +868,31 @@ cdef class Source:
 \index{source!python!JSource}
 <<source.pyx>>=
 import json
-cdef class JSource(Source):
+class JSONAbstract:
+    def __init__(self, jprms = None, jsonfile = None):
+        if jsonfile is not None:
+            with open(jsonfile) as f:
+	        self.jprms = json.loads(f.read())
+        else:
+           self.jprms = jprms
+        print(self)
+
+    def __str__(self):
+        return json.dumps(self.jprms,indent=2, separators=(',', ': '))
+class JSource(JSONAbstract,Source):
     """
         docstring for JSource
     """
-    def __init__(self, dict jprms = None, bytes jsonfile = None):
-        if jsonfile is not None:
-            with open(jsonfile) as f:
-	        jprms = json.loads(f.read())
-        super(JSource,self).__init__(jprms["band"],
-                                    zenith = jprms["zenith"],
-                                    azimuth = jprms["azimuth"],
-                                    height = np.float(jprms["height"]),
-                                    magnitude = jprms["magnitude"],
-                                    rays_box_size = jprms["pupil size"],
-                                    rays_box_sampling = jprms["pupil sampling"],
-                                    rays_origin = jprms["rays origin"])
+    def __init__(self, jprms = None, jsonfile = None):
+        JSONAbstract.__init__(self,jprms=jprms, jsonfile=jsonfile)
+        Source.__init__(self,self.jprms["band"],
+                        zenith            = self.jprms["zenith"],
+                        azimuth           = self.jprms["azimuth"],
+                        height            = np.float(self.jprms["height"]),
+                        magnitude         = self.jprms["magnitude"],
+                        rays_box_size     = self.jprms["pupil size"],
+                        rays_box_sampling = self.jprms["pupil sampling"],
+                        rays_origin       = self.jprms["rays origin"])
 @
 \subsubsection{Ray tracing routines}
 \label{sec:ray-tracing-routines-1}
