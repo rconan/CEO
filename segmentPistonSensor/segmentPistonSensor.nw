@@ -136,7 +136,9 @@ cdef class SegmentPistonSensor:
                                           field_of_view*ARCSEC2RAD,
                                           nyquist_factor)
 
-        self.lenslet_mask = MaskAbstract(self._c_segmentPistonSensor.N_PX2, SPS_lenslet_mask=self)
+        self.lenslet_mask = MaskAbstract(self._c_segmentPistonSensor.N_PX2)
+        self.lenslet_mask._c_mask = &(self._c_segmentPistonSensor.lenslet_mask)
+        self.lenslet_mask.f._c_gpu.dev_data = self.lenslet_mask._c_mask.f
 
         self.W = Complex_amplitude()
         self.W._c_complex_amplitude = &(self._c_segmentPistonSensor.lenslet)
@@ -147,7 +149,9 @@ cdef class SegmentPistonSensor:
                               N_PX_IMAGE = self._c_segmentPistonSensor.N_PX_IMAGE,
                               BIN_IMAGE = 2, sps=self)
 
-        self.fft_mask = MaskAbstract( self.camera.N_PX_FRAME**2, SPS_fft_mask=self)
+        self.fft_mask = MaskAbstract( self.camera.N_PX_FRAME**2)
+        self.fft_mask._c_mask = &(self._c_segmentPistonSensor.fft_mask)
+        self.fft_mask.f._c_gpu.dev_data = self.fft_mask._c_mask.f
 
         cdef int n
         n = self._c_segmentPistonSensor.FFT.N_SIDE_LENSLET*self._c_segmentPistonSensor.FFT.N_PX_CAMERA

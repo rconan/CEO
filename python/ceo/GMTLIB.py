@@ -400,18 +400,7 @@ u
 
         return D
 # JGMT_MX
-import json
-class JSONAbstract:
-    def __init__(self, jprms = None, jsonfile = None):
-        if jsonfile is not None:
-            with open(jsonfile) as f:
-	        self.jprms = json.loads(f.read())
-        else:
-           self.jprms = jprms
-        print(self)
-
-    def __str__(self):
-        return json.dumps(self.jprms,indent=2, separators=(',', ': '))
+from utilities import JSONAbstract
 class JGMT_MX(JSONAbstract,GMT_MX):
     def __init__(self, jprms = None, jsonfile = None):
         JSONAbstract.__init__(self,jprms=jprms, jsonfile=jsonfile)
