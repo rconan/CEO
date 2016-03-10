@@ -531,19 +531,29 @@ cdef class GmtAtmosphere(AtmosphereAbstract):
 <<atmosphere.pyx>>=
 import json
 from constants import ARCMIN2RAD
-cdef class JGmtAtmosphere(GmtAtmosphere):
-  def __init__(self, dict jprms = None, bytes jsonfile = None):
-    if jsonfile is not None:
-        with open(jsonfile) as f:
-	    jprms = json.loads(f.read())
-    super(JGmtAtmosphere,self).__init__(jprms["r0"],
-                                        jprms["L0"],
-                                        L = jprms["pupil size"],
-                                        NXY_PUPIL = jprms["pupil sampling"],
-                                        fov = jprms["field-of-view [arcmin]"]*ARCMIN2RAD,
-                                        duration = jprms["duration"],
-                                        filename = str( jprms["filename"] ),
-                                        N_DURATION=jprms["time sampling"])
+class JSONAbstract:
+    def __init__(self, jprms = None, jsonfile = None):
+        if jsonfile is not None:
+            with open(jsonfile) as f:
+	        self.jprms = json.loads(f.read())
+        else:
+           self.jprms = jprms
+        print(self)
+
+    def __str__(self):
+        return json.dumps(self.jprms,indent=2, separators=(',', ': '))
+from constants import ARCMIN2RAD
+class JGmtAtmosphere(JSONAbstract,GmtAtmosphere):
+    def __init__(self, jprms = None, jsonfile = None):
+        JSONAbstract.__init__(self,jprms=jprms, jsonfile=jsonfile)
+        GmtAtmosphere.__init__(self,self.jprms["r0"],
+                               self.jprms["L0"],
+                               L          = self.jprms["pupil size"],
+                               NXY_PUPIL  = self.jprms["pupil sampling"],
+                               fov        = self.jprms["field-of-view [arcmin]"]*ARCMIN2RAD,
+                               duration   = self.jprms["duration"],
+                               filename   = str( self.jprms["filename"] ),
+                               N_DURATION = self.jprms["time sampling"])
 @
 <<python atmosphere methods>>=
 def reset(self):

@@ -196,14 +196,14 @@ cdef class Imaging:
     """
 
     def __cinit__(self, *args, **kwargs):
-	      self._c_imaging = new imaging()
+        self._c_imaging = new imaging()
 
     def __init__(self, int N_SIDE_LENSLET, int N_PX_PUPIL,
-		              DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1,
-		              N_SOURCE=1,
-		              ShackHartmann wfs=None,
-                  SegmentPistonSensor sps=None,
-		              Pyramid pym=None):
+		 DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1,
+		 N_SOURCE=1,
+		 ShackHartmann wfs=None,
+		 SegmentPistonSensor sps=None,
+		 Pyramid pym=None):
         if N_PX_IMAGE is None:
             N_PX_IMAGE = N_PX_PUPIL;
         self.N_SIDE_LENSLET = N_SIDE_LENSLET
@@ -346,17 +346,26 @@ cdef class Imaging:
 \index{imaging!python!JImaging}
 <<imaging.pyx>>=
 import json
-cdef class JImaging(Imaging):
-    """
-    """
-    def __init__(self, dict jprms = None, bytes jsonfile = None):
+class JSONAbstract:
+    def __init__(self, jprms = None, jsonfile = None):
         if jsonfile is not None:
             with open(jsonfile) as f:
-                jprms = json.loads(f.read())
-        super(JImaging,self).__init__(1,jprms["pupil sampling"]-1,
-                                    DFT_osf=2*jprms["nyquist factor"],
-                                    N_PX_IMAGE=jprms["resolution"],
-                                    N_SOURCE=jprms["guide star #"])
+	        self.jprms = json.loads(f.read())
+        else:
+           self.jprms = jprms
+        print(self)
+
+    def __str__(self):
+        return json.dumps(self.jprms,indent=2, separators=(',', ': '))
+class JImaging(JSONAbstract,Imaging):
+    """
+    """
+    def __init__(self, jprms = None, jsonfile = None):
+        JSONAbstract.__init__(self,jprms=jprms, jsonfile=jsonfile)
+	Imaging.__init__(self,1,self.jprms["pupil sampling"]-1,
+			 DFT_osf    = 2*self.jprms["nyquist factor"],
+			 N_PX_IMAGE = self.jprms["resolution"],
+			 N_SOURCE   = self.jprms["guide star #"])
 @
 
 \section{Parameters}

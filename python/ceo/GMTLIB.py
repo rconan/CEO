@@ -401,15 +401,24 @@ u
         return D
 # JGMT_MX
 import json
-class JGMT_MX(GMT_MX):
+class JSONAbstract:
     def __init__(self, jprms = None, jsonfile = None):
         if jsonfile is not None:
             with open(jsonfile) as f:
-                jprms = json.loads(f.read())
-        super(JGMT_MX,self).__init__(jprms["pupil size"],
-                                    jprms["pupil sampling"],
-                                    M1_radial_order=jprms["M1"]["Zernike radial order"],
-                                    M2_radial_order=jprms["M2"]["Zernike radial order"])
+	        self.jprms = json.loads(f.read())
+        else:
+           self.jprms = jprms
+        print(self)
+
+    def __str__(self):
+        return json.dumps(self.jprms,indent=2, separators=(',', ': '))
+class JGMT_MX(JSONAbstract,GMT_MX):
+    def __init__(self, jprms = None, jsonfile = None):
+        JSONAbstract.__init__(self,jprms=jprms, jsonfile=jsonfile)
+        GMT_MX.__init__(self,self.jprms["pupil size"],
+                        self.jprms["pupil sampling"],
+                        M1_radial_order=self.jprms["M1"]["Zernike radial order"],
+                        M2_radial_order=self.jprms["M2"]["Zernike radial order"])
 
 
 class TT7(ShackHartmann):
