@@ -100,7 +100,7 @@ void CUBLAS_ERROR(cublasStatus_t status);
 
 <<lenslet 2 actuator>>
 __global__ void fill_ones_char(char *ones, int n_data) ;
-__global__ void circular_pupil(char *pupil, int N);
+__global__ void circular_pupil(char *pupil, int N, float scale);
 __global__ void square_pupil(char *pupil, int N, int N_S, int I_S, int J_S);
 __global__ void rot_square_pupil(char *pupil, int N, float N_S, 
 				 float I_0, float J_0, float theta, float I_S, float J_S);
@@ -880,9 +880,9 @@ void CUBLAS_ERROR(cublasStatus_t status) {
 
 In the following, a circular pupil in a [[N]]$\times$[[N]] array is computed:
 <<circular pupil>>=
-__global__ void circular_pupil(char *pupil, int N)
+__global__ void circular_pupil(char *pupil, int N, float scale)
 {
-  int i, j, k;
+  int i, j, k, l2;
   float h,x,y,r;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
@@ -892,7 +892,9 @@ __global__ void circular_pupil(char *pupil, int N)
     x = i - h;
     y = j - h;
     r = x*x + y*y;
-    pupil[k] = (r>N*N/4) ? 0 : 1;
+    l2 = N*N/4;
+    l2 *= scale*scale;
+    pupil[k] = (r>l2) ? 0 : 1;
   }
 }
 @
@@ -1280,6 +1282,7 @@ struct mask {
 	     float theta, float i_s, float j_s, int n_out );
   void setup_circular(int n);
   void setup_circular(int n, float D);
+  void setup_circular(int n, float D, float scale);
   void setup_GMT(int n, float S);
   void set_filter(void);
   void set_filter_quiet(void);
@@ -1375,7 +1378,7 @@ void mask::setup_circular(int n) {
   <<setup common>>
   dim3 blockDim(16,16);
   dim3 gridDim(n/16+1,n/16+1);
-  circular_pupil LLL gridDim,blockDim RRR ( m , n );
+  circular_pupil LLL gridDim,blockDim RRR ( m , n , 1.0 );
   set_filter();
 }
 @ \item with a circular mask of diameter [[D]] (in meter) inside an [[n]]$\times$[[n]] array
@@ -1390,7 +1393,22 @@ void mask::setup_circular(int n, float D) {
   <<setup common>>
   dim3 blockDim(16,16);
   dim3 gridDim(n/16+1,n/16+1);
-  circular_pupil LLL gridDim,blockDim RRR ( m , n );
+  circular_pupil LLL gridDim,blockDim RRR ( m , n , 1.0 );
+  set_filter();
+}
+@ \item with a circular mask of diameter [[D]] (in meter) inside an [[n]]$\times$[[n]] array, [[D]] is sampled with [[n]]$\times$[[scale]] pixels
+\index{utilities!mask!setup\_circular}
+<<mask functions>>=
+void mask::setup_circular(int n, float D, float scale) {
+  size_px[0] = size_px[1] = n;
+  size_m[0]  = size_m[1]  = D;
+  delta[0]   = delta[1]   = D/(n-1);
+  nel = n*n;
+  area = 0.25*PI*D*D;
+  <<setup common>>
+  dim3 blockDim(16,16);
+  dim3 gridDim(n/16+1,n/16+1);
+  circular_pupil LLL gridDim,blockDim RRR ( m , n , scale );
   set_filter();
 }
 @ \item with the Giant Magellan Telescope mask inside an [[n]]$\times$[[n]] array of length [[S]] in meter
@@ -1601,6 +1619,7 @@ The python wrapper is
         void setup(float , float , float , float , 
                    float , float , float , int)
         void setup_circular(int, float)
+        void setup_circular(int, float, float)
         void setup_GMT(int, float)
         void set_gmt_piston(float *, float *)
         void alter(float *)
@@ -1744,9 +1763,9 @@ cdef class Telescope(MaskAbstract):
     --------
     MaskAbstract
     """ 
-    def __init__(self, int n, float D):
+    def __init__(self, int n, float D, float scale=1.0):
         super(Telescope,self).__init__(n*n)
-        self._c_mask.setup_circular(n,D)    
+        self._c_mask.setup_circular(n,D,scale)    
 	self.f = cuFloatArray(shape=(self.n,1))
         self.f._c_gpu.dev_data = self._c_mask.f
 
