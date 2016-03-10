@@ -238,12 +238,28 @@ cdef extern from "utilities.h":
         rtd y
         rtd z
 @ 
+\index{utilities!python!JSONAbstract}
 <<utilities.pyx>>=
 import numpy as np
 import math
 from libc cimport math
 cimport numpy as np
 cimport utilities
+import json
+class JSONAbstract:
+    def __init__(self, jprms = None, jsonfile = None):
+        if jsonfile is not None:
+            with open(jsonfile) as f:
+	        self.jprms = json.loads(f.read())
+        else:
+           self.jprms = jprms
+        print(self)
+
+    def __str__(self):
+        return json.dumps(self.jprms,indent=2, separators=(',', ': '))
+
+    def __getitem__(self, key):
+        return self.jprms[key]
 @
 
 \section{Functions}
@@ -1627,7 +1643,6 @@ The python wrapper is
 @ 
 \index{utilities!python!MaskAbstract}
 <<class definitions>>=
-from segmentPistonSensor cimport SegmentPistonSensor
 # MaskAbstract
 cdef class MaskAbstract:
     cdef mask *_c_mask
@@ -1659,12 +1674,8 @@ cdef class MaskAbstract:
     def __cinit__(self, *args, **kwargs):
  	self._c_mask = new mask()
 
-    def __init__(self, int n, SegmentPistonSensor SPS_fft_mask=None, SegmentPistonSensor SPS_lenslet_mask=None):
+    def __init__(self, int n):
         self.n = n
-        if SPS_fft_mask is not None:
-            self._c_mask = &(SPS_fft_mask._c_segmentPistonSensor.fft_mask)
-	elif SPS_lenslet_mask is not None:
-            self._c_mask = &(SPS_lenslet_mask._c_segmentPistonSensor.lenslet_mask)
         self.f = cuFloatArray(shape=(self.n,1))
         self.f._c_gpu.dev_data = self._c_mask.f
 
