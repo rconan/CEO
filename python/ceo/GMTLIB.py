@@ -3,7 +3,8 @@ import math
 import numpy as np
 from scipy.optimize import brenth, leastsq
 from skimage.feature import blob_log
-from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GmtMirrors, SegmentPistonSensor
+from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GmtMirrors, SegmentPistonSensor, \
+constants, Telescope, cuFloatArray
 
 class GMT_MX(GmtMirrors):
     """
@@ -523,6 +524,25 @@ class DispersedFringeSensor(SegmentPistonSensor):
 	self._N_SRC = src.N_SRC
 	self.INIT_ALL_ATTRIBUTES = False
 	self.lobe_detection = 'gaussfit'
+
+    def init_detector_mask(self, mask_size):
+	"""
+	Defines the circular mask to be applied over each fringe image.
+
+	Parameters
+	----------
+	mask_size: float
+	   Diameter of mask in arcseconds. 
+	"""
+	mask_size_px = mask_size / (self.pixel_scale * constants.RAD2ARCSEC)
+	print "Size of DFS detector mask [pix]: %d"%(np.round(mask_size_px)) 
+	N_PX_FRINGE_IMAGE = self.camera.N_PX_IMAGE / self.camera.BIN_IMAGE
+	scale = mask_size_px / N_PX_FRINGE_IMAGE
+	circ = Telescope(N_PX_FRINGE_IMAGE, 1, scale=scale)
+	circ_m = circ.f.host(shape=(N_PX_FRINGE_IMAGE,N_PX_FRINGE_IMAGE))
+	big_circ_m = np.tile(np.tile(circ_m,self.camera.N_SIDE_LENSLET).T,self.camera.N_SIDE_LENSLET)
+	gpu_big_circ_m = cuFloatArray(host_data=big_circ_m)
+	self.fft_mask.alter(gpu_big_circ_m)
 
     def gaussian_func(self, height, center_x, center_y, width_x, width_y, rotation):
     	"""
