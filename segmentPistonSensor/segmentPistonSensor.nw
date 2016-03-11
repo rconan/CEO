@@ -37,7 +37,7 @@ struct segmentPistonSensor {
   void cleanup(void);
   void propagate(source *src);
   void readout(float exposureTime, float readoutNoiseRms, 
-	       float nBackgroundPhoton, float backgroundNoiseEffectiveArea);
+	       float nBackgroundPhoton);
   void fft(void);
   void info(void);
 };
@@ -77,7 +77,7 @@ cdef extern from "segmentPistonSensor.h":
         void setup(gmt_m1 *, source *, float, float, float)
         void cleanup()
         void propagate(source *)
-        void readout(float, float, float, float)
+        void readout(float, float, float)
         void fft()
 <<class definition>>
 @ 
@@ -136,7 +136,9 @@ cdef class SegmentPistonSensor:
                                           field_of_view*ARCSEC2RAD,
                                           nyquist_factor)
 
-        self.lenslet_mask = MaskAbstract(self._c_segmentPistonSensor.N_PX2, SPS_lenslet_mask=self)
+        self.lenslet_mask = MaskAbstract(self._c_segmentPistonSensor.N_PX2)
+        self.lenslet_mask._c_mask = &(self._c_segmentPistonSensor.lenslet_mask)
+        self.lenslet_mask.f._c_gpu.dev_data = self.lenslet_mask._c_mask.f
 
         self.W = Complex_amplitude()
         self.W._c_complex_amplitude = &(self._c_segmentPistonSensor.lenslet)
@@ -147,7 +149,9 @@ cdef class SegmentPistonSensor:
                               N_PX_IMAGE = self._c_segmentPistonSensor.N_PX_IMAGE,
                               BIN_IMAGE = 2, sps=self)
 
-        self.fft_mask = MaskAbstract( self.camera.N_PX_FRAME**2, SPS_fft_mask=self)
+        self.fft_mask = MaskAbstract( self.camera.N_PX_FRAME**2)
+        self.fft_mask._c_mask = &(self._c_segmentPistonSensor.fft_mask)
+        self.fft_mask.f._c_gpu.dev_data = self.fft_mask._c_mask.f
 
         cdef int n
         n = self._c_segmentPistonSensor.FFT.N_SIDE_LENSLET*self._c_segmentPistonSensor.FFT.N_PX_CAMERA
@@ -169,7 +173,7 @@ cdef class SegmentPistonSensor:
         self._c_segmentPistonSensor.propagate(gs._c_source)
      
     def readOut(self, float exposureTime, float readOutNoiseRms, 
-                float backgroundMagnitude, float backgroundNoiseEffectiveArea=2.25):
+                float backgroundMagnitude):
         """
         Reads-out the detector applying photon noise, read-out noise and background noise
 
@@ -183,7 +187,7 @@ cdef class SegmentPistonSensor:
             The background magnitude per arcsec square
         """
         self._c_segmentPistonSensor.readout(exposureTime, readOutNoiseRms, 
-                                            backgroundMagnitude, backgroundNoiseEffectiveArea)
+                                            backgroundMagnitude)
 
     def fft(self):
         """
@@ -302,6 +306,10 @@ float dispersion;
 \item the number of spectral element:
 <<parameters>>=
 int N_LAMBDA;
+@ 
+\item the number of guide star:
+<<parameters>>=
+int N_GS;
 @
 \item the camera pixel scale:
 <<parameters>>=
@@ -381,6 +389,7 @@ D_px2         *= D_px;
 dispersion     = _dispersion_;
 field_of_view  = _field_of_view_;
 nyquist_factor = _nyquist_factor_;
+N_GS           = src->N_SRC;
 @
 The guide stars wavefront are cropped on areas centered on the segment piston sensor lenslet and twice their size.
 <<setup content>>=
@@ -389,7 +398,7 @@ N_PX_LENSLET2 *= N_PX_LENSLET;
 @
 All the images corresponding to the cropped areas will be assembled on a square camera with [[N_LENSLET]]$\times$[[N_LENSLET]] lenslets.
 <<setup content>>=
-N_LENSLET2 =  N_LENSLET = ceil(sqrt(12*src->N_SRC));
+N_LENSLET2 =  N_LENSLET = ceil(sqrt(12*N_GS));
 N_LENSLET2 *= N_LENSLET;
 @
 A new \verb|complex_amplitude| object [[lenslet]] is instanciated to hold all the cropped wavefronts of all the guide stars.
@@ -490,7 +499,7 @@ The propagation through the segment piston sensor is done in 2 steps.
 First, the incoming wavefront is cut into square pieces twice the size of the sensor lenslets and also centered on the lenslets.
 <<propagation content>>=
 dim3 blockDim(16,16);
-dim3 gridDim(N_PX_LENSLET/16+1,N_PX_LENSLET/16+1,gs->N_SRC);
+dim3 gridDim(N_PX_LENSLET/16+1,N_PX_LENSLET/16+1,N_GS);
 lenslet_trim LLL gridDim, blockDim RRR (lenslet.phase, 
 					lenslet.amplitude, 
 					lenslet_mask.m,
@@ -502,7 +511,7 @@ lenslet_trim LLL gridDim, blockDim RRR (lenslet.phase,
 					lenslet_height, R,
 					gs->dev_ptr, m2px);
 lenslet_mask.set_filter_quiet();
-lenslet_mask.area = gs->N_SRC*lenslet_mask.nnz*
+lenslet_mask.area = N_GS*lenslet_mask.nnz*
   gs->wavefront.M->area/gs->wavefront.M->nnz/N_LAMBDA;
 @ 
 Second, the piecewise wavefront are propagated through the lenslets and to the focal plane on the detector, one wavelength at a time.
@@ -622,8 +631,7 @@ The detector readout routine adds photon, read--out and background noise to the 
 \index{segmentPistonSensor!segmentPistonSensor!readout}
 <<read-out>>=
 void segmentPistonSensor::readout(float exposureTime, float readOutNoiseRms, 
-				  float backgroundMagnitude,
-				  float backgroundNoiseEffectiveArea)
+				  float backgroundMagnitude)
 {
   float p2, nBackgroundPhoton;
   p2 = pixel_scale*camera.BIN_IMAGE/ARCSEC(1);
@@ -631,9 +639,9 @@ void segmentPistonSensor::readout(float exposureTime, float readOutNoiseRms,
   lenslet_src.magnitude = backgroundMagnitude;
   nBackgroundPhoton = p2*lenslet_src.n_photon();
   //nBackgroundPhoton *= backgroundNoiseEffectiveArea;
-  nBackgroundPhoton *= lenslet_mask.area*N_LAMBDA;
-  nBackgroundPhoton *= exposureTime*camera.photoelectron_gain;
-  fprintf(stdout,"nBackgroundPhoton=%g\n",nBackgroundPhoton);
+  nBackgroundPhoton *= lenslet_mask.area*N_LAMBDA/N_GS/12;
+  nBackgroundPhoton *= camera.photoelectron_gain;
+  fprintf(stdout,"nBackgroundPhoton=%g\n",exposureTime*nBackgroundPhoton);
   camera.readout(exposureTime, readOutNoiseRms, nBackgroundPhoton);
 }
 @ 
@@ -645,6 +653,7 @@ void segmentPistonSensor::readout(float exposureTime, float readOutNoiseRms,
 <<Fourier>>=
 void segmentPistonSensor::fft(void)
 {
+  fft_src.wavefront.masked();
   FFT.propagateNoOverlap( &fft_src );
 }
 @ 

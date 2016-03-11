@@ -100,7 +100,7 @@ void CUBLAS_ERROR(cublasStatus_t status);
 
 <<lenslet 2 actuator>>
 __global__ void fill_ones_char(char *ones, int n_data) ;
-__global__ void circular_pupil(char *pupil, int N);
+__global__ void circular_pupil(char *pupil, int N, float scale);
 __global__ void square_pupil(char *pupil, int N, int N_S, int I_S, int J_S);
 __global__ void rot_square_pupil(char *pupil, int N, float N_S, 
 				 float I_0, float J_0, float theta, float I_S, float J_S);
@@ -238,12 +238,28 @@ cdef extern from "utilities.h":
         rtd y
         rtd z
 @ 
+\index{utilities!python!JSONAbstract}
 <<utilities.pyx>>=
 import numpy as np
 import math
 from libc cimport math
 cimport numpy as np
 cimport utilities
+import json
+class JSONAbstract:
+    def __init__(self, jprms = None, jsonfile = None):
+        if jsonfile is not None:
+            with open(jsonfile) as f:
+	        self.jprms = json.loads(f.read())
+        else:
+           self.jprms = jprms
+        print(self)
+
+    def __str__(self):
+        return json.dumps(self.jprms,indent=2, separators=(',', ': '))
+
+    def __getitem__(self, key):
+        return self.jprms[key]
 @
 
 \section{Functions}
@@ -573,6 +589,7 @@ In the following, a structure to time a chunk of CUDA code is defined:
 \index{utilities!stopwatch}
 <<tic-toc>>=
 struct stopwatch{
+  float   elapsedTime;
   cudaEvent_t     start, stop;
   void tic(void) {
     HANDLE_ERROR( cudaEventCreate( &start ) );
@@ -582,7 +599,6 @@ struct stopwatch{
   void toc(void) {
     HANDLE_ERROR( cudaEventRecord( stop, 0 ) );
     HANDLE_ERROR( cudaEventSynchronize( stop ) );
-    float   elapsedTime;
     HANDLE_ERROR( cudaEventElapsedTime( &elapsedTime,
                                         start, stop ) );
     printf("\x1B[33mElapsed time: %8.2E ms\x1B[0m\n", elapsedTime );
@@ -592,7 +608,6 @@ struct stopwatch{
   void toc(const char *message) {
     HANDLE_ERROR( cudaEventRecord( stop, 0 ) );
     HANDLE_ERROR( cudaEventSynchronize( stop ) );
-    float   elapsedTime;
     HANDLE_ERROR( cudaEventElapsedTime( &elapsedTime,
                                         start, stop ) );
     printf("\x1B[33m%s: Elapsed time: %8.2E ms\x1B[0m\n", message, elapsedTime );
@@ -881,9 +896,9 @@ void CUBLAS_ERROR(cublasStatus_t status) {
 
 In the following, a circular pupil in a [[N]]$\times$[[N]] array is computed:
 <<circular pupil>>=
-__global__ void circular_pupil(char *pupil, int N)
+__global__ void circular_pupil(char *pupil, int N, float scale)
 {
-  int i, j, k;
+  int i, j, k, l2;
   float h,x,y,r;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
@@ -893,7 +908,9 @@ __global__ void circular_pupil(char *pupil, int N)
     x = i - h;
     y = j - h;
     r = x*x + y*y;
-    pupil[k] = (r>N*N/4) ? 0 : 1;
+    l2 = N*N/4;
+    l2 *= scale*scale;
+    pupil[k] = (r>l2) ? 0 : 1;
   }
 }
 @
@@ -1281,6 +1298,7 @@ struct mask {
 	     float theta, float i_s, float j_s, int n_out );
   void setup_circular(int n);
   void setup_circular(int n, float D);
+  void setup_circular(int n, float D, float scale);
   void setup_GMT(int n, float S);
   void set_filter(void);
   void set_filter_quiet(void);
@@ -1376,7 +1394,7 @@ void mask::setup_circular(int n) {
   <<setup common>>
   dim3 blockDim(16,16);
   dim3 gridDim(n/16+1,n/16+1);
-  circular_pupil LLL gridDim,blockDim RRR ( m , n );
+  circular_pupil LLL gridDim,blockDim RRR ( m , n , 1.0 );
   set_filter();
 }
 @ \item with a circular mask of diameter [[D]] (in meter) inside an [[n]]$\times$[[n]] array
@@ -1391,7 +1409,22 @@ void mask::setup_circular(int n, float D) {
   <<setup common>>
   dim3 blockDim(16,16);
   dim3 gridDim(n/16+1,n/16+1);
-  circular_pupil LLL gridDim,blockDim RRR ( m , n );
+  circular_pupil LLL gridDim,blockDim RRR ( m , n , 1.0 );
+  set_filter();
+}
+@ \item with a circular mask of diameter [[D]] (in meter) inside an [[n]]$\times$[[n]] array, [[D]] is sampled with [[n]]$\times$[[scale]] pixels
+\index{utilities!mask!setup\_circular}
+<<mask functions>>=
+void mask::setup_circular(int n, float D, float scale) {
+  size_px[0] = size_px[1] = n;
+  size_m[0]  = size_m[1]  = D;
+  delta[0]   = delta[1]   = D/(n-1);
+  nel = n*n;
+  area = 0.25*PI*D*D;
+  <<setup common>>
+  dim3 blockDim(16,16);
+  dim3 gridDim(n/16+1,n/16+1);
+  circular_pupil LLL gridDim,blockDim RRR ( m , n , scale );
   set_filter();
 }
 @ \item with the Giant Magellan Telescope mask inside an [[n]]$\times$[[n]] array of length [[S]] in meter
@@ -1602,6 +1635,7 @@ The python wrapper is
         void setup(float , float , float , float , 
                    float , float , float , int)
         void setup_circular(int, float)
+        void setup_circular(int, float, float)
         void setup_GMT(int, float)
         void set_gmt_piston(float *, float *)
         void alter(float *)
@@ -1609,7 +1643,6 @@ The python wrapper is
 @ 
 \index{utilities!python!MaskAbstract}
 <<class definitions>>=
-from segmentPistonSensor cimport SegmentPistonSensor
 # MaskAbstract
 cdef class MaskAbstract:
     cdef mask *_c_mask
@@ -1641,12 +1674,8 @@ cdef class MaskAbstract:
     def __cinit__(self, *args, **kwargs):
  	self._c_mask = new mask()
 
-    def __init__(self, int n, SegmentPistonSensor SPS_fft_mask=None, SegmentPistonSensor SPS_lenslet_mask=None):
+    def __init__(self, int n):
         self.n = n
-        if SPS_fft_mask is not None:
-            self._c_mask = &(SPS_fft_mask._c_segmentPistonSensor.fft_mask)
-	elif SPS_lenslet_mask is not None:
-            self._c_mask = &(SPS_lenslet_mask._c_segmentPistonSensor.lenslet_mask)
         self.f = cuFloatArray(shape=(self.n,1))
         self.f._c_gpu.dev_data = self._c_mask.f
 
@@ -1745,9 +1774,9 @@ cdef class Telescope(MaskAbstract):
     --------
     MaskAbstract
     """ 
-    def __init__(self, int n, float D):
+    def __init__(self, int n, float D, float scale=1.0):
         super(Telescope,self).__init__(n*n)
-        self._c_mask.setup_circular(n,D)    
+        self._c_mask.setup_circular(n,D,scale)    
 	self.f = cuFloatArray(shape=(self.n,1))
         self.f._c_gpu.dev_data = self._c_mask.f
 

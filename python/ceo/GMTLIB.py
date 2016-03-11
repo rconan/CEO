@@ -399,13 +399,15 @@ u
         sys.stdout.write("------------\n")
 
         return D
-
-class JGMT_MX(GMT_MX):
-    def __init__(self, json):
-        super(JGMT_MX,self).__init__(json["pupil size"],
-                                    json["pupil sampling"],
-                                    M1_radial_order=json["M1"]["Zernike radial order"],
-                                    M2_radial_order=json["M2"]["Zernike radial order"])
+# JGMT_MX
+from utilities import JSONAbstract
+class JGMT_MX(JSONAbstract,GMT_MX):
+    def __init__(self, jprms = None, jsonfile = None):
+        JSONAbstract.__init__(self,jprms=jprms, jsonfile=jsonfile)
+        GMT_MX.__init__(self,self.jprms["pupil size"],
+                        self.jprms["pupil sampling"],
+                        M1_radial_order=self.jprms["M1"]["Zernike radial order"],
+                        M2_radial_order=self.jprms["M2"]["Zernike radial order"])
 
 
 class TT7(ShackHartmann):

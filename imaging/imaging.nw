@@ -41,7 +41,7 @@ struct imaging {
   void set_pointing_direction(float zen, float azim);
 
   void reset(void);
-  void reset_rng(void);
+  void reset_rng(int SEED);
 
   void propagate(source *src);
   void propagateNoOverlap(source *src);
@@ -133,7 +133,7 @@ cdef extern from "imaging.h":
         void propagateThroughModulatedPyramid(source *, float)
         void readout(float, float)
         void reset()
-        void reset_rng()
+        void reset_rng(int)
 <<class definitions>>
 @
 <<class definitions>>=
@@ -147,6 +147,8 @@ cdef class Imaging:
 @
 \index{imaging!python!Imaging}
 <<imaging.pyx>>=
+from scipy.optimize import bisect
+import numpy as np
 cdef class Imaging:
     """
     Creates an imaging object.
@@ -194,14 +196,14 @@ cdef class Imaging:
     """
 
     def __cinit__(self, *args, **kwargs):
-	      self._c_imaging = new imaging()
+        self._c_imaging = new imaging()
 
     def __init__(self, int N_SIDE_LENSLET, int N_PX_PUPIL,
-		              DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1,
-		              N_SOURCE=1,
-		              ShackHartmann wfs=None,
-                  SegmentPistonSensor sps=None,
-		              Pyramid pym=None):
+		 DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1,
+		 N_SOURCE=1,
+		 ShackHartmann wfs=None,
+		 SegmentPistonSensor sps=None,
+		 Pyramid pym=None):
         if N_PX_IMAGE is None:
             N_PX_IMAGE = N_PX_PUPIL;
         self.N_SIDE_LENSLET = N_SIDE_LENSLET
@@ -308,11 +310,32 @@ cdef class Imaging:
         """
         self._c_imaging.reset()
 
-    def reset_rng(self):
+    def reset_rng(self, int SEED):
         """
         Resets the random number generator
         """
-        self._c_imaging.reset_rng()
+        self._c_imaging.reset_rng(SEED)
+
+    def ee80(self):
+        cdef:
+            int n, m
+            double q
+            double[:,::1] x, y, gate
+            double[:] u, v
+        psf   = self.frame.host()
+        n,m   = psf.shape
+        u     = np.linspace(-1.0,1.0,n)*(n/2.0)
+        v     = np.linspace(-1.0,1.0,m)*(m/2.0)
+        x,y   = np.meshgrid(u,v)
+        def ee80_fun(float ee_Delta):
+            _ee_Delta_ = ee_Delta/2.0
+            gate = np.logical_and(np.abs(x)<=_ee_Delta_,np.abs(y)<=_ee_Delta_)
+            return np.sum(psf*gate)/psf.sum() - 0.8
+        try:
+            q = bisect(ee80_fun,3,n)
+        except ValueError:
+            q = np.float('inf')
+        return q
 
     property photoelectron_gain:
         def __get__(self):
@@ -322,14 +345,16 @@ cdef class Imaging:
 @
 \index{imaging!python!JImaging}
 <<imaging.pyx>>=
-cdef class JImaging(Imaging):
+from utilities import JSONAbstract
+class JImaging(JSONAbstract,Imaging):
     """
     """
-    def __init__(self, dict json):
-        super(JImaging,self).__init__(1,json["pupil sampling"]-1,
-                                    DFT_osf=2*json["nyquist factor"],
-                                    N_PX_IMAGE=json["resolution"],
-                                    N_SOURCE=json["guide star #"])
+    def __init__(self, jprms = None, jsonfile = None):
+        JSONAbstract.__init__(self,jprms=jprms, jsonfile=jsonfile)
+	Imaging.__init__(self,1,self.jprms["pupil sampling"]-1,
+			 DFT_osf    = 2*self.jprms["nyquist factor"],
+			 N_PX_IMAGE = self.jprms["resolution"],
+			 N_SOURCE   = self.jprms["guide star #"])
 @
 
 \section{Parameters}
@@ -351,11 +376,13 @@ if it is positive or null then the guide star is displaced in the image plane ac
 \item the pixel scale [[pixel_scale]],
 \item a flag setting the pointing of the imaging device either absolute or relative to the direction of the light source [[absolute_pointing]],
 \item the optics and detector photon to electron gain [[photoelectron_gain]],
+\item the random seed generator [[LOCAL_RAND_SEED]].
 \end{itemize}
 
 <<parameters>>=
 int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_LENSLET,
-  N_SOURCE, N_PX_IMAGE, N_PX_CAMERA, N_FRAME, BIN_IMAGE;
+    N_SOURCE, N_PX_IMAGE, N_PX_CAMERA, N_FRAME, 
+  BIN_IMAGE, LOCAL_RAND_SEED;
 cufftHandle plan;
 float2 *d__wave_PUPIL;
 float  *d__frame, zenith, azimuth, theta_x, theta_y, pixel_scale, photoelectron_gain;
@@ -432,6 +459,7 @@ void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
 }
 @
 <<setup common>>=
+LOCAL_RAND_SEED = RAND_SEED;
 zenith = -1.0;
 pixel_scale = 0.0;
 absolute_pointing = 0;
@@ -449,7 +477,7 @@ n_data = N_SOURCE*N_LENSLET*N_PX_CAMERA*N_PX_CAMERA;
 HANDLE_ERROR( cudaMalloc( (void**)&devStates, n_data*sizeof(curandState)) );
 dim3 blockDim(256);
 dim3 gridDim(n_data/256+1);
-setupRandomSequence_imaging LLL gridDim,blockDim RRR (devStates, n_data);
+setupRandomSequence_imaging LLL gridDim,blockDim RRR (devStates, n_data, LOCAL_RAND_SEED);
 info();
 @ \index{imaging!imaging!setupSegmentPistonSensor}
 <<setup segment piston sensor>>=
@@ -1278,30 +1306,35 @@ __global__ void noisify(curandState *state, float *frame, const int n_frame,
     	 curand_normal(&localState)*sqrt(lambda) + lambda;
            frame[id] += (readOutNoiseRms>0) ?
     	 curand_normal(&localState)*readOutNoiseRms : 0;
-       frame[id] -= nBackgroundPhoton;
-       frame[id] = floorf(frame[id]);
+       frame[id] -= nBackgroundPhoton*exposureTime;
+       //frame[id] = (frame[id]>0) ? floorf(frame[id]) : ceilf(frame[id]);
        state[id] = localState;
          }
      }
 @
 In CUDA, there are as many random generator states as the number of threads.
-These states are initialized providing a used defined seed number [[RAND_SEED]];
+These states are initialized providing the seed number [[LOCAL_RAND_SEED]];
+[[LOCAL_RAND_SEED]] is set to the global variable [[RAND_SEED]].
 
 <<random numbers>>=
-  __global__ void setupRandomSequence_imaging(curandState *state, int n_data)
+  __global__ void setupRandomSequence_imaging(curandState *state, const int n_data, 
+					      const int LOCAL_RAND_SEED)
 {
   int id = threadIdx.x + blockIdx.x*blockDim.x;
   if (id<n_data)
-    curand_init(RAND_SEED, id, 0, &state[id]);
+    curand_init(LOCAL_RAND_SEED, id, 0, &state[id]);
 }
 @ 
+\index{imaging!imaging!reset_rng}
+The random number generator can be reset with another [[LOCAL_RAND_SEED]] value with:
 <<reset random generator>>=
-void imaging::reset_rng(void) {
+void imaging::reset_rng(int SEED) {
   int n_data;
   n_data = N_SOURCE*N_LENSLET*N_PX_CAMERA*N_PX_CAMERA;
+  LOCAL_RAND_SEED = SEED;
   dim3 blockDim(256);
   dim3 gridDim(n_data/256+1);
-  setupRandomSequence_imaging LLL gridDim,blockDim RRR (devStates, n_data);  
+  setupRandomSequence_imaging LLL gridDim,blockDim RRR (devStates, n_data, LOCAL_RAND_SEED);  
 }
 
 @
