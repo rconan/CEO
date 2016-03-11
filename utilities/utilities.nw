@@ -155,7 +155,8 @@ void freedev( float **dev_data );
 <<sparse matrix>>
 
 void wavefront_finite_difference(float *sx, float *sy, int NL, 
-                                 float *phi, int n, float d);
+                                 float *phi, int n, float d, 
+				 int N_GS);
 void wavefront_finite_difference(float *sx, float *sy, int NL, 
                                  float *phi, int n, float d, 
                                  mask *pupil, int N_GS);
@@ -2369,10 +2370,10 @@ The x and y slopes corresponding to the average gradient of the wavefront $\varp
 \index{utilities!wavefront\_finite\_difference}
 <<wavefront differentiation>>=
 void wavefront_finite_difference(float *sx, float *sy, int NL, 
-                                 float *phi, int n, float d)
+                                 float *phi, int n, float d, int N_GS)
   {
     dim3 blockDim(16,16);
-    dim3 gridDim(NL/16+1,NL/16+1);
+    dim3 gridDim(NL/16+1,NL/16+1,N_GS);
     wavefront_finite_difference_kernel LLL gridDim,blockDim RRR (sx, sy, NL, phi, n, d);
   }
 @ with the kernel
@@ -2474,7 +2475,7 @@ void wavefront_finite_difference(float *sx, float *sy, int NL,
                                  float *phi, int n, float d,
                                  mask *pupil, int N_GS)
   {
-    int sxy_nbyte = sizeof(float)*NL*NL;
+    int sxy_nbyte = sizeof(float)*NL*NL*N_GS;
     HANDLE_ERROR( cudaMemset(sx,  0, sxy_nbyte ) );
     HANDLE_ERROR( cudaMemset(sy,  0, sxy_nbyte ) );
     dim3 blockDim(16,16);
@@ -2505,7 +2506,8 @@ The python wrapper is
 <<utilities.pxd>>=
 ## wavefront differentiation
     void wavefront_finite_difference(float *sx, float *sy, int NL, 
-                                     float *phi, int n, float d)
+                                     float *phi, int n, float d,
+                                     int N_GS)
     void wavefront_finite_difference(float *sx, float *sy, int NL, 
                                      float *phi, int n, float d, 
                                      mask *pupil, int N_GS)
@@ -2539,7 +2541,7 @@ cpdef wavefrontFiniteDifference(cuFloatArray sx, cuFloatArray sy, int NL,
     """
     if M is None:
         wavefront_finite_difference(sx._c_gpu.dev_data, sy._c_gpu.dev_data, NL, 
-                                    phi._c_gpu.dev_data, n, d)
+                                    phi._c_gpu.dev_data, n, d, N_GS)
     else:
         wavefront_finite_difference(sx._c_gpu.dev_data, sy._c_gpu.dev_data, NL, 
                                     phi._c_gpu.dev_data, n, d, M._c_mask, N_GS)
