@@ -211,10 +211,17 @@ cdef class GmtMirrors:
         """
         Reset M1 and M2 mirror segments to their original locations and shapes
         """
-        self.M1.reset()
+        self.M1.motion_CS.reset()
         self.M1.zernike.reset()
-        self.M2.reset()
+        self.M2.motion_CS.reset()
         self.M2.zernike.reset()
+
+    def dump_log(self, bytes filename):
+        np.savez(filename,
+                 M1_rigid_body = self.M1.motion_CS.data_log,
+                 M1_zernike    = self.M1.zernike.data_log,
+                 M2_rigid_body = self.M2.motion_CS.data_log,
+                 M2_zernike    = self.M2.zernike.data_log)
 @
 \subsubsection{GMT M1}
 \label{sec:gmt-m1-1}
@@ -334,14 +341,6 @@ def global_tiptilt(self, float tip, float tilt):
         The y axis angle
     """
     self._c_gmt_m12.global_tiptilt(tip, tilt);
-
-def reset(self):
-    """
-    Reset the segments to their original prescription
-    """
-    self.motion_CS.origin[:] = 0.0
-    self.motion_CS.euler_angles[:] = 0.0
-    self.motion_CS.update()
 
 property D_assembly:
     def __get__(self):
