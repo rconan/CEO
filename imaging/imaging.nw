@@ -766,7 +766,7 @@ __global__ void wave2intensity(float2 *wave_PUPIL, const int N, float intensity_
 The intensity is normalized with respect to the brightness of the source:
 <<intensity normalization>>=
 float intensity_norm;
-intensity_norm = photoelectron_gain*src->n_photon()*
+intensity_norm = src->n_photon()*
   src->wavefront.M->area/src->wavefront.M->nnz;
 //fprintf(stdout,"wavefront M:\n . area: %f\n . nnz: %f\n",src->wavefront.M->area,src->wavefront.M->nnz);
 
@@ -1256,7 +1256,8 @@ Poisson and Gaussian noise are added to the frame with the [[readout]] routine
 void imaging::readout(float exposureTime, float readOutNoiseRms) {
 <<read-out content>>
 noisify LLL gridDim, blockDim RRR (devStates, d__frame, N,
-				   readOutNoiseRms, exposureTime, 0.0);
+				   readOutNoiseRms, exposureTime, 
+				   0.0, photoelectron_gain);
 }
 @ with
 <<read-out content>>=
@@ -1272,14 +1273,15 @@ void imaging::readout(float exposureTime, float readOutNoiseRms, float nBackgrou
 <<read-out content>>
 noisify LLL gridDim, blockDim RRR (devStates, d__frame, N,
 				   readOutNoiseRms, exposureTime,
-				   nBackgroundPhoton);
+				   nBackgroundPhoton, photoelectron_gain);
 }
 @  with the kernels defined in the following
 <<detector Poisson and Gaussian noise>>=
 <<random numbers>>
 __global__ void noisify(curandState *state, float *frame, const int n_frame,
 			const float readOutNoiseRms, float exposureTime,
-			const float nBackgroundPhoton)
+			const float nBackgroundPhoton,
+			const float photoelectron_gain)
    {
      int i, j, id;
      float lambda;
@@ -1292,6 +1294,7 @@ __global__ void noisify(curandState *state, float *frame, const int n_frame,
        {
          localState = state[id];
          frame[id] += nBackgroundPhoton;
+	 frame[id] *= photoelectron_gain;
          frame[id] *= exposureTime;
          lambda = frame[id];
          //       frame[id] = (float) curand_poisson(&localState, (double) lambda);
