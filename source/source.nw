@@ -450,6 +450,7 @@ property piston_mask:
         mask *M
         void reset()
         void reset_phase()
+        void reset_phase(complex_amplitude *)
         void masked(mask *)
         void masked()
         void add_phase(float , float *)
@@ -542,6 +543,9 @@ cdef class Complex_amplitude:
 
     def reset_phase(self):
         self._c_complex_amplitude.reset_phase()
+
+    def reset_phase_prime(self, Complex_amplitude wavefront):
+        self._c_complex_amplitude.reset_phase(wavefront._c_complex_amplitude)
 @
 \subsubsection{Source}
 \label{sec:source}
@@ -938,7 +942,7 @@ struct complex_amplitude {
   void cleanup(void);
   void reset(void);
   void reset_phase(void);
-  void reset(complex_amplitude wavefront_prime);
+  void reset_phase(complex_amplitude *wavefront_prime);
   void add_phase(float alpha, float *phase_prime);
   void masked(void);
   void masked(mask *M_in);
@@ -2409,10 +2413,10 @@ void complex_amplitude::reset(void)
 @
 The following resets the wavefront phase to the phase of the new wavefront:
 <<resetting the wavefront to new wavefront>>=
-void complex_amplitude::reset(complex_amplitude wavefront_prime)
+void complex_amplitude::reset_phase(complex_amplitude *wavefront_prime)
 {
-  reset();
-  add_phase(1, wavefront_prime.phase);
+  reset_phase();
+  add_phase(1, wavefront_prime->phase);
 }
 @
 The wavefront phase is reset to 0 with
