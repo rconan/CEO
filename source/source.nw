@@ -449,6 +449,7 @@ property piston_mask:
         float *amplitude
         mask *M
         void reset()
+        void reset(complex_amplitude *)
         void reset_phase()
         void reset_phase(complex_amplitude *)
         void masked(mask *)
@@ -524,7 +525,7 @@ cdef class Complex_amplitude:
         self._c_complex_amplitude.rms(&rms[0])
         return np.array(rms)*10**-units_exponent
 
-    def reset(self, cuFloatArray phase = None):
+    def reset(self, cuFloatArray phase = None, Complex_amplitude wavefront=None):
         """
         Reset the wavefront amplitude to 1 and phase to 0 or to the given phase
 
@@ -537,15 +538,18 @@ cdef class Complex_amplitude:
         --------
         cuFloatArray : a class for GPU host and device float data
         """
-        self._c_complex_amplitude.reset()
-        if phase is not None:
-            self._c_complex_amplitude.add_phase(1,phase._c_gpu.dev_data)
+        if wavefront is None:
+            self._c_complex_amplitude.reset()
+            if phase is not None:
+                self._c_complex_amplitude.add_phase(1,phase._c_gpu.dev_data)
+        else:
+            self._c_complex_amplitude.reset(wavefront._c_complex_amplitude)
 
-    def reset_phase(self):
-        self._c_complex_amplitude.reset_phase()
-
-    def reset_phase_prime(self, Complex_amplitude wavefront):
-        self._c_complex_amplitude.reset_phase(wavefront._c_complex_amplitude)
+    def reset(self, Complex_amplitude wavefront=None):
+        if wavefront is None:
+	    self._c_complex_amplitude.reset_phase()
+        else:
+            self._c_complex_amplitude.reset_phase(wavefront._c_complex_amplitude)
 @
 \subsubsection{Source}
 \label{sec:source}
@@ -941,6 +945,7 @@ struct complex_amplitude {
   void setup(int n_pixel, int n_src);
   void cleanup(void);
   void reset(void);
+  void reset(complex_amplitude *wavefront);
   void reset_phase(void);
   void reset_phase(complex_amplitude *wavefront_prime);
   void add_phase(float alpha, float *phase_prime);
@@ -2409,6 +2414,23 @@ void complex_amplitude::reset(void)
   squarePupil LLL gridDim,blockDim RRR (amplitude, phase, N_PX);
   /* if (M!=NULL) */
   /*   apply_mask LLL gridDim,blockDim RRR (amplitude, phase, M->m, N_PX);   */
+}
+@ 
+The wavefront amplitude can also be reset to a given wavefront, both wavefronts will share the same mask,:
+<<resetting the wavefront>>=
+void complex_amplitude::reset(complex_amplitude *wavefront)
+{
+  if (N_PX==wavefront->N_PX) {
+    HANDLE_ERROR( cudaMemcpy( phase, wavefront->phase,
+                              sizeof(float)*N_PX,
+                              cudaMemcpyDeviceToDevice ) );
+    HANDLE_ERROR( cudaMemcpy( amplitude, wavefront->amplitude,
+                              sizeof(float)*N_PX,
+                              cudaMemcpyDeviceToDevice ) );
+    M = wavefront->M;
+  } else {
+    fprintf(stdout,"\n\x1B[31m@(CEO)>WARNING: Wavefront resolutions are not matching!\x1B[0m\n");
+  }
 }
 @
 The following resets the wavefront phase to the phase of the new wavefront:
