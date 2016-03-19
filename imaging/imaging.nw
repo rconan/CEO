@@ -45,6 +45,7 @@ struct imaging {
 
   void propagate(source *src);
   void propagateNoOverlap(source *src);
+  void propagateNoOverlapBare(source *src);
   void propagateNoOverlapSPS(source *src, float d, float wavenumber);
   void propagateThroughFieldStop(source *src, float field_stop_diam);
   void propagateThroughPyramid(source *src);
@@ -596,6 +597,36 @@ N = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
 Nb = (int) ceilf( sqrtf(N)/16.0 );
 gridDim  = dim3(Nb,Nb);
 wave2intensity LLL gridDim , blockDim RRR( d__wave_PUPIL, N, intensity_norm);
+gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
+                N_SOURCE);
+binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
+                                   src->dev_ptr, pixel_scale, theta_x, theta_y,
+				   absolute_pointing,
+                                   N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
+    ++N_FRAME;
+ }
+@ or, in the case of no overlapping lenslet and no intensity normalization, the [[propagateNoOverlap]] routine:
+\index{imaging!imaging!propagateNoOverlapBare}
+<<propagation>>=
+void imaging::propagateNoOverlapBare(source *src) {
+  int M = N_PX_IMAGE/N_PX_CAMERA;
+  dim3 gridDim;
+  dim3 blockDim(16,16);
+  gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
+  complexAmplitudeNoOverlap LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
+					      src->wavefront.amplitude,
+					      src->wavefront.phase,
+                                              src->wavenumber(),
+					      N_PX_PUPIL, N_PX_IMAGE, M,
+					      N_SIDE_LENSLET, src->dev_ptr,
+                                              pixel_scale, theta_x,theta_y,
+					      absolute_pointing,1);
+<<imaging CUFFT execution>>
+int N, Nb;
+N = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
+Nb = (int) ceilf( sqrtf(N)/16.0 );
+gridDim  = dim3(Nb,Nb);
+wave2intensity LLL gridDim , blockDim RRR( d__wave_PUPIL, N, 1.0);
 gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
                 N_SOURCE);
 binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
@@ -1331,7 +1362,7 @@ These states are initialized providing the seed number [[LOCAL_RAND_SEED]];
     curand_init(LOCAL_RAND_SEED, id, 0, &state[id]);
 }
 @ 
-\index{imaging!imaging!reset_rng}
+\index{imaging!imaging!reset\_rng}
 The random number generator can be reset with another [[LOCAL_RAND_SEED]] value with:
 <<reset random generator>>=
 void imaging::reset_rng(int SEED) {
