@@ -86,6 +86,20 @@ struct atmosphere {
 		 float duration,
 		 const char *fullpath_to_phasescreens,
 		 int _N_DURATION);
+  void gmt_setup(float r0_, float L0,
+		 int _RAND_SEED_);
+  void gmt_setup(float r0_, float L0,
+		 float _L_, int _NXY_PUPIL_,
+		 float field_size,
+		 float duration,
+		 int _RAND_SEED_);
+  void gmt_setup(float r0_, float L0,
+		 float _L_, int _NXY_PUPIL_,
+		 float field_size,
+		 float duration,
+		 const char *fullpath_to_phasescreens,
+		 int _N_DURATION,
+		 int _RAND_SEED_);
 
   void cleanup(void);
 
@@ -183,6 +197,9 @@ struct atmosphere {
 <<atmosphere setup (GMT prm)>>
 <<atmosphere setup (GMT prm, ray tracing)>>
 <<atmosphere setup (GMT prm, ray tracing, precomputed phase screens)>>
+<<atmosphere setup (GMT prm, rand seed)>>
+<<atmosphere setup (GMT prm, ray tracing, rand seed)>>
+<<atmosphere setup (GMT prm, ray tracing, precomputed phase screens, rand seed)>>
 
 <<cleanup>>
 
@@ -235,6 +252,10 @@ cdef extern from "atmosphere.h":
         void gmt_setup(float , float,
 		       float, int, float, float, char *, int)
         void gmt_setup(float, float, float, int, float, float)
+        void gmt_setup(float , float, int)
+        void gmt_setup(float , float,
+		       float, int, float, float, char *, int, int)
+        void gmt_setup(float, float, float, int, float, float, int)
         void cleanup()
         void info()
         void save_layer_phasescreens(char *,int)
@@ -509,23 +530,37 @@ cdef class GmtAtmosphere(AtmosphereAbstract):
     """
 
     def __init__(self, float r0, float L0,
-                float L=0.0,int NXY_PUPIL=0,float fov=0.0,
-		            float duration=1.0, bytes filename=None,
-                int N_DURATION=1):
+                 float L=0.0,int NXY_PUPIL=0,float fov=0.0,
+                 float duration=1.0, bytes filename=None,
+                 int N_DURATION=1,
+                 int SEED=0):
         super(GmtAtmosphere,self).__init__(r0,L0)
-        if NXY_PUPIL==0:
-            self._c_atmosphere.gmt_setup(r0, L0)
-        else:
-            if filename is None:
-                self._c_atmosphere.gmt_setup(r0, L0,
-                                             L, NXY_PUPIL,
-                                             fov, duration)
+        if SEED==0:
+            if NXY_PUPIL==0:
+                self._c_atmosphere.gmt_setup(r0, L0)
             else:
-                self._c_atmosphere.gmt_setup(r0, L0,
-                                             L, NXY_PUPIL,
-                                             fov, duration,
-                                             filename, N_DURATION)
-
+                if filename is None:
+                    self._c_atmosphere.gmt_setup(r0, L0,
+                                                 L, NXY_PUPIL,
+                                                 fov, duration)
+                else:
+                    self._c_atmosphere.gmt_setup(r0, L0,
+                                                 L, NXY_PUPIL,
+                                                 fov, duration,
+                                                 filename, N_DURATION)
+        else:
+            if NXY_PUPIL==0:
+                self._c_atmosphere.gmt_setup(r0, L0, SEED)
+            else:
+                if filename is None:
+                    self._c_atmosphere.gmt_setup(r0, L0,
+                                                 L, NXY_PUPIL,
+                                                 fov, duration, SEED)
+                else:
+                    self._c_atmosphere.gmt_setup(r0, L0,
+                                                 L, NXY_PUPIL,
+                                                 fov, duration,
+                                                 filename, N_DURATION, SEED)
 @
 \index{atmosphere!python!JGmtAtmosphere}
 <<atmosphere.pyx>>=
@@ -752,6 +787,9 @@ float *phase_screen_LAYER;
 @ \item the number of phase screen chunks of duration [[layers_duration]] in [[layers_fid]]
 <<atmosphere parameters>>=
 int N_DURATION;
+@ \item the random seed generator
+<<atmosphere parameters>>=
+int LOCAL_RAND_SEED;
 @ \end{itemize}
 
 The atmospheric layer parameters are:
@@ -1042,11 +1080,8 @@ void atmosphere::gmt_setup(float r0_, float L0) {
   d__phase_screen_LAYER = NULL;
 }
 @
-<<atmosphere setup (GMT prm, ray tracing)>>=
-void atmosphere::gmt_setup(float r0_, float L0,
-                           float _W_, int _N_W_,
-                           float _field_size_,
-			   float duration) {
+<<atmosphere setup (GMT prm, rand seed)>>=
+void atmosphere::gmt_setup(float r0_, float L0, int _RAND_SEED_) {
   wavelength = 550e-9;
   wavenumber = wavelength/2/PI;
   r0 = r0_;
@@ -1058,14 +1093,61 @@ void atmosphere::gmt_setup(float r0_, float L0,
               wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
   turbulence.setup(altitude, xi0,
 		   wind_speed, wind_direction, N_LAYER);
-  field_size = _field_size_;
-  W = _W_;
-  N_W = _N_W_;
+  field_size = 0.0;
   N_PHASE_LAYER = 0;
+  W = 0.0;
+  N_W = 0;
   layers_OSF            = 2;
-  layers_duration       = duration;
+  layers_duration       = 0.0;
   layers_tau0           = 0.0;
+  <<allocation: turbulence profile>>
+  LOCAL_RAND_SEED = _RAND_SEED_;
+  <<allocation: variates generation>>
+  phase_screen_LAYER = NULL;
+  d__phase_screen_LAYER = NULL;
+}
+@
+<<atmosphere setup (GMT prm, ray tracing)>>=
+void atmosphere::gmt_setup(float r0_, float L0,
+                           float _W_, int _N_W_,
+                           float _field_size_,
+			   float duration) {
+  <<gmt atmosphere setup common>>
   <<allocation>>
+  HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_LAYER, N_PHASE_LAYER*sizeof(float) ) );
+  <<layer to device (ray tracing)>>
+}
+@ with
+<<gmt atmosphere setup common>>=
+wavelength = 500e-9;
+wavenumber = wavelength/2/PI;
+r0 = r0_;
+turbulence.L0 = L0;
+N_LAYER = 7;
+float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
+      xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
+      wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
+      wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+turbulence.setup(altitude, xi0,
+                 wind_speed, wind_direction, N_LAYER);
+field_size = _field_size_;
+W = _W_;
+N_W = _N_W_;
+N_PHASE_LAYER = 0;
+layers_OSF            = 2;
+layers_duration       = duration;
+layers_tau0           = 0.0;
+@
+<<atmosphere setup (GMT prm, ray tracing, rand seed)>>=
+void atmosphere::gmt_setup(float r0_, float L0,
+                           float _W_, int _N_W_,
+                           float _field_size_,
+			   float duration,
+                           int _RAND_SEED_) {
+  <<gmt atmosphere setup common>>
+  <<allocation: turbulence profile>>
+  LOCAL_RAND_SEED = _RAND_SEED_;
+  <<allocation: variates generation>>
   HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_LAYER, N_PHASE_LAYER*sizeof(float) ) );
   <<layer to device (ray tracing)>>
 }
@@ -1077,35 +1159,40 @@ void atmosphere::gmt_setup(float r0_, float L0,
 			     float duration,
 			     const char *fullpath_to_phasescreens,
 			     int _N_DURATION) {
-  wavelength = 550e-9;
-  wavenumber = wavelength/2/PI;
-  r0 = r0_;
-  turbulence.L0 = L0;
-  N_LAYER = 7;
-  float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
-              xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
-              wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
-              wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
-  turbulence.setup(altitude, xi0,
-		   wind_speed, wind_direction, N_LAYER);
-  field_size = _field_size_;
-  W = _W_;
-  N_W = _N_W_;
-  N_PHASE_LAYER = 0;
-  layers_OSF            = 2;
-  layers_duration       = duration;
-  layers_tau0           = 0.0;
+  <<gmt atmosphere setup common>>
   <<allocation>>
   <<save or load phase screens>>
 }
 @
+<<atmosphere setup (GMT prm, ray tracing, precomputed phase screens, rand seed)>>=
+void atmosphere::gmt_setup(float r0_, float L0,
+			     float _W_, int _N_W_,
+			     float _field_size_,
+			     float duration,
+			     const char *fullpath_to_phasescreens,
+			     int _N_DURATION,
+                             int _RAND_SEED_) {
+  <<gmt atmosphere setup common>>
+  <<allocation: turbulence profile>>
+  LOCAL_RAND_SEED = _RAND_SEED_;
+  <<allocation: variates generation>>
+  <<save or load phase screens>>
+}
+@
 <<allocation>>=
+<<allocation: turbulence profile>>
+LOCAL_RAND_SEED = RAND_SEED;
+<<allocation: variates generation>>
+@ 
+<<allocation: turbulence profile>>=
 info();
 N_DURATION = 0;
 <<layer to device (common)>>
 HANDLE_ERROR( cudaMalloc( (void**)&d__turbulence, sizeof(profile) ) );
 HANDLE_ERROR( cudaMemcpy( d__turbulence, &turbulence,
 			  sizeof(profile), cudaMemcpyHostToDevice ) );
+@ 
+<<allocation: variates generation>>=
 int nel = N_LAYER*turbulence.N_k*turbulence.N_a;
 stopwatch tid;
 tid.tic();
