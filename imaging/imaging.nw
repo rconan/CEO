@@ -122,8 +122,8 @@ from pyramid cimport Pyramid
 from segmentPistonSensor cimport SegmentPistonSensor
 cdef extern from "imaging.h":
     cdef cppclass imaging:
-        int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_PX_CAMERA, N_SOURCE
-        float photoelectron_gain
+        int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_PX_CAMERA, N_SOURCE, N_FRAME
+        float photoelectron_gain, N_PHOTON_PER_FRAME
         float *d__frame
         void setup(int , int , int , int , int, int)
         void cleanup()
@@ -331,7 +331,7 @@ cdef class Imaging:
         def ee80_fun(float ee_Delta):
             _ee_Delta_ = ee_Delta/2.0
             gate = np.logical_and(np.abs(x)<=_ee_Delta_,np.abs(y)<=_ee_Delta_)
-            return np.sum(psf*gate)/psf.sum() - 0.8
+            return np.sum(psf*gate)/(self._c_imaging.N_PHOTON_PER_FRAME*self._c_imaging.N_FRAME) - 0.8
         try:
             q = bisect(ee80_fun,3,n)
         except ValueError:
@@ -343,6 +343,10 @@ cdef class Imaging:
             return self._c_imaging.photoelectron_gain
         def __set__(self,float value):
             self._c_imaging.photoelectron_gain = value
+
+    property N_FRAME:
+        def __get__(self):
+            return self._c_imaging.N_FRAME
 @
 \index{imaging!python!JImaging}
 <<imaging.pyx>>=
@@ -377,7 +381,8 @@ if it is positive or null then the guide star is displaced in the image plane ac
 \item the pixel scale [[pixel_scale]],
 \item a flag setting the pointing of the imaging device either absolute or relative to the direction of the light source [[absolute_pointing]],
 \item the optics and detector photon to electron gain [[photoelectron_gain]],
-\item the random seed generator [[LOCAL_RAND_SEED]].
+\item the random seed generator [[LOCAL_RAND_SEED]],
+\item the number of photon per second per frame [[N_PHOTON_PER_SECOND_PER_FRAME]].
 \end{itemize}
 
 <<parameters>>=
@@ -385,6 +390,7 @@ int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_LENSLET,
     N_SOURCE, N_PX_IMAGE, N_PX_CAMERA, N_FRAME, 
   BIN_IMAGE, LOCAL_RAND_SEED;
 cufftHandle plan;
+float N_PHOTON_PER_SECOND_PER_FRAME, N_PHOTON_PER_FRAME;
 float2 *d__wave_PUPIL;
 float  *d__frame, zenith, azimuth, theta_x, theta_y, pixel_scale, photoelectron_gain;
 char absolute_pointing;
@@ -796,10 +802,10 @@ __global__ void wave2intensity(float2 *wave_PUPIL, const int N, float intensity_
 @
 The intensity is normalized with respect to the brightness of the source:
 <<intensity normalization>>=
+N_PHOTON_PER_FRAME = N_PHOTON_PER_SECOND_PER_FRAME = src->n_photon()*src->wavefront.M->area;
 float intensity_norm;
-intensity_norm = src->n_photon()*
-  src->wavefront.M->area/src->wavefront.M->nnz;
-//fprintf(stdout,"wavefront M:\n . area: %f\n . nnz: %f\n",src->wavefront.M->area,src->wavefront.M->nnz);
+intensity_norm = N_PHOTON_PER_SECOND_PER_FRAME/src->wavefront.M->nnz;
+//fprintf(stdout,"# of photon per second: %g\n",N_PHOTON_PER_SECOND_PER_FRAME);
 
 @ The camera frame is continuously accumulating images and can be reset with:
 \index{imaging!imaging!reset}
@@ -807,6 +813,7 @@ intensity_norm = src->n_photon()*
 void imaging::reset(void) {
   HANDLE_ERROR( cudaMemset(d__frame, 0,
 			   sizeof(float)*N_PX_CAMERA*N_PX_CAMERA*N_LENSLET*N_SOURCE) );
+  N_FRAME = 0;
 }
 
 @ The rank of the DFT [[NRANK]] is always 2 and the size of each DFT is $[[N_DFT]]\times[[N_DFT]]$.
@@ -1293,6 +1300,7 @@ noisify LLL gridDim, blockDim RRR (devStates, d__frame, N,
 @ with
 <<read-out content>>=
 int N, Nb;
+N_PHOTON_PER_FRAME *= exposureTime;
 N = N_PX_CAMERA * N_PX_CAMERA * N_LENSLET*N_SOURCE;
 Nb = (int) ceilf( sqrtf(N)/16.0 );
 dim3 blockDim(16,16);
