@@ -1312,7 +1312,7 @@ void atmosphere::save_layer_phasescreens(const char* _fullpath_to_phasescreens, 
 FILE *layers_fid;
 size_t N_READ;
 layers_fid = fopen(fullpath_to_phasescreens,"rb");
-fprintf(stdout,"@(CEO)>atmosphere: Loading the phase screens in the layers from file %s...\n",fullpath_to_phasescreens);
+fprintf(stdout,"\n@(CEO)>atmosphere: Loading the phase screens in the layers from file %s...\n",fullpath_to_phasescreens);
 
 N_READ = fread(&N_DURATION,       sizeof(int),  1,layers_fid);
 if (N_READ==0)
@@ -2570,14 +2570,16 @@ void atmosphere::rayTracing(source *src,
   float new_tau = tau - layers_tau0;
   stopwatch tid;
 
-  if (tau>(layers_tau0+layers_duration)) {
+  //fprintf(stdout," . tau=%f\n . layers_tau=%f\n . layers_duration=%f\n",tau,layers_tau0,layers_duration);
+
+  if (fabs(tau-layers_tau0)>layers_duration) {
 
     k_DURATION = (int) (tau/layers_duration);
     layers_tau0 = k_DURATION*layers_duration;
     new_tau     = tau - k_DURATION*layers_duration;
 
     if (N_DURATION>0) {
-      fprintf(stdout,"Loading phase screens to device...\n");
+      fprintf(stdout,"\n@(CEO)>atmopshere: Loading phase screens to device...\n");
       tid.tic();
       HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
 				phase_screen_LAYER + k_DURATION*N_PHASE_LAYER,
