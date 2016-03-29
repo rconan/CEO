@@ -1347,17 +1347,17 @@ __global__ void noisify(curandState *state, float *frame, const int n_frame,
   	   curand_poisson_atkinson( &localState, lambda);
          }
     */
-           frame[id] = (lambda<64) ?
-    	 curand_poisson_knuth( &localState, lambda) :
-    	 (lambda<4000) ?
-    	 (float) curand_poisson_gammainc( &localState, lambda) :
-    	 curand_normal(&localState)*sqrt(lambda) + lambda;
-           frame[id] += (readOutNoiseRms>0) ?
-    	 curand_normal(&localState)*readOutNoiseRms : 0;
-       frame[id] -= nBackgroundPhoton*exposureTime;
-       //frame[id] = (frame[id]>0) ? floorf(frame[id]) : ceilf(frame[id]);
-       state[id] = localState;
-         }
+	 frame[id] = (lambda<64) ?
+	   curand_poisson_knuth( &localState, lambda) :
+	   (lambda<4000) ?
+	   (float) curand_poisson_gammainc( &localState, lambda) :
+	   curand_normal(&localState)*sqrt(lambda) + lambda;
+	 frame[id] += (readOutNoiseRms>0) ?
+	   curand_normal(&localState)*readOutNoiseRms : 0;
+	 frame[id] -= nBackgroundPhoton*exposureTime*photoelectron_gain;
+	 //frame[id] = (frame[id]>0) ? floorf(frame[id]) : ceilf(frame[id]);
+	 state[id] = localState;
+       }
      }
 @
 In CUDA, there are as many random generator states as the number of threads.
