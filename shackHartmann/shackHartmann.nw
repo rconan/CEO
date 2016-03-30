@@ -44,7 +44,7 @@ struct shackHartmann {
 
 #endif // __SHACKHARTMANN__
 
-@ 
+@
 \subsection{Source}
 \label{sec:source}
 
@@ -91,7 +91,7 @@ cdef extern from "shackHartmann.h":
 	float* get_frame_dev_ptr()
         void get_valid_slopes(float *)
 <<class definitions>>
-@ 
+@
 \index{shackHartmann!python!ShackHartmann}
 <<class definitions>>=
 from utilities cimport cuFloatArray, MaskAbstract
@@ -105,14 +105,14 @@ cdef class ShackHartmann:
         readonly cuFloatArray c0
         readonly Imaging camera
         readonly Centroiding data_proc
-        cuFloatArray _valid_slopes_ 
-@ 
+        cuFloatArray _valid_slopes_
+@
 <<shackHartmann.pyx>>=
 from libc.math cimport M_PI
 from utilities cimport cuFloatArray, MaskAbstract
 from source cimport Source
 cdef class ShackHartmann:
-    """ 
+    """
     Creates a shackHartmann object.
 
     Parameters
@@ -212,14 +212,16 @@ cdef class ShackHartmann:
     >>> wfs = ShackHartmann(..., N_GS=6)
     """
 
-    def __cinit__(self, int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
-	          DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, N_GS=1):
+    def __cinit__(self, *args, **kwargs):
         self._c_shackHartmann = new shackHartmann()
+
+    def __init__(self, int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
+	          DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, N_GS=1):
         if N_PX_IMAGE is None:
             N_PX_IMAGE = N_PX_LENSLET;
         self.N_GS           = N_GS
-        self._c_shackHartmann.setup(N_SIDE_LENSLET, N_PX_LENSLET, d, 
-                                    DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_GS)    
+        self._c_shackHartmann.setup(N_SIDE_LENSLET, N_PX_LENSLET, d,
+                                    DFT_osf, N_PX_IMAGE, BIN_IMAGE, N_GS)
 
         self.camera = Imaging(N_SIDE_LENSLET, N_PX_LENSLET,
                               DFT_osf=DFT_osf,N_PX_IMAGE=N_PX_IMAGE,
@@ -328,27 +330,27 @@ cdef class ShackHartmann:
             The azimuth angle [rd]
         """
         self._c_shackHartmann.camera.set_pointing_direction(zen, azim)
-        
+
     property N_SIDE_LENSLET:
         def __get__(self):
             return self.camera.N_SIDE_LENSLET
-        
+
     property N_PX_LENSLET:
         def __get__(self):
             return self.camera.N_PX_LENSLET
-        
+
     property DFT_osf:
         def __get__(self):
             return self.camera.DFT_osf
-        
+
     property N_PX_IMAGE:
         def __get__(self):
             return self.camera.N_PX_IMAGE
-        
+
     property BIN_IMAGE:
         def __get__(self):
             return self.camera.BIN_IMAGE
-        
+
     property N_PX_FRAME:
         def __get__(self):
             return self.camera.N_PX_FRAME
@@ -357,11 +359,11 @@ cdef class ShackHartmann:
         def __get__(self):
             self._c_shackHartmann.get_valid_slopes(self._valid_slopes_._c_gpu.dev_data)
             return self._valid_slopes_
-    
+
     property n_valid_lenslet:
         def __get__(self):
             return self.valid_lenslet.nnz
-    
+
     property n_valid_slopes:
         def __get__(self):
             return 2*self.n_valid_lenslet
@@ -372,12 +374,12 @@ cdef class ShackHartmann:
 
     property pixel_scale:
         def __get__(self):
-            return self._c_shackHartmann.pixel_scale 
+            return self._c_shackHartmann.pixel_scale
 
     property pixel_scale_arcsec:
         def __get__(self):
             return self._c_shackHartmann.pixel_scale*180*3600/M_PI
-    
+
     property frame:
         def __get__(self):
             return self.camera.frame
@@ -389,8 +391,25 @@ cdef class ShackHartmann:
     property c:
         def __get__(self):
             return self.data_proc.c
-@ 
-
+@
+<<shackHartmann.pyx>>=
+from utilities import JSONAbstract
+class JShackHartmann(JSONAbstract,ShackHartmann):
+    def __init__(self, jprms = None, jsonfile = None):
+        print "@(ceo.JShackHartmann)>"
+        JSONAbstract.__init__(self,jprms=jprms, jsonfile=jsonfile)
+        nLenslet   = self.jprms["lenslet #"]
+        nPxLenslet = (self.jprms["pupil sampling"]-1)/nLenslet
+        assert (nPxLenslet*nLenslet==self.jprms["pupil sampling"]-1), \
+             "The number of pixel per lenslet in the pupil plane is not an integer number!"
+        d          = float(self.jprms["pupil size"])/nLenslet
+        N_PX       = self.jprms["resolution"]*self.jprms["binning factor"]
+        ShackHartmann.__init__(self,nLenslet,nPxLenslet,d,
+                               DFT_osf    = 2*self.jprms["nyquist factor"],
+                               N_PX_IMAGE = N_PX,
+                               BIN_IMAGE  = self.jprms["binning factor"],
+                               N_GS       = self.jprms["guide star #"])
+@
 \section{Parameters}
 \label{sec:parameters}
 
@@ -469,7 +488,7 @@ void shackHartmann::setup(int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
   N_SLOPE    = N_LENSLET*N_GS*2;
   slopes_gain = 1.0;
   HANDLE_ERROR( cudaMalloc( (void**)&d__c0 , sizeof(float) *N_SLOPE ) );
-  HANDLE_ERROR( cudaMemset( d__c0, 0, sizeof(float)*N_SLOPE ) ); 
+  HANDLE_ERROR( cudaMemset( d__c0, 0, sizeof(float)*N_SLOPE ) );
   d__cx0 = d__c0;
   d__cy0 = d__c0 + N_LENSLET;
   valid_lenslet.setup(N_LENSLET*N_WFS);//,(N_SIDE_LENSLET-1)*d);
@@ -481,7 +500,7 @@ void shackHartmann::setup(int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
 }
 @
 The [[lenslet_mask]] in [[data_proc]] now points to the mask in the [[valid_lenslet]] [[mask]] structure
-<<lenslet mask pointer>>= 
+<<lenslet mask pointer>>=
 HANDLE_ERROR( cudaFree( data_proc.lenslet_mask) );
 data_proc.lenslet_mask = valid_lenslet.m;
 @
@@ -508,7 +527,7 @@ void shackHartmann::cleanup(void)
 
 The WFS calibration routine is:
 \index{shackHartmann!shackHartmann!calibrate}
-<<WFS calibration>>= 
+<<WFS calibration>>=
 void shackHartmann::calibrate(source *src, float threshold) {
   <<WFS calibration source propagation>>
   <<WFS calibration reference slopes>>
@@ -522,16 +541,16 @@ The wavefront sensor need first to be calibrated with a reference calibration so
 camera.pixel_scale = src->wavelength()/(lenslet_pitch*DFT_osf);
 pixel_scale = camera.pixel_scale*camera.BIN_IMAGE*slopes_gain;
 camera.propagate(src);
-@ 
+@
 The slopes derived from the calibration wavefront will be set a the reference slopes.
 <<WFS calibration reference slopes>>=
 data_proc.get_data(camera.d__frame,camera.N_PX_CAMERA);
-HANDLE_ERROR( cudaMemcpy( d__c0, data_proc.d__c, N_SLOPE*sizeof(float), 
-			  cudaMemcpyDeviceToDevice ) ); 
-HANDLE_ERROR( cudaMemset( data_proc.d__c, 0, sizeof(float)*N_SLOPE ) ); 
+HANDLE_ERROR( cudaMemcpy( d__c0, data_proc.d__c, N_SLOPE*sizeof(float),
+			  cudaMemcpyDeviceToDevice ) );
+HANDLE_ERROR( cudaMemset( data_proc.d__c, 0, sizeof(float)*N_SLOPE ) );
 @
 The total intensity per lenslet is used to compute the valid lenslet.
-The valid lenslet and actuator masks are first set to 0. 
+The valid lenslet and actuator masks are first set to 0.
 <<WFS calibration valid lenslet>>=
 HANDLE_ERROR( cudaMemset(valid_lenslet.m,  0, sizeof(char)*N_LENSLET*N_WFS  ) );
 HANDLE_ERROR( cudaMemset(valid_actuator.m, 0, sizeof(char)*N_ACTUATOR*N_WFS ) );
@@ -550,7 +569,7 @@ The masks are computed with the [[set_valid_lenslet]] kernel:
 int NL = camera.N_SIDE_LENSLET;
 dim3 blockDim(16,16);
 dim3 gridDim(NL/16+1,NL/16+1,N_WFS); // The 3rd argument sets the WFS which intensity is used for calibration
-set_valid_lenslet LLL gridDim,blockDim RRR (valid_lenslet.m, valid_actuator.m, 
+set_valid_lenslet LLL gridDim,blockDim RRR (valid_lenslet.m, valid_actuator.m,
                                             NL, data_proc.d__mass,
                                             idx, threshold);
 valid_lenslet.set_filter();
@@ -558,7 +577,7 @@ valid_lenslet.set_index();
 valid_actuator.set_filter();
 @ with the kernel:
 <<valid lenslet>>=
-__global__ void set_valid_lenslet(char *lenslet_mask, char *actuator_mask, 
+__global__ void set_valid_lenslet(char *lenslet_mask, char *actuator_mask,
 				    int NL, float *lenslet_intensity_map,
 				    int max_idx, float threshold)
 {
@@ -575,28 +594,28 @@ __global__ void set_valid_lenslet(char *lenslet_mask, char *actuator_mask,
       max_intensity_threshold *= threshold;
       if (lenslet_intensity_map[kL]>=max_intensity_threshold)
 	{
-	
+
 	  lenslet_mask[kL] = 1;
-	
-	  kA = lenset2actuator(iL,jL,NL, 1, 1);     
+
+	  kA = lenset2actuator(iL,jL,NL, 1, 1);
 	  kA += iSource*(1+NL)*(1+NL);
 	  actuator_mask[kA] = 1;
-	  kA = lenset2actuator(iL,jL,NL,-1, 1);     
+	  kA = lenset2actuator(iL,jL,NL,-1, 1);
 	  kA += iSource*(1+NL)*(1+NL);
 	  actuator_mask[kA] = 1;
-	  kA = lenset2actuator(iL,jL,NL,-1,-1);     
+	  kA = lenset2actuator(iL,jL,NL,-1,-1);
 	  kA += iSource*(1+NL)*(1+NL);
 	  actuator_mask[kA] = 1;
-	  kA = lenset2actuator(iL,jL,NL, 1,-1);  
+	  kA = lenset2actuator(iL,jL,NL, 1,-1);
 	  kA += iSource*(1+NL)*(1+NL);
 	  actuator_mask[kA] = 1;
-	
+
 	}
       else
 	lenslet_intensity_map[kL] = 0.0;
     }
 }
-@ 
+@
 
 \subsection{Wavefront processing}
 \label{sec:wavefront-processing}
@@ -637,23 +656,23 @@ void shackHartmann::analyze(source *gs) {
 A pointer to the detector frame is obtained with
 <<get detector frame>>=
 float* shackHartmann::get_frame_dev_ptr(void) {
-  return camera.d__frame;     
+  return camera.d__frame;
 }
-@ 
+@
 The slopes in the valid lenslet are extracted with
 \index{shackHartmann!shackHartmann!get\_valid\_slopes}
 <<valid lenslet slopes>>=
-void shackHartmann::get_valid_slopes(float *d__valid_slopes) 
+void shackHartmann::get_valid_slopes(float *d__valid_slopes)
 {
   dim3 blockDim(16,16);
   dim3 gridDim(valid_lenslet.nnz/256+1,1);
-  get_valid_slopes_kern LLL gridDim, blockDim RRR (d__valid_slopes, valid_lenslet.idx, 
+  get_valid_slopes_kern LLL gridDim, blockDim RRR (d__valid_slopes, valid_lenslet.idx,
 						   valid_lenslet.nnz, data_proc.d__c,
 						   N_LENSLET);
 }
 @ with
 <<valid lenslet slopes kernel>>=
-__global__ void get_valid_slopes_kern(float *d__valid_slopes,  int *idx, 
+__global__ void get_valid_slopes_kern(float *d__valid_slopes,  int *idx,
 				      const int NNZ, float *d__c, const int N_LENSLET)
 {
   int i, j, k, iSource, _idx_;
@@ -668,7 +687,7 @@ __global__ void get_valid_slopes_kern(float *d__valid_slopes,  int *idx,
     d__valid_slopes[k+NNZ] = d__c[ _idx_ + N_LENSLET];
   }
 }
-@ 
+@
 \subsection{Input/Output}
 \label{sec:inputoutput}
 
@@ -684,7 +703,7 @@ All CEO programs must include the following headers which also contains the head
 <<shackHartmann.bin>>=
 <<test 2>>
 
-@ 
+@
 \subsection{Test 1}
 \label{sec:test-1}
 
@@ -769,7 +788,7 @@ N_PX2 = N_PX*N_PX;
 float p, d;
 p = 25.0/N_PX;
 d = 25.0/N_SIDE_LENSLET;
-@ 
+@
 The guide star is defined with
 <<test 1 setup>>=
 float zenith[] = {ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30),ARCSEC(30)},
@@ -778,7 +797,7 @@ source gs;
 gs.setup("K", zenith, azimuth, INFINITY, N_GS, N_PX2);
 <<test 1 cleanup>>=
 gs.cleanup();
-@ 
+@
 The telescope pupil is defined with the [[mask]] structure:
 <<test 1 setup>>=
 mask telescope;
@@ -786,25 +805,25 @@ telescope.setup_circular(N_PX);
 gs.wavefront.masked(&telescope);
 <<test 1 cleanup>>=
 telescope.cleanup();
-@ 
+@
 The wavefront sampled on the actuators location is from the following guide star:
 <<test 1 setup>>=
 source gs_dm;
 gs_dm.setup("K", zenith, azimuth, INFINITY, N_GS, N_ACTUATOR2);
 <<test 1 cleanup>>=
 gs_dm.cleanup();
-@ 
+@
 The wavefront sensor is defined with:
 <<test 1 setup>>=
 shackHartmann wfs;
 wfs.setup(N_SIDE_LENSLET,N_PX_LENSLET,d,2,N_PX_LENSLET,1,N_GS);
 <<test 1 cleanup>>=
 wfs.cleanup();
-@ 
+@
 The timing is done with the [[stopwatch]] structure:
 <<test 1 setup>>=
 stopwatch tid;
-@ 
+@
 The square pupil is made of tiles [[N_PX_LENSLET]]$\times$[[N_PX_LENSLET]] pixels with intensity equal to lenslet index
 <<setup opt-out>>=
 dim3 blockDim(16,16);
@@ -815,8 +834,8 @@ gs.wavefront.show_amplitude("Shack-Hartmann/amplitude",N_PX,N_PX*N_GS);
 __global__ void squareTiledPupil(float* amplitude, const int N_PX_LENSLET, const int N_SIDE_LENSLET, const int N_GS) {
   int i, j, iLenslet, jLenslet, ij_PUPIL, iSource, kLenslet;
   iSource = blockIdx.z;
-  if ( threads2lenslet(threadIdx, blockIdx, blockDim, 
-		       &i, &j, N_PX_LENSLET, 
+  if ( threads2lenslet(threadIdx, blockIdx, blockDim,
+		       &i, &j, N_PX_LENSLET,
 		       &iLenslet, &jLenslet, N_SIDE_LENSLET) ) {
     ij_PUPIL = lenslet2array(i,j,N_PX_LENSLET,iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
     kLenslet = iLenslet*N_SIDE_LENSLET + jLenslet;
@@ -842,24 +861,24 @@ mask DM_mask;
 DM_mask.setup( (N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1) );
 <<test 1 cleanup>>=
 DM_mask.cleanup();
-@ 
+@
 The Fried geometry for a circular pupil with the intensity [[threshold]] is enforced::
 <<test 1 setup>>=
 float threshold = 0.5;
-wfs.data_proc.MASK_SET = fried_geometry_setup(wfs.data_proc.lenslet_mask, DM_mask.m, 
+wfs.data_proc.MASK_SET = fried_geometry_setup(wfs.data_proc.lenslet_mask, DM_mask.m,
 				    N_SIDE_LENSLET, 16, threshold);
-@ 
+@
 The filtering properties associated with the pupil are set with:
 <<test 1 setup>>=
 DM_mask.set_filter();
-@ 
+@
 The wavefront is reconstructed from the centroids:
 <<test 1 setup>>=
 LMMSE lmmse;
 lmmse.setup(&atm,&gs,&gs,d,N_SIDE_LENSLET,&DM_mask,"MINRES");
 <<test 1 cleanup>>=
 lmmse.cleanup();
-@ 
+@
 
 \subsection{Test 2}
 \label{sec:test-2}
@@ -971,18 +990,18 @@ wfs.calibrate(&ngs,0.5);
 <<cleanup test 2>>=
 wfs.cleanup();
 
-@ 
+@
 The Fried geometry for a circular pupil with the intensity [[threshold]] is enforced::
 <<setup test 2>>=
   //float threshold = 0.5;
-  //cog.MASK_SET = fried_geometry_setup(cog.lenslet_mask, pupil_mask.m, 
+  //cog.MASK_SET = fried_geometry_setup(cog.lenslet_mask, pupil_mask.m,
 //				    N_SIDE_LENSLET, 16, threshold);
-@ 
+@
 The filtering properties associated with the pupil are set with:
 <<setup test 2>>=
   wfs.valid_actuator.set_filter();
   //pupil_mask.set_filter();
-@ 
+@
 The science is propagated through the [[pupil_mask]] to the focal plane of the [[imager]]:
 <<setup test 2>>=
 src.wavefront.masked(&wfs.valid_actuator);
@@ -1027,7 +1046,7 @@ complex_amplitude phase_screen;
 phase_screen.setup((N_SIDE_LENSLET+1)*(N_SIDE_LENSLET+1));
 phase_screen.add_phase(1,src.wavefront.phase);
 
-@ 
+@
 All CEO programs must include the following headers which also contains the headers for all the CEO library modules.
 <<main header>>=
 #ifndef __CEO_H__
@@ -1074,7 +1093,7 @@ for (k_SAMPLE=0;k_SAMPLE<N_SAMPLE;k_SAMPLE++) {
 <<ngsao>>=
 atm.get_phase_screen_gradient(&wfs.data_proc,N_SIDE_LENSLET,d,&ngs,tau);
 
-@ 
+@
 The wavefront is reconstructed from the NGS centroids:
 <<setup test 2>>=
 LMMSE ngs_lmmse;
@@ -1096,7 +1115,7 @@ if (k_SAMPLE==PLOTLY_LIM) {
 <<setup test 2>>=
 float ngs_wfe_rms_lmmse=0.;
 <<ngsao>>=
-ngs_wfe_rms_lmmse += S.var(src.wavefront.phase, 
+ngs_wfe_rms_lmmse += S.var(src.wavefront.phase,
 		   &wfs.valid_actuator, NP2);
 //ngs_lmmse.toFile("phaseEstNgsItp.bin");
 <<cleanup test 2>>=
@@ -1110,7 +1129,7 @@ if (k_SAMPLE==PLOTLY_LIM) {
   imager_ngsao_lmmse.show_frame(plotly_name,&imager);
  }
 
-@ 
+@
 \subsubsection{Results}
 \label{sec:results}
 
@@ -1160,7 +1179,7 @@ frame0 = zeros( (nPx*nSrc,nPx), order="c", dtype=float32)
 wfs.getframe(frame0)
 
 figure(1)
-ax = imshow(frame0,interpolation='None') 
+ax = imshow(frame0,interpolation='None')
 colorbar(ax)
 draw()
 
@@ -1173,7 +1192,7 @@ src.getphase(ps)
 
 figure(2)
 subplot(1, 3, 1)
-ax = imshow(ps,interpolation='None') 
+ax = imshow(ps,interpolation='None')
 colorbar(ax)
 
 wfs.reset()
@@ -1181,13 +1200,13 @@ wfs.analyze(src)
 wfs.getframe(frame0)
 
 subplot(1, 3, 2)
-ax = imshow(frame0,interpolation='None') 
+ax = imshow(frame0,interpolation='None')
 colorbar(ax)
 
 c = zeros( nSrc*2*nLenslet**2, order="c", dtype=float32 )
 wfs.getc(c)
 
 subplot(1, 3, 3)
-ax = imshow(reshape(c,[nSrc*nLenslet*2,nLenslet]),interpolation='None') 
+ax = imshow(reshape(c,[nSrc*nLenslet*2,nLenslet]),interpolation='None')
 colorbar(ax)
 show()

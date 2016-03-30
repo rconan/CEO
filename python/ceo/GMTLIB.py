@@ -58,7 +58,7 @@ class GMT_MX(GmtMirrors):
     >>> gmt = ceo.GMT_MX(25.5,256, M1_radial_order=8, M2_radial_order=14)
 
     A source is propagated (geometrically) through the telescope with the following procedure:
-u
+
     >>> src = ceo.Source("R",rays_box_size=25.5,rays_box_sampling=256,rays_origin=[0.0,0.0,25])
     >>> gmt.propagate(src)
 
@@ -404,6 +404,7 @@ u
 from utilities import JSONAbstract
 class JGMT_MX(JSONAbstract,GMT_MX):
     def __init__(self, jprms = None, jsonfile = None):
+        print "@(ceo.JGMT_MX)>"
         JSONAbstract.__init__(self,jprms=jprms, jsonfile=jsonfile)
         GMT_MX.__init__(self,self.jprms["pupil size"],
                         self.jprms["pupil sampling"],
@@ -611,8 +612,8 @@ class DispersedFringeSensor(SegmentPistonSensor):
 		Set to "camera" to return fringes; set to "fftlet" to return fftlet images; default: fftlet
 	"""
 
-	assert data_type == 'fftlet' or data_type == 'camera' or data_type == 'pupil_masks', "data_type should be either 'fftlet', 'camera', or 'pupil_masks'"  
-	
+	assert data_type == 'fftlet' or data_type == 'camera' or data_type == 'pupil_masks', "data_type should be either 'fftlet', 'camera', or 'pupil_masks'"
+
 	n_lenslet = self.camera.N_SIDE_LENSLET
 
 	if data_type == 'fftlet':
@@ -624,7 +625,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
 	elif data_type == 'pupil_masks':
 	    data = self.W.amplitude.host()
 	    n_px = (data.shape)[0] / n_lenslet
-	
+
     	dataCube = np.zeros((n_px, n_px, self._N_SRC*12))
     	k = 0
     	for j in range(n_lenslet):
@@ -768,7 +769,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
 	self.reset()
 	self.propagate(src)
 	self.fft()
-	self.process(**kwargs)	
+	self.process(**kwargs)
 
     def piston(self, src, segment='edge', **kwargs):
         """
