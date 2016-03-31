@@ -44,8 +44,8 @@ rjupyter:
 jupyterserver:
 	env PYTHONPATH="$(CEOPATH)/python" jupyter notebook --profile=nbserver
 
-jupyter:
-	env PYTHONPATH="$(CEOPATH)/python" jupyter #notebook
+ipython:
+	env PYTHONPATH="$(CEOPATH)/python" ipython
 
 touch: 
 	find . -name \*.nw -exec touch {} \;

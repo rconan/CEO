@@ -100,6 +100,7 @@ struct atmosphere {
 		 const char *fullpath_to_phasescreens,
 		 int _N_DURATION,
 		 int _RAND_SEED_);
+  void gmt_set_id(int _ID_);
 
   void cleanup(void);
 
@@ -190,6 +191,7 @@ struct atmosphere {
 <<profile setup>>
 <<profile cleanup>>
 
+<<atmosphere setup (GMT, set ID)>>
 <<atmosphere setup>>
 <<atmosphere setup (ray tracing)>>
 <<atmosphere setup (ray tracing, precomputed phase screens)>>
@@ -256,6 +258,7 @@ cdef extern from "atmosphere.h":
         void gmt_setup(float , float,
 		       float, int, float, float, char *, int, int)
         void gmt_setup(float, float, float, int, float, float, int)
+        void gmt_set_id(int)
         void cleanup()
         void info()
         void save_layer_phasescreens(char *,int)
@@ -533,8 +536,10 @@ cdef class GmtAtmosphere(AtmosphereAbstract):
                  float L=0.0,int NXY_PUPIL=0,float fov=0.0,
                  float duration=1.0, bytes filename=None,
                  int N_DURATION=1,
-                 int SEED=0):
+                 int SEED=0,
+                 int ID=0):
         super(GmtAtmosphere,self).__init__(r0,L0)
+        self._c_atmosphere.gmt_set_id(ID)
         if SEED==0:
             if NXY_PUPIL==0:
                 self._c_atmosphere.gmt_setup(r0, L0)
@@ -577,7 +582,8 @@ class JGmtAtmosphere(JSONAbstract,GmtAtmosphere):
                                fov        = self.jprms["field-of-view [arcmin]"]*ARCMIN2RAD,
                                duration   = self.jprms["duration"],
                                filename   = str( self.jprms["filename"] ),
-                               N_DURATION = self.jprms["time sampling"])
+                               N_DURATION = self.jprms["time sampling"],
+                               ID         = self.jprms["ID"])
 @
 <<python atmosphere methods>>=
 def reset(self):
@@ -790,6 +796,9 @@ int N_DURATION;
 @ \item the random seed generator
 <<atmosphere parameters>>=
 int LOCAL_RAND_SEED;
+@ \item the identity number of the GMT atmosphere model
+<<atmosphere parameters>>=
+int ID;
 @ \end{itemize}
 
 The atmospheric layer parameters are:
@@ -1035,14 +1044,9 @@ void atmosphere::gmt_setup() {
   wavelength = 550e-9;
   wavenumber = wavelength/2/PI;
   r0 = 15e-2;
-  turbulence.L0 = 60;
-  N_LAYER = 7;
-  float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
-              xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
-              wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
-              wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
-  turbulence.setup(altitude, xi0,
-		   wind_speed, wind_direction, N_LAYER);
+  turbulence.L0 = 60; 
+  ID = 0;
+  <<GMT atmosphere profile ID>>
   field_size = 0.0;
   N_PHASE_LAYER = 0;
   W = 0.0;
@@ -1054,6 +1058,84 @@ void atmosphere::gmt_setup() {
   phase_screen_LAYER = NULL;
   d__phase_screen_LAYER = NULL;
 }
+@ 
+<<atmosphere setup (GMT, set ID)>>=
+void atmosphere::gmt_set_id(int _ID_) {
+  ID = _ID_;
+}
+@ with
+<<GMT atmosphere profile ID>>=
+N_LAYER = 7;
+float altitude[7], xi0[7], wind_speed[7], wind_direction[7];
+int n_bytes = sizeof(float)*7;
+switch(ID) {
+  case 2 :
+  {
+    fprintf(stdout,"@(CEO)>atmosphere: GMT case 2: STRONG GROUND LAYER (Goodwin LCO Jan08, case 7)\n");
+    float altitude_2[]       = {25, 275, 425, 1250, 4000, 8000, 13000},
+    xi0_2[]            = {0.2039, 0.1116, 0.1706, 0.2281, 0.1694, 0.0615, 0.054},
+    wind_speed_2[]     = {9.4092, 9.6384, 9.7905, 2.7028, 8.2883, 30.1824, 13.0364},
+    wind_direction_2[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+    memcpy(altitude, altitude_2, n_bytes);
+    memcpy(xi0, xi0_2, n_bytes);
+    memcpy(wind_speed, wind_speed_2, n_bytes);
+    memcpy(wind_direction, wind_direction_2, n_bytes);
+    break;
+  }
+  case 3 :
+  {
+    fprintf(stdout,"@(CEO)>atmosphere: GMT case 3: GOOD CONDITIONS (Goodwin LCO Jan08, case 1)\n");
+    float altitude_3[]       = {25, 275, 425, 1250, 4000, 8000, 13000},
+    xi0_3[]            = {0.1410, 0.0381, 0.0542, 0.3403, 0.2528, 0.0917, 0.0819},
+    wind_speed_3[]     = {2.1953, 2.2575, 2.3029, 2.7028, 8.2883, 30.1824, 13.0364},
+    wind_direction_3[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+    memcpy(altitude, altitude_3, n_bytes);
+    memcpy(xi0, xi0_3, n_bytes);
+    memcpy(wind_speed, wind_speed_3, n_bytes);
+    memcpy(wind_direction, wind_direction_3, n_bytes);
+    break;
+  }
+  case 4 :
+  {
+    fprintf(stdout,"@(CEO)>atmosphere: GMT case 4: POOR CONDITIONS (Goodwin LCO Jan08, case 9)\n");
+    float altitude_4[]       = {25, 275, 425, 1250, 4000, 8000, 13000},
+    xi0_4[]            = {0.1335, 0.0730, 0.1117, 0.3311, 0.2170, 0.0613, 0.0724},
+    wind_speed_4[]     = {9.4092, 9.6384, 9.7905, 10.8527, 18.2550, 39.1520, 43.7936},
+    wind_direction_4[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+    memcpy(altitude, altitude_4, n_bytes);
+    memcpy(xi0, xi0_4, n_bytes);
+    memcpy(wind_speed, wind_speed_4, n_bytes);
+    memcpy(wind_direction, wind_direction_4, n_bytes);
+    break;
+  }
+  case 5 :
+  {
+    fprintf(stdout,"@(CEO)>atmosphere: GMT case 5: THIN CLOUDS (Goodwin LCO Jan08, case 5)\n");
+    float altitude_5[]       = {25, 275, 425, 1250, 4000, 8000, 13000},
+    xi0_5[]            = {0.1335, 0.0730, 0.1117, 0.3311, 0.2170, 0.0613, 0.0724},
+    wind_speed_5[]     = {9.4092, 9.6384, 9.7905, 10.8527, 18.2550, 39.1520, 43.7936},
+    wind_direction_5[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+    memcpy(altitude, altitude_5, n_bytes);
+    memcpy(xi0, xi0_5, n_bytes);
+    memcpy(wind_speed, wind_speed_5, n_bytes);
+    memcpy(wind_direction, wind_direction_5, n_bytes);
+    break;
+  }
+  default :
+  {
+    fprintf(stdout,"@(CEO)>atmosphere: GMT case 1: MEDIAN (Goodwin LCO Jan08, case 5)\n");
+    float altitude_1[]       = {25, 275, 425, 1250, 4000, 8000, 13000},
+    xi0_1[]            = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
+    wind_speed_1[]     = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
+    wind_direction_1[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
+    memcpy(altitude, altitude_1, n_bytes);
+    memcpy(xi0, xi0_1, n_bytes);
+    memcpy(wind_speed, wind_speed_1, n_bytes);
+    memcpy(wind_direction, wind_direction_1, n_bytes);
+  }
+}
+turbulence.setup(altitude, xi0,
+                 wind_speed, wind_direction, N_LAYER);
 @
 <<atmosphere setup (GMT prm)>>=
 void atmosphere::gmt_setup(float r0_, float L0) {
@@ -1061,13 +1143,7 @@ void atmosphere::gmt_setup(float r0_, float L0) {
   wavenumber = wavelength/2/PI;
   r0 = r0_;
   turbulence.L0 = L0;
-  N_LAYER = 7;
-  float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
-              xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
-              wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
-              wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
-  turbulence.setup(altitude, xi0,
-		   wind_speed, wind_direction, N_LAYER);
+  <<GMT atmosphere profile ID>>
   field_size = 0.0;
   N_PHASE_LAYER = 0;
   W = 0.0;
@@ -1086,13 +1162,7 @@ void atmosphere::gmt_setup(float r0_, float L0, int _RAND_SEED_) {
   wavenumber = wavelength/2/PI;
   r0 = r0_;
   turbulence.L0 = L0;
-  N_LAYER = 7;
-  float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
-              xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
-              wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
-              wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
-  turbulence.setup(altitude, xi0,
-		   wind_speed, wind_direction, N_LAYER);
+  <<GMT atmosphere profile ID>>
   field_size = 0.0;
   N_PHASE_LAYER = 0;
   W = 0.0;
@@ -1123,13 +1193,7 @@ wavelength = 500e-9;
 wavenumber = wavelength/2/PI;
 r0 = r0_;
 turbulence.L0 = L0;
-N_LAYER = 7;
-float altitude[] = {25, 275, 425, 1250, 4000, 8000, 13000},
-      xi0[] = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
-      wind_speed[] = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
-      wind_direction[] = {0.0136, 0.1441, 0.2177, 0.5672, 1.2584, 1.6266, 1.7462};
-turbulence.setup(altitude, xi0,
-                 wind_speed, wind_direction, N_LAYER);
+<<GMT atmosphere profile ID>>
 field_size = _field_size_;
 W = _W_;
 N_W = _N_W_;
