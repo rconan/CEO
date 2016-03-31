@@ -743,8 +743,9 @@ class DispersedFringeSensor(SegmentPistonSensor):
     	    elif self.lobe_detection == 'peak_value':
         	height = np.max(mylobe)
         	height_pos = np.argmax(mylobe)
-        	y = height_pos / mylobe.shape[0]
-        	x = height_pos % mylobe.shape[0]
+		y, x = np.unravel_index(height_pos, mylobe.shape)
+		x += 0.5*(mylobe[y,x-1] - mylobe[y,x+1]) / (mylobe[y,x-1]+mylobe[y,x+1]-2*height+1e-6)
+		y += 0.5*(mylobe[y-1,x] - mylobe[y+1,x]) / (mylobe[y-1,x]+mylobe[y+1,x]-2*height+1e-6)
         	width_x, width_y, rot = 0,0,0
 	    x1 = x * np.cos(-self.fftlet_rotation[k]) - y * np.sin(-self.fftlet_rotation[k])
 	    y1 = x * np.sin(-self.fftlet_rotation[k]) + y * np.cos(-self.fftlet_rotation[k])
