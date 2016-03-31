@@ -525,6 +525,10 @@ cdef class GmtAtmosphere(AtmosphereAbstract):
        The name of the file to save the phase screens of the layers to, default: None.
     N_DURATION : int, optionnal
        The number of phase screens of time length duration, default: 1.
+    SEED : int, optional
+       The seed of the random generator, default: 2016.
+    ID : int, optional
+       The ID number of the GMT atmosphere model, default: 1.
 
     See also
     --------
@@ -536,36 +540,22 @@ cdef class GmtAtmosphere(AtmosphereAbstract):
                  float L=0.0,int NXY_PUPIL=0,float fov=0.0,
                  float duration=1.0, bytes filename=None,
                  int N_DURATION=1,
-                 int SEED=0,
-                 int ID=0):
+                 int SEED=2016,
+                 int ID=1):
         super(GmtAtmosphere,self).__init__(r0,L0)
         self._c_atmosphere.gmt_set_id(ID)
-        if SEED==0:
-            if NXY_PUPIL==0:
-                self._c_atmosphere.gmt_setup(r0, L0)
-            else:
-                if filename is None:
-                    self._c_atmosphere.gmt_setup(r0, L0,
-                                                 L, NXY_PUPIL,
-                                                 fov, duration)
-                else:
-                    self._c_atmosphere.gmt_setup(r0, L0,
-                                                 L, NXY_PUPIL,
-                                                 fov, duration,
-                                                 filename, N_DURATION)
+        if NXY_PUPIL==0:
+            self._c_atmosphere.gmt_setup(r0, L0, SEED)
         else:
-            if NXY_PUPIL==0:
-                self._c_atmosphere.gmt_setup(r0, L0, SEED)
+            if filename is None:
+                self._c_atmosphere.gmt_setup(r0, L0,
+                                             L, NXY_PUPIL,
+                                             fov, duration, SEED)
             else:
-                if filename is None:
-                    self._c_atmosphere.gmt_setup(r0, L0,
-                                                 L, NXY_PUPIL,
-                                                 fov, duration, SEED)
-                else:
-                    self._c_atmosphere.gmt_setup(r0, L0,
-                                                 L, NXY_PUPIL,
-                                                 fov, duration,
-                                                 filename, N_DURATION, SEED)
+                self._c_atmosphere.gmt_setup(r0, L0,
+                                             L, NXY_PUPIL,
+                                             fov, duration,
+                                             filename, N_DURATION, SEED)
 @
 \index{atmosphere!python!JGmtAtmosphere}
 <<atmosphere.pyx>>=
@@ -1059,6 +1049,7 @@ void atmosphere::gmt_setup() {
   d__phase_screen_LAYER = NULL;
 }
 @ 
+The GMT atmosphere ID needs to be set before setting--up the atmosphere:
 <<atmosphere setup (GMT, set ID)>>=
 void atmosphere::gmt_set_id(int _ID_) {
   ID = _ID_;
