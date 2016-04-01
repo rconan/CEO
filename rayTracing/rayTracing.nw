@@ -60,6 +60,13 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 					     rtd *d__R);
 
 
+void transform_to_S(bundle *rays, conic *F);
+void transform_to_S(bundle *rays, aperture *A);
+void transform_to_R(bundle *rays, conic *F);
+void transform_to_R(bundle *rays, aperture *A);
+void intersect(bundle *rays, conic *F);
+void reflect(bundle *rays);
+
 #endif // __RAYTRACING_H__
 @
 \subsection{Source}
@@ -90,6 +97,14 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 <<vignetting kernel>>
 <<aperture functions>>
 
+<<transformation to surface system kernel>>
+<<transformation to surface system>>
+<<transformation to rays system kernel>>
+<<transformation to rays system>>
+<<intersection with surface kernel>>
+<<intersection with surface>>
+<<reflection kernel>>
+<<reflection>>
 
 @
 \subsection{Python}
@@ -440,6 +455,20 @@ cdef class Quaternion:
 # conic
 cdef class Conic:
     """
+    A class defining a conic surface
+
+    Parameters
+    ----------
+    c : rtd
+        The vertex curvature
+    k : rtd
+        The conic constant
+    origin : list, optional
+        The location of the conic surface [m]; default: [0.0,0.0,0.0]
+    euler_angles : list, optional
+        The rotation along the x,y and z axis [rd]; default: [0.0,0.0,0.0]  
+    conic_origin : list, optional
+        The coordinates of the center of the conic surface; default: [0.0,0.0,0.0]
     """
     cdef conic *_c_conic
 
@@ -448,17 +477,17 @@ cdef class Conic:
                   conic_origin=[0.0,0.0,0.0]):
         self._c_conic = new conic()
         cdef vector __origin
-        __origin.x = <float>origin[0]
-        __origin.y = <float>origin[1]
-        __origin.z = <float>origin[2]
+        __origin.x = <rtd>origin[0]
+        __origin.y = <rtd>origin[1]
+        __origin.z = <rtd>origin[2]
         cdef vector __euler_angles
-        __euler_angles.x = <float>euler_angles[0]
-        __euler_angles.y = <float>euler_angles[1]
-        __euler_angles.z = <float>euler_angles[2]
+        __euler_angles.x = <rtd>euler_angles[0]
+        __euler_angles.y = <rtd>euler_angles[1]
+        __euler_angles.z = <rtd>euler_angles[2]
         cdef vector __conic_origin
-        __conic_origin.x = <float>conic_origin[0]
-        __conic_origin.y = <float>conic_origin[1]
-        __conic_origin.z = <float>conic_origin[2]
+        __conic_origin.x = <rtd>conic_origin[0]
+        __conic_origin.y = <rtd>conic_origin[1]
+        __conic_origin.z = <rtd>conic_origin[2]
         self._c_conic.setup(c, k, __origin, __euler_angles, __conic_origin)
 
     def __dealloc__(self):
@@ -481,6 +510,20 @@ cdef class Conic:
 # aperture
 cdef class Aperture:
     """
+    A class defining a circular aperture for ray tracing
+
+    Parameters
+    ----------
+    D : float
+        The aperture diameter [m]
+    ri : float
+        The central obscuration ratio
+    D_px : int
+        The sampling of the diameter [pixel]
+    origin : list, optional
+        The location of the aperture [m]; default: [0.0,0.0,0.0]
+    euler_angles : list, optional
+        The rotation along the x,y and z axis [rd]; default: [0.0,0.0,0.0]  
     """
     cdef aperture *_c_aperture
 
@@ -763,6 +806,39 @@ def Zernike_Surface(rtd r, rtd o, int max_n, np.ndarray a):
 <<log properties (start)>>
         self.__data_log__ = np.zeros((self.N_SURF,self.n_mode,self.__log__), dtype=np.float64)
 <<log properties (end)>>
+@
+\subsubsection{Ray tracing routines}
+\label{sec:ray-tracing-routines}
+
+\index{rayTracing!python!Transform_to_S}
+\index{rayTracing!python!Transform_to_R}
+\index{rayTracing!python!Intersect}
+\index{rayTracing!python!Reflect}
+
+<<rayTracing.pxd contents>>=
+    cdef void transform_to_S(bundle *, conic *)
+    cdef void transform_to_S(bundle *, aperture *)
+    cdef void transform_to_R(bundle *, conic *)
+    cdef void transform_to_R(bundle *, aperture *)
+    cdef void intersect(bundle *, conic *)
+    cdef void reflect(bundle *)
+    cdef void thin_lens(bundle *)
+@
+<<rayTracing.pyx>>=
+# ray tracing
+from source cimport Source
+def Transform_to_S(Source src, Conic F):
+    transform_to_S(src.rays._c_bundle, F._c_conic)
+def Transform_to_S_from_A(Source src, Aperture A):
+    transform_to_S(src.rays._c_bundle, A._c_aperture)
+def Transform_to_R(Source src, Conic F):
+    transform_to_R(src.rays._c_bundle, F._c_conic)
+def Transform_to_R_from_A(Source src, Aperture A):
+    transform_to_R(src.rays._c_bundle, A._c_aperture)
+def Intersect(Source src, Conic F):
+    intersect(src.rays._c_bundle, F._c_conic)
+def Reflect(Source src):
+    reflect(src.rays._c_bundle)
 @ 
 \section{Coordinate system}
 \label{sec:coordinate-system}
@@ -2432,6 +2508,12 @@ The reverse transform is simply
 <<transformation to surface system>>=
 void transform_to_S(bundle *rays, conic *F)
 {
+  vector v;
+  HANDLE_ERROR( cudaMemcpy( &v, F->ref_frame.d__origin,
+			    sizeof(vector), cudaMemcpyDeviceToHost ) );
+  fprintf(stdout,"v: [%g,%g,%.9f]\n",v.x,v.y,v.z);
+  transform_to_S_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+				   F->ref_frame.d__R, F->ref_frame.d__origin);
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   transform_to_S_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
@@ -2439,6 +2521,8 @@ void transform_to_S(bundle *rays, conic *F)
 }
 void transform_to_S(bundle *rays, aperture *A)
 {
+  transform_to_S_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+				   A->ref_frame.d__R, A->ref_frame.d__origin);
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   transform_to_S_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
@@ -2491,6 +2575,8 @@ __host__ __device__  void forward_transform_centered(vector *v_out, vector *v_in
 <<transformation to rays system>>=
 void transform_to_R(bundle *rays, conic *F)
 {
+  transform_to_R_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+				   F->ref_frame.d__R, F->ref_frame.d__origin);
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   transform_to_R_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
@@ -2498,6 +2584,8 @@ void transform_to_R(bundle *rays, conic *F)
 }
 void transform_to_R(bundle *rays, aperture *A)
 {
+  transform_to_R_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+				   A->ref_frame.d__R, A->ref_frame.d__origin);
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   transform_to_R_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
@@ -2859,6 +2947,7 @@ Eq.~(\ref{eq:14}) thus becomes
 <<reflection>>=
 void reflect(bundle *rays)
 {
+  reflect_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1, 1.0);
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   reflect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, 1.0);
