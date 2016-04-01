@@ -115,7 +115,7 @@ void reflect(bundle *rays);
 <<rayTracing.pxd>>=
 cimport numpy as np
 from utilities cimport rtd, vector, cuFloatArray, cuDoubleArray
-from source cimport bundle, Bundle
+from source cimport bundle, Bundle, Source
 cdef extern from "rayTracing.h":
 <<rayTracing.pxd contents>>
 <<class definitions>>
@@ -500,6 +500,24 @@ cdef class Conic:
 
     def __dealloc__(self):
         self._c_conic.cleanup()
+
+    def trace(self, Source src):
+        """
+        Traces the rays of the source to the conic optical surface
+
+        Parameters
+        ----------
+        src : Source
+            A Source object
+
+        See also
+        --------
+        Source : the celestial source class
+        """
+        transform_to_S(src.rays._c_bundle, self._c_conic)
+        intersect(src.rays._c_bundle, self._c_conic)
+        reflect(src.rays._c_bundle)
+        transform_to_R(src.rays._c_bundle, self._c_conic)
 @
 \subsubsection{Aperture}
 \label{sec:aperture-1}
@@ -554,8 +572,20 @@ cdef class Aperture:
     def __dealloc__(self):
         self._c_aperture.cleanup()
 
-    def vignetting(self, Bundle rays):
-        self._c_aperture.vignetting(rays._c_bundle)
+    def vignetting(self, Source src):
+        """
+        Vignets the rays of the source according to the aperture geometry
+
+        Parameters
+        ----------
+        src : Source
+            A Source object
+
+        See also
+        --------
+        Source : the celestial source class
+        """
+        self._c_aperture.vignetting(src.rays._c_bundle)
 @
 \subsubsection{Zernike}
 \label{sec:zernike}
@@ -838,7 +868,6 @@ def Zernike_Surface(rtd r, rtd o, int max_n, np.ndarray a):
 @
 <<rayTracing.pyx>>=
 # ray tracing
-from source cimport Source
 def Transform_to_S(Source src, Conic F):
     """
     Transforms the rays of the source into the coordinate system of the conic object
