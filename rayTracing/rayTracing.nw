@@ -447,6 +447,7 @@ cdef class Quaternion:
 
 <<rayTracing.pxd contents>>=
     cdef cppclass conic:
+        vector origin
         coordinate_system ref_frame
         void setup(rtd , rtd , vector , vector , vector)
         void cleanup()
@@ -470,7 +471,10 @@ cdef class Conic:
     conic_origin : list, optional
         The coordinates of the center of the conic surface; default: [0.0,0.0,0.0]
     """
-    cdef conic *_c_conic
+    cdef:
+        conic *_c_conic
+        public Coordinate_system ref_frame
+        readonly Coordinates origin
 
     def __cinit__(self,rtd c, rtd k,
                   origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0],
@@ -489,6 +493,10 @@ cdef class Conic:
         __conic_origin.y = <rtd>conic_origin[1]
         __conic_origin.z = <rtd>conic_origin[2]
         self._c_conic.setup(c, k, __origin, __euler_angles, __conic_origin)
+        self.ref_frame = Coordinate_system(1)
+        self.ref_frame.init( &(self._c_conic.ref_frame) )
+        self.origin = Coordinates((1,3))
+        self.origin.v = &(self._c_conic.origin)
 
     def __dealloc__(self):
         self._c_conic.cleanup()
@@ -525,7 +533,9 @@ cdef class Aperture:
     euler_angles : list, optional
         The rotation along the x,y and z axis [rd]; default: [0.0,0.0,0.0]  
     """
-    cdef aperture *_c_aperture
+    cdef:
+        aperture *_c_aperture
+        public Coordinate_system ref_frame
 
     def __cinit__(self, float D, float ri, int D_px, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0]):
         self._c_aperture = new aperture()
@@ -538,6 +548,8 @@ cdef class Aperture:
         __euler_angles.y = <float>euler_angles[1]
         __euler_angles.z = <float>euler_angles[2]
         self._c_aperture.setup(D, ri, D_px, __origin, __euler_angles)
+        self.ref_frame = Coordinate_system(1)
+        self.ref_frame.init( &(self._c_aperture.ref_frame) )
 
     def __dealloc__(self):
         self._c_aperture.cleanup()
