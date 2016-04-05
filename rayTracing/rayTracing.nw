@@ -59,14 +59,13 @@ __host__ __device__  void backward_transform(vector *v_out, vector *v_in,
 __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_in,
 					     rtd *d__R);
 
-
 void transform_to_S(bundle *rays, conic *F);
 void transform_to_S(bundle *rays, aperture *A);
 void transform_to_R(bundle *rays, conic *F);
 void transform_to_R(bundle *rays, aperture *A);
 void intersect(bundle *rays, conic *F);
 void reflect(bundle *rays);
-
+void refract(bundle *rays, rtd mu);
 #endif // __RAYTRACING_H__
 @
 \subsection{Source}
@@ -74,6 +73,12 @@ void reflect(bundle *rays);
 
 <<rayTracing.cu>>=
 #include "rayTracing.h"
+
+<<transformation to surface system kernel>>
+<<transformation to rays system kernel>>
+<<intersection with surface kernel>>
+<<reflection kernel>>
+<<refraction kernel>>
 
 <<coordinates forward transform>>
 <<coordinates backward transform>>
@@ -97,15 +102,11 @@ void reflect(bundle *rays);
 <<vignetting kernel>>
 <<aperture functions>>
 
-<<transformation to surface system kernel>>
 <<transformation to surface system>>
-<<transformation to rays system kernel>>
 <<transformation to rays system>>
-<<intersection with surface kernel>>
 <<intersection with surface>>
-<<reflection kernel>>
 <<reflection>>
-
+<<refraction>>
 @
 \subsection{Python}
 \label{sec:python}
@@ -115,7 +116,7 @@ void reflect(bundle *rays);
 <<rayTracing.pxd>>=
 cimport numpy as np
 from utilities cimport rtd, vector, cuFloatArray, cuDoubleArray
-from source cimport bundle, Bundle, Source
+from source cimport source, bundle, Bundle, Source
 cdef extern from "rayTracing.h":
 <<rayTracing.pxd contents>>
 <<class definitions>>
@@ -444,13 +445,13 @@ cdef class Quaternion:
 \label{sec:surface-1}
 
 \index{rayTracing!python!Conic}
-
 <<rayTracing.pxd contents>>=
     cdef cppclass conic:
         vector origin
         coordinate_system ref_frame
-        void setup(rtd , rtd , vector , vector , vector)
+        void setup(rtd , rtd , vector , vector , vector, rtd)
         void cleanup()
+        void trace(bundle *)
 @
 <<rayTracing.pyx>>=
 # conic
@@ -477,8 +478,10 @@ cdef class Conic:
         readonly Coordinates origin
 
     def __cinit__(self,rtd c, rtd k,
-                  origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0],
-                  conic_origin=[0.0,0.0,0.0]):
+                  origin       = [0.0,0.0,0.0], 
+                  euler_angles = [0.0,0.0,0.0],
+                  conic_origin = [0.0,0.0,0.0],
+                  refractive_index = 1.0):
         self._c_conic = new conic()
         cdef vector __origin
         __origin.x = <rtd>origin[0]
@@ -492,7 +495,8 @@ cdef class Conic:
         __conic_origin.x = <rtd>conic_origin[0]
         __conic_origin.y = <rtd>conic_origin[1]
         __conic_origin.z = <rtd>conic_origin[2]
-        self._c_conic.setup(c, k, __origin, __euler_angles, __conic_origin)
+        self._c_conic.setup(c, k, __origin, __euler_angles, 
+                            __conic_origin, refractive_index)
         self.ref_frame = Coordinate_system(1)
         self.ref_frame.init( &(self._c_conic.ref_frame) )
         self.origin = Coordinates((1,3))
@@ -514,10 +518,7 @@ cdef class Conic:
         --------
         Source : the celestial source class
         """
-        transform_to_S(src.rays._c_bundle, self._c_conic)
-        intersect(src.rays._c_bundle, self._c_conic)
-        reflect(src.rays._c_bundle)
-        transform_to_R(src.rays._c_bundle, self._c_conic)
+        self._c_conic.trace(&(src._c_source.rays))
 @
 \subsubsection{Aperture}
 \label{sec:aperture-1}
@@ -864,6 +865,7 @@ def Zernike_Surface(rtd r, rtd o, int max_n, np.ndarray a):
     cdef void transform_to_R(bundle *, aperture *)
     cdef void intersect(bundle *, conic *)
     cdef void reflect(bundle *)
+    cdef void refract(bundle *, rtd)
     cdef void thin_lens(bundle *)
 @
 <<rayTracing.pyx>>=
@@ -932,15 +934,28 @@ def Reflect(Source src):
     ----------
     src : Source
         A Source object
-    F : Conic
-        A Conic object
 
     See also
     --------
     Source : the celestial source class
-    Conic : the optics conic surface class
     """
     reflect(src.rays._c_bundle)
+def Refract(Source src, rtd mu):
+    """
+    Refraction of the rays of the source through the surface represented by the conic object
+
+    Parameters
+    ----------
+    src : Source
+        A Source object
+    mu : rtd
+        The ratio of the index of refraction associated to the incident and refracted rays
+
+    See also
+    --------
+    Source : the celestial source class
+    """
+    refract(src.rays._c_bundle, mu)
 @ 
 \section{Coordinate system}
 \label{sec:coordinate-system}
@@ -1230,8 +1245,12 @@ struct conic {
 
   void setup(rtd _c_, rtd _k_);
   void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_);
-  void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, vector conic_origin);
+  void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
+             vector conic_origin);
+  void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
+             vector conic_origin, rtd _refractive_index_);
   void cleanup(void);
+  void trace(bundle *src);
 };
 @
 A conic surface is defined at a given location within a given coordinate system:
@@ -1239,11 +1258,11 @@ A conic surface is defined at a given location within a given coordinate system:
 coordinate_system ref_frame;
 vector origin, *d__origin;
 @
-The conic shape is specified with two parameters:
+The conic is specified with three parameters:
 <<conic parameters>>=
-rtd c, k;
+rtd c, k, refractive_index;
 @
-where [[c]] is the vertex curvature and [[k]] is the conic parameter.
+where [[c]] is the vertex curvature, [[k]] is the conic parameter and [[refractive_index]] is the index of refraction.
 
 The conic surface is defined with
 \begin{equation}
@@ -1456,6 +1475,18 @@ void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, vect
   ref_frame.setup(_origin_, _euler_angles_);
   <<conic allocation>>
 }
+void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
+                  vector conic_origin, rtd _refractive_index_)
+{
+  c = _c_;
+  k = _k_;
+  origin.x = conic_origin.x;
+  origin.y = conic_origin.y;
+  origin.z = conic_origin.z;
+  ref_frame.setup(_origin_, _euler_angles_);
+  <<conic allocation>>
+  refractive_index = _refractive_index_;
+}
 @
 A conic surface that sets in the GCS is simply defined with
 \index{rayTracing!conic!setup}
@@ -1471,6 +1502,7 @@ void conic::setup(rtd _c_, rtd _k_)
   <<conic allocation>>
 }
 <<conic allocation>>=
+refractive_index = 1.0;
 HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
 HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
@@ -1517,6 +1549,33 @@ void conic::cleanup(void)
 }
 @
 
+Ray tracing, to and through the surface, is computed with
+<<conic functions>>=
+void conic::trace(bundle *rays)
+{
+  transform_to_S_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+                                       ref_frame.d__R, ref_frame.d__origin);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
+  transform_to_S_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+					            ref_frame.d__R, ref_frame.d__origin);
+  intersect_chief_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+                                        k, c, d__origin);
+  intersect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+					       k, c, d__origin,
+					       rays->d__chief_ray);
+  if (rays->refractive_index==refractive_index) 
+     reflect(rays);
+   else { 
+     refract(rays, rays->refractive_index/refractive_index);
+     rays->refractive_index = refractive_index;
+   }
+   transform_to_R_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+				       ref_frame.d__R, ref_frame.d__origin);
+  transform_to_R_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+        	 				    ref_frame.d__R, ref_frame.d__origin);
+}
+@
 \section{Zernike surface}
 \label{sec:zernike-surface}
 
@@ -2610,10 +2669,6 @@ The reverse transform is simply
 <<transformation to surface system>>=
 void transform_to_S(bundle *rays, conic *F)
 {
-  vector v;
-  HANDLE_ERROR( cudaMemcpy( &v, F->ref_frame.d__origin,
-			    sizeof(vector), cudaMemcpyDeviceToHost ) );
-  fprintf(stdout,"v: [%g,%g,%.9f]\n",v.x,v.y,v.z);
   transform_to_S_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
 				   F->ref_frame.d__R, F->ref_frame.d__origin);
   dim3 blockDim(N_THREAD,N_THREAD);
@@ -2999,6 +3054,7 @@ with
 <<refraction>>=
 void refract(bundle *rays, const rtd mu)
 {
+  refract_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1, mu);
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   refract_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, mu);
@@ -3021,7 +3077,7 @@ __global__ void refract_kernel(ray *d__ray, int N_RAY, const rtd mu)
     {
       gamma1 = 0.5*(gamma0*gamma0-b)/(gamma0+a);
       gamma_relative_error = abs( gamma1/gamma0 - 1.0 );
-      if (gamma_relative_error<0.01)
+        if (gamma_relative_error<1E-6)
       {
         d__ray[ij].directions.x = mu*k + gamma1*K;
         d__ray[ij].directions.y = mu*l + gamma1*L;
