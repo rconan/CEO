@@ -131,6 +131,26 @@ ZernikeS
 .. autoclass:: ZernikeS
     :members:
 
+Transform_to_S
+~~~~~~~~~~~~~~
+.. autofunction:: Transform_to_S
+
+Transform_to_R
+~~~~~~~~~~~~~~
+.. autofunction:: Transform_to_R
+
+Intersect
+~~~~~~~~~
+.. autofunction:: Intersect
+
+Reflect
+~~~~~~~
+.. autofunction:: Reflect
+
+Refract
+~~~~~~~
+.. autofunction:: Refract
+
 gmtMirrors
 ----------
 
