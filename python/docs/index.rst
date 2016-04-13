@@ -50,6 +50,11 @@ Layer
 source
 ------
 
+Bundle
+~~~~~~
+.. autoclass:: Bundle
+    :members:
+
 Complex_amplitude
 ~~~~~~~~~~~~~~~~~
 .. autoclass:: Complex_amplitude
@@ -111,9 +116,14 @@ Coordinate_system
 .. autoclass:: Coordinate_system
     :members:
 
-Bundle
-~~~~~~
-.. autoclass:: Bundle
+Aperture
+~~~~~~~~
+.. autoclass:: Aperture
+    :members:
+
+Conic
+~~~~~~~~
+.. autoclass:: Conic
     :members:
 
 ZernikeS
