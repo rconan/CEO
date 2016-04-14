@@ -988,6 +988,46 @@ def Refract(Source src, rtd mu):
     Source : the celestial source class
     """
     refract(src.rays._c_bundle, mu)
+def Trace(Source src, list S, bint global_CS=True):
+    cdef: 
+        int k, n
+        rtd n_S, mu
+        list xyz
+        Conic _S_
+    n = len(S)
+    xyz = [ src.rays.coordinates.host() ]
+    for k in range(n):
+        print 'Material refractive index: %f'%src.rays.refractive_index
+        _S_ = S[k]
+        Transform_to_S(src,_S_)
+        if not _S_.coord_break: 
+            Intersect(src,_S_)
+            n_S = _S_.refractive_index
+            if n_S!=0:
+                if n_S==-1:
+                    Reflect(src)
+                else:
+                    mu = src.rays.refractive_index/n_S
+                    Refract(src,mu)
+                    src.rays.refractive_index = n_S
+            if global_CS:
+                Transform_to_R(src,_S_)
+            xyz.append( src.rays.coordinates.host() )
+    return xyz
+    #chief()
+@ 
+    _S_ = S[idx-1]
+    ceo.Transform_to_S(src,_S_)
+    if not _S_.coord_break: 
+        ceo.Intersect(src,_S_)
+        n_S = _S_.refractive_index
+        if n_S!=0:
+            if n_S==-1:
+                ceo.Reflect(src)
+            else:
+                _mu_ = src.rays.refractive_index/n_S
+                ceo.Refract(src,_mu_)
+                src.rays.refractive_index = n_S
 @ 
 \section{Coordinate system}
 \label{sec:coordinate-system}

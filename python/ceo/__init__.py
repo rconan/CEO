@@ -1,7 +1,7 @@
 import constants
 from utilities import cuFloatArray, cuDoubleArray, cuIntArray, MaskAbstract, Mask, Telescope, GMT, StopWatch, SparseMatrix, SparseGradient, wavefrontFiniteDifference
 from source import Bundle, Complex_amplitude, Source, JSource
-from rayTracing import ZernikeS, Coordinates, Coordinate_system, Quaternion, Aperture, Conic, Transform_to_S, Transform_to_R, Intersect, Reflect, Refract
+from rayTracing import ZernikeS, Coordinates, Coordinate_system, Quaternion, Aperture, Conic, Transform_to_S, Transform_to_R, Intersect, Reflect, Refract, Trace
 from atmosphere import AtmosphereAbstract, Atmosphere, GmtAtmosphere, Layer, JGmtAtmosphere
 from centroiding import Centroiding
 from imaging import Imaging, JImaging
