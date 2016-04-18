@@ -569,8 +569,8 @@ cdef class Conic:
 <<rayTracing.pxd contents>>=
     cdef cppclass aperture:
         coordinate_system ref_frame
-        void setup(float, float, int, vector , vector)
-        void setup_GMT_M1(float, int)
+        void setup(rtd, rtd, int, vector , vector)
+        void setup_GMT_M1(rtd, int)
         void cleanup()
         void vignetting(bundle *)
 @
@@ -582,9 +582,9 @@ cdef class Aperture:
 
     Parameters
     ----------
-    D : float
+    D : rtd
         The aperture diameter [m]
-    ri : float
+    ri : rtd
         The central obscuration ratio
     D_px : int
         The sampling of the diameter [pixel]
@@ -602,16 +602,16 @@ cdef class Aperture:
         aperture *_c_aperture
         public Coordinate_system ref_frame
 
-    def __cinit__(self, float D, float ri, int D_px, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0]):
+    def __cinit__(self, rtd D, rtd ri, int D_px, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0]):
         self._c_aperture = new aperture()
         cdef vector __origin
-        __origin.x = <float>origin[0]
-        __origin.y = <float>origin[1]
-        __origin.z = <float>origin[2]
+        __origin.x = <rtd>origin[0]
+        __origin.y = <rtd>origin[1]
+        __origin.z = <rtd>origin[2]
         cdef vector __euler_angles
-        __euler_angles.x = <float>euler_angles[0]
-        __euler_angles.y = <float>euler_angles[1]
-        __euler_angles.z = <float>euler_angles[2]
+        __euler_angles.x = <rtd>euler_angles[0]
+        __euler_angles.y = <rtd>euler_angles[1]
+        __euler_angles.z = <rtd>euler_angles[2]
         self._c_aperture.setup(D, ri, D_px, __origin, __euler_angles)
         self.ref_frame = Coordinate_system(1)
         self.ref_frame.init( &(self._c_aperture.ref_frame) )
@@ -2536,13 +2536,13 @@ An aperture is a bounded surface used to clip a bundle of ray to the aperture sh
 <<aperture structure>>=
 struct aperture {
   <<aperture parameters>>
-  void setup(float _D_, int _D_px_,
+  void setup(rtd _D_, int _D_px_,
 	     vector _origin_, vector _euler_angles_);
-  void setup(float _D_, float _ri_, int _D_px_,
+  void setup(rtd _D_, rtd _ri_, int _D_px_,
 	     vector _origin_, vector _euler_angles_);
-  void setup(float _D_, float _ri_, float _D_seg_, int _D_px_,
+  void setup(rtd _D_, rtd _ri_, rtd _D_seg_, int _D_px_,
 	     vector *_origin_, vector *_euler_angles_, int N_segment);
-  void setup_GMT_M1(float _D_, int _D_px_);
+  void setup_GMT_M1(rtd _D_, int _D_px_);
   void cleanup(void);
   void vignetting(bundle *rays);
 
@@ -2555,7 +2555,7 @@ The location of the aperture segments is defined within a given coordinate syste
 A mask [[V]] is used to select the rays that are not vignetted by the aperture.
 <<aperture parameters>>=
 int D_px;
-float D, ri, D_seg;
+rtd D, ri, D_seg;
 int N;
 mask V;
 coordinate_system ref_frame;
@@ -2569,7 +2569,7 @@ An aperture is initialized with:
 \item for a circular aperture,
 \index{rayTracing!aperture!setup}
 <<aperture functions>>=
-void aperture::setup(float _D_, int _D_px_,
+void aperture::setup(rtd _D_, int _D_px_,
 		     vector _origin_, vector _euler_angles_)
 {
   D_px = _D_px_;
@@ -2582,7 +2582,7 @@ void aperture::setup(float _D_, int _D_px_,
 @  \item for an annular aperture,
 \index{rayTracing!aperture!setup}
 <<aperture functions>>=
-void aperture::setup(float _D_, float _ri_, int _D_px_,
+void aperture::setup(rtd _D_, rtd _ri_, int _D_px_,
 		     vector _origin_, vector _euler_angles_)
 {
   D_px = _D_px_;
@@ -2596,7 +2596,7 @@ void aperture::setup(float _D_, float _ri_, int _D_px_,
 \item for an aperture with [[N_segment]] circular segment of diameter [[D_seg]], each segment with a different coordinate system,
 \index{rayTracing!aperture!setup}
 <<aperture functions>>=
-void aperture::setup(float _D_, float _ri_, float _D_seg_, int _D_px_,
+void aperture::setup(rtd _D_, rtd _ri_, rtd _D_seg_, int _D_px_,
 		     vector *_origin_, vector *_euler_angles_, int N_segment)
 {
   D_px  = _D_px_;
@@ -2625,10 +2625,10 @@ The vignetting of the rays are done with
 <<aperture functions>>=
 void aperture::vignetting(bundle *rays)
 {
-  float R2, Rri2;
+  rtd R2, Rri2;
   R2 = D_seg*D_seg*0.25;
   Rri2 = R2*ri*ri;
-  fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);
+  fprintf(stdout,"R2=%g - Rri2=%5.2f\n",R2,Rri2);
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   HANDLE_ERROR( cudaMemset(V.m, 0, sizeof(char)*rays->N_RAY ) );
@@ -2641,7 +2641,7 @@ void aperture::vignetting(bundle *rays)
 @ calling the device kernel:
 <<vignetting kernel>>=
 __global__ void vignetting_kernel(char *mask, ray *d__ray, int N_RAY,
-				  float inner2, float outer2,
+				  rtd inner2, rtd outer2,
 				  rtd *d__R, vector *d__origin)
 {
   int i, j, ij, iCoordSys, idx;
