@@ -462,7 +462,7 @@ cdef class Conic:
         public Coordinate_system ref_frame
         readonly Coordinates origin
         public bint coord_break
-        readonly dict material
+        readonly bytes material
 @
 <<rayTracing.pyx>>=
 from refractors import glass_index
@@ -504,7 +504,7 @@ cdef class Conic:
                   list origin       = [0.0,0.0,0.0], 
                   list euler_angles = [0.0,0.0,0.0],
                   list conic_origin = [0.0,0.0,0.0],
-                  dict material = None,
+                  bytes material = None,
                   rtd refractive_index = 0.0,
                   bint coord_break = False):
         self._c_conic = new conic()
@@ -555,11 +555,6 @@ cdef class Conic:
                                src.wavelength*1e6,
                                None,None,
                                self.material['c'])
-@ 
-
-    property refractive_index:
-        def __get__(self):
-            return self._c_conic.refractive_index
 @
 \subsubsection{Aperture}
 \label{sec:aperture-1}
@@ -1030,6 +1025,7 @@ def Trace(Source src, list S, bint global_CS=True):
     return xyz
     #chief()
 @ 
+<<orphan>>=
     _S_ = S[idx-1]
     ceo.Transform_to_S(src,_S_)
     if not _S_.coord_break: 
@@ -2628,7 +2624,7 @@ void aperture::vignetting(bundle *rays)
   rtd R2, Rri2;
   R2 = D_seg*D_seg*0.25;
   Rri2 = R2*ri*ri;
-  fprintf(stdout,"R2=%g - Rri2=%5.2f\n",R2,Rri2);
+  //fprintf(stdout,"R2=%g - Rri2=%5.2f\n",R2,Rri2);
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   HANDLE_ERROR( cudaMemset(V.m, 0, sizeof(char)*rays->N_RAY ) );
