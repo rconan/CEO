@@ -301,8 +301,9 @@ cdef class Coordinates:
             exp = np.floor(np.log10(max_abs_data))
         else:
             exp = 0
-        s = np.array_str(np.asarray(self.data)*(10**-exp),precision=2,suppress_small=True)
-        return "@(CEO)>Coordinates:\nX,Y,Z coordinates in meter: 10^%dX\n"%exp + s
+        s = np.array_str(np.array(self.data)*(10**-exp),precision=3,suppress_small=True)
+        return "10^%dX"%exp + s
+        #return "@(CEO)>Coordinates:\nX,Y,Z coordinates in meter: 10^%dX\n"%exp + s
 
     property shape:
         def __get__(self):
@@ -447,7 +448,7 @@ cdef class Quaternion:
 \index{rayTracing!python!Conic}
 <<rayTracing.pxd contents>>=
     cdef cppclass conic:
-        rtd refractive_index
+        rtd refractive_index, c, k
         vector origin
         coordinate_system ref_frame
         void setup(rtd , rtd , vector , vector , vector, rtd)
@@ -462,6 +463,7 @@ cdef class Conic:
         public Coordinate_system ref_frame
         readonly Coordinates origin
         public bint coord_break
+        public bint tilted_surface
         public dict material
 @
 <<rayTracing.pyx>>=
@@ -506,7 +508,8 @@ cdef class Conic:
                   list conic_origin = [0.0,0.0,0.0],
                   str material = '',
                   rtd refractive_index = 0.0,
-                  bint coord_break = False):
+                  bint coord_break = False,
+                  bint tilted_surface = False):
         self._c_conic = new conic()
         cdef vector __origin
         __origin.x = <rtd>origin[0]
@@ -531,6 +534,16 @@ cdef class Conic:
 
     def __dealloc__(self):
         self._c_conic.cleanup()
+
+    def __str__(self):
+        origin       = "\n   . Origin: "+self.ref_frame.origin.__str__()
+        euler_angles = "\n   . Euler angles: "+self.ref_frame.euler_angles.__str__()
+        if self.coord_break:
+            return ". coordinate break"+origin+euler_angles
+        else:
+            return ". material: "+self.material["name"]+\
+            " [c=%g,k=%g]"%(self._c_conic.c,self._c_conic.k)+\
+            origin+euler_angles
 
     def trace(self, Source src):
         """
@@ -1306,6 +1319,7 @@ void coordinate_system::info_details(void)
 <<coordinate system functions>>=
 void coordinate_system::info(void)
 {
+  info_details();
 /*
   fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   fprintf(stdout," %d coordinate systems\n",N);
@@ -1333,6 +1347,7 @@ struct conic {
              vector conic_origin, rtd _refractive_index_);
   void cleanup(void);
   void trace(bundle *src);
+  void info(void);
 };
 @
 A conic surface is defined at a given location within a given coordinate system:
@@ -1556,6 +1571,7 @@ void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, vect
   origin.z = conic_origin.z;
   ref_frame.setup(_origin_, _euler_angles_);
   <<conic allocation>>
+  info();
 }
 void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
                   vector conic_origin, rtd _refractive_index_)
@@ -1656,6 +1672,17 @@ void conic::trace(bundle *rays)
 				       ref_frame.d__R, ref_frame.d__origin);
   transform_to_R_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
         	 				    ref_frame.d__R, ref_frame.d__origin);
+}
+@ 
+<<conic functions>>=
+void conic::info(void)
+{
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>conic:\x1B[;42m\n");
+  fprintf(stdout," . curvature       : %g\n",c);
+  fprintf(stdout," . conic constant  : %g\n",k);
+  fprintf(stdout," . refractive index: %g\n",refractive_index);
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");  
+  ref_frame.info();
 }
 @
 \section{Zernike surface}
