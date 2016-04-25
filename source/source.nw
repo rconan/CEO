@@ -1052,6 +1052,10 @@ ray *d__ray;
 The structure may contain several bundle of rays, each associated to a different source but with the same number of rays
 <<ray bundle parameters>>=
 int N_BUNDLE;
+@ 
+The total number of rays
+<<ray bundle parameters>>=
+int N_RAY_TOTAL;
 @
 The x and y coordinates of the [[origin]] vector specifies the location of the center of the ray bundle when it crosses the (x,y) plane of the first surface.
 The z coordinate specifies the height of the ray bundle with respect to the first surface.
@@ -1111,8 +1115,9 @@ void bundle::setup(rtd RADIUS, int _N_RADIUS_,
   L        = RADIUS;
   N_BUNDLE = N_SRC;
   N_RAY = (N_RADIUS-1)*N_THETA + 1;
-  V.setup(N_RAY*N_BUNDLE);
-  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY*N_BUNDLE ) );
+  N_RAY_TOTAL = N_RAY*N_BUNDLE;
+  V.setup(N_RAY_TOTAL);
+  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY_TOTAL ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
@@ -1172,12 +1177,13 @@ The cartesian coordinates are defined with the sampling of the square box length
   L = _L_;
   N_BUNDLE = N_SRC;
   N_RAY = N_L*N_L;
-  V.setup(N_RAY*N_BUNDLE);
-  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY*N_BUNDLE ) );
+  N_RAY_TOTAL = N_RAY*N_BUNDLE;
+  V.setup(N_RAY_TOTAL);
+  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY_TOTAL ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY*N_BUNDLE ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY_TOTAL ) );
   <<chief ray allocation>>
 }
 @
@@ -1658,7 +1664,7 @@ __global__ void get_optical_path_length_kernel(double *d__opl, ray *d__ray, int 
 <<gathering ray optical path difference>>=
 void bundle::get_optical_path_difference(double *d__opd)
 {
-  HANDLE_ERROR( cudaMemset(d__opd, 0, sizeof(double)*N_RAY*N_BUNDLE ) );
+  HANDLE_ERROR( cudaMemset(d__opd, 0, sizeof(double)*N_RAY_TOTAL ) );
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
   get_optical_path_difference_kernel LLL gridDim , blockDim RRR (d__opd, d__ray, N_RAY);
@@ -1684,7 +1690,7 @@ __global__ void get_optical_path_difference_kernel(double *d__opd, ray *d__ray, 
 <<gathering ray number of iterative steps>>=
 void bundle::get_n_iteration(int *n_iteration)
 {
-  HANDLE_ERROR( cudaMemset(n_iteration, 0, sizeof(int)*N_RAY*N_BUNDLE ) );
+  HANDLE_ERROR( cudaMemset(n_iteration, 0, sizeof(int)*N_RAY_TOTAL ) );
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
   get_n_iteration_kernel LLL gridDim , blockDim RRR (n_iteration, d__ray, N_RAY);
