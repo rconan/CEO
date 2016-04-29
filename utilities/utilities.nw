@@ -159,7 +159,7 @@ void wavefront_finite_difference(float *sx, float *sy, int NL,
 				 int N_GS);
 void wavefront_finite_difference(float *sx, float *sy, int NL, 
                                  float *phi, int n, float d, 
-                                 mask *pupil, int N_GS);
+                                 mask *valid_lenset, int N_GS);
 
 #endif  // __UTILITIES_H__
 @
@@ -2492,12 +2492,16 @@ csrRowPtrH[kL+1] = 2*(n+1)*(kL+1);
 csrRowPtrH[kL+1+NL2] = 2*(n+1)*(kL+1+NL2);
    
 @
-In case of finite pupil:
+\subsubsection{Masked lenslet array}
+\label{sec:masked-lenslet-array}
+
+When the lenslet array is partially illuminated, the valid lenslet mask [[valid_lenslet]] can be passed to the routine.
+The slopes outside the mask are set to 0.
 \index{utilities!wavefront\_finite\_difference}
 <<wavefront differentiation (with mask)>>=
 void wavefront_finite_difference(float *sx, float *sy, int NL, 
                                  float *phi, int n, float d,
-                                 mask *pupil, int N_GS)
+                                 mask *valid_lenslet, int N_GS)
   {
     int sxy_nbyte = sizeof(float)*NL*NL*N_GS;
     HANDLE_ERROR( cudaMemset(sx,  0, sxy_nbyte ) );
@@ -2505,7 +2509,7 @@ void wavefront_finite_difference(float *sx, float *sy, int NL,
     dim3 blockDim(16,16);
     dim3 gridDim(NL/16+1,NL/16+1,N_GS);
     wavefront_finite_difference_kernel_masked LLL gridDim,blockDim RRR 
-                                (sx, sy, NL, phi, n, d,pupil->m);
+                                (sx, sy, NL, phi, n, d, valid_lenslet->m);
   }
 @ with the kernel
 <<wavefront differentiation kernel (with mask)>>=

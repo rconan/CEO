@@ -76,6 +76,9 @@ struct source {
 <<reference sphere origin from chief ray>>
 <<ray bundle kernels>>
 <<bundle reset kernel>>
+<<wavefront differentiation kernel (partial illumination identification)>>
+<<wavefront differentiation kernel (slope estimates)>>
+
 <<ray bundle functions>>
 
 <<square geometry>>
@@ -92,6 +95,7 @@ struct source {
 <<masking wavefront amplitude I>>
 <<masking wavefront amplitude II>>
 <<wavefront stats>>
+<<wavefront differentiation>>
 
 <<phase to file>>
 
@@ -444,6 +448,8 @@ property refractive_index:
         void masked()
         void add_phase(float , float *)
         void rms(float *)
+	void finite_difference(float *, float *, int, float);
+        void finite_difference(float *, float *, int, float, mask *);
 @
 <<class definitions>>=
 cdef class Complex_amplitude:
@@ -538,6 +544,33 @@ cdef class Complex_amplitude:
 	    self._c_complex_amplitude.reset_phase()
         else:
             self._c_complex_amplitude.reset_phase(wavefront._c_complex_amplitude)
+
+    def finiteDifference(self, int NL, float d, MaskAbstract M=None):
+        """
+        Computes the average finite difference of the wavefront
+
+        Parameters
+        ----------
+        NL : int
+            The linear size of the lenslet array
+        d : float
+            The lenslet pitch
+        M : MaskAbstract, optional
+            The valid lenslet mask
+        """
+        cdef cuFloatArray sx
+        cdef cuFloatArray sy
+        sx = cuFloatArray(shape=(self._c_complex_amplitude.N*NL,NL), dev_malloc=True)
+        sy = cuFloatArray(shape=(self._c_complex_amplitude.N*NL,NL), dev_malloc=True)
+        if M is None:
+            self._c_complex_amplitude.finite_difference(sx._c_gpu.dev_data, 
+                                                        sy._c_gpu.dev_data, 
+                                                        NL, d)
+        else:
+            self._c_complex_amplitude.finite_difference(sx._c_gpu.dev_data, 
+                                                        sy._c_gpu.dev_data, 
+                                                        NL, d, M._c_mask)        
+        return (sx,sy)
 @
 \subsubsection{Source}
 \label{sec:source}
@@ -940,6 +973,8 @@ struct complex_amplitude {
   void masked(void);
   void masked(mask *M_in);
   void rms(float *rms);
+  void finite_difference(float *sx, float *sy, int NL, float d);
+  void finite_difference(float *sx, float *sy, int NL, float d, mask *valid_lenslet);
   void show_phase(char *filename);
   void show_phase(char *filename, int N_SRC);
   void show_amplitude(char *filename);
@@ -2520,6 +2555,186 @@ void complex_amplitude::rms(float *rms)
   cublasDestroy(handle);
 }
 @
+\paragraph{Wavefront differentiation}
+\label{sec:wavefr-diff}
+
+@ 
+For a $[[NL]]\times [[NL]]$ lenslet array of pitch [[d]] meter, the lenslet x and y average finite difference 
+is given by:
+<<wavefront differentiation>>=
+void complex_amplitude::finite_difference(float *sx, float *sy, int NL,float d)
+  {
+    <<wavefront differentiation (common)>>
+    wavefront_finite_difference(sx, sy, NL, 
+                                phase, n, d, N);
+  }
+@ 
+The number of wavefront pixel [[n]] per lenslet must verify $n_{px}=[[NL]][[n]]+1$ where $n_{px}$ is the linear number of pixel on the wavefront, it verifies $n_{px}^2[[N]]=[[N_PX]]$
+<<wavefront differentiation (common)>>=
+int n;
+n = (int) sqrt(N_PX/N);
+n -= 1;
+n/= NL;
+@ 
+The mask of valid lenslets can be passed to the same routine and the slopes outside the mask are set to 0:
+<<wavefront differentiation>>=
+void complex_amplitude::finite_difference(float *sx, float *sy, int NL, 
+                                          float d, mask *valid_lenslet)
+{
+  <<wavefront differentiation (common)>>
+  wavefront_finite_difference(sx, sy, NL, 
+                              phase, n, d,
+                              valid_lenslet, N);
+  if (M!=NULL) 
+  {
+    <<wavefront differentiation (partial illumination identification)>>
+    <<wavefront differentiation (slope estimates)>>
+  }
+}
+@
+If the wavefront pupil mask [[M]] exists, the partially illuminated lenslets are identified and the fraction of the illuminated lenslet surface is saved in [[M->f]]:
+<<wavefront differentiation (partial illumination identification)>>=
+fprintf(stdout,"PARTIAL ILLUMINATION IDENTIFICATION!\n");
+dim3 blockDim(16,16);
+dim3 gridDim(NL/16+1,NL/16+1,N);
+partial_illumination_identification LLL gridDim,blockDim RRR (valid_lenslet->f, 
+                                                              valid_lenslet->m,
+                                                              M->f, NL, n);
+HANDLE_ERROR( cudaDeviceSynchronize() );
+@ 
+with the kernel 
+<<wavefront differentiation kernel (partial illumination identification)>>=
+__global__ void partial_illumination_identification(float *valid_lenslet_f, 
+                                                    char  *valid_lenslet_m, 
+                                                    float *wavefront_mask_f,
+                                                    const int NL, const int n)
+{
+    int iL, jL, i, j, kL, u, v, w0, w, NP, iSource, n2;
+    iL = blockIdx.x * blockDim.x + threadIdx.x;
+    jL = blockIdx.y * blockDim.y + threadIdx.y;
+    iSource = blockIdx.z;
+    kL = iL*NL+jL;
+    kL += iSource*NL*NL;
+    if ( ( (iL<NL) && (jL<NL) ) && (valid_lenslet_m[kL]>0) ) {  
+       kL = iL*NL+jL;
+       NP = n*NL + 1;
+       kL += iSource*NL*NL;
+       u = iL*n;
+       v = jL*n;
+       w0 = iSource*NP*NP;
+       n2 = (n+1)*(n+1);
+       valid_lenslet_f[kL] = 0;
+       for (i=0;i<=n;i++) {
+         for (j=0;j<=n;j++) {
+           w = w0 + (u+i)*NP + v + j;
+           valid_lenslet_f[kL] += wavefront_mask_f[w];
+         }
+       }
+       valid_lenslet_f[kL] /= n2;
+    }
+}
+@
+The lenslet average centroid on a partially illuminated lenslet is given by
+\begin{eqnarray}
+  \label{eq:1}
+  s_x(i_L,j_L) &=& {1\over S} \sum_{i=0}^n \sum_{j=0}^n P_{i+1,j}P_{i-1,j} { \varphi_{i+1,j} - \varphi_{i-1,j} \over 2p}, \\
+  s_y(i_L,j_L) &=& {1\over S} \sum_{i=0}^n \sum_{j=0}^n P_{i,j+1}P_{i,j-1} { \varphi_{i,j+1} - \varphi_{i,j-1} \over 2p},
+\end{eqnarray}
+with
+\begin{equation}
+  \label{eq:3}
+  S = \sum_{i=0}^n \sum_{j=0}^n P_{i,j+1}P_{i,j-1},
+\end{equation}
+where $P_{i,j}$ is equal to 1 inside the wavefront pupil mask and 0 outside and $p=d/n$ is the pupil pixel size.
+<<wavefront differentiation (slope estimates)>>=
+partial_illumination_slopes LLL gridDim,blockDim RRR (sx, sy, NL, n, d,
+                                                      phase,
+                                                      valid_lenslet->f, 
+                                                      valid_lenslet->m,
+                                                      M->f);
+@ 
+with the kernel
+<<wavefront differentiation kernel (slope estimates)>>=
+__global__ void partial_illumination_slopes(float *sx, float *sy,
+                                                    const int NL, const int n,
+                                                    float d,
+                                                    float *phase,
+                                                    float *valid_lenslet_f, 
+                                                    char  *valid_lenslet_m, 
+                                                    float *wavefront_mask_f)
+{
+    int iL, jL, i, j, kL, uL, vL, a, b, w0, w, NP, iSource;
+    float p, dphi, h, P, S;
+    iL = blockIdx.x * blockDim.x + threadIdx.x;
+    jL = blockIdx.y * blockDim.y + threadIdx.y;
+    iSource = blockIdx.z;
+    kL = iL*NL+jL;
+    kL += iSource*NL*NL;
+    if ( ( (iL<NL) && (jL<NL) ) && 
+       (valid_lenslet_m[kL]>0 && 
+            ((valid_lenslet_f[kL]>0) && (valid_lenslet_f[kL]<1)) ) ) {  
+       kL = iL*NL+jL;
+       NP = n*NL + 1;
+       kL += iSource*NL*NL;
+       uL = iL*n;
+       vL = jL*n;
+       w0 = iSource*NP*NP;
+       sx[kL] = sy[kL] = 0.0;
+       p = d/n;
+
+       S = 0;
+       for (i=0;i<=n;i++) {
+         a = uL + i + 1;
+         h = 2*p;
+         if (a>=NP) {
+            a = NP-1;
+            h = p;
+         }    
+         b = uL + i - 1;
+         if (b<0) {
+            b = 0;
+            h = p;
+         }
+         for (j=0;j<=n;j++) {
+           w = w0 + b*NP + vL + j;
+           dphi = phase[w];
+           P    = wavefront_mask_f[w];
+           w = w0 + a*NP + vL + j;
+           dphi -= phase[w];
+           P    *= wavefront_mask_f[w];
+           S += P;
+           sx[kL] += P*dphi/h;
+          }
+        }
+        sx[kL] /= S;
+
+       S = 0;
+       for (i=0;i<=n;i++) {
+         w = w0 + (uL+i)*NP;
+         for (j=0;j<=n;j++) {
+            a = vL + j + 1;
+            h = 2*p;
+            if (a>=NP) {
+               a = NP-1;
+               h = p;
+            }    
+            b = vL + j - 1;
+            if (b<0) {
+                b = 0;
+                h = p;
+             }
+           dphi = phase[w+b];
+           P    = wavefront_mask_f[w+a];
+           dphi -= phase[w+a];
+           P    *= wavefront_mask_f[w+b];
+           S += P;
+           sy[kL] += P*dphi/h;
+         }
+       }
+       sy[kL] /= S;
+    }
+}
+@ 
 \subsubsection{Input/Output}
 \label{sec:inputoutput-1}
 The wavefront phase is save to a file with
