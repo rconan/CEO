@@ -33,6 +33,8 @@ struct shackHartmann {
   void setup(int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
 	     int DFT_osf_, int N_PX_IMAGE, int BIN_IMAGE, int N_GS);
   void cleanup(void);
+  void identify_valid_lenslet(source *src, float threshold);
+  void set_reference_slopes(source *src);
   void calibrate(source *src, float threshold);
   void propagate(source *gs);
   void process(void);
@@ -84,6 +86,8 @@ cdef extern from "shackHartmann.h":
         centroiding data_proc
         void setup(int , int, float , int , int , int, int)
         void cleanup()
+        void identify_valid_lenslet(source *, float);
+        void set_reference_slopes(source *);
         void calibrate(source *, float )
         void propagate(source *)
         void process()
@@ -243,6 +247,40 @@ cdef class ShackHartmann:
 
     def __dealloc__(self):
         self._c_shackHartmann.cleanup()
+
+    def identifyValidLenslet(self, Source gs, float threshold):
+        """
+        Selects the WFS valid lenslet and calibrated the reference slopes
+
+        Parameters
+        ----------
+        gs : Source
+            The WFS guide star
+        threshold : float
+            The intensity threshold, a lenslet is discared if the flux of the lenslet divided by the fully illuminated flux of the lenslet is less than the threshold
+
+        See also
+        --------
+        Source : a class for astronomical sources
+        """
+        self._c_shackHartmann.identify_valid_lenslet(gs._c_source, threshold)
+        self._valid_slopes_ = cuFloatArray(shape=(1,self._c_shackHartmann.valid_lenslet.nnz*2),
+                                           dev_malloc=True)
+
+    def setReferenceSlopes(self, Source gs):
+        """
+        Selects the WFS valid lenslet and calibrated the reference slopes
+
+        Parameters
+        ----------
+        gs : Source
+            The WFS guide star
+
+        See also
+        --------
+        Source : a class for astronomical sources
+        """
+        self._c_shackHartmann.set_reference_slopes(gs._c_source)
 
     def calibrate(self, Source gs, float threshold):
         """
@@ -525,7 +563,28 @@ void shackHartmann::cleanup(void)
 \subsection{Calibration}
 \label{sec:calibration}
 
-The WFS calibration routine is:
+The WFS calibration consists in selecting the valid lenslets based on their illumination using an intensity threshold parameter [[threshold]] and setting the reference slopes.
+
+The valid lenslets are identified with:
+\index{shackHartmann!shackHartmann!identify\_valid\_lenslet}
+<<WFS calibration>>=
+void shackHartmann::identify_valid_lenslet(source *src, float threshold) {
+  <<WFS calibration source propagation>>
+  <<WFS calibration valid lenslet>>
+  data_proc.MASK_SET = 1;
+  camera.reset();
+} 
+@
+The reference slopes are set with:
+\index{shackHartmann!shackHartmann!set\_reference\_slopes}
+<<WFS calibration>>=
+void shackHartmann::set_reference_slopes(source *src) {
+  <<WFS calibration source propagation>>
+  <<WFS calibration reference slopes>>
+  camera.reset();
+}
+@
+The WFS full calibration routine is given by:
 \index{shackHartmann!shackHartmann!calibrate}
 <<WFS calibration>>=
 void shackHartmann::calibrate(source *src, float threshold) {
@@ -541,10 +600,10 @@ The wavefront sensor need first to be calibrated with a reference calibration so
 camera.pixel_scale = src->wavelength()/(lenslet_pitch*DFT_osf);
 pixel_scale = camera.pixel_scale*camera.BIN_IMAGE*slopes_gain;
 camera.propagate(src);
+data_proc.get_data(camera.d__frame,camera.N_PX_CAMERA);
 @
 The slopes derived from the calibration wavefront will be set a the reference slopes.
 <<WFS calibration reference slopes>>=
-data_proc.get_data(camera.d__frame,camera.N_PX_CAMERA);
 HANDLE_ERROR( cudaMemcpy( d__c0, data_proc.d__c, N_SLOPE*sizeof(float),
 			  cudaMemcpyDeviceToDevice ) );
 HANDLE_ERROR( cudaMemset( data_proc.d__c, 0, sizeof(float)*N_SLOPE ) );
