@@ -3,7 +3,8 @@ import math
 import numpy as np
 from scipy.optimize import brenth, leastsq
 from skimage.feature import blob_log
-from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GmtMirrors, SegmentPistonSensor
+from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GmtMirrors, SegmentPistonSensor, \
+constants, Telescope, cuFloatArray
 
 class GMT_MX(GmtMirrors):
     """
@@ -525,6 +526,25 @@ class DispersedFringeSensor(SegmentPistonSensor):
 	self.INIT_ALL_ATTRIBUTES = False
 	self.lobe_detection = 'gaussfit'
 
+    def init_detector_mask(self, mask_size):
+	"""
+	Defines the circular mask to be applied over each fringe image.
+
+	Parameters
+	----------
+	mask_size: float
+	   Diameter of mask in arcseconds. 
+	"""
+	mask_size_px = mask_size / (self.pixel_scale * constants.RAD2ARCSEC)
+	print "Size of DFS detector mask [pix]: %d"%(np.round(mask_size_px)) 
+	N_PX_FRINGE_IMAGE = self.camera.N_PX_IMAGE / self.camera.BIN_IMAGE
+	scale = mask_size_px / N_PX_FRINGE_IMAGE
+	circ = Telescope(N_PX_FRINGE_IMAGE, 1, scale=scale)
+	circ_m = circ.f.host(shape=(N_PX_FRINGE_IMAGE,N_PX_FRINGE_IMAGE))
+	big_circ_m = np.tile(np.tile(circ_m,self.camera.N_SIDE_LENSLET).T,self.camera.N_SIDE_LENSLET)
+	gpu_big_circ_m = cuFloatArray(host_data=big_circ_m)
+	self.fft_mask.alter(gpu_big_circ_m)
+
     def gaussian_func(self, height, center_x, center_y, width_x, width_y, rotation):
     	"""
 	Returns a gaussian function G(x,y) to produce a 2D Gaussian with the given parameters
@@ -723,8 +743,10 @@ class DispersedFringeSensor(SegmentPistonSensor):
     	    elif self.lobe_detection == 'peak_value':
         	height = np.max(mylobe)
         	height_pos = np.argmax(mylobe)
-        	y = height_pos / mylobe.shape[0]
-        	x = height_pos % mylobe.shape[0]
+		y, x = np.unravel_index(height_pos, mylobe.shape)
+		if y < (mylobe.shape[0]-1) and x < (mylobe.shape[1]-1):
+		    x += 0.5*(mylobe[y,x-1] - mylobe[y,x+1]) / (mylobe[y,x-1]+mylobe[y,x+1]-2*height+1e-6)
+		    y += 0.5*(mylobe[y-1,x] - mylobe[y+1,x]) / (mylobe[y-1,x]+mylobe[y+1,x]-2*height+1e-6)
         	width_x, width_y, rot = 0,0,0
 	    x1 = x * np.cos(-self.fftlet_rotation[k]) - y * np.sin(-self.fftlet_rotation[k])
 	    y1 = x * np.sin(-self.fftlet_rotation[k]) + y * np.cos(-self.fftlet_rotation[k])
