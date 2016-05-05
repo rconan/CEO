@@ -529,6 +529,9 @@ cdef class GeometricShackHartmann:
         """
         self._c_geometricShackHartmann.analyze(gs._c_source)
 
+    def reset(self):
+        pass
+
     property c:
         def __get__(self):
             return self.data_proc.c
@@ -688,16 +691,9 @@ Allocated memory is freed with:
 <<cleanup>>=
 void shackHartmann::cleanup(void)
 {
-  fprintf(stdout,"@(CEO)>shackHartmann: freeing memory!\n");
-  fprintf(stdout," |-");
-  valid_lenslet.cleanup();
-  data_proc.lenslet_mask = 0;
-  fprintf(stdout," |-");
-  valid_actuator.cleanup();
+  <<cleanup common>>
   fprintf(stdout," |-");
   camera.cleanup();
-  fprintf(stdout," |-");
-  data_proc.cleanup();
 }
 @ 
 or with
@@ -705,15 +701,19 @@ or with
 <<cleanup>>=
 void geometricShackHartmann::cleanup(void)
 {
-  fprintf(stdout,"@(CEO)>shackHartmann: freeing memory!\n");
-  fprintf(stdout," |-");
-  valid_lenslet.cleanup();
-  data_proc.lenslet_mask = 0;
-  fprintf(stdout," |-");
-  valid_actuator.cleanup();
-  fprintf(stdout," |-");
-  data_proc.cleanup();
+  <<cleanup common>>
 }
+@ where
+<<cleanup common>>=
+fprintf(stdout,"@(CEO)>shackHartmann: freeing memory!\n");
+HANDLE_ERROR( cudaFree( d__c0) );
+fprintf(stdout," |-");
+valid_lenslet.cleanup();
+data_proc.lenslet_mask = 0;
+fprintf(stdout," |-");
+valid_actuator.cleanup();
+fprintf(stdout," |-");
+data_proc.cleanup();
 @
 \subsection{Calibration}
 \label{sec:calibration}
