@@ -558,19 +558,17 @@ cdef class Complex_amplitude:
         M : MaskAbstract, optional
             The valid lenslet mask
         """
-        cdef cuFloatArray sx
-        cdef cuFloatArray sy
-        sx = cuFloatArray(shape=(self._c_complex_amplitude.N*NL,NL), dev_malloc=True)
-        sy = cuFloatArray(shape=(self._c_complex_amplitude.N*NL,NL), dev_malloc=True)
+        cdef cuFloatArray sxy
+        sxy = cuFloatArray(shape=(self._c_complex_amplitude.N*NL*2,NL), dev_malloc=True)
         if M is None:
-            self._c_complex_amplitude.finite_difference(sx._c_gpu.dev_data, 
-                                                        sy._c_gpu.dev_data, 
+            self._c_complex_amplitude.finite_difference(sxy._c_gpu.dev_data, 
+                                                        sxy._c_gpu.dev_data + NL*NL, 
                                                         NL, d)
         else:
-            self._c_complex_amplitude.finite_difference(sx._c_gpu.dev_data, 
-                                                        sy._c_gpu.dev_data, 
+            self._c_complex_amplitude.finite_difference(sxy._c_gpu.dev_data, 
+                                                        sxy._c_gpu.dev_data + NL*NL, 
                                                         NL, d, M._c_mask)        
-        return (sx,sy)
+        return sxy
 @
 \subsubsection{Source}
 \label{sec:source}
@@ -2583,13 +2581,20 @@ void complex_amplitude::finite_difference(float *sx, float *sy, int NL,
                                           float d, mask *valid_lenslet)
 {
   <<wavefront differentiation (common)>>
+  //stopwatch tid;
+  //tid.tic();
   wavefront_finite_difference(sx, sy, NL, 
                               phase, n, d,
                               valid_lenslet, N);
+  //tid.toc("Finite difference (lenslet edge method)");
   if (M!=NULL) 
   {
+    //tid.tic();
     <<wavefront differentiation (partial illumination identification)>>
+    //tid.toc("Finite difference (partial illumination identification)");
+    //tid.tic();
     <<wavefront differentiation (slope estimates)>>
+    //tid.toc("Finite difference (gradient average method)");
   }
 }
 @
@@ -2675,7 +2680,7 @@ __global__ void partial_illumination_slopes(float *sx, float *sy,
             ((valid_lenslet_f[kL]>0) && (valid_lenslet_f[kL]<1)) ) ) {  
        kL = iL*NL+jL;
        NP = n*NL + 1;
-       kL += iSource*NL*NL;
+       kL += 2*iSource*NL*NL;
        uL = iL*n;
        vL = jL*n;
        w0 = iSource*NP*NP;
