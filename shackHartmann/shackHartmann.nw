@@ -49,6 +49,8 @@ struct geometricShackHartmann {
   <<parameters>>
   void setup(int N_SIDE_LENSLET, float d, int N_GS);
   void cleanup(void);
+  void identify_valid_lenslet(source *src, float threshold);
+  void set_reference_slopes(source *src);
   void calibrate(source *src, float threshold);
   void analyze(source *gs);
   void get_valid_slopes(float *d__valid_slopes);
@@ -114,6 +116,8 @@ cdef extern from "shackHartmann.h":
         centroiding data_proc
         void setup(int , float , int)
         void cleanup()
+        void identify_valid_lenslet(source *, float);
+        void set_reference_slopes(source *);
         void calibrate(source *, float )
         void analyze(source *)
         void get_valid_slopes(float *)
@@ -124,6 +128,16 @@ cdef extern from "shackHartmann.h":
 from utilities cimport cuFloatArray, MaskAbstract
 from imaging cimport Imaging
 from centroiding cimport Centroiding
+cdef class ShackHartmannAbstract:
+    cdef:
+        void *_c_shackHartmann
+        readonly int N_SIDE_LENSLET
+        readonly int N_GS
+        readonly MaskAbstract valid_lenslet, valid_actuator
+        readonly cuFloatArray c0
+        readonly Imaging camera
+        readonly Centroiding data_proc
+        cuFloatArray _valid_slopes_
 cdef class ShackHartmann:
     cdef:
         shackHartmann *_c_shackHartmann
@@ -494,6 +508,40 @@ cdef class GeometricShackHartmann:
     def __dealloc__(self):
         self._c_geometricShackHartmann.cleanup()
 
+    def identifyValidLenslet(self, Source gs, float threshold):
+        """
+        Selects the WFS valid lenslet and calibrated the reference slopes
+
+        Parameters
+        ----------
+        gs : Source
+            The WFS guide star
+        threshold : float
+            The intensity threshold, a lenslet is discared if the flux of the lenslet divided by the fully illuminated flux of the lenslet is less than the threshold
+
+        See also
+        --------
+        Source : a class for astronomical sources
+        """
+        self._c_geometricShackHartmann.identify_valid_lenslet(gs._c_source, threshold)
+        self._valid_slopes_ = cuFloatArray(shape=(1,self._c_geometricShackHartmann.valid_lenslet.nnz*2),
+                                           dev_malloc=True)
+
+    def setReferenceSlopes(self, Source gs):
+        """
+        Selects the WFS valid lenslet and calibrated the reference slopes
+
+        Parameters
+        ----------
+        gs : Source
+            The WFS guide star
+
+        See also
+        --------
+        Source : a class for astronomical sources
+        """
+        self._c_geometricShackHartmann.set_reference_slopes(gs._c_source)
+
 
     def calibrate(self, Source gs, float threshold):
         """
@@ -834,9 +882,10 @@ __global__ void set_valid_lenslet(char *lenslet_mask, char *actuator_mask,
 \subsubsection{Geometric model}
 \label{sec:geometric-model}
 
-\index{shackHartmann!geometricShackHartmann!calibrate}
+The valid lenslets are identified with:
+\index{shackHartmann!geometricShackHartmann!identify\_valid\_lenslet}
 <<WFS calibration>>=
-void geometricShackHartmann::calibrate(source *src, float threshold) {
+void geometricShackHartmann::identify_valid_lenslet(source *src, float threshold) {
   int n;
   n = (int) sqrt(src->wavefront.N_PX/src->wavefront.N);
   n -= 1;
@@ -852,6 +901,12 @@ void geometricShackHartmann::calibrate(source *src, float threshold) {
   valid_lenslet.set_filter();
   valid_lenslet.set_index();
   valid_actuator.set_filter();
+} 
+@
+The reference slopes are set with:
+\index{shackHartmann!geometricShackHartmann!set\_reference\_slopes}
+<<WFS calibration>>=
+void geometricShackHartmann::set_reference_slopes(source *src) {
   src->wavefront.finite_difference(data_proc.d__cx,
 				  data_proc.d__cy,
 				  N_SIDE_LENSLET,
@@ -859,8 +914,16 @@ void geometricShackHartmann::calibrate(source *src, float threshold) {
 				  &valid_lenslet);
   <<WFS calibration reference slopes>>
 }
+@
+The WFS full calibration routine is given by:
+\index{shackHartmann!geometricShackHartmann!calibrate}
+<<WFS calibration>>=
+void geometricShackHartmann::calibrate(source *src, float threshold) {
+  identify_valid_lenslet(src, threshold);
+  set_reference_slopes(src);
+}
 @ 
-with the kernel 
+The valid lenslet are identified by computing the normalized sum of the wavefront mask [[M]] in each lenslet:
 <<geometric valid lenslet>>=
 __global__ void  set_geometric_valid_lenslet(float *valid_lenslet_f, 
                                              char  *valid_lenslet_m, 
