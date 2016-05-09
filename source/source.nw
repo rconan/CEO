@@ -78,6 +78,7 @@ struct source {
 <<bundle reset kernel>>
 <<wavefront differentiation kernel (partial illumination identification)>>
 <<wavefront differentiation kernel (slope estimates)>>
+<<wavefront differentiation kernel (gradient average)>>
 
 <<ray bundle functions>>
 
@@ -450,6 +451,7 @@ property refractive_index:
         void rms(float *)
 	void finite_difference(float *, float *, int, float);
         void finite_difference(float *, float *, int, float, mask *);
+        void gradient_average(float *, float *, int , float)
 @
 <<class definitions>>=
 cdef class Complex_amplitude:
@@ -568,6 +570,24 @@ cdef class Complex_amplitude:
             self._c_complex_amplitude.finite_difference(sxy._c_gpu.dev_data, 
                                                         sxy._c_gpu.dev_data + NL*NL, 
                                                         NL, d, M._c_mask)        
+        return sxy
+
+    def gradientAverage(self, int NL, float d):
+        """
+        Computes the average finite difference of the wavefront
+
+        Parameters
+        ----------
+        NL : int
+            The linear size of the lenslet array
+        d : float
+            The lenslet pitch
+        """
+        cdef cuFloatArray sxy
+        sxy = cuFloatArray(shape=(self._c_complex_amplitude.N*NL*2,NL), dev_malloc=True)
+        self._c_complex_amplitude.gradient_average(sxy._c_gpu.dev_data, 
+                                                   sxy._c_gpu.dev_data + NL*NL, 
+                                                   NL, d)
         return sxy
 @
 \subsubsection{Source}
@@ -973,6 +993,7 @@ struct complex_amplitude {
   void rms(float *rms);
   void finite_difference(float *sx, float *sy, int NL, float d);
   void finite_difference(float *sx, float *sy, int NL, float d, mask *valid_lenslet);
+  void gradient_average(float *sx, float *sy, int NL, float d);
   void show_phase(char *filename);
   void show_phase(char *filename, int N_SRC);
   void show_amplitude(char *filename);
@@ -2737,6 +2758,102 @@ __global__ void partial_illumination_slopes(float *sx, float *sy,
          }
        }
        sy[kL] /= S;
+    }
+}
+@ 
+The wavefront finite difference can be computed with a straight lenslet--average of the phase gradient with:
+<<wavefront differentiation>>=
+void complex_amplitude::gradient_average(float *sx, float *sy, int NL, float d)
+{
+  <<wavefront differentiation (common)>>
+  dim3 blockDim(16,16);
+  dim3 gridDim(NL/16+1,NL/16+1,N);
+  gradient_average_kernel LLL gridDim,blockDim RRR (sx, sy, NL, n, d,
+                                                    phase, M->f);
+}
+@ 
+@ 
+with the kernel
+<<wavefront differentiation kernel (gradient average)>>=
+__global__ void gradient_average_kernel(float *sx, float *sy,
+                                        const int NL, const int n,
+                                        float d,
+                                        float *phase,
+                                        float *wavefront_mask_f)
+{
+    int iL, jL, i, j, kL, uL, vL, a, b, w0, w, NP, iSource;
+    float p, dphi, h, P, S;
+    iL = blockIdx.x * blockDim.x + threadIdx.x;
+    jL = blockIdx.y * blockDim.y + threadIdx.y;
+    iSource = blockIdx.z;
+    kL = iL*NL+jL;
+    kL += iSource*NL*NL;
+    if ( (iL<NL) && (jL<NL) ) {  
+       kL = iL*NL+jL;
+       NP = n*NL + 1;
+       kL += 2*iSource*NL*NL;
+       uL = iL*n;
+       vL = jL*n;
+       w0 = iSource*NP*NP;
+       sx[kL] = sy[kL] = 0.0;
+       p = d/n;
+
+       S = 0;
+       for (i=0;i<=n;i++) {
+         a = uL + i + 1;
+         h = 2*p;
+         if (a>=NP) {
+            a = NP-1;
+            h = p;
+         }    
+         b = uL + i - 1;
+         if (b<0) {
+            b = 0;
+            h = p;
+         }
+         for (j=0;j<=n;j++) {
+           w = w0 + b*NP + vL + j;
+           dphi = phase[w];
+           P    = wavefront_mask_f[w];
+           w = w0 + a*NP + vL + j;
+           dphi -= phase[w];
+           P    *= wavefront_mask_f[w];
+           S += P;
+           sx[kL] += P*dphi/h;
+          }
+        }
+        if (S>0)
+           sx[kL] /= S;
+        else
+           sx[kL] = 0.0;;
+
+       S = 0;
+       for (i=0;i<=n;i++) {
+         w = w0 + (uL+i)*NP;
+         for (j=0;j<=n;j++) {
+            a = vL + j + 1;
+            h = 2*p;
+            if (a>=NP) {
+               a = NP-1;
+               h = p;
+            }    
+            b = vL + j - 1;
+            if (b<0) {
+                b = 0;
+                h = p;
+             }
+           dphi = phase[w+b];
+           P    = wavefront_mask_f[w+a];
+           dphi -= phase[w+a];
+           P    *= wavefront_mask_f[w+b];
+           S += P;
+           sy[kL] += P*dphi/h;
+         }
+       }
+        if (S>0)
+           sy[kL] /= S;
+        else
+           sy[kL] = 0.0;;
     }
 }
 @ 
