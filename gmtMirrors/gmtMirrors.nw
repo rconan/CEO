@@ -98,6 +98,8 @@ void reset()
 void trace(bundle *)
 void blocking(bundle *)
 void global_tiptilt(float , float )
+void remove(int *seg_ID, int N_ID)
+void keep(int *seg_ID, int N_ID)
 @
 <<class definition>>=
 cdef class GmtMirrors:
@@ -341,6 +343,12 @@ def global_tiptilt(self, float tip, float tilt):
         The y axis angle
     """
     self._c_gmt_m12.global_tiptilt(tip, tilt);
+
+def remove(self, int[:] seg_ID):
+    self._c_gmt_m12.remove(&seg_ID[0], seg_ID.shape[0])
+
+def keep(self, int[:] seg_ID):
+    self._c_gmt_m12.keep(&seg_ID[0], seg_ID.shape[0])
 
 property D_assembly:
     def __get__(self):
@@ -741,6 +749,8 @@ void blocking(bundle *rays);
 void global_tiptilt(float tip, float tilt);
 void test_ray_tracing(void);
 void track(float *x, float *y, int N, int idx);
+void remove(int *seg_ID, int N_ID);
+void keep(int *seg_ID, int N_ID);
 @
 The GMT M12 parameters are:
 \begin{itemize}
@@ -849,6 +859,10 @@ double *d__C;
 <<GMT M12 parameters>>=
 cublasHandle_t handle;
 @
+\item a 7 element array where 1 means the segment is active and 0 means the segment is missing
+<<GMT M12 parameters>>=
+char *d__valid_segments;
+@
 \end{itemize}
  \end{itemize}
 
@@ -933,6 +947,9 @@ depth = conic_equation(&__v,&__v0,conic_k,conic_c);
 D_c = L;
 __v.x = L;
 zo = conic_equation(&__v,&__v0,conic_k,conic_c);
+
+HANDLE_ERROR( cudaMalloc((void**)&d__valid_segments, sizeof(char)*7) );
+HANDLE_ERROR( cudaMemset( d__valid_segments, 1, sizeof(char)*7) );
 
 <<M12 rigid body definition>>
 
@@ -1105,6 +1122,7 @@ rigid_body_CS.cleanup();
 fprintf(stdout," |-");
 motion_CS.cleanup();
 HANDLE_ERROR( cudaFree( d__conic_origin ) );
+HANDLE_ERROR( cudaFree( d__valid_segments ) );
 @
 The rigid body motion parameters are updated with:
 \index{gmtMirrors!gmt\_m1!update}
@@ -1296,22 +1314,23 @@ void gmt_m1::trace(bundle *rays)
  HANDLE_ERROR( cudaMemset(rays->d__piston_mask, 0,
 			  sizeof(int)*rays->N_RAY*rays->N_BUNDLE ) );
 m1_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY,
-					     Rri2, R2,
-					     aperture_CS.d__R,
-					     aperture_CS.d__origin,
-					     conic_CS.d__R,
-					     conic_CS.d__origin,
-					     conic_k, conic_c,
-					     d__conic_origin,
-					     rigid_body_CS.d__R,
-					     rigid_body_CS.d__origin,
-					     motion_CS.d__R,
-					     motion_CS.d__origin,
-					     ZS->max_n, ZS->n_mode,
-					     ZS->d__a, ZS->d__cx, ZS->d__cy,
-					     0.5*D_full,
-					     rays->d__chief_ray,
-					     rays->d__piston_mask);
+					    Rri2, R2,
+					    aperture_CS.d__R,
+					    aperture_CS.d__origin,
+					    conic_CS.d__R,
+					    conic_CS.d__origin,
+					    conic_k, conic_c,
+					    d__conic_origin,
+					    rigid_body_CS.d__R,
+					    rigid_body_CS.d__origin,
+					    motion_CS.d__R,
+					    motion_CS.d__origin,
+					    ZS->max_n, ZS->n_mode,
+					    ZS->d__a, ZS->d__cx, ZS->d__cy,
+					    0.5*D_full,
+					    rays->d__chief_ray,
+					    rays->d__piston_mask,
+					    d__valid_segments);
 intersection LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY);
 float previous_nnz = rays->V.nnz;
 //fprintf(stdout,"M%d previous nnz rays: %f\n",M_ID,previous_nnz);
@@ -1332,8 +1351,8 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 				rtd *d__motion_R, vector *d__motion_origin,
 				int max_n, int n_mode,
 				rtd *d__a, rtd *d__cx, rtd *d__cy, rtd R,
-				ray *d__chief_ray,
-				int *d__piston_mask)
+				ray *d__chief_ray, int *d__piston_mask,
+				char *d__valid_segments)
 {
   int i, j, ij, iCoordSys, iSource, b_n_mode;
   rtd rho2;
@@ -1353,9 +1372,9 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
   if  ( ( j<N_RAY ) && (d__ray[ij].v) )// & (iCoordSys<1) )
   {
 
-    for (iCoordSys=0; iCoordSys<7; iCoordSys++)
+    for (iCoordSys=0; iCoordSys<7 ; iCoordSys++)
       {
-
+        if (d__valid_segments[iCoordSys]>0) {
 	d__origin = d__conic_self_origin[iCoordSys];
 
         <<from global CS to motion CS>>
@@ -1372,6 +1391,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 		d__ray[ij].optical_path_length - d__chief_ray[iSource].optical_path_length;
 	    return;
 	  }
+        }
       }
   }
 }
@@ -1673,6 +1693,47 @@ S = conic_surface(&xyz, &d__origin, Fk, Fc);
 K = partial_x_conic_surface(&xyz, &d__origin, Fk, Fc);
 L = partial_y_conic_surface(&xyz, &d__origin, Fk, Fc);
 M = partial_z_conic_surface();
+@
+\subsection{Segment selection}
+\label{sec:segment-selection}
+
+Segments can be removed from the M1 or M2 models with the routine:
+\index{gmtMirrors!remove}
+<<GMT M1 functions>>=
+void gmt_m1::remove(int *seg_ID, int N_ID)
+{
+  <<GMT remove segments>>
+}
+@ where [[seg_ID]] is an array of length [[N_ID]] with the ID number of the segments to deactivate,
+and
+<<GMT remove segments>>=
+int k;
+char valid[7];
+memset(valid, 1, sizeof(char)*7);
+for (k=0;k<N_ID;k++)
+  valid[seg_ID[k]-1] = 0;
+HANDLE_ERROR( cudaMemcpy( d__valid_segments, valid,
+                          sizeof(char)*7, cudaMemcpyHostToDevice ) );
+@
+One can also specifies the segments to keep
+\index{gmtMirrors!keep}
+<<GMT M1 functions>>=
+void gmt_m1::keep(int *seg_ID, int N_ID)
+{
+  <<GMT keep segments>>
+}
+@ where [[seg_ID]] is an array of length [[N_ID]] with the ID number of the segments to keep,
+and
+<<GMT keep segments>>=
+int k;
+char valid[7];
+memset(valid, 0, sizeof(char)*7);
+for (k=0;k<N_ID;k++)
+  fprintf(stdout,"%d: %d\n",k,seg_ID[k]);
+for (k=0;k<N_ID;k++)
+  valid[seg_ID[k]-1] = 1;
+HANDLE_ERROR( cudaMemcpy( d__valid_segments, valid,
+                          sizeof(char)*7, cudaMemcpyHostToDevice ) );
 @
 \subsection{Mirror location tracker}
 \label{sec:mirr-locat-track}
@@ -2940,6 +3001,25 @@ The rigid body motion are reset to 0 with:
 void gmt_m2::reset(void)
 {
     <<GMT M12 reset>>
+}
+@
+\subsection{Segment selection}
+\label{sec:segment-selection}
+
+Segments can be removed from the M1 or M2 models with the routine:
+\index{gmtMirrors!remove}
+<<GMT M2 functions>>=
+void gmt_m2::remove(int *seg_ID, int N_ID)
+{
+  <<GMT remove segments>>
+}
+@
+One can also specifies the segments to keep
+\index{gmtMirrors!keep}
+<<GMT M2 functions>>=
+void gmt_m2::keep(int *seg_ID, int N_ID)
+{
+  <<GMT keep segments>>
 }
 @
 \subsection{Global motions}
