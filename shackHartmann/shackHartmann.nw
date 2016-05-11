@@ -40,8 +40,8 @@ struct shackHartmann {
   void process(void);
   void analyze(source *gs);
   float* get_frame_dev_ptr(void);
+  void get_valid_reference_slopes(float *d__valid_slopes);
   void get_valid_slopes(float *d__valid_slopes);
-
 };
 
 struct geometricShackHartmann {
@@ -53,6 +53,7 @@ struct geometricShackHartmann {
   void set_reference_slopes(source *src);
   void calibrate(source *src, float threshold);
   void analyze(source *gs);
+  void get_valid_reference_slopes(float *d__valid_slopes);
   void get_valid_slopes(float *d__valid_slopes);
 };
 
@@ -90,54 +91,37 @@ from centroiding cimport centroiding
 from source cimport source
 cdef extern from "shackHartmann.h":
     cdef cppclass shackHartmann:
-        int N_LENSLET, N_ACTUATOR
-        float lenslet_pitch, slopes_gain, pixel_scale
-        float *d__c0
-        mask valid_lenslet
-        mask valid_actuator
+        <<common extern declaration>>
         imaging camera
-        centroiding data_proc
         void setup(int , int, float , int , int , int, int)
-        void cleanup()
-        void identify_valid_lenslet(source *, float);
-        void set_reference_slopes(source *);
-        void calibrate(source *, float )
         void propagate(source *)
         void process()
-        void analyze(source *)
 	float* get_frame_dev_ptr()
-        void get_valid_slopes(float *)
     cdef cppclass geometricShackHartmann:
-        int N_LENSLET, N_ACTUATOR
-        float lenslet_pitch, slopes_gain, pixel_scale
-        float *d__c0
-        mask valid_lenslet
-        mask valid_actuator
-        centroiding data_proc
+        <<common extern declaration>>
         void setup(int , float , int)
-        void cleanup()
-        void identify_valid_lenslet(source *, float);
-        void set_reference_slopes(source *);
-        void calibrate(source *, float )
-        void analyze(source *)
-        void get_valid_slopes(float *)
 <<class definitions>>
+@ where
+<<common extern declaration>>=
+int N_LENSLET, N_ACTUATOR
+float lenslet_pitch, slopes_gain, pixel_scale
+float *d__c0
+mask valid_lenslet
+mask valid_actuator
+centroiding data_proc
+void cleanup()
+void identify_valid_lenslet(source *, float);
+void set_reference_slopes(source *);
+void calibrate(source *, float )
+void analyze(source *)
+void get_valid_slopes(float *)
+void get_valid_reference_slopes(float *)
 @
 \index{shackHartmann!python!ShackHartmann}
 <<class definitions>>=
 from utilities cimport cuFloatArray, MaskAbstract
 from imaging cimport Imaging
 from centroiding cimport Centroiding
-cdef class ShackHartmannAbstract:
-    cdef:
-        void *_c_shackHartmann
-        readonly int N_SIDE_LENSLET
-        readonly int N_GS
-        readonly MaskAbstract valid_lenslet, valid_actuator
-        readonly cuFloatArray c0
-        readonly Imaging camera
-        readonly Centroiding data_proc
-        cuFloatArray _valid_slopes_
 cdef class ShackHartmann:
     cdef:
         shackHartmann *_c_shackHartmann
@@ -146,19 +130,19 @@ cdef class ShackHartmann:
         readonly cuFloatArray c0
         readonly Imaging camera
         readonly Centroiding data_proc
-        cuFloatArray _valid_slopes_
+	cuFloatArray _valid_slopes_, _valid_reference_slopes_
 @
 \index{shackHartmann!python!GeometricShackHartmann}
 <<class definitions>>=
 cdef class GeometricShackHartmann:
     cdef:
-        geometricShackHartmann *_c_geometricShackHartmann
+        geometricShackHartmann *_c_shackHartmann
         readonly int N_SIDE_LENSLET
         readonly int N_GS
         readonly MaskAbstract valid_lenslet, valid_actuator
         readonly cuFloatArray c0
         readonly Centroiding data_proc
-        cuFloatArray _valid_slopes_
+	cuFloatArray _valid_slopes_, _valid_reference_slopes_
 @
 <<shackHartmann.pyx>>=
 from libc.math cimport M_PI
@@ -280,90 +264,15 @@ cdef class ShackHartmann:
                               DFT_osf=DFT_osf,N_PX_IMAGE=N_PX_IMAGE,
                               BIN_IMAGE=BIN_IMAGE,N_SOURCE=N_GS,wfs=self)
         self.data_proc = Centroiding(N_SIDE_LENSLET,wfs=self)
+        <<shackHartmann cython init>>
 
-        self.valid_lenslet = MaskAbstract(self._c_shackHartmann.N_LENSLET*self.N_GS)
-        self.valid_lenslet._c_mask = &(self._c_shackHartmann.valid_lenslet)
-	self.valid_lenslet.f = cuFloatArray(shape=(self._c_shackHartmann.N_LENSLET*self.N_GS,1))
-        self.valid_lenslet.f._c_gpu.dev_data = self.valid_lenslet._c_mask.f
+<<shackHartmann cython methods>>
 
-        self.valid_actuator = MaskAbstract(self._c_shackHartmann.N_ACTUATOR*self.N_GS)
-        self.valid_actuator._c_mask = &(self._c_shackHartmann.valid_actuator)
-	self.valid_actuator.f = cuFloatArray(shape=(self._c_shackHartmann.N_ACTUATOR*self.N_GS,1))
-        self.valid_actuator.f._c_gpu.dev_data = self.valid_actuator._c_mask.f
-
-	self.c0 = cuFloatArray(shape=(self.N_GS,(self.N_SIDE_LENSLET**2)*2))
-	self.c0._c_gpu.dev_data = self._c_shackHartmann.d__c0
-
-    def __dealloc__(self):
-        self._c_shackHartmann.cleanup()
-
-    def identifyValidLenslet(self, Source gs, float threshold):
+    def reset(self):
         """
-        Selects the WFS valid lenslet and calibrated the reference slopes
-
-        Parameters
-        ----------
-        gs : Source
-            The WFS guide star
-        threshold : float
-            The intensity threshold, a lenslet is discared if the flux of the lenslet divided by the fully illuminated flux of the lenslet is less than the threshold
-
-        See also
-        --------
-        Source : a class for astronomical sources
+        Resets the WFS detector frame to 0
         """
-        self._c_shackHartmann.identify_valid_lenslet(gs._c_source, threshold)
-        self._valid_slopes_ = cuFloatArray(shape=(1,self._c_shackHartmann.valid_lenslet.nnz*2),
-                                           dev_malloc=True)
-
-    def setReferenceSlopes(self, Source gs):
-        """
-        Selects the WFS valid lenslet and calibrated the reference slopes
-
-        Parameters
-        ----------
-        gs : Source
-            The WFS guide star
-
-        See also
-        --------
-        Source : a class for astronomical sources
-        """
-        self._c_shackHartmann.set_reference_slopes(gs._c_source)
-
-    def calibrate(self, Source gs, float threshold):
-        """
-        Selects the WFS valid lenslet and calibrated the reference slopes
-
-        Parameters
-        ----------
-        gs : Source
-            The WFS guide star
-        threshold : float
-            The intensity threshold, a lenslet is discared if the flux of the lenslet divided by the fully illuminated flux of the lenslet is less than the threshold
-
-        See also
-        --------
-        Source : a class for astronomical sources
-        """
-        self._c_shackHartmann.calibrate(gs._c_source, threshold)
-        self._valid_slopes_ = cuFloatArray(shape=(1,self._c_shackHartmann.valid_lenslet.nnz*2),
-                                           dev_malloc=True)
-
-    def analyze(self, Source gs):
-        """
-        Propagates the guide star to the WFS detector (noiseless) and processes the frame
-
-        Parameters
-        ----------
-        gs : Source
-            The WFS guide star
-
-        See also
-        --------
-        Source : a class for astronomical sources
-        """
-        self._c_shackHartmann.analyze(gs._c_source)
+        self._c_shackHartmann.camera.reset()
 
     def propagate(self, Source gs):
         """
@@ -399,12 +308,6 @@ cdef class ShackHartmann:
         """
         self._c_shackHartmann.camera.readout(exposureTime,readOutNoiseRms)
 
-    def reset(self):
-        """
-        Resets the WFS detector frame to 0
-        """
-        self._c_shackHartmann.camera.reset()
-
     def pointing(self,float zen, float azim):
         """
         Sets the pointing of the WFS relative to the guide star
@@ -417,6 +320,8 @@ cdef class ShackHartmann:
             The azimuth angle [rd]
         """
         self._c_shackHartmann.camera.set_pointing_direction(zen, azim)
+
+<<shackHartmann cython properties>>
 
     property N_SIDE_LENSLET:
         def __get__(self):
@@ -442,19 +347,6 @@ cdef class ShackHartmann:
         def __get__(self):
             return self.camera.N_PX_FRAME
 
-    property valid_slopes:
-        def __get__(self):
-            self._c_shackHartmann.get_valid_slopes(self._valid_slopes_._c_gpu.dev_data)
-            return self._valid_slopes_
-
-    property n_valid_lenslet:
-        def __get__(self):
-            return self.valid_lenslet.nnz
-
-    property n_valid_slopes:
-        def __get__(self):
-            return 2*self.n_valid_lenslet
-
     property slopes_gain:
         def __set__(self, float val):
             self._c_shackHartmann.slopes_gain = val
@@ -474,39 +366,25 @@ cdef class ShackHartmann:
     property flux:
         def __get__(self):
             return self.data_proc.flux
+@ with
+<<shackHartmann cython init>>=
 
-    property c:
-        def __get__(self):
-            return self.data_proc.c
-@
-<<shackHartmann.pyx>>=
-cdef class GeometricShackHartmann:
+self.valid_lenslet = MaskAbstract(self._c_shackHartmann.N_LENSLET*self.N_GS)
+self.valid_lenslet._c_mask = &(self._c_shackHartmann.valid_lenslet)
+self.valid_lenslet.f = cuFloatArray(shape=(self._c_shackHartmann.N_LENSLET*self.N_GS,1))
+self.valid_lenslet.f._c_gpu.dev_data = self.valid_lenslet._c_mask.f
 
-    def __cinit__(self, *args, **kwargs):
-        self._c_geometricShackHartmann = new geometricShackHartmann()
+self.valid_actuator = MaskAbstract(self._c_shackHartmann.N_ACTUATOR*self.N_GS)
+self.valid_actuator._c_mask = &(self._c_shackHartmann.valid_actuator)
+self.valid_actuator.f = cuFloatArray(shape=(self._c_shackHartmann.N_ACTUATOR*self.N_GS,1))
+self.valid_actuator.f._c_gpu.dev_data = self.valid_actuator._c_mask.f
 
-    def __init__(self, int N_SIDE_LENSLET, float d, N_GS=1):
-        self.N_SIDE_LENSLET = N_SIDE_LENSLET
-        self.N_GS           = N_GS
-        self._c_geometricShackHartmann.setup(N_SIDE_LENSLET, d, N_GS)
-
-        self.data_proc = Centroiding(N_SIDE_LENSLET,gwfs=self)
-
-        self.valid_lenslet = MaskAbstract(self._c_geometricShackHartmann.N_LENSLET*self.N_GS)
-        self.valid_lenslet._c_mask = &(self._c_geometricShackHartmann.valid_lenslet)
-	self.valid_lenslet.f = cuFloatArray(shape=(self._c_geometricShackHartmann.N_LENSLET*self.N_GS,1))
-        self.valid_lenslet.f._c_gpu.dev_data = self.valid_lenslet._c_mask.f
-
-        self.valid_actuator = MaskAbstract(self._c_geometricShackHartmann.N_ACTUATOR*self.N_GS)
-        self.valid_actuator._c_mask = &(self._c_geometricShackHartmann.valid_actuator)
-	self.valid_actuator.f = cuFloatArray(shape=(self._c_geometricShackHartmann.N_ACTUATOR*self.N_GS,1))
-        self.valid_actuator.f._c_gpu.dev_data = self.valid_actuator._c_mask.f
-
-	self.c0 = cuFloatArray(shape=(self.N_GS,(self.N_SIDE_LENSLET**2)*2))
-	self.c0._c_gpu.dev_data = self._c_geometricShackHartmann.d__c0
-
+self.c0 = cuFloatArray(shape=(self.N_GS,(self.N_SIDE_LENSLET**2)*2))
+self.c0._c_gpu.dev_data = self._c_shackHartmann.d__c0
+@ and
+<<shackHartmann cython methods>>=
     def __dealloc__(self):
-        self._c_geometricShackHartmann.cleanup()
+        self._c_shackHartmann.cleanup()
 
     def identifyValidLenslet(self, Source gs, float threshold):
         """
@@ -523,8 +401,10 @@ cdef class GeometricShackHartmann:
         --------
         Source : a class for astronomical sources
         """
-        self._c_geometricShackHartmann.identify_valid_lenslet(gs._c_source, threshold)
-        self._valid_slopes_ = cuFloatArray(shape=(1,self._c_geometricShackHartmann.valid_lenslet.nnz*2),
+        self._c_shackHartmann.identify_valid_lenslet(gs._c_source, threshold)
+        self._valid_slopes_ = cuFloatArray(shape=(1,self._c_shackHartmann.valid_lenslet.nnz*2),
+                                           dev_malloc=True)
+        self._valid_reference_slopes_ = cuFloatArray(shape=(1,self._c_shackHartmann.valid_lenslet.nnz*2),
                                            dev_malloc=True)
 
     def setReferenceSlopes(self, Source gs):
@@ -540,8 +420,7 @@ cdef class GeometricShackHartmann:
         --------
         Source : a class for astronomical sources
         """
-        self._c_geometricShackHartmann.set_reference_slopes(gs._c_source)
-
+        self._c_shackHartmann.set_reference_slopes(gs._c_source)
 
     def calibrate(self, Source gs, float threshold):
         """
@@ -558,8 +437,10 @@ cdef class GeometricShackHartmann:
         --------
         Source : a class for astronomical sources
         """
-        self._c_geometricShackHartmann.calibrate(gs._c_source, threshold)
-        self._valid_slopes_ = cuFloatArray(shape=(1,self._c_geometricShackHartmann.valid_lenslet.nnz*2),
+        self._c_shackHartmann.calibrate(gs._c_source, threshold)
+        self._valid_slopes_ = cuFloatArray(shape=(1,self._c_shackHartmann.valid_lenslet.nnz*2),
+                                           dev_malloc=True)
+        self._valid_reference_slopes_ = cuFloatArray(shape=(1,self._c_shackHartmann.valid_lenslet.nnz*2),
                                            dev_malloc=True)
 
     def analyze(self, Source gs):
@@ -575,14 +456,17 @@ cdef class GeometricShackHartmann:
         --------
         Source : a class for astronomical sources
         """
-        self._c_geometricShackHartmann.analyze(gs._c_source)
-
-    def reset(self):
-        pass
-
-    property c:
+        self._c_shackHartmann.analyze(gs._c_source)
+<<shackHartmann cython properties>>=
+    property valid_reference_slopes:
         def __get__(self):
-            return self.data_proc.c
+            self._c_shackHartmann.get_valid_reference_slopes(self._valid_slopes_._c_gpu.dev_data)
+            return self._valid_slopes_
+
+    property valid_slopes:
+        def __get__(self):
+            self._c_shackHartmann.get_valid_slopes(self._valid_slopes_._c_gpu.dev_data)
+            return self._valid_slopes_
 
     property n_valid_lenslet:
         def __get__(self):
@@ -592,10 +476,30 @@ cdef class GeometricShackHartmann:
         def __get__(self):
             return 2*self.n_valid_lenslet
 
-    property valid_slopes:
+    property c:
         def __get__(self):
-            self._c_geometricShackHartmann.get_valid_slopes(self._valid_slopes_._c_gpu.dev_data)
-            return self._valid_slopes_
+            return self.data_proc.c
+@
+<<shackHartmann.pyx>>=
+cdef class GeometricShackHartmann:
+
+    def __cinit__(self, *args, **kwargs):
+        self._c_shackHartmann = new geometricShackHartmann()
+
+    def __init__(self, int N_SIDE_LENSLET, float d, N_GS=1):
+        self.N_SIDE_LENSLET = N_SIDE_LENSLET
+        self.N_GS           = N_GS
+        self._c_shackHartmann.setup(N_SIDE_LENSLET, d, N_GS)
+
+        self.data_proc = Centroiding(N_SIDE_LENSLET,gwfs=self)
+        <<shackHartmann cython init>>
+
+<<shackHartmann cython methods>>
+
+    def reset(self):
+        pass
+
+<<shackHartmann cython properties>>
 @
 <<shackHartmann.pyx>>=
 from utilities import JSONAbstract
@@ -1063,6 +967,28 @@ __global__ void get_valid_slopes_kern(float *d__valid_slopes,  int *idx,
     d__valid_slopes[k+NNZ] = d__c[ _idx_ + N_LENSLET];
   }
 }
+@
+The reference slopes in the valid lenslet are extracted with
+\index{shackHartmann!shackHartmann!get\_valid\_reference\_slopes}
+<<valid lenslet slopes>>=
+void shackHartmann::get_valid_reference_slopes(float *d__valid_slopes)
+{
+  <<valid lenslet reference slopes common>>
+}
+@ 
+\index{shackHartmann!geometricShackHartmann!get\_valid\_reference\_slopes}
+<<valid lenslet slopes>>=
+void geometricShackHartmann::get_valid_reference_slopes(float *d__valid_slopes)
+{
+  <<valid lenslet reference slopes common>>
+}
+@ where
+<<valid lenslet reference slopes common>>=
+dim3 blockDim(16,16);
+dim3 gridDim(valid_lenslet.nnz/256+1,1);
+get_valid_slopes_kern LLL gridDim, blockDim RRR (d__valid_slopes, valid_lenslet.idx,
+                                                 valid_lenslet.nnz, d__c0,
+                                                 N_LENSLET);
 @
 \subsection{Input/Output}
 \label{sec:inputoutput}
