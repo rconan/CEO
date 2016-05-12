@@ -219,6 +219,14 @@ cdef class GmtMirrors:
         self.M2.zernike.reset()
 
     def dump_log(self, bytes filename):
+        """
+        Writes the M1 and M2 segment commands log to a file
+
+        Parameters
+        ----------
+        filename : bytes
+            The name of the file
+        """
         np.savez(filename,
                  M1_rigid_body = self.M1.motion_CS.data_log,
                  M1_zernike    = self.M1.zernike.data_log,
@@ -226,6 +234,19 @@ cdef class GmtMirrors:
                  M2_zernike    = self.M2.zernike.data_log)
 
     def segmentsWavefrontGradient(self, Source src):
+        """
+        Computes the gradient of the phase of the wavefront on each segment
+
+        Parameters
+        ----------
+        src : Source
+            The Source object
+
+        Returns
+        -------
+        cuFloatArray
+            The wavefront gradient average in an array of size [N_SRCx14,1]
+        """
         cdef cuFloatArray sxy
         sxy = cuFloatArray( host_data=np.zeros((7*src.N_SRC*2,1) ) )
         src._c_source.wavefront.segments_gradient_average(sxy._c_gpu.dev_data,
