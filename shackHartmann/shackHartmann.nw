@@ -42,6 +42,7 @@ struct shackHartmann {
   float* get_frame_dev_ptr(void);
   void get_valid_reference_slopes(float *d__valid_slopes);
   void get_valid_slopes(float *d__valid_slopes);
+  void get_valid_slopes_norm(float *d__valid_slopes_norm);
 };
 
 struct geometricShackHartmann {
@@ -55,6 +56,7 @@ struct geometricShackHartmann {
   void analyze(source *gs);
   void get_valid_reference_slopes(float *d__valid_slopes);
   void get_valid_slopes(float *d__valid_slopes);
+  void get_valid_slopes_norm(float *d__valid_slopes_norm);
 };
 
 #endif // __SHACKHARTMANN__
@@ -69,6 +71,7 @@ struct geometricShackHartmann {
 <<valid lenslet>>
 <<geometric valid lenslet>>
 <<valid lenslet slopes kernel>>
+<<valid lenslet slopes norm kernel>>
 
 <<setup>>
 <<cleanup>>
@@ -78,6 +81,7 @@ struct geometricShackHartmann {
 <<wavefront processing>>
 <<get detector frame>>
 <<valid lenslet slopes>>
+<<valid lenslet slopes norm>>
 @
 
 \subsection{Python}
@@ -116,6 +120,7 @@ void calibrate(source *, float )
 void analyze(source *)
 void get_valid_slopes(float *)
 void get_valid_reference_slopes(float *)
+void get_valid_slopes_norm(float *)
 @
 \index{shackHartmann!python!ShackHartmann}
 <<class definitions>>=
@@ -457,6 +462,14 @@ self.c0._c_gpu.dev_data = self._c_shackHartmann.d__c0
         Source : a class for astronomical sources
         """
         self._c_shackHartmann.analyze(gs._c_source)
+
+    def slopesNorm(self):
+        cdef cuFloatArray sn
+        sn = cuFloatArray(shape=(1,self._c_shackHartmann.valid_lenslet.nnz),
+                          dev_malloc=True)
+        self._c_shackHartmann.get_valid_slopes_norm(sn._c_gpu.dev_data)
+        return sn
+
 <<shackHartmann cython properties>>=
     property valid_reference_slopes:
         def __get__(self):
@@ -989,6 +1002,48 @@ dim3 gridDim(valid_lenslet.nnz/256+1,1);
 get_valid_slopes_kern LLL gridDim, blockDim RRR (d__valid_slopes, valid_lenslet.idx,
                                                  valid_lenslet.nnz, d__c0,
                                                  N_LENSLET);
+@
+The valid slopes norm $\bar s$ is defined as $\bar s^2 = (s_x+s_{0,x})^2 + (s_y+s_{0,y})^2$.
+It is computed with:
+\index{shackHartmann!shackHartmann!get\_valid\_slopes\_norm}
+<<valid lenslet slopes norm>>=
+void shackHartmann::get_valid_slopes_norm(float *d__valid_slopes_norm)
+{
+  <<valid lenslet slopes norm common>>
+}
+@ 
+\index{shackHartmann!geometricShackHartmann!get\_valid\_slopes\_norm}
+<<valid lenslet slopes norm>>=
+void geometricShackHartmann::get_valid_slopes_norm(float *d__valid_slopes_norm)
+{
+  <<valid lenslet slopes norm common>>
+}
+@ where
+<<valid lenslet slopes norm common>>=
+dim3 blockDim(16,16);
+dim3 gridDim(valid_lenslet.nnz/256+1,1);
+get_valid_slopes_norm_kern LLL gridDim, blockDim RRR (d__valid_slopes_norm, valid_lenslet.idx,
+                                                      valid_lenslet.nnz, data_proc.d__c,
+                                                      d__c0, N_LENSLET);
+@ with
+<<valid lenslet slopes norm kernel>>=
+__global__ void get_valid_slopes_norm_kern(float *d__valid_slopes_norm,  int *idx,
+                                           const int NNZ, float *d__c, float *d__c0,
+                                           const int N_LENSLET)
+{
+  int i, j, k, iSource, _idx_;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if (k<NNZ) {
+    _idx_ = idx[k];
+    iSource = _idx_/N_LENSLET;
+    _idx_ += iSource*N_LENSLET;
+    d__valid_slopes_norm[k] = hypotf( d__c[ _idx_ ] + d__c0[ _idx_ ],
+                                      d__c[ _idx_ + N_LENSLET] +
+                                      d__c0[ _idx_ + N_LENSLET]);
+  }
+}
 @
 \subsection{Input/Output}
 \label{sec:inputoutput}
