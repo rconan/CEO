@@ -341,7 +341,7 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="zernike":
-                n_mode = self.M1.zernike.n_mode
+                n_mode = self.M2.zernike.n_mode
                 D = np.zeros((wfs.valid_lenslet.nnz*2,(n_mode-first_mode)*7))
                 idx = 0;
                 for kSeg in range(7):
