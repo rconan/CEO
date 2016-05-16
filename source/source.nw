@@ -63,6 +63,7 @@ struct source {
   float spectral_bandwidth(void);
   float n_photon(void);
   float wavenumber(void);
+  void update_directions(float *zenith, float *azimuth, int N_DIR);
 };
 #endif // __SOURCE_H__
 @
@@ -70,6 +71,8 @@ struct source {
 
 <<source.cu>>=
 #include "source.h"
+
+<<zenith and azimuth update kernel>>
 
 <<to z plane kernel>>
 <<to sphere kernel>>
@@ -116,6 +119,8 @@ struct source {
 
 <<reset rays>>
 <<ray tracing>>
+
+<<zenith and azimuth update>>
 
 <<info>>
 
@@ -624,6 +629,7 @@ cdef class Complex_amplitude:
         float n_photon()
         float wavelength()
         float spectral_bandwidth()
+        void update_directions(float *, float *, int)
 @
 <<class definitions>>=
 cdef class Source:
@@ -632,7 +638,7 @@ cdef class Source:
         readonly int N_SRC
         readonly int n, m
         readonly int size
-        readonly ndarray zenith, azimuth
+        float[:] _zenith_, _azimuth_
         readonly float height
         readonly Bundle rays
         readonly Complex_amplitude wavefront
@@ -744,23 +750,23 @@ cdef class Source:
             resolution = [rays_box_sampling, rays_box_sampling]
         self.n = resolution[0]
         self.m = resolution[1]
-        self.zenith  = np.array( zenith,  dtype=np.float32, ndmin=1)
-        self.azimuth = np.array( azimuth, dtype=np.float32, ndmin=1)
+        self._zenith_  = np.array( zenith,  dtype=np.float32, ndmin=1)
+        self._azimuth_ = np.array( azimuth, dtype=np.float32, ndmin=1)
         self.height  = float(height);
-        self.size = self.zenith.size
+        self.size = self._zenith_.size
         cdef vector _origin_
         if rays_box_size is None:
             self._c_source.setup(_photometric_band,
-                                 <float *>self.zenith.data,
-                                 <float *>self.azimuth.data, height,
+                                 &self._zenith_[0],
+                                 &self._azimuth_[0], height,
                                  self.size, np.prod(resolution))
         else:
             _origin_.x = <float>rays_origin[0]
             _origin_.y = <float>rays_origin[1]
             _origin_.z = <float>rays_origin[2]
             self._c_source.setup(_photometric_band,
-                                 <float *>self.zenith.data,
-                                 <float *>self.azimuth.data, height,
+                                 &self._zenith_[0],
+                                 &self._azimuth_[0], height,
                                  self.size,
                                  rays_box_size,
 				 rays_box_sampling,
@@ -782,6 +788,21 @@ cdef class Source:
         Transfer the OPD from ray tracing to the wavefront phase
         """
         self._c_source.opd2phase()
+
+    def updateDirections(self, float[:] zenith, float[:] azimuth):
+        """
+        Update the zenith and azimuth direction angles
+
+        Parameters
+        ----------
+        zenith : float[:]
+            The zenith angle array in radian
+        azimuth : float[:]
+            The azimuth angle array in radian
+        """
+        self._zenith_ = zenith
+        self._azimuth_ = azimuth
+        self._c_source.update_directions(&zenith[0],&azimuth[0],zenith.size)
 
     property phase:
         def __get__(self):
@@ -812,6 +833,14 @@ cdef class Source:
     property magnitude:
         def __set__(self,value):
             self._c_source.magnitude = value
+    
+    property zenith:
+        def __get__(self):
+            return np.asarray(self._zenith_)
+    
+    property azimuth:
+        def __get__(self):
+            return np.asarray(self._azimuth_)            
 
     def masked(self, MaskAbstract tel):
         """
@@ -2239,6 +2268,35 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
 x   = L*(i - (N_L-1)*0.5)/(N_L-1);
 y   = L*(j - (N_L-1)*0.5)/(N_L-1);
 @ \end{itemize}
+
+The zenith and azimuth angle are updated with:
+<<zenith and azimuth update>>=
+void source::update_directions(float *zenith, float *azimuth, int N_DIR)
+{
+  int n_byte = sizeof(float)*N_DIR;
+  float *d__zenith, *d__azimuth;
+  HANDLE_ERROR( cudaMalloc((void**)&d__zenith, n_byte ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__azimuth, n_byte ) );
+  HANDLE_ERROR( cudaMemcpy( d__zenith, &zenith,
+			    n_byte, cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMemcpy( d__azimuth, &azimuth,
+			    n_byte, cudaMemcpyHostToDevice ) );
+  update_directions_kernel LLL N_SRC,1 RRR ( d__zenith, d__azimuth, N_DIR, dev_ptr);
+  HANDLE_ERROR( cudaFree( d__zenith ));
+  HANDLE_ERROR( cudaFree( d__azimuth ));}
+@ with
+<<zenith and azimuth update kernel>>=
+__global__ void update_directions_kernel(float *d__zenith, float *d__azimuth, 
+                                         const int N_DIR, source *d__src)
+{
+  int i;
+  i = blockIdx.x;
+  d__src[i].zenith  = d__zenith[i];
+  d__src[i].azimuth = d__azimuth[i];
+  d__src[i].theta_x = tanf(d__zenith[i])*cosf(d__azimuth[i]);
+  d__src[i].theta_y = tanf(d__zenith[i])*sinf(d__azimuth[i]);
+}
+@ 
 \subsubsection{Photometry}
 \label{sec:photometry}
 
