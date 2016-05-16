@@ -213,8 +213,9 @@ class ZemaxModel():
         phi   = math.atan2(y, x)
         theta = (x * ceo.constants.DEG2RAD) / math.cos(phi)
 
-        self.src.azimuth = np.array(phi,   dtype=np.float32, ndmin=1)
-        self.src.zenith  = np.array(theta, dtype=np.float32, ndmin=1)
+        azimuth = np.array(phi,   dtype=np.float32, ndmin=1)
+        zenith  = np.array(theta, dtype=np.float32, ndmin=1)
+        self.src.updateDirections(zenith,azimuth)
 
     def XFLN(self, x, *line):
         self.field_angles['x'] = float(x)
