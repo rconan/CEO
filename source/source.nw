@@ -63,6 +63,7 @@ struct source {
   float spectral_bandwidth(void);
   float n_photon(void);
   float wavenumber(void);
+  void update_directions(float *zenith, float *azimuth, int N_DIR);
 };
 #endif // __SOURCE_H__
 @
@@ -71,6 +72,8 @@ struct source {
 <<source.cu>>=
 #include "source.h"
 
+<<zenith and azimuth update kernel>>
+
 <<to z plane kernel>>
 <<to sphere kernel>>
 <<reference sphere origin from chief ray>>
@@ -78,6 +81,8 @@ struct source {
 <<bundle reset kernel>>
 <<wavefront differentiation kernel (partial illumination identification)>>
 <<wavefront differentiation kernel (slope estimates)>>
+<<wavefront differentiation kernel (gradient average)>>
+<<wavefront differentiation kernel (segments gradient average)>>
 
 <<ray bundle functions>>
 
@@ -114,6 +119,8 @@ struct source {
 
 <<reset rays>>
 <<ray tracing>>
+
+<<zenith and azimuth update>>
 
 <<info>>
 
@@ -450,6 +457,8 @@ property refractive_index:
         void rms(float *)
 	void finite_difference(float *, float *, int, float);
         void finite_difference(float *, float *, int, float, mask *);
+        void gradient_average(float *, float *, int , float)
+        void segments_gradient_average(float *, float * , float, int *)
 @
 <<class definitions>>=
 cdef class Complex_amplitude:
@@ -557,20 +566,46 @@ cdef class Complex_amplitude:
             The lenslet pitch
         M : MaskAbstract, optional
             The valid lenslet mask
+
+        Returns
+        -------
+        cuFloatArray
+            The wavefront finite differences in an array of size [N_SRCxNLx2,NL]
         """
-        cdef cuFloatArray sx
-        cdef cuFloatArray sy
-        sx = cuFloatArray(shape=(self._c_complex_amplitude.N*NL,NL), dev_malloc=True)
-        sy = cuFloatArray(shape=(self._c_complex_amplitude.N*NL,NL), dev_malloc=True)
+        cdef cuFloatArray sxy
+        sxy = cuFloatArray(shape=(self._c_complex_amplitude.N*NL*2,NL), dev_malloc=True)
         if M is None:
-            self._c_complex_amplitude.finite_difference(sx._c_gpu.dev_data, 
-                                                        sy._c_gpu.dev_data, 
+            self._c_complex_amplitude.finite_difference(sxy._c_gpu.dev_data, 
+                                                        sxy._c_gpu.dev_data + NL*NL, 
                                                         NL, d)
         else:
-            self._c_complex_amplitude.finite_difference(sx._c_gpu.dev_data, 
-                                                        sy._c_gpu.dev_data, 
+            self._c_complex_amplitude.finite_difference(sxy._c_gpu.dev_data, 
+                                                        sxy._c_gpu.dev_data + NL*NL, 
                                                         NL, d, M._c_mask)        
-        return (sx,sy)
+        return sxy
+
+    def gradientAverage(self, int NL, float d):
+        """
+        Computes the average finite difference of the wavefront
+
+        Parameters
+        ----------
+        NL : int
+            The linear size of the lenslet array
+        d : float
+            The lenslet pitch
+
+        Returns
+        -------
+        cuFloatArray
+            The wavefront gradient average in an array of size [N_SRCxNLx2,NL]
+        """
+        cdef cuFloatArray sxy
+        sxy = cuFloatArray(shape=(self._c_complex_amplitude.N*NL*2,NL), dev_malloc=True)
+        self._c_complex_amplitude.gradient_average(sxy._c_gpu.dev_data, 
+                                                   sxy._c_gpu.dev_data + NL*NL, 
+                                                   NL, d)
+        return sxy
 @
 \subsubsection{Source}
 \label{sec:source}
@@ -594,6 +629,7 @@ cdef class Complex_amplitude:
         float n_photon()
         float wavelength()
         float spectral_bandwidth()
+        void update_directions(float *, float *, int)
 @
 <<class definitions>>=
 cdef class Source:
@@ -602,7 +638,7 @@ cdef class Source:
         readonly int N_SRC
         readonly int n, m
         readonly int size
-        readonly ndarray zenith, azimuth
+        float[:] _zenith_, _azimuth_
         readonly float height
         readonly Bundle rays
         readonly Complex_amplitude wavefront
@@ -714,23 +750,23 @@ cdef class Source:
             resolution = [rays_box_sampling, rays_box_sampling]
         self.n = resolution[0]
         self.m = resolution[1]
-        self.zenith  = np.array( zenith,  dtype=np.float32, ndmin=1)
-        self.azimuth = np.array( azimuth, dtype=np.float32, ndmin=1)
+        self._zenith_  = np.array( zenith,  dtype=np.float32, ndmin=1)
+        self._azimuth_ = np.array( azimuth, dtype=np.float32, ndmin=1)
         self.height  = float(height);
-        self.size = self.zenith.size
+        self.size = self._zenith_.size
         cdef vector _origin_
         if rays_box_size is None:
             self._c_source.setup(_photometric_band,
-                                 <float *>self.zenith.data,
-                                 <float *>self.azimuth.data, height,
+                                 &self._zenith_[0],
+                                 &self._azimuth_[0], height,
                                  self.size, np.prod(resolution))
         else:
             _origin_.x = <float>rays_origin[0]
             _origin_.y = <float>rays_origin[1]
             _origin_.z = <float>rays_origin[2]
             self._c_source.setup(_photometric_band,
-                                 <float *>self.zenith.data,
-                                 <float *>self.azimuth.data, height,
+                                 &self._zenith_[0],
+                                 &self._azimuth_[0], height,
                                  self.size,
                                  rays_box_size,
 				 rays_box_sampling,
@@ -752,6 +788,21 @@ cdef class Source:
         Transfer the OPD from ray tracing to the wavefront phase
         """
         self._c_source.opd2phase()
+
+    def updateDirections(self, float[:] zenith, float[:] azimuth):
+        """
+        Update the zenith and azimuth direction angles
+
+        Parameters
+        ----------
+        zenith : float[:]
+            The zenith angle array in radian
+        azimuth : float[:]
+            The azimuth angle array in radian
+        """
+        self._zenith_ = zenith
+        self._azimuth_ = azimuth
+        self._c_source.update_directions(&zenith[0],&azimuth[0],zenith.size)
 
     property phase:
         def __get__(self):
@@ -782,6 +833,14 @@ cdef class Source:
     property magnitude:
         def __set__(self,value):
             self._c_source.magnitude = value
+    
+    property zenith:
+        def __get__(self):
+            return np.asarray(self._zenith_)
+    
+    property azimuth:
+        def __get__(self):
+            return np.asarray(self._azimuth_)            
 
     def masked(self, MaskAbstract tel):
         """
@@ -975,6 +1034,8 @@ struct complex_amplitude {
   void rms(float *rms);
   void finite_difference(float *sx, float *sy, int NL, float d);
   void finite_difference(float *sx, float *sy, int NL, float d, mask *valid_lenslet);
+  void gradient_average(float *sx, float *sy, int NL, float d);
+  void segments_gradient_average(float *sx, float *sy, float D, int *segment_markers);
   void show_phase(char *filename);
   void show_phase(char *filename, int N_SRC);
   void show_amplitude(char *filename);
@@ -2207,6 +2268,35 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
 x   = L*(i - (N_L-1)*0.5)/(N_L-1);
 y   = L*(j - (N_L-1)*0.5)/(N_L-1);
 @ \end{itemize}
+
+The zenith and azimuth angle are updated with:
+<<zenith and azimuth update>>=
+void source::update_directions(float *zenith, float *azimuth, int N_DIR)
+{
+  int n_byte = sizeof(float)*N_DIR;
+  float *d__zenith, *d__azimuth;
+  HANDLE_ERROR( cudaMalloc((void**)&d__zenith, n_byte ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__azimuth, n_byte ) );
+  HANDLE_ERROR( cudaMemcpy( d__zenith, &zenith,
+			    n_byte, cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMemcpy( d__azimuth, &azimuth,
+			    n_byte, cudaMemcpyHostToDevice ) );
+  update_directions_kernel LLL N_SRC,1 RRR ( d__zenith, d__azimuth, N_DIR, dev_ptr);
+  HANDLE_ERROR( cudaFree( d__zenith ));
+  HANDLE_ERROR( cudaFree( d__azimuth ));}
+@ with
+<<zenith and azimuth update kernel>>=
+__global__ void update_directions_kernel(float *d__zenith, float *d__azimuth, 
+                                         const int N_DIR, source *d__src)
+{
+  int i;
+  i = blockIdx.x;
+  d__src[i].zenith  = d__zenith[i];
+  d__src[i].azimuth = d__azimuth[i];
+  d__src[i].theta_x = tanf(d__zenith[i])*cosf(d__azimuth[i]);
+  d__src[i].theta_y = tanf(d__zenith[i])*sinf(d__azimuth[i]);
+}
+@ 
 \subsubsection{Photometry}
 \label{sec:photometry}
 
@@ -2583,13 +2673,20 @@ void complex_amplitude::finite_difference(float *sx, float *sy, int NL,
                                           float d, mask *valid_lenslet)
 {
   <<wavefront differentiation (common)>>
+  //stopwatch tid;
+  //tid.tic();
   wavefront_finite_difference(sx, sy, NL, 
                               phase, n, d,
                               valid_lenslet, N);
+  //tid.toc("Finite difference (lenslet edge method)");
   if (M!=NULL) 
   {
+    //tid.tic();
     <<wavefront differentiation (partial illumination identification)>>
+    //tid.toc("Finite difference (partial illumination identification)");
+    //tid.tic();
     <<wavefront differentiation (slope estimates)>>
+    //tid.toc("Finite difference (gradient average method)");
   }
 }
 @
@@ -2675,7 +2772,7 @@ __global__ void partial_illumination_slopes(float *sx, float *sy,
             ((valid_lenslet_f[kL]>0) && (valid_lenslet_f[kL]<1)) ) ) {  
        kL = iL*NL+jL;
        NP = n*NL + 1;
-       kL += iSource*NL*NL;
+       kL += 2*iSource*NL*NL;
        uL = iL*n;
        vL = jL*n;
        w0 = iSource*NP*NP;
@@ -2733,6 +2830,202 @@ __global__ void partial_illumination_slopes(float *sx, float *sy,
        }
        sy[kL] /= S;
     }
+}
+@ 
+\index{source!complex\_amplitude!gradient\_average}
+The wavefront finite difference can be computed with a straight lenslet--average of the phase gradient with:
+<<wavefront differentiation>>=
+void complex_amplitude::gradient_average(float *sx, float *sy, int NL, float d)
+{
+  <<wavefront differentiation (common)>>
+  dim3 blockDim(16,16);
+  dim3 gridDim(NL/16+1,NL/16+1,N);
+  gradient_average_kernel LLL gridDim,blockDim RRR (sx, sy, NL, n, d,
+                                                    phase, M->f);
+}
+@ 
+@ 
+with the kernel
+<<wavefront differentiation kernel (gradient average)>>=
+__global__ void gradient_average_kernel(float *sx, float *sy,
+                                        const int NL, const int n,
+                                        float d,
+                                        float *phase,
+                                        float *wavefront_mask_f)
+{
+    int iL, jL, i, j, kL, uL, vL, a, b, w0, w, NP, iSource;
+    float p, dphi, h, P, S;
+    iL = blockIdx.x * blockDim.x + threadIdx.x;
+    jL = blockIdx.y * blockDim.y + threadIdx.y;
+    iSource = blockIdx.z;
+    kL = iL*NL+jL;
+    kL += iSource*NL*NL;
+    if ( (iL<NL) && (jL<NL) ) {  
+       kL = iL*NL+jL;
+       NP = n*NL + 1;
+       kL += 2*iSource*NL*NL;
+       uL = iL*n;
+       vL = jL*n;
+       w0 = iSource*NP*NP;
+       sx[kL] = sy[kL] = 0.0;
+       p = d/n;
+
+       S = 0;
+       for (i=0;i<=n;i++) {
+         a = uL + i + 1;
+         h = 2*p;
+         if (a>=NP) {
+            a = NP-1;
+            h = p;
+         }    
+         b = uL + i - 1;
+         if (b<0) {
+            b = 0;
+            h = p;
+         }
+         for (j=0;j<=n;j++) {
+           w = w0 + b*NP + vL + j;
+           dphi = phase[w];
+           P    = wavefront_mask_f[w];
+           w = w0 + a*NP + vL + j;
+           dphi -= phase[w];
+           P    *= wavefront_mask_f[w];
+           S += P;
+           sx[kL] += P*dphi/h;
+          }
+        }
+        if (S>0)
+           sx[kL] /= S;
+        else
+           sx[kL] = 0.0;;
+
+       S = 0;
+       for (i=0;i<=n;i++) {
+         w = w0 + (uL+i)*NP;
+         for (j=0;j<=n;j++) {
+            a = vL + j + 1;
+            h = 2*p;
+            if (a>=NP) {
+               a = NP-1;
+               h = p;
+            }    
+            b = vL + j - 1;
+            if (b<0) {
+                b = 0;
+                h = p;
+             }
+           dphi = phase[w+b];
+           P    = wavefront_mask_f[w+a];
+           dphi -= phase[w+a];
+           P    *= wavefront_mask_f[w+b];
+           S += P;
+           sy[kL] += P*dphi/h;
+         }
+       }
+        if (S>0)
+           sy[kL] /= S;
+        else
+           sy[kL] = 0.0;;
+    }
+}
+@ 
+\index{source!complex\_amplitude!segments\_gradient\_average}
+The gradient of the wavefront phase on each GMT segments is computed with:
+<<wavefront differentiation>>=
+void complex_amplitude::segments_gradient_average(float *sx, float *sy, 
+                                                  float D, int *segment_markers)
+{
+  int NL = 1;
+  <<wavefront differentiation (common)>>
+  dim3 blockDim(1,1);
+  dim3 gridDim(7,N);
+  segments_gradient_average_kernel LLL gridDim,blockDim RRR (sx, sy, n, D,
+                                                             phase, M->f,
+                                                             segment_markers);
+}
+@ 
+@ 
+with the kernel
+<<wavefront differentiation kernel (segments gradient average)>>=
+__global__ void segments_gradient_average_kernel(float *sx, float *sy,
+                                        const int n,
+                                        float d,
+                                        float *phase,
+                                        float *wavefront_mask_f,
+                                        int *segment_mask)
+{
+    int i, j, kL0, kL, a, b, w0, w, NP, iSource;
+    float p, dphi, h, P, S;
+    kL0      = blockIdx.x;
+    iSource = blockIdx.y;
+
+       NP = n + 1;
+       kL = kL0 + 2*iSource*7;
+       w0 = iSource*NP*NP;
+
+       sx[kL] = sy[kL] = 0.0;
+       p = d/n;
+
+       S = 0;
+       for (i=0;i<=n;i++) {
+         a =  i + 1;
+         h = 2*p;
+         if (a>=NP) {
+            a = NP-1;
+            h = p;
+         }    
+         b = i - 1;
+         if (b<0) {
+            b = 0;
+            h = p;
+         }
+         for (j=0;j<=n;j++) {
+           if (segment_mask[w0+i*NP+j]==(kL0+1)) {
+             w = w0 + b*NP + j;
+             dphi = phase[w];
+             P    =  wavefront_mask_f[w];
+             w = w0 + a*NP + j;
+             dphi -= phase[w];
+             P    *= wavefront_mask_f[w];
+             S += P;
+             sx[kL] += P*dphi/h;
+           }
+          }
+        }
+        if (S>0)
+           sx[kL] /= S;
+        else
+           sx[kL] = 0.0;;
+
+       S = 0;
+       for (i=0;i<=n;i++) {
+         w = w0 + i*NP;
+         for (j=0;j<=n;j++) {
+           if (segment_mask[w0+i*NP+j]==(kL0+1)) {
+             a = j + 1;
+             h = 2*p;
+             if (a>=NP) {
+               a = NP-1;
+               h = p;
+             }    
+             b = j - 1;
+             if (b<0) {
+               b = 0;
+               h = p;
+             }
+             dphi = phase[w+b];
+             P    = wavefront_mask_f[w+a];
+             dphi -= phase[w+a];
+             P    *= wavefront_mask_f[w+b];
+             S += P;
+             sy[kL] += P*dphi/h;
+           }
+         }
+       }
+        if (S>0)
+           sy[kL] /= S;
+        else
+           sy[kL] = 0.0;
 }
 @ 
 \subsubsection{Input/Output}

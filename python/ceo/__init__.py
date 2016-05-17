@@ -5,7 +5,7 @@ from rayTracing import ZernikeS, Coordinates, Coordinate_system, Quaternion, Ape
 from atmosphere import AtmosphereAbstract, Atmosphere, GmtAtmosphere, Layer, JGmtAtmosphere
 from centroiding import Centroiding
 from imaging import Imaging, JImaging
-from shackHartmann import ShackHartmann, JShackHartmann
+from shackHartmann import ShackHartmann, GeometricShackHartmann, JShackHartmann
 from pyramid import Pyramid
 from segmentPistonSensor import SegmentPistonSensor
 from aaStats import AaStats, PaStats

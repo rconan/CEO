@@ -72,7 +72,7 @@ struct centroiding {
 \index{centroiding!python}
 <<centroiding.pxd>>=
 from utilities cimport cuFloatArray, mask, MaskAbstract
-from shackHartmann cimport ShackHartmann
+from shackHartmann cimport ShackHartmann, GeometricShackHartmann
 from pyramid cimport Pyramid
 cdef extern from "centroiding.h":
     cdef cppclass centroiding:
@@ -123,6 +123,7 @@ cdef class Centroiding:
 
     def __cinit__(self, int N_SIDE_LENSLET, int N_SOURCE=1, 
                   ShackHartmann wfs=None,
+                  GeometricShackHartmann gwfs=None,
 		  Pyramid pym=None):
 	self._c_centroiding = new centroiding()
         self.N_SIDE_LENSLET = N_SIDE_LENSLET
@@ -130,6 +131,10 @@ cdef class Centroiding:
             self.isPtr = 1
             self.N_SOURCE = wfs.N_GS
             self._c_centroiding = &(wfs._c_shackHartmann.data_proc)
+        elif gwfs is not None:
+            self.isPtr = 1
+            self.N_SOURCE = gwfs.N_GS
+            self._c_centroiding = &(gwfs._c_shackHartmann.data_proc)
         elif pym is not None:
             self.isPtr = 1
             self.N_SOURCE = N_SOURCE
@@ -177,7 +182,8 @@ void centroiding::setup(int _N_SIDE_LENSLET, int _N_SOURCE) {
   _N_SIDE_LENSLET_ = _N_SIDE_LENSLET;
   N_LENSLET = _N_SIDE_LENSLET_*_N_SIDE_LENSLET_;
   N_SOURCE = _N_SOURCE;
-  HANDLE_ERROR( cudaMalloc( (void**)&d__c   , sizeof(float) *N_LENSLET*N_SOURCE*2 ) );
+  HANDLE_ERROR( cudaMalloc( (void**)&d__c   , sizeof(float)*N_LENSLET*N_SOURCE*2 ) );
+  HANDLE_ERROR( cudaMemset( d__c, 0, sizeof(float)*N_LENSLET*N_SOURCE*2 ) );
   d__cx = d__c;
   d__cy = d__c + N_LENSLET;
   HANDLE_ERROR( cudaMalloc( (void**)&d__mass , sizeof(float) *N_LENSLET*N_SOURCE ) );     

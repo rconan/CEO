@@ -3,7 +3,8 @@ import math
 import numpy as np
 from scipy.optimize import brenth, leastsq
 from skimage.feature import blob_log
-from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GmtMirrors, SegmentPistonSensor
+from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GmtMirrors, SegmentPistonSensor, \
+constants, Telescope, cuFloatArray
 
 class GMT_MX(GmtMirrors):
     """
@@ -88,8 +89,8 @@ class GMT_MX(GmtMirrors):
             The mirror label: eiher "M1" or "M2"
         mode : string
             The degrees of freedom label
-            for M1: "global tip-tilt", "zernike", "Txyz", "segment tip-tilt"
-            for M2: "global tip-tilt", "pointing neutral", "coma neutral", "zernike", "Txyz", "Rxyz", "segment tip-tilt", "TT7 segment tip-tilt"
+            for M1: "global tip-tilt", "zernike", "Txyz", "Rxyz", "Rz", "segment tip-tilt"
+            for M2: "global tip-tilt", "pointing neutral", "coma neutral", "zernike", "Txyz", "Rxyz", "Rz", "segment tip-tilt", "TT7 segment tip-tilt"
         stroke : float
             The amplitude of the motion
 	segment : string
@@ -177,8 +178,8 @@ class GMT_MX(GmtMirrors):
             self.M2.zernike.a[kSeg,kMode] = _stroke_
             self.M2.zernike.update()
 
+        sys.stdout.write("___ %s ___ (%s)\n"%(mirror,mode))
         if mirror=="M1":
-            sys.stdout.write("___ M1 ___\n")
             if mode=="global tip-tilt":
                 D = np.zeros((wfs.valid_lenslet.nnz*2,2))
                 D[:,0] = pushpull( lambda x : self.M1.global_tiptilt(x,0) )
@@ -212,6 +213,16 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                     D[:,idx] = pushpull( Ry )
                     idx += 1
+                    D[:,idx] = pushpull( Rz )
+                    idx += 1
+                sys.stdout.write("\n")
+            if mode=="Rz":
+                D = np.zeros((wfs.valid_lenslet.nnz*2,7))
+                idx = 0
+                Rz = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,0,x],idx=kSeg)
+                sys.stdout.write("Segment #:")
+                for kSeg in range(1,8):
+                    sys.stdout.write("%d "%kSeg)
                     D[:,idx] = pushpull( Rz )
                     idx += 1
                 sys.stdout.write("\n")
@@ -281,7 +292,6 @@ class GMT_MX(GmtMirrors):
                 sys.stdout.write("\n")
 
         if mirror=="M2":
-            sys.stdout.write("___ M2 ___\n")
             if mode=="global tip-tilt":
                 D = np.zeros((wfs.valid_lenslet.nnz*2,2))
                 D[:,0] = pushpull( lambda x : self.M2.global_tiptilt(x,0) )
@@ -326,6 +336,16 @@ class GMT_MX(GmtMirrors):
                     D[:,idx] = pushpull( Rz )
                     idx += 1
                 sys.stdout.write("\n")
+            if mode=="Rz":
+                D = np.zeros((wfs.valid_lenslet.nnz*2,7))
+                idx = 0
+                Rz = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,0,x],idx=kSeg)
+                sys.stdout.write("Segment #:")
+                for kSeg in range(1,8):
+                    sys.stdout.write("%d "%kSeg)
+                    D[:,idx] = pushpull( Rz )
+                    idx += 1
+                sys.stdout.write("\n")
             if mode=="segment tip-tilt":
                 D = np.zeros((wfs.valid_lenslet.nnz*2,2*7))
                 idx = 0
@@ -340,7 +360,7 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="zernike":
-                n_mode = self.M1.zernike.n_mode
+                n_mode = self.M2.zernike.n_mode
                 D = np.zeros((wfs.valid_lenslet.nnz*2,(n_mode-first_mode)*7))
                 idx = 0;
                 for kSeg in range(7):
@@ -524,6 +544,25 @@ class DispersedFringeSensor(SegmentPistonSensor):
 	self._N_SRC = src.N_SRC
 	self.INIT_ALL_ATTRIBUTES = False
 	self.lobe_detection = 'gaussfit'
+
+    def init_detector_mask(self, mask_size):
+	"""
+	Defines the circular mask to be applied over each fringe image.
+
+	Parameters
+	----------
+	mask_size: float
+	   Diameter of mask in arcseconds. 
+	"""
+	mask_size_px = mask_size / (self.pixel_scale * constants.RAD2ARCSEC)
+	print "Size of DFS detector mask [pix]: %d"%(np.round(mask_size_px)) 
+	N_PX_FRINGE_IMAGE = self.camera.N_PX_IMAGE / self.camera.BIN_IMAGE
+	scale = mask_size_px / N_PX_FRINGE_IMAGE
+	circ = Telescope(N_PX_FRINGE_IMAGE, 1, scale=scale)
+	circ_m = circ.f.host(shape=(N_PX_FRINGE_IMAGE,N_PX_FRINGE_IMAGE))
+	big_circ_m = np.tile(np.tile(circ_m,self.camera.N_SIDE_LENSLET).T,self.camera.N_SIDE_LENSLET)
+	gpu_big_circ_m = cuFloatArray(host_data=big_circ_m)
+	self.fft_mask.alter(gpu_big_circ_m)
 
     def gaussian_func(self, height, center_x, center_y, width_x, width_y, rotation):
     	"""
@@ -723,8 +762,10 @@ class DispersedFringeSensor(SegmentPistonSensor):
     	    elif self.lobe_detection == 'peak_value':
         	height = np.max(mylobe)
         	height_pos = np.argmax(mylobe)
-        	y = height_pos / mylobe.shape[0]
-        	x = height_pos % mylobe.shape[0]
+		y, x = np.unravel_index(height_pos, mylobe.shape)
+		if y < (mylobe.shape[0]-1) and x < (mylobe.shape[1]-1):
+		    x += 0.5*(mylobe[y,x-1] - mylobe[y,x+1]) / (mylobe[y,x-1]+mylobe[y,x+1]-2*height+1e-6)
+		    y += 0.5*(mylobe[y-1,x] - mylobe[y+1,x]) / (mylobe[y-1,x]+mylobe[y+1,x]-2*height+1e-6)
         	width_x, width_y, rot = 0,0,0
 	    x1 = x * np.cos(-self.fftlet_rotation[k]) - y * np.sin(-self.fftlet_rotation[k])
 	    y1 = x * np.sin(-self.fftlet_rotation[k]) + y * np.cos(-self.fftlet_rotation[k])

@@ -34,6 +34,9 @@ The ray tracing method involves 4 steps \cite{}:
 
 <<conic structure>>
 
+__host__ __device__ rtd even_asphere(rtd r, int N, rtd *a);
+__host__ __device__ rtd partial_x_or_y_even_asphere(rtd x_or_y, rtd r2, int N, rtd *a);
+
 <<zernikeS structure>>
 
 __host__ __device__  rtd zernike_surface(rtd r, rtd o, int max_n, rtd *a);
@@ -82,6 +85,8 @@ void refract(bundle *rays, rtd mu);
 
 <<coordinates forward transform>>
 <<coordinates backward transform>>
+
+<<even asphere equations>>
 
 <<zernike surface kernel>>
 <<zernike surface and derivatives kernel>>
@@ -452,6 +457,7 @@ cdef class Quaternion:
         vector origin
         coordinate_system ref_frame
         void setup(rtd , rtd , vector , vector , vector, rtd)
+        void setup(rtd , rtd , vector , vector , vector, rtd, int, rtd *)
         void cleanup()
         void trace(bundle *)
 @ 
@@ -467,6 +473,7 @@ cdef class Conic:
         public dict material
 @
 <<rayTracing.pyx>>=
+from cython cimport boundscheck, wraparound
 from refractors import glass_index
 # conic
 cdef class Conic:
@@ -509,7 +516,8 @@ cdef class Conic:
                   str material = '',
                   rtd refractive_index = 0.0,
                   bint coord_break = False,
-                  bint tilted_surface = False):
+                  bint tilted_surface = False,
+		  rtd[:] asphere_a = np.empty(0)):
         self._c_conic = new conic()
         cdef vector __origin
         __origin.x = <rtd>origin[0]
@@ -523,8 +531,10 @@ cdef class Conic:
         __conic_origin.x = <rtd>conic_origin[0]
         __conic_origin.y = <rtd>conic_origin[1]
         __conic_origin.z = <rtd>conic_origin[2]
-        self._c_conic.setup(c, k, __origin, __euler_angles, 
-                            __conic_origin, refractive_index)
+        with boundscheck(False), wraparound(False):
+            self._c_conic.setup(c, k, __origin, __euler_angles, 
+                                __conic_origin, refractive_index,
+                                asphere_a.size, &asphere_a[0])
         self.ref_frame = Coordinate_system(1)
         self.ref_frame.init( &(self._c_conic.ref_frame) )
         self.origin = Coordinates((1,3))
@@ -1174,7 +1184,7 @@ info();
 @
 \end{itemize}
 
-The rotation matrix to transform the ray coordinates in the LCS is given by
+The rotation matrix to transform the ray coordinates in the GCS is given by
 \begin{eqnarray}
 R &=& \left[
   \begin{array}{ccc}
@@ -1345,6 +1355,9 @@ struct conic {
              vector conic_origin);
   void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
              vector conic_origin, rtd _refractive_index_);
+  void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
+             vector conic_origin, rtd _refractive_index_,
+	     int asphere_N, rtd *asphere_a);
   void cleanup(void);
   void trace(bundle *src);
   void info(void);
@@ -1360,6 +1373,15 @@ The conic is specified with three parameters:
 rtd c, k, refractive_index;
 @
 where [[c]] is the vertex curvature, [[k]] is the conic parameter and [[refractive_index]] is the index of refraction.
+@
+An even asphere surface can be added to the conic surface. It is defined with the number of even polynomials [[even_asphere_N]] and their coefficients [[even_asphere_a]].
+<<conic parameters>>=
+int even_asphere_N;
+rtd *d__even_asphere_a;
+@
+
+\subsection{Conic definition}
+\label{sec:conic-definition}
 
 The conic surface is defined with
 \begin{equation}
@@ -1369,26 +1391,30 @@ The conic surface is defined with
 The conic expression is computed with
 \index{rayTracing!conic!conic\_equation}
 <<conic equations>>=
-__host__ __device__ inline rtd conic_equation(vector *v, vector *v0, const rtd k, const rtd c)
+__host__ __device__ inline rtd conic_equation(vector *v, vector *v0, 
+					      const rtd k, const rtd c,
+					      const int N, rtd *a)
 {
+  rtd rho2;
+  rho2 = c*v->rho2_shift(v0->x,v0->y);
   if (c==0)
-    return 0.0;
+    return 0.0 + even_asphere(rho2, N, a);
   else {
-    rtd rho2;
-    rho2 = c*v->rho2_shift(v0->x,v0->y);
     if (k==0)
-      return rho2*0.5;
+      return rho2*0.5 + even_asphere(rho2, N, a);
     else
-      return rho2/( 1 + sqrt(1 - k*c*rho2) );
+      return rho2/( 1 + sqrt(1 - k*c*rho2) ) + even_asphere(rho2, N, a);
   }
 }
 @
 and the surface equation with
 \index{rayTracing!conic!conic\_surface}
 <<conic equations>>=
-__device__ inline rtd  conic_surface(vector *v, vector *v0, const rtd k, const rtd c)
+__device__ inline rtd  conic_surface(vector *v, vector *v0, 
+				     const rtd k, const rtd c,
+				     const int N, rtd *a)
 {
-  return v->z - v0->z - conic_equation(v, v0, k, c);
+  return v->z - v0->z - conic_equation(v, v0, k, c, N, a);
 }
 @
 @
@@ -1401,17 +1427,18 @@ The partial derivative of the conic equation are written
 \index{rayTracing!conic!partial\_x\_conic\_surface}
 <<conic equations>>=
  __device__ inline rtd partial_x_conic_surface(vector *v, vector *v0,
-					       const rtd k, const rtd c)
+					       const rtd k, const rtd c,
+					       const int N, rtd *a)
 {
+  rtd rho2;
+  rho2 = c*v->rho2_shift(v0->x,v0->y);
   if (c==0)
-    return 0.0;
+    return 0.0 - partial_x_or_y_even_asphere(v->x - v0->x, rho2, N, a);
   else
     if (k==0)
-      return -(v->x - v0->x)*c;
+      return -(v->x - v0->x)*c - partial_x_or_y_even_asphere(v->x - v0->x, rho2, N, a);
     else {
-      rtd rho2;
-      rho2 = c*v->rho2_shift(v0->x,v0->y);
-      return -(v->x - v0->x)*c*rsqrt(1 - k*c*rho2);
+      return -(v->x - v0->x)*c*rsqrt(1 - k*c*rho2) - partial_x_or_y_even_asphere(v->x - v0->x, rho2, N, a);
     }
 }
 @
@@ -1422,17 +1449,18 @@ The partial derivative of the conic equation are written
 \index{rayTracing!conic!partial\_y\_conic\_surface}
 <<conic equations>>=
 __device__ inline rtd partial_y_conic_surface(vector *v, vector *v0,
-					      const rtd k, const rtd c)
+					      const rtd k, const rtd c,
+					      const int N, rtd *a)
 {
+  rtd rho2;
+  rho2 = c*v->rho2_shift(v0->x,v0->y);
   if (c==0)
-    return 0.0;
+    return 0.0 - partial_x_or_y_even_asphere(v->y - v0->y, rho2, N, a);
   else
     if (k==0)
-      return -(v->y - v0->y)*c;
+      return -(v->y - v0->y)*c - partial_x_or_y_even_asphere(v->y - v0->y, rho2, N, a);
     else {
-      rtd rho2;
-      rho2 = c*v->rho2_shift(v0->x,v0->y);
-      return -(v->y - v0->y)*c*rsqrt(1 - k*c*rho2);
+      return -(v->y - v0->y)*c*rsqrt(1 - k*c*rho2) - partial_x_or_y_even_asphere(v->y - v0->y, rho2, N, a);
     }
 }
 @
@@ -1449,6 +1477,9 @@ __device__ inline rtd partial_z_conic_surface(void)
 @
 \end{itemize}
 
+\subsection{Zernike aspheric definition}
+\label{sec:zern-asph-defin}
+
 The generic expression for aspheric surface is given by
 \begin{equation}
   \label{eq:69}
@@ -1460,11 +1491,11 @@ __device__ inline rtd aspheric_surface(vector *v, vector *v0,
                                        const rtd k, const rtd c,
 				       const int max_n, rtd *a, const rtd R)
 {
-  return conic_surface(v, v0, k, c) -
+  return conic_surface(v, v0, k, c, 0, a) -
          zernike_surface(v->mag(R), v->angle(), max_n, a);
 }
 @
-The partial derivative of the aspheric equation are written
+The partial derivatives of the aspheric equation are written
 \begin{itemize}
 \item
   \begin{equation}
@@ -1477,7 +1508,7 @@ __device__ inline rtd partial_x_aspheric_surface(vector *v, vector *v0,
 					       const int max_n, rtd *cx,
 					       const rtd R)
 {
-  return partial_x_conic_surface(v, v0,	k, c) -
+  return partial_x_conic_surface(v, v0,	k, c, 0, cx) -
          zernike_surface(v->mag(R), v->angle(), max_n-1, cx);
 }
 @
@@ -1492,7 +1523,7 @@ __device__ inline rtd partial_y_aspheric_surface(vector *v, vector *v0,
 					      const int max_n, rtd *cy,
 					      const rtd R)
 {
-  return partial_y_conic_surface(v, v0,	k, c) -
+  return partial_y_conic_surface(v, v0,	k, c, 0, cy) -
          zernike_surface(v->mag(R), v->angle(), max_n-1, cy);
 }
 @
@@ -1543,6 +1574,70 @@ __device__ void aspheric_surface_and_partials(rtd *S, rtd *dSdx, rtd *dSdy, rtd 
   }
 }
 @
+\subsection{Even asphere definition}
+\label{sec:even-asph-defin}
+
+An even asphere is defined by
+\begin{equation}
+  \label{eq:2}
+  A(\rho) = \sum_{n=1}^8 \alpha_n \rho^{2n}.
+\end{equation}
+\index{rayTracing!conic!even\_asphere}
+<<even asphere equations>>=
+__host__ __device__ rtd even_asphere(rtd r2, int N, rtd *a)
+{
+  int k;
+  rtd A, _r2_;
+  if (N==0)
+    return 0.0;
+  else {
+    _r2_ = r2;
+    A = a[0]*_r2_;
+    for (k=1;k<N;k++) {
+      _r2_ *= r2;
+      A += a[k]*_r2_;
+    }
+    return A;
+  }
+}
+@ 
+The partial derivatives of the even asphere equation are:
+\begin{itemize}
+\item for $x$:
+  \begin{equation}
+    \label{eq:26}
+    {\partial A(\rho) \over \partial x} = 2x\sum_{n=1}^8 n \alpha_n \rho^{2n-2}
+  \end{equation}
+\item for $y$:
+  \begin{equation}
+    \label{eq:26}
+    {\partial A(\rho) \over \partial y} = 2y\sum_{n=1}^8 n \alpha_n \rho^{2n-2}
+  \end{equation}
+\end{itemize}
+\index{rayTracing!conic!partial\_x\_even\_asphere}
+<<even asphere equations>>=
+__host__ __device__ rtd partial_x_or_y_even_asphere(rtd x_or_y, rtd r2, int N, rtd *a)
+{
+  <<even asphere partials>>
+  return A;
+}
+@
+with
+<<even asphere partials>>=
+int k;
+rtd A, _r2_;
+if (N==0)
+  A = 0.0;
+else {
+  _r2_ = 1;
+  A = a[0];
+  for (k=1;k<N;k++) {
+    _r2_ *= r2;
+    A += (k+1)*a[k]*_r2_;
+  }
+  A *= 2*x_or_y;
+}
+@
 \subsection{Setup \& Cleanup}
 \label{sec:surf-setup--cleanup}
 
@@ -1573,6 +1668,8 @@ void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, vect
   <<conic allocation>>
   info();
 }
+@ and with the refractive index
+<<conic functions>>=
 void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
                   vector conic_origin, rtd _refractive_index_)
 {
@@ -1584,6 +1681,25 @@ void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_,
   ref_frame.setup(_origin_, _euler_angles_);
   <<conic allocation>>
   refractive_index = _refractive_index_;
+}
+@ The parameters of an even asphere surface are set with
+<<conic functions>>=
+void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
+                  vector conic_origin, rtd _refractive_index_,
+                  int asphere_N, rtd *asphere_a)
+{
+  c = _c_;
+  k = _k_;
+  origin.x = conic_origin.x;
+  origin.y = conic_origin.y;
+  origin.z = conic_origin.z;
+  ref_frame.setup(_origin_, _euler_angles_);
+  <<conic allocation>>
+  refractive_index = _refractive_index_;
+  even_asphere_N = asphere_N;
+  HANDLE_ERROR( cudaMalloc((void**)&d__even_asphere_a, sizeof(rtd)*even_asphere_N ) );
+  HANDLE_ERROR( cudaMemcpy( d__even_asphere_a, &asphere_a,
+			    sizeof(rtd)*even_asphere_N, cudaMemcpyHostToDevice ) );
 }
 @
 A conic surface that sets in the GCS is simply defined with
@@ -1599,11 +1715,15 @@ void conic::setup(rtd _c_, rtd _k_)
   ref_frame.setup();
   <<conic allocation>>
 }
+@ 
+Some common variables are initialized with:
 <<conic allocation>>=
 refractive_index = 1.0;
 HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
 HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
+even_asphere_N = 0;
+d__even_asphere_a = NULL;
 @
 The GMT M1 segmented conic is defined with
 <<conic functions (opt-out)>>=
@@ -1644,6 +1764,8 @@ void conic::cleanup(void)
   fprintf(stdout,"@(CEO)>conic: freeing memory!\n");
   ref_frame.cleanup();
   HANDLE_ERROR( cudaFree( d__origin ) );
+  if (d__even_asphere_a!=NULL)
+    HANDLE_ERROR( cudaFree( d__even_asphere_a ) );
 }
 @
 
@@ -1658,10 +1780,12 @@ void conic::trace(bundle *rays)
   transform_to_S_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
 					            ref_frame.d__R, ref_frame.d__origin);
   intersect_chief_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
-                                        k, c, d__origin);
+                                        k, c, d__origin,
+					even_asphere_N, d__even_asphere_a);
   intersect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
 					       k, c, d__origin,
-					       rays->d__chief_ray);
+					       rays->d__chief_ray,
+					       even_asphere_N, d__even_asphere_a);
   if (rays->refractive_index==refractive_index) 
      reflect(rays);
    else { 
@@ -2916,18 +3040,21 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 void intersect(bundle *rays, conic *F)
 {
   intersect_chief_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
-						     F->k, F->c, F->d__origin);
+					F->k, F->c, F->d__origin,
+					F->even_asphere_N, F->d__even_asphere_a);
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   intersect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
 					       F->k, F->c, F->d__origin,
-					       rays->d__chief_ray);
+					       rays->d__chief_ray,
+					       F->even_asphere_N, F->d__even_asphere_a);
 }
 
 <<intersection with surface kernel>>=
-__global__ void intersect_chief_kernel(ray *d__ray, int N_RAY,
-				 const rtd Fk, const rtd Fc,
-				 vector *d__origin)
+__global__ void intersect_chief_kernel(ray *d__ray, const int N_RAY,
+				       const rtd Fk, const rtd Fc,
+				       vector *d__origin,
+				       const int N, rtd *a)
 {
   int j, ij;
   rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
@@ -2944,9 +3071,10 @@ __global__ void intersect_chief_kernel(ray *d__ray, int N_RAY,
     }
 }
 __global__ void intersect_kernel(ray *d__ray, int N_RAY,
-				 const rtd Fk, const rtd Fc,
+				 rtd Fk, const rtd Fc,
 				 vector *d__origin,
-                                 ray *d__chief_ray)
+                                 ray *d__chief_ray,
+				 int N, rtd *a)
 {
   int i, j, ij;
   rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
@@ -3026,9 +3154,9 @@ vv.z = m*s0;
                       &=& k\left.{ \partial F(x,y,z) \over \partial x } \right|_j + l\left. { \partial F(x,y,z) \over \partial y }\right|_j + m\left.{ \partial F(x,y,z) \over \partial z }\right|_j
 \end{eqnarray}
 <<Newton-Raphson>>=
-S = conic_surface(&vv, d__origin, Fk, Fc);
-K = partial_x_conic_surface(&vv, d__origin, Fk, Fc);
-L = partial_y_conic_surface(&vv, d__origin, Fk, Fc);
+S = conic_surface(&vv, d__origin, Fk, Fc, N, a);
+K = partial_x_conic_surface(&vv, d__origin, Fk, Fc, N, a);
+L = partial_y_conic_surface(&vv, d__origin, Fk, Fc, N, a);
 M = partial_z_conic_surface();
 dSds = K*k + L*l + M*m;
 if (dSds==0) { return; }
@@ -3039,9 +3167,9 @@ if (abs(s1-s0)<TOL)
   d__ray[ij].coordinates.y = y1 + l*s1;
   d__ray[ij].coordinates.z = m*s1;
   d__ray[ij].surface_normal.x    =
-    partial_x_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc);
+    partial_x_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc, N, a);
   d__ray[ij].surface_normal.y    =
-    partial_y_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc);
+    partial_y_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc, N, a);
   d__ray[ij].surface_normal.z    = partial_z_conic_surface();
   d__ray[ij].optical_path_length += s1;
   d__ray[ij].n_iteration = j;
