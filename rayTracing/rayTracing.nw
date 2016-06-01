@@ -1395,15 +1395,17 @@ __host__ __device__ inline rtd conic_equation(vector *v, vector *v0,
 					      const rtd k, const rtd c,
 					      const int N, rtd *a)
 {
-  rtd rho2;
-  rho2 = c*v->rho2_shift(v0->x,v0->y);
+  rtd rho2, asphere;
+  rho2    = v->rho2_shift(v0->x,v0->y);
+  asphere = even_asphere(rho2, N, a);
+  rho2   *= c;
   if (c==0)
-    return 0.0 + even_asphere(rho2, N, a);
+    return 0.0 + asphere;
   else {
     if (k==0)
-      return rho2*0.5 + even_asphere(rho2, N, a);
+      return rho2*0.5 + asphere;
     else
-      return rho2/( 1 + sqrt(1 - k*c*rho2) ) + even_asphere(rho2, N, a);
+      return rho2/( 1 + sqrt(1 - k*c*rho2) ) + asphere;
   }
 }
 @
@@ -1430,15 +1432,17 @@ The partial derivative of the conic equation are written
 					       const rtd k, const rtd c,
 					       const int N, rtd *a)
 {
-  rtd rho2;
-  rho2 = c*v->rho2_shift(v0->x,v0->y);
+  rtd rho2, asphere;
+  rho2    = v->rho2_shift(v0->x,v0->y);
+  asphere = partial_x_or_y_even_asphere(v->x - v0->x, rho2, N, a);
+  rho2   *= c;
   if (c==0)
-    return 0.0 - partial_x_or_y_even_asphere(v->x - v0->x, rho2, N, a);
+    return 0.0 - asphere;
   else
     if (k==0)
-      return -(v->x - v0->x)*c - partial_x_or_y_even_asphere(v->x - v0->x, rho2, N, a);
+      return -(v->x - v0->x)*c - asphere;
     else {
-      return -(v->x - v0->x)*c*rsqrt(1 - k*c*rho2) - partial_x_or_y_even_asphere(v->x - v0->x, rho2, N, a);
+      return -(v->x - v0->x)*c*rsqrt(1 - k*c*rho2) - asphere;
     }
 }
 @
@@ -1452,15 +1456,17 @@ __device__ inline rtd partial_y_conic_surface(vector *v, vector *v0,
 					      const rtd k, const rtd c,
 					      const int N, rtd *a)
 {
-  rtd rho2;
-  rho2 = c*v->rho2_shift(v0->x,v0->y);
+  rtd rho2, asphere;
+  rho2    = v->rho2_shift(v0->x,v0->y);
+  asphere = partial_x_or_y_even_asphere(v->y - v0->y, rho2, N, a);
+  rho2   *= c;
   if (c==0)
-    return 0.0 - partial_x_or_y_even_asphere(v->y - v0->y, rho2, N, a);
+    return 0.0 - asphere;
   else
     if (k==0)
-      return -(v->y - v0->y)*c - partial_x_or_y_even_asphere(v->y - v0->y, rho2, N, a);
+      return -(v->y - v0->y)*c - asphere;
     else {
-      return -(v->y - v0->y)*c*rsqrt(1 - k*c*rho2) - partial_x_or_y_even_asphere(v->y - v0->y, rho2, N, a);
+      return -(v->y - v0->y)*c*rsqrt(1 - k*c*rho2) - asphere;
     }
 }
 @
