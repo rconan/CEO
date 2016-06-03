@@ -91,7 +91,7 @@ if simul_onaxis_AO == True:
     gAO = 0.8
 
 #---- Initial scramble parameters:
-scramble_tt = False
+scramble_tt = True
 scramble_pist = False
 tt_scramble_rms = 50e-3   #arcsec
 pist_scramble_rms = 1e-6  #m SURF
