@@ -442,6 +442,7 @@ if VISU==True:
 # In[12]:
 
 ## INIT VARIABLES AND ALLOCATE MEMORY FOR RESULTS
+totSimulIter = int(totSimulTime/Tsim)
 
 if simul_SPS==True:
     sps_exp_count = 0
@@ -455,7 +456,6 @@ if simul_SPS==True:
     if eval_perf_sps==True:
         seg_pist_sps_iter = np.zeros((N_GS_PS,7,totSimulIter))
 
-totSimulIter = int(totSimulTime/Tsim)
 timeVec = np.arange(totSimulIter)*Tsim
 
 M1TrVec  = M1TrVecInit  #np.zeros((7,3))
