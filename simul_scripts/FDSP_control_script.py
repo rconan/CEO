@@ -20,6 +20,9 @@ from FDSP_control_params import *
 
 # In[2]:
 
+save_dir = sys.argv[1]
+print "Results will be saved in %s"%save_dir
+
 ## GENERIC STUFF:
 tid = ceo.StopWatch()
 
@@ -845,10 +848,12 @@ print '--> max WF RMS at the edge of the field: %3.2f nm WF RMS'%np.max(sf_rms)"
 # In[ ]:
 
 #---- Dictionary containing variables to save in results file
+CEO_git_commit = !git rev-parse --verify --short HEAD
+
 tosave = dict(D=D, nPx=nPx, Tsim=Tsim, totSimulTime=totSimulTime, simul_turb=simul_turb,
         simul_onaxis_AO=simul_onaxis_AO, simul_PS_control=simul_PS_control,
         simul_FDSP_control=simul_FDSP_control, M1_radial_order=M1_radial_order, M2_radial_order=M2_radial_order,
-        elapsedTime=elapsedTime, scramble_tt=scramble_tt, scramble_pist=scramble_pist)
+        elapsedTime=elapsedTime, scramble_tt=scramble_tt, scramble_pist=scramble_pist, CEO_git_commit=CEO_git_commit)
 
 if simul_turb == True:
     tosave.update(dict(r0=r0, L0=L0, atm_fname=atm_fname, atm_seed=atm_seed))
@@ -891,7 +896,7 @@ if scramble_pist == True:
 #---- Save the results file!
 now = datetime.datetime.now()
 
-save_dir = './'
+#save_dir = './'
 #filename=save_dir+'SPS'+str(int(alpha_ps/60))+'_'+clcalib+'_mag'+str(int(mag))+'_Turb'+str(atm_seed)+'_Noise'+str(sps_seed)+'_Texp'+str(int(exposureTime*1e3))+'ms'+'_Ts'+str(int(samplingTime*1e3))+'ms.npz'
 
 filename=save_dir+now.strftime("%Y%m%d-%H%M")+'.npz'
