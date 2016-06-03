@@ -76,7 +76,8 @@ class GMT_MX(GmtMirrors):
                             M2_radial_order=M2_radial_order)
 
     def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,cl_wfs=None,cl_gs=None,cl_recmat=None, 
-		idealps=None,idealps_rec=None,idealps_ref=None,first_mode=3, closed_loop_calib=False):
+		idealps=None,idealps_rec=None,idealps_ref=None,first_mode=3, closed_loop_calib=False, 
+                remove_on_pist=False, CL_calib_modes=None):
         """
         Calibrate the different degrees of freedom of the  mirrors
 
@@ -165,7 +166,7 @@ class GMT_MX(GmtMirrors):
 	    def close_M2_segTT_loop():
 		niter = 7
                 self.M2.motion_CS.euler_angles[:] = 0
-                gmt.M2.motion_CS.update()
+                self.M2.motion_CS.update()
 		myTTest1 = np.zeros(14)
 		for ii in range(niter):
         	    cl_gs.reset()
@@ -199,17 +200,20 @@ class GMT_MX(GmtMirrors):
 		return np.dot(idealps_rec, idealps_signal)
             def get_slopes(stroke_sign):
 		self.reset()
-                action(stroke_sign*stroke) 
-		niter = 2 
-                idealps_est = np.zeros(6)
+                action(stroke_sign*stroke)
+                if remove_on_pist==True:
+		    niter = 2 
+                    idealps_est = np.zeros(6)
+                else: niter=1
                 for ii in range(niter):
-                    #close_M2_segTT_loop()
-		    close_M2_zern_loop()
-		    idealps_est += get_onaxis_piston()
-                    #print "Estimated Piston [nm SURF]:"
-                    #print np.array_str(idealps_est*1e9, precision=1, suppress_small=True)
-                    self.M1.motion_CS.origin[0:6,2] = -idealps_est
-                    self.M1.motion_CS.update()
+                    if CL_calib_modes=='TT':
+                        close_M2_segTT_loop()
+                    elif CL_calib_modes=='zernikes':
+                        close_M2_zern_loop()
+                    if remove_on_pist == True:
+                        idealps_est += get_onaxis_piston()
+                        self.M1.motion_CS.origin[0:6,2] = -idealps_est
+                        self.M1.motion_CS.update()
 		gs.reset()
                 self.propagate(gs)
 		wfs.reset()
