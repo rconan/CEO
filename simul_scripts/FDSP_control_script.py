@@ -20,13 +20,12 @@ import commands
 from FDSP_control_params import *
 
 # In[2]:
-
 save_dir = sys.argv[1]
 print "Results will be saved in %s"%save_dir
 
 ## GENERIC STUFF:
 tid = ceo.StopWatch()
-
+CEO_git_commit = commands.getoutput("git rev-parse --verify --short HEAD")
 
 # In[3]:
 
@@ -848,8 +847,6 @@ print '--> max WF RMS at the edge of the field: %3.2f nm WF RMS'%np.max(sf_rms)"
 
 # In[ ]:
 
-#---- Dictionary containing variables to save in results file
-CEO_git_commit = commands.getoutput("git rev-parse --verify --short HEAD")
 
 tosave = dict(D=D, nPx=nPx, Tsim=Tsim, totSimulTime=totSimulTime, simul_turb=simul_turb,
         simul_onaxis_AO=simul_onaxis_AO, simul_PS_control=simul_PS_control,
