@@ -68,7 +68,7 @@ if simul_SPS==True:
         simul_SH = True
 
     exposureTime = 10e-3 # DFS camera integration time [seconds]
-    samplingTime = 7.0  # DFS sampling time [seconds]
+    samplingTime = 30.0  # DFS sampling time [seconds]
     sps_exp_delay_count_max = 2  # number of cycles to delay exposure after FDSP correction
     # (to avoid M1-M2 transient)
     sps_sampl_iter = 8
