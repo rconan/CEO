@@ -71,7 +71,7 @@ if simul_SPS==True:
     samplingTime = 30.0  # DFS sampling time [seconds]
     sps_exp_delay_count_max = 2  # number of cycles to delay exposure after FDSP correction
     # (to avoid M1-M2 transient)
-    sps_sampl_iter = 8
+    sps_sampl_iter = 4
     totSimulTime = sps_sampl_iter*samplingTime + exposureTime
 
 #---- ON-AXIS AO system parameters:
