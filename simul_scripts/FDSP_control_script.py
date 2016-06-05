@@ -284,10 +284,15 @@ if simul_FDSP_control==True:
     elif CL_calib_modes=='zernikes':
         R_4calib = R_M2_Z
 
-    D_FDSP = gmt.calibrate(ps, gsps, mirror="M1", mode="FDSP", stroke=TTstroke*math.pi/180/3600,
-                           segment='edge', cl_wfs=wfs, cl_gs=gs, cl_recmat=R_4calib,
-                           idealps=onps, idealps_rec=R_M1_PSideal, idealps_ref=onps_signal_ref,
-                           remove_on_pist=remove_on_pist, CL_calib_modes=CL_calib_modes)
+    if remove_on_pist == True:
+        D_FDSP = gmt.calibrate(ps, gsps, mirror="M1", mode="FDSP", stroke=TTstroke*math.pi/180/3600,
+			   segment='edge', cl_wfs=wfs, cl_gs=gs, cl_recmat=R_4calib,
+			   idealps=onps, idealps_rec=R_M1_PSideal, idealps_ref=onps_signal_ref,
+			   remove_on_pist=remove_on_pist, CL_calib_modes=CL_calib_modes)
+    else: 
+        D_FDSP = gmt.calibrate(ps, gsps, mirror="M1", mode="FDSP", stroke=TTstroke*math.pi/180/3600,
+			   segment='edge', cl_wfs=wfs, cl_gs=gs, cl_recmat=R_4calib,
+			   remove_on_pist=remove_on_pist, CL_calib_modes=CL_calib_modes)
 
     R_FDSP = np.linalg.pinv(D_FDSP)
     print 'SPS - FDSP Rec:'
