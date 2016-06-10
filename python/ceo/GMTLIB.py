@@ -104,7 +104,7 @@ class GMT_MX(GmtMirrors):
                 self.propagate(gs)
                 wfs.reset()
                 wfs.analyze(gs)
-                return wfs.valid_slopes.host()
+                return wfs.valid_slopes.host().ravel()
             s_push = get_slopes(+1)
             s_pull = get_slopes(-1)
             return 0.5*(s_push-s_pull)/stroke
@@ -417,8 +417,8 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
         sys.stdout.write("------------\n")
-
-        return D
+        self[mirror].D.update({mode:D})
+        #return D
 # JGMT_MX
 from utilities import JSONAbstract
 class JGMT_MX(JSONAbstract,GMT_MX):
