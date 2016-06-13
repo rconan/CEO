@@ -843,7 +843,7 @@ coordinate_system TT_CS;
 @
 \item a pointer to a matrix array:
 <<GMT M12 parameters>>=
-double *d__C;
+double *d__C, *d__D;
 @
 \item a CUBLAS handle:
 <<GMT M12 parameters>>=
@@ -1757,24 +1757,36 @@ From Eq.~(\ref{eq:4}) and Eq.~(\ref{eq:5}), the 3D rotation matrix of each segme
   \label{eq:6}
   \RM = \RS^T \RT \RS.
 \end{equation}
+
+The transpose of Eq.~(\ref{eq:6}) is implemented below, remembering that the transpose of the rotation matrices are stored into CEO.
 <<global tip-tilt transformation>>=
+ cublasDgemm(handle,
+	     CUBLAS_OP_N, CUBLAS_OP_T,
+	     3,3,3,
+	     &alpha,
+	     TT_CS.d__R, 3,
+	     rigid_body_CS.d__R+k9, 3,
+	     &beta,
+	     d__C, 3);
  cublasDgemm(handle,
 	     CUBLAS_OP_N, CUBLAS_OP_N,
 	     3,3,3,
 	     &alpha,
 	     rigid_body_CS.d__R+k9, 3,
-	     TT_CS.d__R, 3,
+	     d__C, 3,
 	     &beta,
-	     d__C, 3);
+	     d__D, 3);
  cublasDgemm(handle,
-	     CUBLAS_OP_N, CUBLAS_OP_T,
+	     CUBLAS_OP_N, CUBLAS_OP_N,
 	     3,3,3,
 	     &alpha,
-	     d__C, 3,
-	     rigid_body_CS.d__R+k9, 3,
+	     motion_CS.d__R+k9, 3,
+	     d__D, 3,
 	     &beta,
-	     motion_CS.d__R+k9, 3);
+	     d__C, 3);
 
+ HANDLE_ERROR( cudaMemcpy( motion_CS.d__R+k9, d__C,
+			   sizeof(double)*9, cudaMemcpyDeviceToDevice ) );
  HANDLE_ERROR( cudaMemcpy( motion_CS.R+k9, motion_CS.d__R+k9,
 			   sizeof(double)*9, cudaMemcpyDeviceToHost ) );
  /*
@@ -1810,14 +1822,18 @@ The tip--tilt transformation is also applied to the origin of each segment $\vec
 \end{equation}
 where $\vec O_R$ is the rotation point.
 <<global tip-tilt transformation>>=
- forward_transform(motion_CS.origin + k, rigid_body_CS.origin + k,
-		   TT_CS.R, TT_CS.origin);
- motion_CS.origin[k].x = rigid_body_CS.origin[k].x - TT_CS.origin->x - motion_CS.origin[k].x;
- motion_CS.origin[k].y = rigid_body_CS.origin[k].y - TT_CS.origin->y - motion_CS.origin[k].y;
- motion_CS.origin[k].z = rigid_body_CS.origin[k].z - TT_CS.origin->z - motion_CS.origin[k].z;
- forward_transform_centered(motion_CS.origin + k, motion_CS.origin + k, rigid_body_CS.R + k9);
- HANDLE_ERROR( cudaMemcpy( motion_CS.d__origin+k, motion_CS.origin+k,
-			   sizeof(vector), cudaMemcpyHostToDevice ) );
+vector o;
+forward_transform(&o, rigid_body_CS.origin + k,
+		  TT_CS.R, TT_CS.origin);
+o.x = rigid_body_CS.origin[k].x - TT_CS.origin->x - o.x;
+o.y = rigid_body_CS.origin[k].y - TT_CS.origin->y - o.y;
+o.z = rigid_body_CS.origin[k].z - TT_CS.origin->z - o.z;
+forward_transform_centered(&o, &o, rigid_body_CS.R + k9);
+motion_CS.origin[k].x += o.x; 
+motion_CS.origin[k].y += o.y;
+motion_CS.origin[k].z += o.z;
+HANDLE_ERROR( cudaMemcpy( motion_CS.d__origin+k, motion_CS.origin+k,
+			  sizeof(vector), cudaMemcpyHostToDevice ) );
 
 /*
  fprintf(stdout,"#%d >> MOTION CS origins [micron]  : %+.3e, %+.3e, %+.3e\n",k,
@@ -1848,18 +1864,20 @@ TT_CS_euler_angles.x = TT_CS_euler_angles.y = TT_CS_euler_angles.z = 0.0;
 TT_CS.setup(&TT_CS_origin, &TT_CS_euler_angles, 1, tag);
 cublasCreate(&handle);
 HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__D, sizeof(double)*9 ) );
 @
 <<GMT global tip-tilt cleanup>>=
 TT_CS.cleanup();
 cublasDestroy(handle);
 HANDLE_ERROR( cudaFree( d__C ) );
+HANDLE_ERROR( cudaFree( d__D ) );
 @  and
 <<GMT global tip-tilt common>>=
 double alpha, beta;
 alpha = 1.0;
 beta  = 0.0;
 int k, k9;
-vector origin, euler_angles;
+vector origin, euler_angles, o;
 origin.x = origin.y = origin.z = 0.0;
 euler_angles.x = tip;
 euler_angles.y = tilt;
