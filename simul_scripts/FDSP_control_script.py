@@ -213,6 +213,24 @@ if simul_SH == True:
         plt.imshow(D_M2_Z, origin='lower')
         plt.colorbar()
 
+    #----- M2 global TT Interaction Matrix and Reconstructor
+    TTstroke = 25e-3 #arcsec
+    D_M2_gTT = gmt.calibrate(wfs, gs, mirror="M2", mode="global tip-tilt", stroke=TTstroke*math.pi/180/3600)
+    R_M2_gTT = np.linalg.pinv(D_M2_gTT)
+    print 'AO SH WFS - M2 global TT Rec:'
+    print R_M2_gTT.shape
+    print 'Condition number: %f'%np.linalg.cond(D_M2_gTT)
+
+    #----- Merge AO SH WFS - M2 global AND segment TTs in a single IM and REC
+    D_M2_TTm = np.concatenate((D_M2_gTT, D_M2_TT), axis=1)
+    R_M2_TTm = np.linalg.pinv(D_M2_TTm)#, rcond=2e-2)
+    print 'Merged SH WFS - global/local TT IM:'
+    print R_M2_TTm.shape
+    print 'Condition number: %f'%np.linalg.cond(D_M2_TTm)
+    if VISU == True:
+        plt.pcolor(D_M2_TTm)
+        plt.colorbar()
+
 # In[9]:
 
 # Calibrate Segment Piston Sensor Interaction Matrix and Reconstructor
@@ -481,6 +499,8 @@ if simul_onaxis_AO==True:
         a_M2_iter = np.zeros((nzernall,totSimulIter))
     elif onaxis_AO_modes=='TT':
         M2TTiter = np.zeros((7,2,totSimulIter))
+        myTTest1 = np.zeros(14+2)  #7x2 segment TTs + global TT
+        M2gTTresiter = np.zeros((2,totSimulIter))
 
 if eval_perf_onaxis==True:
     wfe_gs_iter      = np.zeros(totSimulIter)
@@ -521,17 +541,22 @@ for jj in range(totSimulIter):
                 PhaseTur = ongs.phase.host(units='nm')-ph_fda_on*1e3
                 seg_aTur_gs_iter[:,:,jj] = Zobj.fitting(PhaseTur)
 
-    #----- Update M1 / M2 positions -------------------------------------
+    #----- Update M1  positions -------------------------------------
     for idx in range(7): gmt.M1.update(origin =  M1TrVec[idx,:].tolist(), 
                                  euler_angles = M1RotVec[idx,:].tolist(), 
                                  idx = idx+1)
-    for idx in range(7): gmt.M2.update(origin =  M2TrVec[idx,:].tolist(), 
+    #----- Update M2  positions -------------------------------------
+    """for idx in range(7): gmt.M2.update(origin =  M2TrVec[idx,:].tolist(), 
                                  euler_angles = M2RotVec[idx,:].tolist(), 
-                                 idx = idx+1)
-
-    if simul_onaxis_AO==True and onaxis_AO_modes=='zernikes':
-        gmt.M2.zernike.a[:,z_first_mode:] = -a_M2.reshape((7,-1))
-        gmt.M2.zernike.update()
+                                 idx = idx+1)"""
+    if simul_onaxis_AO==True:
+        if onaxis_AO_modes=='TT':
+            gmt.M2.motion_CS.euler_angles[:,0:2] -= myTTest1[2:].reshape((7,2))
+            gmt.M2.motion_CS.update()
+            gmt.M2.global_tiptilt(-myTTest1[0],-myTTest1[1])
+        elif onaxis_AO_modes=='zernikes':
+            gmt.M2.zernike.a[:,z_first_mode:] = -a_M2.reshape((7,-1))
+            gmt.M2.zernike.update()
 
 
     #----- On-axis WFS measurement and correction -----------------------
@@ -541,12 +566,16 @@ for jj in range(totSimulIter):
         wfs.analyze(gs)
         slopevec = wfs.valid_slopes.host().ravel()
 
-        #--- segment TT correction (on M2)
         if onaxis_AO_modes=='TT':
+            """#--- segment TT correction (on M2)
             M2TTiter[:,:,jj] = M2RotVec[:,0:2]
             myTTest1 = gAO * np.dot(R_M2_TT, slopevec).reshape((7,2))
-            M2RotVec[:,0:2] -= myTTest1
-
+            M2RotVec[:,0:2] -= myTTest1"""
+            #---- Global TT and Segment TT correction
+            M2TTiter[:,:,jj] = M2RotVec[:,0:2]
+            M2gTTresiter[:,jj] = -myTTest1[0:2]
+            myTTest1 = gAO * np.dot(R_M2_TTm, slopevec)
+            M2RotVec[:,0:2] -= myTTest1[2:].reshape((7,2))
         #--- segment Zernikes correction (on M2)
         elif onaxis_AO_modes=='zernikes':
             a_M2_iter[:,jj] = a_M2
@@ -875,7 +904,9 @@ if simul_SH == True:
 if simul_onaxis_AO == True:
     tosave.update(dict(gAO=gAO, onaxis_AO_modes=onaxis_AO_modes))
     if onaxis_AO_modes == 'zernikes': tosave['a_M2_iter'] = a_M2_iter
-    elif onaxis_AO_modes =='TT': tosave['M2TTiter'] = M2TTiter
+    elif onaxis_AO_modes =='TT':
+        tosave['M2TTiter'] = M2TTiter
+        tosave['M2gTTresiter']=M2gTTresiter
 
 if simul_PS_control == True:
     tosave.update(dict(gPS=gPS, PS_CL_calib=PS_CL_calib, M1PSresiter=M1PSresiter))
