@@ -312,6 +312,7 @@ class GMT_MX(GmtMirrors):
 		    D = D[0:6,:]
 		sys.stdout.write("\n")
 	    if mode=="FDSP":
+                assert CL_calib_modes == 'TT' or CL_calib_modes == 'zernikes', "CL_calib_modes should be either 'TT', or 'zernikes'"
 		if segment=="edge":
 		    n_meas = 12
 		elif segment=="full":
