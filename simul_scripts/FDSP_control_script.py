@@ -505,6 +505,8 @@ if simul_onaxis_AO==True:
 if eval_perf_onaxis==True:
     wfe_gs_iter      = np.zeros(totSimulIter)
     seg_pist_onaxis_iter = np.zeros((7,totSimulIter))
+    if simul_turb==True:
+	wfe_gs_tur_iter = np.zeros(totSimulIter)
     if eval_perf_modal==True:
         seg_aRes_gs_iter = np.zeros((Zobj.n_mode,7,totSimulIter))
         if simul_turb==True:
@@ -537,6 +539,7 @@ for jj in range(totSimulIter):
             atm.ray_tracing(  gs, p,nPx,p,nPx, jj*Tsim)
         if eval_perf_onaxis==True:
             atm.ray_tracing(ongs, p,nPx,p,nPx, jj*Tsim)
+	    wfe_gs_tur_iter[jj] = ongs.wavefront.rms()
             if eval_perf_modal==True:
                 PhaseTur = ongs.phase.host(units='nm')-ph_fda_on*1e3
                 seg_aTur_gs_iter[:,:,jj] = Zobj.fitting(PhaseTur)
@@ -915,7 +918,7 @@ if simul_FDSP_control == True:
     tosave.update(dict(gFDSP=gFDSP, remove_on_pist=remove_on_pist, M1TTresiter=M1TTresiter))
 
 if eval_perf_onaxis == True:
-    tosave.update(dict(wfe_gs_iter=wfe_gs_iter, seg_pist_onaxis_iter=seg_pist_onaxis_iter))
+    tosave.update(dict(wfe_gs_iter=wfe_gs_iter, seg_pist_onaxis_iter=seg_pist_onaxis_iter, wfe_gs_tur_iter=wfe_gs_tur_iter))
 
     if eval_perf_modal == True:
         tosave['seg_aRes_gs_iter']=seg_aRes_gs_iter
