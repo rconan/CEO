@@ -317,7 +317,20 @@ cdef class Imaging:
         """
         self._c_imaging.reset_rng(SEED)
 
-    def ee80(self):
+    def ee80(self,double units=1.0):
+        """
+        Computes the 80% ensquared energy patch size
+        
+        Parameters
+        ----------
+        units : double
+            The units to convert the 80% ensquared energy to
+
+        Returns
+        -------
+        delta : double
+            The 80% ensquared energy patch size in pixel (default) or units if given
+        """
         cdef:
             int n, m
             double q
@@ -325,8 +338,10 @@ cdef class Imaging:
             double[:] u, v
         psf   = self.frame.host()
         n,m   = psf.shape
-        u     = np.linspace(-1.0,1.0,n)*(n/2.0)
-        v     = np.linspace(-1.0,1.0,m)*(m/2.0)
+        #u     = np.linspace(-1.0,1.0,n)*(n/2.0)
+        #v     = np.linspace(-1.0,1.0,m)*(m/2.0)
+        u     = np.arange(n,dtype=np.float64)-(n-1)*0.5
+        v     = np.arange(m,dtype=np.float64)-(m-1)*0.5
         x,y   = np.meshgrid(u,v)
         def ee80_fun(float ee_Delta):
             _ee_Delta_ = ee_Delta/2.0
@@ -336,7 +351,7 @@ cdef class Imaging:
             q = bisect(ee80_fun,3,n)
         except ValueError:
             q = np.float('inf')
-        return q
+        return q*units
 
     property photoelectron_gain:
         def __get__(self):
