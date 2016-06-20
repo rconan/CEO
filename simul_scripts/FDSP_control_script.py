@@ -1006,7 +1006,7 @@ if simul_onaxis_AO == True:
     elif onaxis_AO_modes =='TT':
         tosave['M2TTiter'] = M2TTiter
         #tosave['M2gTTresiter']=M2gTTresiter
-        tosave['M2PSiter' = M2PSiter
+        tosave['M2PSiter'] = M2PSiter
 
 if simul_PS_control == True:
     tosave.update(dict(gPS=gPS, PS_CL_calib=PS_CL_calib, M1PSresiter=M1PSresiter))
