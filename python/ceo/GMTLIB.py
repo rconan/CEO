@@ -411,9 +411,9 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                     D[:,idx] = pushpull( Ry )
                     idx += 1
-                if isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
+                """if isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
                     if segment=="full":
-                        D = D[0:6,:]
+                        D = D[0:6,:]"""
                 sys.stdout.write("\n")
             if mode=="zernike":
                 n_mode = self.M2.zernike.n_mode
@@ -449,18 +449,18 @@ class GMT_MX(GmtMirrors):
                         n_meas = 7*gs.N_SRC
                     else :
                         sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
-		n_mode = 6
+		n_mode = 7
 		D = np.zeros((n_meas,n_mode))
 		idx = 0
                 Tz = lambda x : self.M2.update(origin=[0,0,x],euler_angles=[0,0,0],idx=kSeg)
                 sys.stdout.write("Segment #:")
-                for kSeg in range(1,7):
+                for kSeg in range(1,8):
                     sys.stdout.write("%d "%kSeg)
                     D[:,idx] = SPS_pushpull( Tz )
                     idx += 1
-                if isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
+                """if isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
                     if segment=="full":
-                        D = D[0:6,:]
+                        D = D[0:6,:]"""
 		sys.stdout.write("\n")
 	    if mode=="geometric segment tip-tilt":
                 n_meas = 14

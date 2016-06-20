@@ -268,7 +268,7 @@ if simul_onaxis_AO == True:
     gs.reset()
     gmt.reset()
     gmt.propagate(gs)
-    onps_signal_ref = onps.piston(gs, segment='full').ravel()[0:6] # reference signal
+    onps_signal_ref = onps.piston(gs, segment='full').ravel()#[0:6] # reference signal
 
     TTstroke = 25e-3 #arcsec
     D_M2_TT_PSideal = gmt.calibrate(onps, gs, mirror="M2", mode="segment tip-tilt",
@@ -366,7 +366,7 @@ if simul_FDSP_control==True:
         gs.reset()
         gmt.reset()
         gmt.propagate(gs)
-        onps_signal_ref = onps.piston(gs, segment='full').ravel()[0:6] # reference signal
+        onps_signal_ref6 = onps.piston(gs, segment='full').ravel()[0:6] # reference signal
                                          
         if VISU == True:
             fig, ax = plt.subplots()
@@ -388,7 +388,7 @@ if simul_FDSP_control==True:
     if remove_on_pist == True:
         D_FDSP = gmt.calibrate(ps, gsps, mirror="M1", mode="FDSP", stroke=TTstroke*math.pi/180/3600,
 			   segment='edge', cl_wfs=wfs, cl_gs=gs, cl_recmat=R_4calib,
-			   idealps=onps, idealps_rec=R_M1_PSideal, idealps_ref=onps_signal_ref,
+			   idealps=onps, idealps_rec=R_M1_PSideal, idealps_ref=onps_signal_ref6,
 			   remove_on_pist=remove_on_pist, CL_calib_modes=CL_calib_modes)
     else: 
         D_FDSP = gmt.calibrate(ps, gsps, mirror="M1", mode="FDSP", stroke=TTstroke*math.pi/180/3600,
@@ -583,7 +583,7 @@ if simul_onaxis_AO==True:
     elif onaxis_AO_modes=='TT':
         M2TTiter = np.zeros((7,2,totSimulIter))
         M2PSiter = np.zeros((7,totSimulIter))
-        myAOest1 = np.zeros(14+6)  #7x2 segments TTs + 6 outer segment pistons
+        myAOest1 = np.zeros(14+7)  #7x2 segments TTs + 6 outer segment pistons
         #myTTest1 = np.zeros(14+2)  #7x2 segment TTs + global TT
         #M2gTTresiter = np.zeros((2,totSimulIter))
 
@@ -640,7 +640,7 @@ for jj in range(totSimulIter):
     if simul_onaxis_AO==True:
         if onaxis_AO_modes=='TT':
             gmt.M2.motion_CS.euler_angles[:,0:2] -= myAOest1[0:14].reshape((7,2))
-            gmt.M2.motion_CS.origin[0:6,2] -= myAOest1[14:]
+            gmt.M2.motion_CS.origin[:,2] -= myAOest1[14:]
             #gmt.M2.motion_CS.euler_angles[:,0:2] -= myTTest1[2:].reshape((7,2))
             #gmt.M2.global_tiptilt(-myTTest1[0],-myTTest1[1])
             gmt.M2.motion_CS.update()
@@ -655,7 +655,7 @@ for jj in range(totSimulIter):
         wfs.reset()
         wfs.analyze(gs)
         slopevec = wfs.valid_slopes.host().ravel()
-        onpsvec =  onps.piston(gs, segment='full').ravel()[0:6] - onps_signal_ref
+        onpsvec =  onps.piston(gs, segment='full').ravel() - onps_signal_ref
         AOmeasvec = np.concatenate((slopevec, onpsvec))
 
         if onaxis_AO_modes=='TT':
@@ -673,7 +673,7 @@ for jj in range(totSimulIter):
             M2PSiter[:,jj] = M2TrVec[:,2]
             myAOest1 = gAO * np.dot(R_AO, AOmeasvec)
             M2RotVec[:,0:2] -= myAOest1[0:14].reshape((7,2))
-            M2TrVec[0:6,2] -= myAOest1[14:]
+            M2TrVec[:,2] -= myAOest1[14:]
 
         #--- segment Zernikes correction (on M2)
         elif onaxis_AO_modes=='zernikes':
