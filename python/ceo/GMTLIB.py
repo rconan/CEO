@@ -105,8 +105,12 @@ class GMT_MX(GmtMirrors):
                 gs.reset()
                 self.propagate(gs)
                 wfs.reset()
-                wfs.analyze(gs)
-                return wfs.valid_slopes.host()
+                if isinstance(wfs, ShackHartmann) == True:
+                    wfs.analyze(gs)
+                    return wfs.valid_slopes.host()
+                elif isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
+                    return wfs.piston(gs, segment=segment).ravel()
+                else: sys.exit("WFS type not recognized...") 
             s_push = get_slopes(+1)
             s_pull = get_slopes(-1)
             return 0.5*(s_push-s_pull)/stroke
@@ -146,7 +150,12 @@ class GMT_MX(GmtMirrors):
                 gs.reset()
                 self.propagate(gs)
 		wfs.reset()
-                return wfs.piston(gs, segment=segment).ravel()
+                if isinstance(wfs, ShackHartmann) == True:
+                    wfs.analyze(gs)
+                    return wfs.valid_slopes.host()
+                elif isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
+                    return wfs.piston(gs, segment=segment).ravel()
+                else: sys.exit("WFS type not recognized...") 
             s_push = get_slopes(+1)
             s_pull = get_slopes(-1)
             return 0.5*(s_push-s_pull)/stroke
@@ -381,7 +390,17 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="segment tip-tilt":
-                D = np.zeros((wfs.valid_lenslet.nnz*2,2*7))
+                if isinstance(wfs, ShackHartmann) == True:
+                    n_meas = wfs.valid_lenslet.nnz*2 
+                elif isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
+                    if segment=="edge":
+                        n_meas = 12*gs.N_SRC
+                    elif segment=="full":
+                        n_meas = 7*gs.N_SRC
+                    else :
+                        sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
+
+                D = np.zeros((n_meas,2*7))
                 idx = 0
                 Rx = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
                 Ry = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
@@ -392,6 +411,9 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                     D[:,idx] = pushpull( Ry )
                     idx += 1
+                if isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
+                    if segment=="full":
+                        D = D[0:6,:]
                 sys.stdout.write("\n")
             if mode=="zernike":
                 n_mode = self.M2.zernike.n_mode
@@ -418,14 +440,17 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
 	    if mode=="segment piston":
-		if segment=="edge":
-		    n_meas = 12
-		elif segment=="full":
-		    n_meas = 7
-		else :
-		    sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
+                if isinstance(wfs, ShackHartmann) == True:
+                    n_meas = wfs.valid_lenslet.nnz*2 
+                elif isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
+                    if segment=="edge":
+                        n_meas = 12*gs.N_SRC
+                    elif segment=="full":
+                        n_meas = 7*gs.N_SRC
+                    else :
+                        sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
 		n_mode = 6
-		D = np.zeros((n_meas*gs.N_SRC,n_mode))
+		D = np.zeros((n_meas,n_mode))
 		idx = 0
                 Tz = lambda x : self.M2.update(origin=[0,0,x],euler_angles=[0,0,0],idx=kSeg)
                 sys.stdout.write("Segment #:")
@@ -433,8 +458,9 @@ class GMT_MX(GmtMirrors):
                     sys.stdout.write("%d "%kSeg)
                     D[:,idx] = SPS_pushpull( Tz )
                     idx += 1
-                if segment=="full":
-		    D = D[0:6,:]
+                if isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
+                    if segment=="full":
+                        D = D[0:6,:]
 		sys.stdout.write("\n")
 	    if mode=="geometric segment tip-tilt":
                 n_meas = 14

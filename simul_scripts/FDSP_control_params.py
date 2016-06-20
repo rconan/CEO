@@ -80,7 +80,7 @@ if simul_SH == True:
     nLenslet = 30              # number of sub-apertures across the pupil
     n = int((nPx-1)/nLenslet)  # number of pixels per subaperture
     nPx = n*nLenslet+1
-    sh_thr = 0.1            # illumination threshold for valid SA selection
+    sh_thr = 0.2            # illumination threshold for valid SA selection
     print "pupil sampling: %d pixel"%nPx
     print "number of SH SAs across pupil: %d"%nLenslet
     print "number of SH pixels per SA: %d"%n

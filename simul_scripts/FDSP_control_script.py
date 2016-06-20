@@ -190,21 +190,14 @@ if eval_perf_onaxis==True and eval_perf_modal==True:
 # Calibrate AO SH WFS - M2 IMs
 if simul_SH == True:
     
-    #----- M2 segment TT Interaction Matrix and Reconstructor
-    TTstroke = 25e-3 #arcsec
-    D_M2_TT = gmt.calibrate(wfs, gs, mirror="M2", mode="segment tip-tilt", 
-                            stroke=TTstroke*math.pi/180/3600)
-    R_M2_TT = np.linalg.pinv(D_M2_TT)
-    print 'AO SH WFS - M2 segment TT Rec:'
-    print R_M2_TT.shape
-
     #----- M2 segment Zernikes Interaction Matrix and Reconstructor
     Zstroke = 20e-9 #m rms
     z_first_mode = 1  # to remove Tip/Tilt
     D_M2_Z = gmt.calibrate(wfs, gs, mirror="M2", mode="zernike", stroke=Zstroke, 
                            first_mode=z_first_mode)
     nzernall = (D_M2_Z.shape)[1]  ## number of zernike DoFs calibrated
-    R_M2_Z = np.linalg.pinv(D_M2_Z)
+    n_zern = gmt.M2.zernike.n_mode 
+
     print 'AO SH WFS - M2 Segment Zernike IM:'
     print D_M2_Z.shape
     print 'Condition number: %f'%np.linalg.cond(D_M2_Z)
@@ -213,7 +206,46 @@ if simul_SH == True:
         plt.imshow(D_M2_Z, origin='lower')
         plt.colorbar()
 
-    #----- M2 global TT Interaction Matrix and Reconstructor
+    # Identify subapertures belonging to two adjacent segments (leading to control leakage)
+    QQ = D_M2_Z == 0
+    LL = np.sum(QQ, axis=1)
+    LI = np.where( LL[0:wfs.n_valid_lenslet] < (n_zern-1)*6)
+    print ("A total of %d leaking SH WFS SAs identified."%(LI[0].shape))
+    vlens = wfs.valid_lenslet.f.host().ravel()
+    idx = np.where( vlens == 1)
+    vlens[idx[0][LI]] = 0
+    leak_slopes_idx = np.array([LI[0], LI[0]+wfs.n_valid_lenslet]).ravel()
+
+    if VISU == True:
+        fig, (ax1,ax2) = plt.subplots(ncols=2)
+        fig.set_size_inches(10,8)
+        ax1.imshow(wfs.valid_lenslet.f.host().reshape(nLenslet,nLenslet), interpolation='None')
+        ax2.imshow(vlens.reshape(nLenslet,nLenslet),  interpolation='None')
+
+    #Remove leaking SAs from AO SH WFS - M2 segment Zernikes:
+    D_M2_Z[leak_slopes_idx,:] = 0
+    print 'Condition number: %f'%np.linalg.cond(D_M2_Z)
+
+    # compute the AO SH WFS - M2 segment Zernikes REC
+    R_M2_Z = np.linalg.pinv(D_M2_Z)
+    print 'AO SH WFS - M2 Segment Zernike Rec:'
+    print R_M2_Z.shape
+
+    #----- M2 segment TT Interaction Matrix and Reconstructor
+    TTstroke = 25e-3 #arcsec
+    D_M2_TT = gmt.calibrate(wfs, gs, mirror="M2", mode="segment tip-tilt", 
+                            stroke=TTstroke*math.pi/180/3600)
+
+    #Remove leaking SAs from AO SH WFS - M2 segment TT IM:
+    D_M2_TT[leak_slopes_idx,:] = 0
+    print 'Condition number: %f'%np.linalg.cond(D_M2_TT)  
+    
+    R_M2_TT = np.linalg.pinv(D_M2_TT)
+    print 'AO SH WFS - M2 segment TT Rec:'
+    print R_M2_TT.shape
+
+    #Note: global TT IM not cleaned up of leaking SH SAs:
+    """#----- M2 global TT Interaction Matrix and Reconstructor
     TTstroke = 25e-3 #arcsec
     D_M2_gTT = gmt.calibrate(wfs, gs, mirror="M2", mode="global tip-tilt", stroke=TTstroke*math.pi/180/3600)
     R_M2_gTT = np.linalg.pinv(D_M2_gTT)
@@ -229,7 +261,58 @@ if simul_SH == True:
     print 'Condition number: %f'%np.linalg.cond(D_M2_TTm)
     if VISU == True:
         plt.pcolor(D_M2_TTm)
-        plt.colorbar()
+        plt.colorbar()"""
+
+if simul_onaxis_AO == True:
+    onps = ceo.IdealSegmentPistonSensor(gmt, gs)
+    gs.reset()
+    gmt.reset()
+    gmt.propagate(gs)
+    onps_signal_ref = onps.piston(gs, segment='full').ravel()[0:6] # reference signal
+
+    TTstroke = 25e-3 #arcsec
+    D_M2_TT_PSideal = gmt.calibrate(onps, gs, mirror="M2", mode="segment tip-tilt",
+                                        stroke=TTstroke*math.pi/180/3600, segment='full')
+        
+    PSstroke = 50e-9 #m
+    D_M2_PSideal = gmt.calibrate(onps, gs, mirror="M2", mode="segment piston",
+                                        stroke=PSstroke, segment='full')
+            
+    if VISU == True:
+        fig, (ax1,ax2) = plt.subplots(ncols=2)
+        fig.set_size_inches(10,4)
+        imm = ax1.pcolor(D_M2_TT_PSideal)
+        ax1.grid()
+        fig.colorbar(imm, ax=ax1)#, fraction=0.012)
+                
+        imm = ax2.pcolor(D_M2_PSideal)
+        ax2.grid()
+        fig.colorbar(imm, ax=ax2)#, fraction=0.012)  
+
+    # Calibrate Segment Piston Sensor Interaction Matrix with SH WFS
+    PSstroke = 200e-9 #m
+    D_M2_PS_sh = gmt.calibrate(wfs, gs, mirror="M2", mode="segment piston",
+                                    stroke=PSstroke, segment='full')
+    D_M2_PS_sh[leak_slopes_idx,:] = 0
+                    
+    if VISU == True:
+        fig, ax = plt.subplots()
+        fig.set_size_inches(6,4)
+        imm = ax.pcolor(D_M2_PS_sh)
+        ax.grid()
+        fig.colorbar(imm)
+
+    D_AO_SH = np.concatenate((D_M2_TT, D_M2_PS_sh), axis=1)
+    print 'Merged (seg TT & Pist) - SH IM:'
+    print D_AO_SH.shape
+    D_AO_PS = np.concatenate((D_M2_TT_PSideal, D_M2_PSideal), axis=1)
+    print 'Merged (seg TT & Pist) - Ideal SPS IM:'
+    print D_AO_PS.shape
+    D_AO = np.concatenate((D_AO_SH, D_AO_PS), axis=0)
+    print 'AO super-merged IM'
+    print D_AO.shape
+    print 'Condition number: %f'%np.linalg.cond(D_AO)
+    R_AO = np.linalg.pinv(D_AO)
 
 # In[9]:
 
@@ -499,8 +582,10 @@ if simul_onaxis_AO==True:
         a_M2_iter = np.zeros((nzernall,totSimulIter))
     elif onaxis_AO_modes=='TT':
         M2TTiter = np.zeros((7,2,totSimulIter))
-        myTTest1 = np.zeros(14+2)  #7x2 segment TTs + global TT
-        M2gTTresiter = np.zeros((2,totSimulIter))
+        M2PSiter = np.zeros((7,totSimulIter))
+        myAOest1 = np.zeros(14+6)  #7x2 segments TTs + 6 outer segment pistons
+        #myTTest1 = np.zeros(14+2)  #7x2 segment TTs + global TT
+        #M2gTTresiter = np.zeros((2,totSimulIter))
 
 if eval_perf_onaxis==True:
     wfe_gs_iter      = np.zeros(totSimulIter)
@@ -554,9 +639,11 @@ for jj in range(totSimulIter):
                                  idx = idx+1)"""
     if simul_onaxis_AO==True:
         if onaxis_AO_modes=='TT':
-            gmt.M2.motion_CS.euler_angles[:,0:2] -= myTTest1[2:].reshape((7,2))
+            gmt.M2.motion_CS.euler_angles[:,0:2] -= myAOest1[0:14].reshape((7,2))
+            gmt.M2.motion_CS.origin[0:6,2] -= myAOest1[14:]
+            #gmt.M2.motion_CS.euler_angles[:,0:2] -= myTTest1[2:].reshape((7,2))
+            #gmt.M2.global_tiptilt(-myTTest1[0],-myTTest1[1])
             gmt.M2.motion_CS.update()
-            gmt.M2.global_tiptilt(-myTTest1[0],-myTTest1[1])
         elif onaxis_AO_modes=='zernikes':
             gmt.M2.zernike.a[:,z_first_mode:] = -a_M2.reshape((7,-1))
             gmt.M2.zernike.update()
@@ -568,17 +655,26 @@ for jj in range(totSimulIter):
         wfs.reset()
         wfs.analyze(gs)
         slopevec = wfs.valid_slopes.host().ravel()
+        onpsvec =  onps.piston(gs, segment='full').ravel()[0:6] - onps_signal_ref
+        AOmeasvec = np.concatenate((slopevec, onpsvec))
 
         if onaxis_AO_modes=='TT':
             """#--- segment TT correction (on M2)
             M2TTiter[:,:,jj] = M2RotVec[:,0:2]
             myTTest1 = gAO * np.dot(R_M2_TT, slopevec).reshape((7,2))
             M2RotVec[:,0:2] -= myTTest1"""
-            #---- Global TT and Segment TT correction
+            """#---- Global TT and Segment TT correction
             M2TTiter[:,:,jj] = M2RotVec[:,0:2]
             M2gTTresiter[:,jj] = -myTTest1[0:2]
             myTTest1 = gAO * np.dot(R_M2_TTm, slopevec)
-            M2RotVec[:,0:2] -= myTTest1[2:].reshape((7,2))
+            M2RotVec[:,0:2] -= myTTest1[2:].reshape((7,2))"""
+            #---- Using the super-merger simplified AO rec:
+            M2TTiter[:,:,jj] = M2RotVec[:,0:2]
+            M2PSiter[:,jj] = M2TrVec[:,2]
+            myAOest1 = gAO * np.dot(R_AO, AOmeasvec)
+            M2RotVec[:,0:2] -= myAOest1[0:14].reshape((7,2))
+            M2TrVec[0:6,2] -= myAOest1[14:]
+
         #--- segment Zernikes correction (on M2)
         elif onaxis_AO_modes=='zernikes':
             a_M2_iter[:,jj] = a_M2
@@ -909,7 +1005,8 @@ if simul_onaxis_AO == True:
     if onaxis_AO_modes == 'zernikes': tosave['a_M2_iter'] = a_M2_iter
     elif onaxis_AO_modes =='TT':
         tosave['M2TTiter'] = M2TTiter
-        tosave['M2gTTresiter']=M2gTTresiter
+        #tosave['M2gTTresiter']=M2gTTresiter
+        tosave['M2PSiter' = M2PSiter
 
 if simul_PS_control == True:
     tosave.update(dict(gPS=gPS, PS_CL_calib=PS_CL_calib, M1PSresiter=M1PSresiter))
