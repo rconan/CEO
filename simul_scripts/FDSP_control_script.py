@@ -180,10 +180,42 @@ if eval_perf_onaxis==True and eval_perf_modal==True:
     Zobj.fitting_init(ongs)
 
 # In[7]
+#Initialize asterism for performance evaluation in the science field
+if eval_perf_field == True:
+    
+    sfx = np.arange(-45.,55.,15.) # in arcsec
+    sfy = np.arange(-45.,55.,15.) # in arcsec
+    sfxx, sfyy = np.meshgrid(sfx, sfy)
+    sf_zenith_angle = np.sqrt(sfxx**2 + sfyy**2) * ceo.constants.ARCSEC2RAD
+    sf_azimuth_angle = np.arctan2(sfyy,sfxx)
 
-# Field aberrations in the on-axis performance directions (ongs)
+    sfgs = ceo.Source("R",zenith=sf_zenith_angle,azimuth=sf_azimuth_angle,#*math.pi/180,
+                              rays_box_size=D,rays_box_sampling=nPx,rays_origin=[0.0,0.0,25])
 
-# In[8]:
+    if VISU == True:
+        fig,ax1 = plt.subplots()
+        fig.set_size_inches((4,4))
+        ax1.plot(sfxx,sfyy, '*', markersize=10)
+        ax1.set_xlim([-100,100])
+        ax1.set_ylim([-100,100])
+        ax1.grid()
+
+    sfgs.reset()
+    gmt.propagate(sfgs)
+    sf_rms0 = sfgs.wavefront.rms()*1e9
+    print '--> max WF RMS at the edge of the field: %3.2f nm WF RMS'%np.max(sf_rms0)
+
+    if VISU == True:
+        fig, ax2 = plt.subplots()
+        fig.set_size_inches((5,4))
+        contp = ax2.contourf(sfx, sfy, sf_rms0.reshape(len(sfx),-1))
+        clb = fig.colorbar(contp, ax=ax2)
+        ax2.grid()
+        ax2.tick_params(labelsize=12)
+        ax2.set_xlabel('field angle [arcsec]', fontsize=15)
+        clb.set_label('nm WF RMS', fontsize=15)
+        clb.ax.tick_params(labelsize=12)
+
 
 ## INTERACTION MATRICES CALIBRATION
 
@@ -597,6 +629,9 @@ if eval_perf_onaxis==True:
         if simul_turb==True:
             seg_aTur_gs_iter = np.zeros((Zobj.n_mode,7,totSimulIter))
 
+if eval_perf_field == True:
+    wfe_sfgs_iter = np.zeros((sfgs.N_SRC, totSimulIter))
+
 elapsedTime = np.zeros(totSimulIter)
 
 print 'Total simulation time [s]: %4.3f'%(totSimulTime)
@@ -615,6 +650,7 @@ for jj in range(totSimulIter):
     if simul_SPS==True: gsps.reset()
     if simul_SH==True:  gs.reset()
     if eval_perf_onaxis==True: ongs.reset()
+    if eval_perf_field==True: sfgs.reset()
 
     #----- Update Turbulence --------------------------------------------
     if simul_turb == True:
@@ -690,6 +726,9 @@ for jj in range(totSimulIter):
             PhaseRes = ongs.phase.host(units='nm')-ph_fda_on*1e3
             seg_aRes_gs_iter[:,:,jj] = Zobj.fitting(PhaseRes)
 
+    if eval_perf_field==True:
+        gmt.propagate(sfgs)
+        wfe_sfgs_iter[:,jj] = sfgs.wavefront.rms()
 
     #----- Segment Piston Sensors measurement and correction -------------
     if simul_SPS==True:
@@ -1020,6 +1059,10 @@ if eval_perf_onaxis == True:
     if eval_perf_modal == True:
         tosave['seg_aRes_gs_iter']=seg_aRes_gs_iter
         if simul_turb == True: tosave['seg_aTur_gs_iter']=seg_aTur_gs_iter
+
+if eval_perf_field == True:
+    tosave['wfe_sfgs_iter'] = wfe_sfgs_iter
+    tosave['wfe_sfgs_ref'] = sf_rms0
 
 if scramble_tt == True:
     tosave.update(dict(tt_scramble_rms=tt_scramble_rms, TTscramble=TTscramble))
