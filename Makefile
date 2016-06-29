@@ -24,6 +24,12 @@ tex: makefile $(texsrc)
 	for i in $(SOURCE_DIR); do (echo -e "\include{ceo.manual.$$i}\n">>doc/ceo.manual.main.tex); done
 	for i in $(SOURCE_DIR); do (echo -n "\chapter" >doc/ceo.manual.$$i.tex; echo -e "{$$i}\n\label{sec:$$i}\n\n\input{../$$i/$$i}">>doc/ceo.manual.$$i.tex); done
 
+cytex: makefile $(texcysrc)
+	for i in $(CYTHON_DIR); do (make -C $$i cytex); done
+	rm -f doc/cyceo.manual.main.tex
+	for i in $(CYTHON_DIR); do (echo -e "\include{cyceo.manual.$$i}\n">>doc/cyceo.manual.main.tex); done
+	for i in $(CYTHON_DIR); do (echo -n "\chapter" >doc/cyceo.manual.$$i.tex; echo -e "{$$i}\n\label{sec:$$i}\n\n\input{../$$i/$$i.cython}">>doc/cyceo.manual.$$i.tex); done
+
 
 cython: makefile
 	for i in $(CYTHON_DIR); do (make -C $$i cysrc);echo -e "\n"; done

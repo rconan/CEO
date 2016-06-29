@@ -25,8 +25,10 @@ header = $(nwsrc:%.nw=%.h)
 obj    = $(nwsrc:%.nw=%.o)
 sobj    = $(nwsrc:%.nw=%.so)
 cusrc  = $(nwsrc:%.nw=%.cu)
-pxdsrc  = $(nwsrc:%.nw=%.pxd)
-pyxsrc  = $(nwsrc:%.nw=%.pyx)
+nwcysrc  = $(nwsrc:%.nw=%.cython.nw)
+texcysrc = $(nwcysrc:%.nw=%.tex)
+pxdsrc  = $(nwcysrc:%.cython.nw=%.pxd)
+pyxsrc  = $(nwcysrc:%.cython.nw=%.pyx)
 libsrc = $(CEOPATH)/lib/libceo.a 
 
 .SUFFIXES: .nw .tex .cu .mex .bin .py .pxd .pyx .so
@@ -66,10 +68,10 @@ libsrc = $(CEOPATH)/lib/libceo.a
 	$(TANGLE) -R$@ $< > $@
 
 .nw.pxd:
-	$(TANGLE) -R$@ $< > $@
+	$(TANGLE) -R$@ $(nwcysrc) > $@
 	cp $@ $(CEOPYPATH)/
 
 .nw.pyx:
-	$(TANGLE) -R$@ $< > $@
+	$(TANGLE) -R$@  $(nwcysrc) > $@
 	cp $@ $(CEOPYPATH)/
 

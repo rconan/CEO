@@ -1,0 +1,37 @@
+% -*- mode: Noweb; noweb-code-mode: python-mode -*-
+
+<<ceo.pxd>>=
+cdef extern from "GBTBT.h":
+    cdef cppclass GBTBT:
+        int MT2_TOTAL
+        char *mask
+        void setup(int, int, int *, int, float *)
+        void cleanup()
+        void MVM(float *, float *)
+@
+\index{GBTBT!python!Gbtbt}
+<<ceo.pyx>>=
+cdef class Gbtbt:
+    """
+    Generalized block matrix with 2RBT blocks
+    """
+    cdef ceo.GBTBT *_c_GBTBT
+
+    def __cinit__(self, int M_block, int N_block, int N_SIDE_LENSLET, PaStats pa, pupil=None):
+        self._c_GBTBT = new ceo.GBTBT()
+        self._c_GBTBT.setup(M_block,N_block,pa._c_paStats.M_LAYER,
+                            N_SIDE_LENSLET,pa._c_paStats.d__cov)
+        if pupil is not None:
+            self._c_GBTBT.mask = pupil._c_mask.m
+
+    def __dealloc__(self):
+        self._c_GBTBT.cleanup()
+
+    def MVM(self, cuFloatArray x):
+        y = cuFloatArray(shape=(self._c_GBTBT.MT2_TOTAL,1),dev_malloc=True)
+        self._c_GBTBT.MVM(y._c_gpu.dev_data,x._c_gpu.dev_data)
+        return y
+
+    property mask:
+        def __set__(self,MaskAbstract M):
+            self._c_GBTBT.mask = M._c_mask.m

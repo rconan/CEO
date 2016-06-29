@@ -1,0 +1,86 @@
+% -*- mode: Noweb; noweb-code-mode: python-mode -*-
+<<centroiding.pxd>>=
+from utilities cimport cuFloatArray, mask, MaskAbstract
+from shackHartmann cimport ShackHartmann, GeometricShackHartmann
+from pyramid cimport Pyramid
+cdef extern from "centroiding.h":
+    cdef cppclass centroiding:
+        float *d__c
+        float *d__mass
+        void setup(int, int)
+        void fried_geometry(mask *dm, mask *pupil, int n, float threshold)
+        void cleanup()
+<<class definitions>>
+@ 
+<<class definitions>>=
+from utilities cimport cuFloatArray
+cdef class Centroiding:
+    cdef:
+        centroiding *_c_centroiding
+        readonly int N_SIDE_LENSLET, N_SOURCE
+        readonly cuFloatArray flux, c
+        char isPtr
+@ 
+\index{centroiding!python!Centroiding}
+<<centroiding.pyx>>=
+cdef class Centroiding:
+    """ 
+    Create a centroiding container
+
+    Parameters
+    ----------
+    N_SIDE_LENSLET : int
+        The linear size of the lenslet array (>=1)
+    N_SOURCE : int, optional
+        The number of guide stars (>=1); default: 1
+
+    Attributes
+    ----------
+    N_SIDE_LENSLET : int
+        The linear size of the lenslet array (>=1)
+    N_SOURCE : int
+        The number of guide stars (>=1)
+    flux : cuFloatArray
+         The map of flux per lenset
+    c: cuFloatArray
+        The centroid vector of length `N_SOURCE`x`N_SIDE_LENSLET`**2
+
+    See also
+    --------
+    cuFloatArray: class acting as the interface between GPU host and device
+    """
+
+    def __cinit__(self, int N_SIDE_LENSLET, int N_SOURCE=1, 
+                  ShackHartmann wfs=None,
+                  GeometricShackHartmann gwfs=None,
+		  Pyramid pym=None):
+	self._c_centroiding = new centroiding()
+        self.N_SIDE_LENSLET = N_SIDE_LENSLET
+        if wfs is not None:
+            self.isPtr = 1
+            self.N_SOURCE = wfs.N_GS
+            self._c_centroiding = &(wfs._c_shackHartmann.data_proc)
+        elif gwfs is not None:
+            self.isPtr = 1
+            self.N_SOURCE = gwfs.N_GS
+            self._c_centroiding = &(gwfs._c_shackHartmann.data_proc)
+        elif pym is not None:
+            self.isPtr = 1
+            self.N_SOURCE = N_SOURCE
+            self._c_centroiding = &(pym._c_pyramid.data)
+        else:
+            self.isPtr = 0
+            self.N_SOURCE = N_SOURCE
+            self._c_centroiding.setup(self.N_SIDE_LENSLET,self.N_SOURCE)    
+        self.flux = cuFloatArray(shape=(self.N_SOURCE*self.N_SIDE_LENSLET,
+                                        self.N_SIDE_LENSLET))
+        self.flux._c_gpu.dev_data = self._c_centroiding.d__mass
+        self.c = cuFloatArray(shape=(self.N_SOURCE,(self.N_SIDE_LENSLET**2)*2))
+        self.c._c_gpu.dev_data = self._c_centroiding.d__c
+
+    def __dealloc__(self):
+        if not self.isPtr:
+            self._c_centroiding.cleanup()
+
+    def fried_geometry(self,MaskAbstract dm, MaskAbstract pupil, int n, float threshold):
+        self._c_centroiding.fried_geometry(dm._c_mask, pupil._c_mask, n, threshold)

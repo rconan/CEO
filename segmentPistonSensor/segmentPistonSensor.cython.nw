@@ -1,0 +1,148 @@
+% -*- mode: Noweb; noweb-code-mode: python-mode -*-
+
+<<segmentPistonSensor.pxd>>=
+from utilities cimport cuFloatArray, mask, MaskAbstract
+from gmtMirrors cimport gmt_m1, GMT_M1
+from source cimport complex_amplitude, Complex_amplitude, source, Source
+from imaging cimport imaging, Imaging
+cdef extern from "segmentPistonSensor.h":
+    cdef cppclass segmentPistonSensor:
+        int N_LENSLET, N_PX_LENSLET, N_PX, N_PX2, N_PX_IMAGE, N_LAMBDA
+        float pixel_scale
+        mask lenslet_mask, fft_mask
+        complex_amplitude lenslet
+        imaging camera, FFT
+        void setup(gmt_m1 *, source *, float, float, float)
+        void cleanup()
+        void propagate(source *)
+        void readout(float, float, float)
+        void fft()
+<<class definition>>
+@ 
+\index{segmentPistonSensor!python!SegmentPistonSensor}
+<<class definition>>=
+cdef class SegmentPistonSensor:
+    cdef:
+        segmentPistonSensor *_c_segmentPistonSensor
+        readonly MaskAbstract lenslet_mask, fft_mask
+        readonly Complex_amplitude W
+        readonly Imaging camera
+        readonly cuFloatArray fftlet
+@ 
+<<segmentPistonSensor.pyx>>=
+from constants import ARCSEC2RAD
+cdef class SegmentPistonSensor:
+    """
+    The segment piston sensor model
+
+    Parameters
+    ----------
+    M1 : GMT_M1
+        The GMT M1 model class
+    gs : Source
+        The guide star(s) of the segment piston sensor
+    dispersion : float, optional
+        The grism dispersion; default: 5arcsec/micron
+    field_of_view : float, optional
+        The segment piston sensor field-of-view; default: 3 arcsec
+    nyquist_factor : float, optional
+        The Nyquist sampling factor; default: 1, meaning Nyquist sampling
+
+    Attributes
+    ----------
+    W : Complex_amplitude, read-only
+        The piecewise wavefront on the 12 lenslets
+    camera : Imaging, read-only
+        The detector of the segment piston sensor
+    fftlet : cuFloatArray
+        The Fourier trasform of the detector framelet
+    N_LAMBDA : int
+        The number of spectral element
+    pixel_Scale : float
+        The detector pixel scale
+
+    See also
+    --------
+    Imaging : the lenslet and detector class
+    """
+    def __cinit__(self,GMT_M1 M1, Source gs,
+                  float dispersion=5.0,
+                  float field_of_view=3.0,
+                  float nyquist_factor=1.0):
+        self._c_segmentPistonSensor = new segmentPistonSensor()
+        self._c_segmentPistonSensor.setup(M1._c_gmt_m12,
+                                          gs._c_source,
+                                          dispersion*ARCSEC2RAD*1e6,
+                                          field_of_view*ARCSEC2RAD,
+                                          nyquist_factor)
+
+        self.lenslet_mask = MaskAbstract(self._c_segmentPistonSensor.N_PX2)
+        self.lenslet_mask._c_mask = &(self._c_segmentPistonSensor.lenslet_mask)
+        self.lenslet_mask.f._c_gpu.dev_data = self.lenslet_mask._c_mask.f
+
+        self.W = Complex_amplitude()
+        self.W._c_complex_amplitude = &(self._c_segmentPistonSensor.lenslet)
+        self.W.__alloc__((self._c_segmentPistonSensor.N_PX,
+                          self._c_segmentPistonSensor.N_PX))
+        self.camera = Imaging(self._c_segmentPistonSensor.N_LENSLET,
+                              self._c_segmentPistonSensor.N_PX_LENSLET,
+                              N_PX_IMAGE = self._c_segmentPistonSensor.N_PX_IMAGE,
+                              BIN_IMAGE = 2, sps=self)
+
+        self.fft_mask = MaskAbstract( self.camera.N_PX_FRAME**2)
+        self.fft_mask._c_mask = &(self._c_segmentPistonSensor.fft_mask)
+        self.fft_mask.f._c_gpu.dev_data = self.fft_mask._c_mask.f
+
+        cdef int n
+        n = self._c_segmentPistonSensor.FFT.N_SIDE_LENSLET*self._c_segmentPistonSensor.FFT.N_PX_CAMERA
+        self.fftlet = cuFloatArray(shape=(n,n))
+        self.fftlet._c_gpu.dev_data = self._c_segmentPistonSensor.FFT.d__frame
+
+    def __dealloc__(self):
+        self._c_segmentPistonSensor.cleanup()
+
+    def propagate(self, Source gs):
+        """
+        Propagates the guide star wavefront from the segment piston sensor pupil plane to the detector in the focal plane
+
+        Parameters
+        ----------
+        gs : Source
+            The segment piston sensor guide star(s)
+        """
+        self._c_segmentPistonSensor.propagate(gs._c_source)
+     
+    def readOut(self, float exposureTime, float readOutNoiseRms, 
+                float backgroundMagnitude):
+        """
+        Reads-out the detector applying photon noise, read-out noise and background noise
+
+        Parameters
+        ----------
+        exposureTime : float
+            The detector exposure time
+        readOutNoiseRms : float
+            The number of photon-electron rms per pixel
+        backgroundMagnitude : float
+            The background magnitude per arcsec square
+        """
+        self._c_segmentPistonSensor.readout(exposureTime, readOutNoiseRms, 
+                                            backgroundMagnitude)
+
+    def fft(self):
+        """
+        Fourier transforms the detector framelets
+        """
+        self._c_segmentPistonSensor.fft();
+
+    property N_LAMBDA:
+        def __get__(self):
+            return self._c_segmentPistonSensor.N_LAMBDA
+
+    property N_PX:
+        def __get__(self):
+            return self._c_segmentPistonSensor.N_PX
+
+    property pixel_scale:
+        def __get__(self):
+            return self._c_segmentPistonSensor.pixel_scale*2

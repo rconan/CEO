@@ -1,4 +1,4 @@
-% -*- mode: Noweb; noweb-code-mode: python-mode -*-
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
 @
 [[aaStats]] contains a structure and the routines to compute the covariance matrix of the angle--of--arrival.
 \index{aaStats}
@@ -110,89 +110,6 @@ struct paStats {
 <<aaStats variance>>
 @ 
 
-\subsection{Python}
-\label{sec:python}
-
-\index{aaStats!python}
-<<aaStats.pxd>>=
-from utilities cimport cuFloatArray
-from atmosphere cimport atmosphere, AtmosphereAbstract
-from source cimport source, Source
-# aaStats
-cdef extern from "aaStats.h":
-    cdef cppclass aaStats:
-        int NU, N_SRC2
-        float *d__cov
-        void setup(int, atmosphere *, float, source *, int)
-        void cleanup()
-# paStats
-cdef extern from "aaStats.h":
-    cdef cppclass paStats:
-        int NU2, N_SRC2
-        int *M_LAYER
-        float *d__cov
-        void setup(int, int, int , atmosphere *, float,
-                   source *, int, source *, int) 
-        void cleanup()
-<<class definitions>>
-@ 
-<<class definitions>>=
-cdef class AaStats:
-    cdef aaStats *_c_aaStats
-    cdef cuFloatArray cov
-cdef class PaStats:
-    cdef paStats *_c_paStats
-    cdef cuFloatArray cov
-@
-\index{aaStats!python!AaStats}
-<<aaStats.pyx>>=
-# aaStats
-cdef class AaStats:
-    """
-    Slopes covariance matrix class
-
-    Parameters
-    ----------
-    N_SIDE_LENSLET : int
-        The size of the lenslet array
-    atm : Atmosphere
-        The atmosphere model
-    lenslet pitch : float
-        The lenslet array pitch
-    src : Source
-        The guide stars
-    """
-
-    def __cinit__(self, int N_SIDE_LENSLET, AtmosphereAbstract atm, float lenslet_pitch, Source src):
-        self._c_aaStats = new aaStats()
-        self._c_aaStats.setup(N_SIDE_LENSLET, atm._c_atmosphere, lenslet_pitch, 
-                              src._c_source, src._c_source.N_SRC)
-        self.cov = cuFloatArray(shape=(self._c_aaStats.N_SRC2*4*self._c_aaStats.NU,self._c_aaStats.NU))
-        self.cov._c_gpu.dev_data = self._c_aaStats.d__cov
-    def __dealloc__(self):
-        self._c_aaStats.cleanup()
-@
-\index{aaStats!python!PaStats}
-<<aaStats.pyx>>=
-# paStats
-cdef class PaStats:
-    """
-    Phase/Slope covariance matrix class
-    """
-
-    def __cinit__(self, int M, int N, int osf, 
-                  AtmosphereAbstract atm, float lenslet_pitch,
-                  Source phase_src, Source slopes_src):
-        self._c_paStats = new paStats()
-        self._c_paStats.setup(M, N, osf, atm._c_atmosphere, lenslet_pitch,
-                              phase_src._c_source, phase_src._c_source.N_SRC,
-                              slopes_src._c_source, slopes_src._c_source.N_SRC )
-        self.cov = cuFloatArray(shape=(self._c_paStats.N_SRC2*2*self._c_paStats.NU2,1))
-        self.cov._c_gpu.dev_data = self._c_paStats.d__cov
-
-    def __dealloc__(self):
-        self._c_paStats.cleanup() 
-@
 \section{The theory}
 
 Shack--Hartmann WFS centroids are a measure of the spatial derivatives of the wavefront averaged on each subaperture.

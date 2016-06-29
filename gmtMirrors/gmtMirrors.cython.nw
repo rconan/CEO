@@ -1,0 +1,721 @@
+% -*- mode: Noweb; noweb-code-mode: python-mode -*-
+
+<<gmtMirrors.pxd>>=
+from numpy cimport ndarray
+from utilities cimport rtd, vector, cuFloatArray, cuDoubleArray
+from rayTracing cimport coordinate_system, zernikeS, ZernikeS, Coordinate_system, Coordinates
+from source cimport Source, bundle, Bundle
+cdef extern from "gmtMirrors.h":
+<<gmtMirrors.pxd contents>>
+<<class definitions>>
+@
+
+\subsubsection{GMT mirrors}
+\label{sec:gmt-mirrors}
+
+\index{gmtMirrors!python!GmtMirrors}
+
+<<gmtMirrors.pxd contents>>=
+    cdef cppclass gmt_m1:
+        void test_ray_tracing()
+        <<python GMT M12 functions>>
+        void preset(bundle *, rtd )
+        void track(float *, float *, int, int)
+@  where
+<<python GMT M12 functions>>=
+int M_ID
+rtd D_assembly, D_full, D_clear, L, conic_c, conic_k
+coordinate_system aperture_CS
+coordinate_system conic_CS
+coordinate_system rigid_body_CS
+coordinate_system motion_CS
+coordinate_system TT_CS
+void setup(float , int )
+void setup(float , int , int)
+void setup(float , int, zernikeS *)
+void setup(float , int, zernikeS *, int)
+void cleanup()
+void update(vector , vector ,int )
+void reset()
+void trace(bundle *)
+void blocking(bundle *)
+void global_tiptilt(float , float )
+void remove(int *seg_ID, int N_ID)
+void keep(int *seg_ID, int N_ID)
+@
+<<class definition>>=
+cdef class GmtMirrors:
+    cdef:
+        readonly float D, D_px, focal_plane_distance, focal_plane_radius
+        readonly GMT_M1 M1
+        readonly GMT_M2 M2
+@
+<<gmtMirrors.pyx>>=
+cdef class GmtMirrors:
+    """
+    A class container from GMT_M1 and GMT_M2 classes
+
+    Parameters
+    ----------
+    D : float
+        The size of the pupil plane in meter
+    D_px : int
+        The size of the pupil plane in pixel
+    M1_radial_order : int, optionnal
+        The largest radial order of the Zernike polynomials on M1 segments, default to 0
+    M2_radial_order : int, optionnal
+        The largest radial order of the Zernike polynomials on M2 segments, default to 0
+
+    Attributes
+    ----------
+    D : float
+        The size of the pupil plane in meter
+    D_px : int
+        The size of the pupil plane in pixel
+    M1 : GMT_M1
+        The GMT M1 CEO class
+    M2 : GMT_M2
+        The GMT M2 CEO class
+    sphere_radius : float
+        The curvature radius of the ray tracing reference sphere
+
+    See also
+    --------
+    GMT_M1 : the class for GMT M1 model
+    GMT_M2 : the class for GMT M2 model
+    Source : a class for astronomical sources
+    cuFloatArray : an interface class between GPU host and device data for floats
+
+    Examples
+    --------
+    >>> import ceo
+
+    The mandatory parameters are the size of the pupil plane in meter or in pixel
+
+    >>> gmt = ceo.GMT_MX(25.5,256)
+
+    If more that one source (lets say 3) is going to be propagated through the telescope:
+
+    >>> gmt = ceo.GMT_MX(25.5,256, N_SRC=3)
+
+    A combination of Zernike polynomials can be applied to M1 and M2 segments by specifying the largest radial order on each mirror
+
+    >>> gmt = ceo.GMT_MX(25.5,256, M1_radial_order=8, M2_radial_order=14)
+
+    A source is propagated (geometrically) through the telescope with the following procedure:
+
+    >>> src = ceo.Source("R",rays_box_size=25.5,rays_box_sampling=256,rays_origin=[0.0,0.0,25])
+    >>> gmt.propagate(src)
+
+    and the wavefront phase is retrieved either as a 2D map cuFloatArray object with
+
+    >>> gpu_ps2d = src.phase()
+
+    or as a 1D vector with
+
+    >>> gpu_ps1d = src.wavefront.phase()
+    """
+    def __init__(self, float D, float D_px,
+                 int M1_radial_order=0, int M2_radial_order=0):
+        self.D = D
+        self.D_px = D_px
+        self.M1 = GMT_M1(D, D_px, radial_order=M1_radial_order)
+        self.M2 = GMT_M2(D, D_px, radial_order=M2_radial_order)
+        self.focal_plane_distance = -5.830
+        self.focal_plane_radius   =  2.197173
+
+    def __getitem__(self,key):
+        if key=="M1":
+            return self.M1
+        elif key=="M2":
+            return self.M2
+        else:
+            raise KeyError("Available keys are: M1 or M2")
+
+    def propagate(self,Source src,where_to="exit pupil",M2_is_a_stop=True):
+        """
+        Propagate the Source object to the pupil plane conjugated to M1
+
+        Parameters
+        ----------
+        src : Source
+            The Source object
+        where_to: char, optional
+            Either "exit pupil" or "focal plane"; default: "exit pupil"
+        M2_is_a_stop: boolean, optional
+            Set if M2 acts also a stop; default: True
+        """
+        #src.reset()
+        if M2_is_a_stop:
+            self.M2.blocking(src.rays)
+        self.M1.trace(src.rays)
+        self.M2.trace(src.rays)
+#        src.sphere_distance
+#        src.rays.to_sphere(self.sphere_radius,sphere_distance = src.sphere_distance)
+        if where_to=="exit pupil":
+            src.rays.to_sphere(focal_plane_distance=self.focal_plane_distance,
+                               focal_plane_radius=self.focal_plane_radius)
+            src.opd2phase()
+        if where_to=="focal plane":
+            src.rays.to_z_plane(self.focal_plane_distance)
+
+    def reset(self):
+        """
+        Reset M1 and M2 mirror segments to their original locations and shapes
+        """
+        self.M1.motion_CS.reset()
+        self.M1.zernike.reset()
+        self.M2.motion_CS.reset()
+        self.M2.zernike.reset()
+
+    def dump_log(self, bytes filename):
+        """
+        Writes the M1 and M2 segment commands log to a file
+
+        Parameters
+        ----------
+        filename : bytes
+            The name of the file
+        """
+        np.savez(filename,
+                 M1_rigid_body = self.M1.motion_CS.data_log,
+                 M1_zernike    = self.M1.zernike.data_log,
+                 M2_rigid_body = self.M2.motion_CS.data_log,
+                 M2_zernike    = self.M2.zernike.data_log)
+
+    def segmentsWavefrontGradient(self, Source src):
+        """
+        Computes the gradient of the phase of the wavefront on each segment
+
+        Parameters
+        ----------
+        src : Source
+            The Source object
+
+        Returns
+        -------
+        cuFloatArray
+            The wavefront gradient average in an array of size [N_SRCx14,1]
+        """
+        cdef cuFloatArray sxy
+        sxy = cuFloatArray( host_data=np.zeros((7*src.N_SRC*2,1) ) )
+        src._c_source.wavefront.segments_gradient_average(sxy._c_gpu.dev_data,
+                                                          sxy._c_gpu.dev_data+7,
+                                                          self.D,
+                                                          src._c_source.rays.d__piston_mask)
+        return sxy
+@
+\subsubsection{GMT M1}
+\label{sec:gmt-m1-1}
+
+\index{gmtMirrors!python!GMT\_M1}
+<<class definitions>>=
+cdef class GMT_M1:
+    cdef:
+        gmt_m1 *_c_gmt_m12
+    <<GMT M12 class properties>>
+@
+<<gmtMirrors.pyx>>=
+# GMT M1
+cdef class GMT_M1:
+    <<GMT M12 docstring>>
+
+    def __cinit__(self, float D, int D_px, int radial_order=0, int N_SRC=1):
+        self._c_gmt_m12 = new gmt_m1()
+        <<GMT M12 constructor>>
+
+    <<GMT M12 methods>>
+
+    def test(self):
+        self._c_gmt_m12.test_ray_tracing();
+
+    def preset(self, Bundle rays, float margin):
+        self._c_gmt_m12.preset(rays._c_bundle, margin)
+
+    def track(self, ndarray x, ndarray y, int segId):
+
+        cdef cuFloatArray gx, gy, gz
+        gx = cuFloatArray( host_data = x )
+        gy = cuFloatArray( host_data = y )
+        self._c_gmt_m12.track(gx._c_gpu.dev_data,
+                              gy._c_gpu.dev_data,
+                              x.size, segId)
+        return gx.host(), gy.host()
+@
+<<GMT M12 constructor>>=
+self.zernike = ZernikeS(radial_order,N_SURF=7)
+self._c_gmt_m12.setup(D, D_px, <zernikeS *> self.zernike._c_zernikeS, 0)
+
+self.aperture_CS   = Coordinate_system(7)
+self.conic_CS      = Coordinate_system(7)
+self.motion_CS     = Coordinate_system(7)
+self.rigid_body_CS = Coordinate_system(7)
+self.TT_CS         = Coordinate_system(1)
+
+self.aperture_CS.init(   &(self._c_gmt_m12.aperture_CS)   )
+self.conic_CS.init(      &(self._c_gmt_m12.conic_CS)      )
+self.motion_CS.init(     &(self._c_gmt_m12.motion_CS)     )
+self.rigid_body_CS.init( &(self._c_gmt_m12.rigid_body_CS) )
+self.TT_CS.init(         &(self._c_gmt_m12.TT_CS)         )
+
+self.D = {}
+@
+<<GMT M12 methods>>=
+def __dealloc__(self):
+    self._c_gmt_m12.cleanup()
+
+def trace(self, Bundle rays):
+    """
+    Ray tracing to the mirror
+
+    Parameters
+    ----------
+    rays : Bundle
+        A ray bundle used to propagate the light
+
+    See also
+    --------
+    Bundle: a class representing a bundle of light rays used for geometric propagation
+    """
+    self._c_gmt_m12.trace(rays._c_bundle)
+
+def blocking(self, Bundle rays):
+    """
+    Makes the mirror acting as a stop
+
+    Parameters
+    ----------
+    rays : Bundle
+        A ray bundle used to propagate the light
+
+    See also
+    --------
+    Bundle: a class representing a bundle of light rays used for geometric propagation
+    """
+    self._c_gmt_m12.blocking(rays._c_bundle)
+
+def update(self, list origin=[0.0,0.0,0.0], list euler_angles=[0.0,0.0,0.0], int idx=0):
+    """
+    Updates the position of the mirror segments
+
+    Parameters
+    ----------
+    origin : list of float, optional
+        The location of a segment center; default: [0,0,0]
+    euler_angles : list of float, optional
+        The tip, tilt and clock angles of a segment; default: [0,0,0]
+    idx : int
+        The segment index from 1 to 7
+    """
+    assert idx>0 and idx<8, "The segment index must be between 1 and 7!"
+    self.motion_CS.origin[idx-1,:] = origin
+    self.motion_CS.euler_angles[idx-1,:] = euler_angles
+    self.motion_CS.update()
+
+def global_tiptilt(self, float tip, float tilt):
+    """
+    Applies a global tip--tilt to M1
+
+    Parameters
+    ----------
+    tip : float
+        The x axis angle
+    tilt : float
+        The y axis angle
+    """
+    self._c_gmt_m12.global_tiptilt(tip, tilt);
+
+def remove(self, int[:] seg_ID):
+    """
+    Remove some segments and keep the others
+
+    Parameters
+    ----------
+    seg_ID : int
+        The ID numbers of the segment to remove 
+    """
+    self._c_gmt_m12.remove(&seg_ID[0], seg_ID.size)
+
+def keep(self, int[:] seg_ID):
+    """
+    Keep some segments and remove the others
+
+    Parameters
+    ----------
+    seg_ID : int
+        The ID numbers of the segment to keep 
+    """
+    self._c_gmt_m12.keep(&seg_ID[0], seg_ID.size)
+
+property D_assembly:
+    def __get__(self):
+        return self._c_gmt_m12.D_assembly
+
+property D_full:
+    def __get__(self):
+        return self._c_gmt_m12.D_full
+
+property D_clear:
+    def __get__(self):
+        return self._c_gmt_m12.D_clear
+
+property L:
+    def __get__(self):
+        return self._c_gmt_m12.L
+
+property conic_c:
+    def __get__(self):
+        return self._c_gmt_m12.conic_c
+
+property conic_k:
+    def __get__(self):
+        return self._c_gmt_m12.conic_k
+
+property M_ID:
+    def __get__(self):
+        return self._c_gmt_m12.M_ID
+@ with
+<<GMT M12 docstring>>=
+"""
+A class to represent GMT M1 or M2 segmented mirror
+
+Parameters
+----------
+D : float
+    The size in meter of the pupil plane (must be equal or larger than the telescope diameter)
+D_px : float
+    The size in pxixel of the pupil plane
+radial_order : int, optional
+    The radial order of the last Zernike polynomials, default to 0
+
+Attributes
+----------
+D_assembly : rtd
+    The mirror assembly diameter
+D_full : rtd
+    The segment full aperture diameter
+D_clear : rtd
+    The segment clear aperture diameter
+L : rtd
+    The distance from the optical axis to the center of the tilted peripheral segments
+conic_c : rtd
+    The inverse of the mirror radius of curvature
+conic_k : rtd
+    The conic parametert
+M_ID : int
+    The mirror ID #
+zernike : ZernikeS
+    The figure of the segments as Zernike surface object
+aperture_CS : Coordinate_system
+    The segment aperture coordinate system
+conic_CS : Coordinate_system
+    The segment conic coordinate system
+motion_CS : Coordinate_system
+    The segment motion coordinate system
+rigid_body_CS : Coordinate_system
+    The segment rigid body coordinate system
+TT_CS : Coordinate_system
+    The mirror global tip-tilt coordinate system
+
+Examples
+--------
+>>> import ceo
+>>> M1 = ceo.GMT_M1(25.5,101)
+
+With multiple sources:
+
+>>> M2 = ceo.GMT_M2(25.5,101,N_SRC=4)
+
+With Zernike modes
+
+>>> M1 = ceo.GMT_M1(25.5,101,radial_order=4)
+
+An M1 segment (#2) is displaced in x of 2 micron and tilted in y of 50mas with
+
+>>> import math
+>>> theta = 50e-3*math.pi/180/3600
+>>> M1.update(origin=[2e-6,0,0],euler_angles=[0,theta,0],idx=2)
+
+A global tip-tilt of M1 is achieved with
+
+>>> M1.global_tiptilt(theta,-theta)
+
+M2 pointing neutral and coma neutral tip-tilt are realized with
+
+>>> M2.pointing_neutral(theta,-theta)
+>>> M2.coma_neutral(theta,-theta)
+"""
+@ and with
+<<GMT M12 class properties>>=
+cdef:
+    public ZernikeS zernike
+    public Coordinate_system aperture_CS
+    public Coordinate_system conic_CS
+    public Coordinate_system rigid_body_CS
+    public Coordinate_system motion_CS
+    public Coordinate_system TT_CS
+    public dict D
+@
+
+\subsubsection{GMT M2}
+\label{sec:gmt-m2-1}
+
+\index{gmtMirrors!python!GMT\_M2}
+<<gmtMirrors.pxd contents>>=
+    cdef cppclass gmt_m2:
+        <<python GMT M12 functions>>
+        void pointing_neutral(float, float)
+        void coma_neutral(float, float)
+@
+<<gmtMirrors.pyx>>=
+# GMT M2
+cdef class GMT_M2:
+    <<GMT M12 docstring>>
+    cdef gmt_m2 *_c_gmt_m12
+    <<GMT M12 class properties>>
+
+    def __cinit__(self, float D, int D_px, radial_order=0, int N_SRC=1):
+        self._c_gmt_m12 = new gmt_m2()
+        <<GMT M12 constructor>>
+
+    <<GMT M12 methods>>
+
+    def pointing_neutral(self, float tip, float tilt):
+        """
+        Applies a pointing neutral global tip--tilt to M2
+
+        Parameters
+        ----------
+        tip : float
+            The x axis angle
+        tilt : float
+            The y axis angle
+        """
+        self._c_gmt_m12.pointing_neutral(tip, tilt);
+
+    def coma_neutral(self, float tip, float tilt):
+        """
+        Applies a coma neutral global tip--tilt to M2
+
+        Parameters
+        ----------
+        tip : float
+            The x axis angle
+        tilt : float
+            The y axis angle
+        """
+        self._c_gmt_m12.coma_neutral(tip, tilt);
+@
+\subsubsection{Stereoscopic edge sensors}
+\label{sec:ster-edge-sens}
+
+\index{gmtMirrors!python!stereoscopic\_edge\_sensors}
+<<gmtMirrors.pxd contents>>=
+    cdef cppclass stereoscopic_edge_sensors:
+        int N, N_DATA
+        vector *v0
+        vector *dv0
+        vector *v
+        vector *dv
+        void setup(gmt_m1 *)
+        void cleanup()
+        void data()
+@
+<<class definitions>>=
+cdef class StereoscopicEdgeSensors:
+    cdef:
+        stereoscopic_edge_sensors *_c_stereoscopic_edge_sensors
+        public Coordinates v0, v, dv0, dv
+@
+<<gmtMirrors.pyx>>=
+cdef class StereoscopicEdgeSensors:
+    """
+    A class for the GMT stereoscopic edge sensors.
+    The stereoscopic model measures the coordinates of the 3-dimension vector joining a pair of edge sensors.
+
+    Parameters
+    ----------
+    mirror : GMT_M1
+        The GMT M1 mirror
+
+    Attributes
+    ----------
+    v0 : Coordinates
+        The coordinates of the edge sensors for a perfectly aligned telescope
+    v : Coordinates
+        The coordinates of the edge sensors for a disturbed telescope
+    dv0 : Coordinates
+        The coordinates of the vector joining a pair of edge sensors for a perfectly aligned telescope
+    dv : Coordinates
+        The coordinates of the vector joining a pair of edge sensors for a disturbed telescope
+
+    See also
+    --------
+    Coordinates : an interface between an array of device vectors and an array of host coordinates
+    """
+    def __cinit__(self,GMT_M1 mirror):
+        self._c_stereoscopic_edge_sensors = new stereoscopic_edge_sensors()
+        self._c_stereoscopic_edge_sensors.setup(mirror._c_gmt_m12)
+        self.v0    = Coordinates((self._c_stereoscopic_edge_sensors.N,3))
+        self.v0.v  = self._c_stereoscopic_edge_sensors.v0
+        self.dv0   = Coordinates((self._c_stereoscopic_edge_sensors.N_DATA,3))
+        self.dv0.v = self._c_stereoscopic_edge_sensors.dv0
+        self.v     = Coordinates((self._c_stereoscopic_edge_sensors.N,3))
+        self.v.v   = self._c_stereoscopic_edge_sensors.v
+        self.dv   = Coordinates((self._c_stereoscopic_edge_sensors.N_DATA,3))
+        self.dv.v = self._c_stereoscopic_edge_sensors.dv
+
+    def __dealloc__(self):
+        self._c_stereoscopic_edge_sensors.cleanup()
+
+    def data(self):
+        """
+        Computes the edge sensor measurements
+        """
+        self._c_stereoscopic_edge_sensors.data()
+@
+\subsubsection{Lateral edge sensors}
+\label{sec:lateral-edge-sensor}
+
+\index{gmtMirrors!python!lateral\_edge\_sensors}
+<<gmtMirrors.pxd contents>>=
+    cdef cppclass lateral_edge_sensors:
+        int N_DATA
+        vector *A0
+        vector *A
+        vector *B0
+        vector *B
+        vector *k_cam
+        vector *k_laser
+        rtd *d__x
+        rtd *d__y
+        rtd *d__d
+        void setup(gmt_m1 *)
+        void setup(gmt_m1 *, rtd)
+        void cleanup()
+        void data()
+@
+<<class definitions>>=
+cdef class LateralEdgeSensors:
+    cdef:
+        lateral_edge_sensors *_c_lateral_edge_sensors
+        public Coordinates A, A0, B, B0, k_cam, k_laser
+        public cuDoubleArray x, y
+@
+<<gmtMirrors.pyx>>=
+cdef class LateralEdgeSensors:
+    """
+    A class for the GMT lateral displacement edge sensors.
+    It applies to the case of a laser aiming at a camera.
+    The measurements are the laser spot location within the frame of the camera.
+
+    Parameters
+    ----------
+    mirror : GMT_M1
+        The GMT M1 mirror
+
+    Attributes
+    ----------
+    A : Coordinates
+        The laser location coordinates in the motion coordinate system of the segment they are attached to.
+    B : Coordinates
+        The camera location coordinates in the rigid body coordinate system of the segment they are attached to.
+    B0 : Coordinates
+        The camera location coordinates in the global coordinate system of the segment they are attached to.
+    k_cam : Coordinates
+        The vector joining a pair of laser/camera in the rigid body coordinate system of the segment that the camera is attached to in the case of a perfectly aligned telescope.
+    k_laser : Coordinates
+        The vector joining a pair of laser/camera in the rigid body coordinate system of the segment that the camera is attached to in the case of a disturbed telescope.
+    x : cuDoubleArray
+        The x-axis coordinates of the laser spot
+    y : cuDoubleArray
+        The y-axis coordinates of the laser spot
+
+    See also
+    --------
+    Coordinates : an interface between an array of device vectors and an array of host coordinates
+    cuDoubleArray : an interface class between GPU host and device data for doubles
+    """
+    def __cinit__(self,*args,**kwargs):
+        self._c_lateral_edge_sensors = new lateral_edge_sensors()
+
+    def __init__(self,GMT_M1 mirror,*args,**kwargs):
+        if len(args)>0:
+            self._c_lateral_edge_sensors.setup(mirror._c_gmt_m12,args[0])
+        else:
+            self._c_lateral_edge_sensors.setup(mirror._c_gmt_m12)
+        self.A = Coordinates((self._c_lateral_edge_sensors.N_DATA,3))
+        self.A.v = self._c_lateral_edge_sensors.A
+        self.A0 = Coordinates((self._c_lateral_edge_sensors.N_DATA,3))
+        self.A0.v = self._c_lateral_edge_sensors.A0
+        self.B0 = Coordinates((self._c_lateral_edge_sensors.N_DATA,3))
+        self.B0.v = self._c_lateral_edge_sensors.B0
+        self.B = Coordinates((self._c_lateral_edge_sensors.N_DATA,3))
+        self.B.v = self._c_lateral_edge_sensors.B
+        self.k_cam = Coordinates((self._c_lateral_edge_sensors.N_DATA,3))
+        self.k_cam.v = self._c_lateral_edge_sensors.k_cam
+        self.k_laser = Coordinates((self._c_lateral_edge_sensors.N_DATA,3))
+        self.k_laser.v = self._c_lateral_edge_sensors.k_laser
+        self.x = cuDoubleArray(shape=(self._c_lateral_edge_sensors.N_DATA,1),dev_malloc=False)
+        self.x._c_gpu.dev_data = self._c_lateral_edge_sensors.d__x
+        self.y = cuDoubleArray(shape=(self._c_lateral_edge_sensors.N_DATA,1),dev_malloc=False)
+        self.y._c_gpu.dev_data = self._c_lateral_edge_sensors.d__y
+
+    def __dealloc__(self):
+        self._c_lateral_edge_sensors.cleanup()
+
+    def data(self):
+        """
+        Computes the edge sensor measurements
+        """
+        self._c_lateral_edge_sensors.data()
+@
+\subsubsection{Distance edge sensors}
+\label{sec:dist-edge-sens}
+
+\index{gmtMirrors!python!distance\_edge\_sensors}
+<<class definitions>>=
+cdef class DistanceEdgeSensors(LateralEdgeSensors):
+    cdef:
+        cuDoubleArray _d_
+        readonly double[:,::1] d0
+@
+<<gmtMirrors.pyx>>=
+import numpy as np
+cdef class DistanceEdgeSensors(LateralEdgeSensors):
+    """
+    A class for the GMT distance edge sensors.
+    It applies to the case of a laser aiming at a retroreflector.
+    The measurements are the distances between the laser spot and the retroreflector.
+
+    Parameters
+    ----------
+    mirror : GMT_M1
+        The GMT M1 mirror
+    height : rtd
+        The laser and retroreflector are placed at a distance of +/- height from the z=0 plane of the segments
+
+    Attributes
+    ----------
+    d : cuDoubleArray
+        The distance between the laser and the retroreflector
+
+    See also
+    --------
+    cuDoubleArray : an interface class between GPU host and device data for doubles
+    """
+    def __init__(self,GMT_M1 mirror, rtd height=0.25):
+        super().__init__(mirror, height)
+        self._d_ = cuDoubleArray(shape=(self._c_lateral_edge_sensors.N_DATA,1),dev_malloc=False)
+        self._d_._c_gpu.dev_data = self._c_lateral_edge_sensors.d__d
+        self.d0 = np.zeros((self._c_lateral_edge_sensors.N_DATA,1))
+
+    def calibration(self):
+        self.data()
+        self.d0 = self._d_.host()
+
+    property d:
+        def __get__(self):
+            self.data()
+            return self._d_.host()-self.d0
+
