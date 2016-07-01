@@ -691,7 +691,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
   rtd x, y, z, x1, y1, s0, k, l, m;
   rtd s1, S, K, L ,M, dSds;
   rtd G2, a;
-  vector d__origin, xyz, klm, xyz_GS, klm_GS;
+  vector d__origin, xyz, klm, xyz_GS, klm_GS, Snormal;
 
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = threadIdx.y;
@@ -848,11 +848,29 @@ forward_transform_centered(&klm, &klm_GS,
 	  }
 @
 The intersection with and reflection from the surface is done with
-<<from motion CS to conic intersection and back to global CS>>=
+<<from motion CS to conic intersection and back to global CS (opt-out)>>=
 <<from motion CS to conic CS>>
 <<GMT intersection with aspheric>>
 <<reflection from the surface>>
 <<from conic CS to motion CS>>
+<<from motion CS to rigid body CS>>
+<<from rigid body CS to global CS>>
+@ 
+<<from motion CS to conic intersection and back to global CS>>=
+klm.x = klm_GS.x;
+klm.y =	klm_GS.y;
+klm.z =	klm_GS.z;
+xyz.x = xyz_GS.x;
+xyz.y =	xyz_GS.y;
+xyz.z =	xyz_GS.z;
+<<GMT intersection with aspheric>>
+<<reflection from the surface>>
+klm_GS.x = klm.x;
+klm_GS.y = klm.y;
+klm_GS.z = klm.z;
+xyz_GS.x = xyz.x;
+xyz_GS.y = xyz.y;
+xyz_GS.z = xyz.z;
 <<from motion CS to rigid body CS>>
 <<from rigid body CS to global CS>>
 @
@@ -871,6 +889,15 @@ a *= -2.0/G2;
 klm.x += a*K;
 klm.y += a*L;
 klm.z += a*M;
+@
+<<reflection from the surface (new)>>=
+G2 = K*K + L*L + M*M;
+a  = klm_GS.x*K + klm_GS.y*L + klm_GS.z*M;x
+
+a *= -2.0/G2;
+klm_GS.x += a*K;
+klm_GS.y += a*L;
+klm_GS.z += a*M;
 @
 <<from conic CS to motion CS>>=
  // CONIC <<<
@@ -950,41 +977,76 @@ for (j=0; j<SNELL_N_ITERATION; j++)
     }
   s0 = s1;
 }
+@ 
+The aspheric surface is the sum of a conic and a Zernike surface.
+The conic surface is defined in the conic CS whereas the Zernike surface is defined in the motion CS. 
+The coordinates are transformed into the conic CS where the surface height is computed:
+<<aspheric surface (conic CS)>>=
+// CONIC >>>
+backward_transform_centered(&xyz, &xyz,
+			    d__conic_R+iCoordSys*9);
+S = conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
 @
+The coordinates are transformed back into the motion CS where the Zernike height is added to the conic height:
+<<aspheric surface (motion CS)>>=
+// CONIC <<<
+forward_transform_centered(&xyz, &xyz,
+                           d__conic_R+iCoordSys*9);
+S += zernike_surface(&xyz, &d__origin, max_n,
+                     d__a + iCoordSys*n_mode, R); 
+@
+Both above oprations are combined together with: 
 <<aspheric surface>>=
-S = aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n,
-                     d__a + iCoordSys*n_mode, R);
+<<aspheric surface (conic CS)>>
+<<aspheric surface (motion CS)>>
 @
+  The surface derivatives follow the same procedure than the surface but before adding the Zernike derivatives to the conic derivatives, the conic gradient vector is tranformed back into the motion CS:
 <<aspheric surface derivatives>>=
-K = partial_x_aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n,
+// CONIC >>>
+backward_transform_centered(&xyz, &xyz,
+			    d__conic_R+iCoordSys*9);
+K = partial_x_conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
+L = partial_y_conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
+M = partial_z_conic_surface();
+// CONIC <<<
+forward_transform_centered(&xyz, &xyz,
+                           d__conic_R+iCoordSys*9);
+Snormal.x = K;
+Snormal.y = L;
+Snormal.z = M;
+forward_transform_centered(&Snormal, &Snormal,
+			   d__conic_R+iCoordSys*9);
+K = Snormal.x;
+L = Snormal.y;
+M = Snormal.z;
+K += partial_x_zernike_surface(&xyz, &d__origin, max_n,
                                d__cx + iCoordSys*b_n_mode, R);
-L = partial_y_aspheric_surface(&xyz, &d__origin, Fk, Fc, max_n,
+L += partial_y_zernike_surface(&xyz, &d__origin, max_n,
                                d__cy + iCoordSys*b_n_mode, R);
-M = partial_z_aspheric_surface();
+M += partial_z_zernike_surface();
 @
+The surface and the surface derivatives are computed together with:
 <<aspheric surface and derivatives (3 steps)>>=
-<<aspheric surface>>
-<<aspheric surface derivatives>>
+<<aspheric surface (conic CS)>>
+K = partial_x_conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
+L = partial_y_conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
+M = partial_z_conic_surface();
+<<aspheric surface (motion CS)>>
+Snormal.x = K;
+Snormal.y = L;
+Snormal.z = M;
+forward_transform_centered(&Snormal, &Snormal,
+			   d__conic_R+iCoordSys*9);
+K = Snormal.x;
+L = Snormal.y;
+M = Snormal.z;
+K += partial_x_zernike_surface(&xyz, &d__origin, max_n,
+                               d__cx + iCoordSys*b_n_mode, R);
+L += partial_y_zernike_surface(&xyz, &d__origin, max_n,
+                               d__cy + iCoordSys*b_n_mode, R);
+M += partial_z_zernike_surface();
 @
-<<aspheric surface and derivatives (1 step, initialization)>>=
-rtd red,rsqrt_red;
-<<aspheric surface and derivatives (1 step)>>=
-zernike_surface_and_partials(&S, &K, &L,
-			     xyz.mag(R), xyz.angle(), max_n,
-			     d__a + iCoordSys*n_mode,
-			     d__cx + iCoordSys*n_mode,
-			     d__cy + iCoordSys*n_mode);
-S = xyz.z - d__origin.z - S;
-K = -K;
-L = -L;
-M = 1.0;
-rho2 = Fc*xyz.rho2_shift(d__origin.x,d__origin.y);
-red = 1 - Fk*Fc*rho2;
-rsqrt_red = rsqrt(red);
-S -= rho2/( 1 + sqrt(red) );
-K -= (xyz.x - d__origin.x)*Fc*rsqrt_red;
-L -= (xyz.y - d__origin.y)*Fc*rsqrt_red;
-@
+This is the algorithm to compute the coordinates of the intersection of a ray with a conic surface: 
 <<GMT intersection with conic>>=
 k  = klm.x;
 l  = klm.y;
@@ -1025,6 +1087,56 @@ S = conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
 K = partial_x_conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
 L = partial_y_conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
 M = partial_z_conic_surface();
+@
+<<GMT intersection with zernike>>=
+k  = klm_GS.x;
+l  = klm_GS.y;
+m  = klm_GS.z;
+//if (m==0) { return; }
+//s0 = -xyz_GS.z/m;
+x1 = xyz_GS.x;// + k*s0;
+y1 = xyz_GS.y;// + l*s0;
+z1 = xyz_GS.z;
+//d__ray[ij].optical_path_length += s0;
+s0 = s1 = 0;
+for (j=0; j<SNELL_N_ITERATION; j++)
+{
+  xyz_GS.x = x1 + k*s0;
+  xyz_GS.y = y1 + l*s0;
+  xyz_GS.z = z1 + m*s0;
+  <<zernike surface>>
+  <<zernike surface derivatives>>
+  dSds = K*k + L*l + M*m;
+  if (dSds==0)
+    s1 = s0;
+  else
+    s1 = s0 - S/dSds;
+  if (abs(s1-s0)<TOL)
+    {
+      xyz_GS.x = x1 + k*s1;
+      xyz_GS.y = y1 + l*s1;
+      xyz_GS.z = z1 + m*s1;
+      <<zernike surface derivatives>>
+      K += Snormal.x;
+      L += Snormal.y;
+      M += Snormal.z;
+      d__ray[ij].optical_path_length += s1;
+      d__ray[ij].n_iteration = j;
+      break;
+    }
+  s0 = s1;
+}
+@
+<<zernike surface>>=
+S = zernike_surface(&xyz_GS, &d__origin, max_n,
+                     d__a + iCoordSys*n_mode, R); 
+@
+<<zernike surface derivatives>>=
+K = partial_x_zernike_surface(&xyz_GS, &d__origin, max_n,
+                               d__cx + iCoordSys*b_n_mode, R);
+L = partial_y_zernike_surface(&xyz_GS, &d__origin, max_n,
+                               d__cy + iCoordSys*b_n_mode, R);
+M = partial_z_zernike_surface();
 @
 \subsection{Segment selection}
 \label{sec:segment-selection}
