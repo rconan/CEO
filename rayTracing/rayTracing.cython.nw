@@ -1,5 +1,8 @@
 % -*- mode: Noweb; noweb-code-mode: python-mode -*-
 
+\section{PXD file}
+\label{sec:pxd-file}
+
 <<rayTracing.pxd>>=
 cimport numpy as np
 from utilities cimport rtd, vector, cuFloatArray, cuDoubleArray
@@ -8,13 +11,13 @@ cdef extern from "rayTracing.h":
 <<rayTracing.pxd contents>>
 <<class definitions>>
 @
-<<rayTracing.pyx>>=
-import numpy as np
-@
-\subsubsection{Coordinate system}
+\section{Coordinate system}
 \label{sec:coordinate-system-1}
 
 \index{rayTracing!python!Coordinate\_system}
+
+\subsection{PXD file}
+\label{sec:pxd-file-1}
 
 <<rayTracing.pxd contents>>=
     cdef cppclass coordinate_system:
@@ -23,6 +26,10 @@ import numpy as np
         rtd *R
         char *tag
         void update()
+@
+\subsubsection{Class definitions}
+\label{sec:class-definitions}
+
 <<class definitions>>=
 cimport numpy as np
 cdef class Quaternion:
@@ -46,7 +53,11 @@ cdef class Coordinate_system:
 double[:,:,:] __data_log__
 int __log__, __log_idx__
 @
+\subsection{PYX file}
+\label{sec:pyx-file}
+
 <<rayTracing.pyx>>=
+import numpy as np
 # coordinate_system
 cdef class Coordinate_system:
     """
@@ -135,7 +146,7 @@ property data_log:
     def __get__(self):
         return np.asarray(self.__data_log__)
 @
-\paragraph{Coordinates}
+\subsubsection{Coordinates}
 \label{sec:coordinates}
 
 \index{rayTracing!python!Coordinates}
@@ -208,7 +219,7 @@ cdef class Coordinates:
         def __get__(self):
             return self.data.size
 @
-\paragraph{Quaternions}
+\subsubsection{Quaternions}
 \label{sec:quaternions}
 
 \index{rayTracing!python!Quaternions}
@@ -337,10 +348,14 @@ cdef class Quaternion:
             "\nqy:" + np.array_str(self.qy,precision=3,suppress_small=True) + \
             "\nqz:" + np.array_str(self.qz,precision=3,suppress_small=True)
 @
-\subsubsection{Conic surface}
+\section{Conic surface}
 \label{sec:surface-1}
 
 \index{rayTracing!python!Conic}
+
+\subsection{PXD file}
+\label{sec:pxd-file-2}
+
 <<rayTracing.pxd contents>>=
     cdef cppclass conic:
         rtd refractive_index, c, k
@@ -350,7 +365,10 @@ cdef class Quaternion:
         void setup(rtd , rtd , vector , vector , vector, rtd, int, rtd *)
         void cleanup()
         void trace(bundle *)
-@ 
+@
+\subsubsection{Class definition}
+\label{sec:class-definition}
+
 <<class definitions>>=
 # conic
 cdef class Conic:
@@ -362,6 +380,9 @@ cdef class Conic:
         public bint tilted_surface
         public dict material
 @
+\subsection{PYX file}
+\label{sec:pyx-file-3}
+
 <<rayTracing.pyx>>=
 from cython cimport boundscheck, wraparound
 from refractors import glass_index
@@ -469,10 +490,13 @@ cdef class Conic:
                                None,None,
                                self.material['c'])
 @
-\subsubsection{Aperture}
+\section{Aperture}
 \label{sec:aperture-1}
 
 \index{rayTracing!python!Aperture}
+
+\subsection{PXD file}
+\label{sec:pxd-file-3}
 
 <<rayTracing.pxd contents>>=
     cdef cppclass aperture:
@@ -482,6 +506,9 @@ cdef class Conic:
         void cleanup()
         void vignetting(bundle *)
 @
+\subsection{PYX file}
+\label{sec:pyx-file-4}
+
 <<rayTracing.pyx>>=
 # aperture
 cdef class Aperture:
@@ -542,10 +569,13 @@ cdef class Aperture:
         """
         self._c_aperture.vignetting(src.rays._c_bundle)
 @
-\subsubsection{Zernike}
+\section{Zernike}
 \label{sec:zernike}
 
 \index{rayTracing!python!ZernikeS}
+
+\subsection{PXD file}
+\label{sec:pxd-file-4}
 
 <<rayTracing.pxd contents>>=
     cdef cppclass zernikeS:
@@ -563,6 +593,9 @@ cdef class Aperture:
     rtd zernike_surface(rtd , rtd , unsigned int , rtd *)
 
 @
+\subsubsection{Class definition}
+\label{sec:class-definition-1}
+
 <<class definitions>>=
 from numpy cimport ndarray
 from utilities cimport cuDoubleArray
@@ -574,6 +607,9 @@ cdef class ZernikeS:
         double [:,::1] _a_
         <<log variables>>
 @
+\subsection{PYX file}
+\label{sec:pyx-file-5}
+
 <<rayTracing.pyx>>=
 # Zernike surface
 cdef class ZernikeS:
@@ -804,13 +840,16 @@ def Zernike_Surface(rtd r, rtd o, int max_n, np.ndarray a):
         self.__data_log__ = np.zeros((self.N_SURF,self.n_mode,self.__log__), dtype=np.float64)
 <<log properties (end)>>
 @
-\subsubsection{Ray tracing routines}
+\section{Ray tracing routines}
 \label{sec:ray-tracing-routines}
 
 \index{rayTracing!python!Transform\_to\_S}
 \index{rayTracing!python!Transform\_to\_R}
 \index{rayTracing!python!Intersect}
 \index{rayTracing!python!Reflect}
+
+\subsection{PXD file}
+\label{sec:pxd-file-5}
 
 <<rayTracing.pxd contents>>=
     cdef void transform_to_S(bundle *, conic *)
@@ -822,6 +861,9 @@ def Zernike_Surface(rtd r, rtd o, int max_n, np.ndarray a):
     cdef void refract(bundle *, rtd)
     cdef void thin_lens(bundle *)
 @
+\subsection{PYX file}
+\label{sec:pyx-file-6}
+
 <<rayTracing.pyx>>=
 # ray tracing
 def Transform_to_S(Source src, Conic F):

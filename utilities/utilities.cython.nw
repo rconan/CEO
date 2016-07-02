@@ -1,5 +1,7 @@
 %-*- mode: Noweb; noweb-code-mode: python-mode -*-
 
+\section{Typedef}
+\label{sec:typedef}
 
 <<utilities.pxd>>=
 cdef extern from "utilities.h":
@@ -9,7 +11,7 @@ cdef extern from "utilities.h":
         rtd y
         rtd z
 @
-\subsubsection{JSONAbstract}
+\section{JSONAbstract}
 \label{sec:jsonabstract}
 
 \index{utilities!python!JSONAbstract}
@@ -57,11 +59,15 @@ class JSONAbstract:
     def __getitem__(self, key):
         return self.jprms[key]
 @
-\subsubsection{Stopwatch}
+\section{Stopwatch}
 \label{sec:stopwatch-1}
 
 The cython wrapper for stopwatch (Sec.~\ref{sec:stopwatch}) is:
 \index{utilities!python!StopWatch}
+
+\subsection{PXD file}
+\label{sec:pxd-file}
+
 <<utilities.pxd>>=
 ## stopwatch structure
     cdef cppclass stopwatch:
@@ -69,6 +75,9 @@ The cython wrapper for stopwatch (Sec.~\ref{sec:stopwatch}) is:
         void toc()
         void toc(float *)
 @ 
+\subsection{PYX file}
+\label{sec:pyx-file}
+
 <<utilities.pyx>>=
 ## stopwatch structure
 cdef class StopWatch:
@@ -98,11 +107,15 @@ cdef class StopWatch:
         """
         self._c_stopwatch.toc(&(self.elapsedTime))
 @
-\subsubsection{Mask}
+\section{Mask}
 \label{sec:mask}
 
 
 The cython wrapper for the mask structure (Sec.~\ref{sec:mask-structure}) is 
+
+\subsection{PXD file}
+\label{sec:pxd-file-1}
+
 <<utilities.pxd>>=
 ## mask structure
     cdef cppclass mask:
@@ -123,7 +136,9 @@ The cython wrapper for the mask structure (Sec.~\ref{sec:mask-structure}) is
         void alter(float *)
         void cleanup()
 @ 
-\index{utilities!python!MaskAbstract}
+\subsubsection{Class definition}
+\label{sec:class-definition}
+
 <<class definitions>>=
 # MaskAbstract
 cdef class MaskAbstract:
@@ -131,6 +146,15 @@ cdef class MaskAbstract:
     cdef readonly int n    
     cdef readonly cuFloatArray f
     cdef cuIntArray _piston_mask_
+@ 
+\subsection{PYX file}
+\label{sec:pyx-file-1}
+
+\subsubsection{MaskAbstract}
+\label{sec:maskabstract}
+
+\index{utilities!python!MaskAbstract}
+
 <<utilities.pyx>>=
 ## mask structure
 cdef class MaskAbstract:
@@ -194,8 +218,12 @@ cdef class MaskAbstract:
     property area:
         def __get__(self):
             return self._c_mask.area
-@ 
+@
+\subsubsection{Mask}
+\label{sec:mask-1}
+
 \index{utilities!python!Mask}
+
 <<utilities.pyx>>=
 cdef class Mask(MaskAbstract):
     """ 
@@ -238,7 +266,10 @@ cdef class Mask(MaskAbstract):
 
     def __dealloc__(self):
         self._c_mask.cleanup()
-@ 
+@
+\subsubsection{Telescope}
+\label{sec:telescope}
+
 \index{utilities!python!Telescope}
 <<utilities.pyx>>=
 cdef class Telescope(MaskAbstract):
@@ -264,7 +295,10 @@ cdef class Telescope(MaskAbstract):
 
     def __dealloc__(self):
         self._c_mask.cleanup()
-@ 
+@
+\subsubsection{GMT}
+\label{sec:gmt}
+
 \index{utilities!python!GMT}
 <<utilities.pyx>>=
 cdef class GMT(MaskAbstract):
@@ -337,16 +371,24 @@ cdef class GMT(MaskAbstract):
            return [ np.array( [(P[kk,:]*F.ravel())==k for k in range(1,8)] ) for kk in range(self._piston_mask_.shape[0])]
 @ 
 
-\subsubsection{Device to host}
+\section{Device to host}
 \label{sec:device-host}
 
-The cython interface between GPU and CPU array (Sec.~\ref{sec:dev-to-host}) is 
+The cython interface between GPU and CPU array (Sec.~\ref{sec:dev-to-host}).
+
+\subsection{PXD file}
+\label{sec:pxd-file-2}
+
 <<utilities.pxd>>=
 ## device to host
     void dev2host( float *host_data, float *dev_data, int N)
     void host2dev( float **dev_data, float *host_data, int N)
     void freedev( float **dev_data )
-@ 
+@
+\section{cu$<$Type$>$Array}
+\label{sec:cuarray}
+
+
 The cu$<$Type$>$Array class is a cython class that is a container for CUDA variables:
 <<utilities.pxd>>=
 cdef extern from "utilities.h":
@@ -360,7 +402,10 @@ cdef extern from "utilities.h":
         void dev2host()
         void host2dev()
         void reset()
-@ 
+@
+\subsection{cuFloatArray}
+\label{sec:cufloatarray}
+
 \index{utilities!python!cuFloatArray}
 <<class definitions>>=
 # cuFloatArray
@@ -496,6 +541,9 @@ Returns
 numpy array : a copy of the device data on the host
 """
 @
+\subsection{cuIntArray}
+\label{sec:cuintarray}
+
 \index{utilities!python!cuIntArray}
 <<class definitions>>=
 # cuIntArray
@@ -521,6 +569,9 @@ cdef class cuIntArray:
         self._c_gpu.host_data = <int *>self.host_data.data;
 
 @
+\subsection{cuDoubleArray}
+\label{sec:cudoublearray}
+
 \index{utilities!python!cuDoubleArray}
 <<class definitions>>=
 # cuDoubleArray
@@ -546,7 +597,7 @@ cdef class cuDoubleArray:
         self._c_gpu.host_data = <double *>self.host_data.data;
 @
 
-\subsubsection{Atmospheric dispersion}
+\section{Atmospheric dispersion}
 \label{sec:atmosph-disp-1}
 
 The cython wrapper for the atmospheric dispersion routine (Sec.~\ref{sec:atmosph-disp}) is 
@@ -574,7 +625,7 @@ cpdef double atmosphericDispersion(float wavelength, float delta_wavelength,
 				  temperature, humidity)
 @ 
 
-\subsubsection{Wavefront differentiation}
+\section{Wavefront differentiation}
 \label{sec:wavefr-diff-1}
 
 \index{utilities!python!wavefrontFiniteDifference}
@@ -622,9 +673,8 @@ cpdef wavefrontFiniteDifference(cuFloatArray sx, cuFloatArray sy, int NL,
         wavefront_finite_difference(sx._c_gpu.dev_data, sy._c_gpu.dev_data, NL, 
                                     phi._c_gpu.dev_data, n, d, M._c_mask, N_GS)
 @
-\subsubsection{Sparse matrix}
+\section{Sparse matrix}
 \label{sec:sparse-matrix-1}
-
 
 \index{utilities!python!SparseMatrix}
 <<utilities.pxd>>=
@@ -708,6 +758,13 @@ cdef class SparseMatrix:
 			       self.csrColIndH.host().ravel(),
 			       self.csrRowPtrH.host().ravel()),
                               shape=(self.n_row,self.n_col))
+@
+\subsection{SparseGradient}
+\label{sec:sparsegradient}
+
+\index{utilities!python!SparseGradient}
+
+<<utilities.pyx>>=
 ## SparseGradient
 cdef class SparseGradient(SparseMatrix):
 

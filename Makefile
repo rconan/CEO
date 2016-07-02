@@ -35,7 +35,7 @@ cython: makefile
 	for i in $(CYTHON_DIR); do (make -C $$i cysrc);echo -e "\n"; done
 	for i in $(CYTHON_DIR); do (make -C $$i cylib);echo -e "\n"; done
 
-doc: tex
+doc: tex cytex
 	make -C doc all
 
 pydoc: cython
