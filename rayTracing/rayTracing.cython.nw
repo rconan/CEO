@@ -994,7 +994,9 @@ def Refract(Source src, rtd mu):
 
 \index{rayTracing!python!Trace}
 
-<<rayTracing.pyx>>=
+<<rayTracing.pyx (opt-out)>>=
+from ceo cimport GMT_M1, GMT_M2, GmtMirrors
+from GMTLIB import GMT_MX
 def Trace(Source src, list S, bint global_CS=True):
     cdef: 
         int k, n
@@ -1002,25 +1004,35 @@ def Trace(Source src, list S, bint global_CS=True):
         list xyz
         Conic _S_
     n = len(S)
+    src.reset()
     xyz = [ src.rays.coordinates.host() ]
     for k in range(n):
         #print 'Material refractive index: %f'%src.rays.refractive_index
-        _S_ = S[k]
-        Transform_to_S(src,_S_)
-        if not _S_.coord_break: 
-            Intersect(src,_S_)
-            n_S = _S_.refractive_index(src)
-            if n_S!=0:
-                if n_S==-1:
-                    Reflect(src)
-                else:
-                    mu = src.rays.refractive_index/n_S
-                    if mu!=1.0:
-                        Refract(src,mu)
-                        src.rays.refractive_index = n_S
-        if global_CS:
-            Transform_to_R(src,_S_)
-        xyz.append( src.rays.coordinates.host() )
+        if isinstance(S[k],Aperture):
+            S[k].vignetting(src)
+        elif isinstance(S[k],(GMT_M1,GMT_M2)):
+            S[k].trace(src.rays)
+        elif isinstance(S[k],(GmtMirrors)):
+            S[k].M2.blocking(src.rays)            
+            S[k].M1.trace(src.rays)            
+            S[k].M2.trace(src.rays)            
+        else:
+            _S_ = S[k]
+            Transform_to_S(src,_S_)
+            if not _S_.coord_break: 
+                Intersect(src,_S_)
+                n_S = _S_.refractive_index(src)
+                if n_S!=0:
+                    if n_S==-1:
+                        Reflect(src)
+                    else:
+                     mu = src.rays.refractive_index/n_S
+                        if mu!=1.0:
+                            Refract(src,mu)
+                            src.rays.refractive_index = n_S
+            if global_CS:
+                Transform_to_R(src,_S_)
+            xyz.append( src.rays.coordinates.host() )
     return xyz
     #chief()
 @ 
