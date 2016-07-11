@@ -70,8 +70,8 @@ class GMT_MX(GmtMirrors):
 
     >>> gpu_ps1d = src.wavefront.phase()
     """
-    def __init__(self, D, D_px, M1_radial_order=0, M2_radial_order=0):
-        super(GMT_MX,self).__init__(D,D_px,
+    def __init__(self, D=None, D_px=None, M1_radial_order=0, M2_radial_order=0):
+        super(GMT_MX,self).__init__(
                             M1_radial_order=M1_radial_order,
                             M2_radial_order=M2_radial_order)
 
