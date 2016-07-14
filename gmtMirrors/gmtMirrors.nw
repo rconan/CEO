@@ -38,6 +38,7 @@
 <<GMT blocking kernel>>
 <<GMT track kernel>>
 <<nearest neighbor kernel>>
+<<nearest neighbor surface kernel>>
 <<stereoscopic edge sensors initialization kernel>>
 <<stereoscopic edge sensors data kernel>>
 <<lateral edge sensors: laser coordinates kernel>>
@@ -68,8 +69,11 @@ struct gmt_m1 {
   void preset(bundle *rays, rtd margin);
   void edge_sensors_data(void);
   void load_bending_modes(void);
-  void nearest_neighbor(rtd *d__BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
+  void bending_modes_and_partials(rtd *d__BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
 			int NI, rtd di, int k_mode);
+  void bending_modes_and_partials_surface(
+                        rtd *d__BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
+			int NI, rtd di, int N_mode, rtd *b);
 };
 @  with
 <<GMT M12 functions>>=
@@ -1469,9 +1473,9 @@ with $h=5cm$ (the approximate spacing of the irregular grid).
 
 The interpolation algorithm uses a simple nearest neighbor interpolation method where the interpolated value at a given point is given by the value of the bending modes of the nearest point on the origin mesh.
 
-\index{gmtMirrors!gmt\_m1!nearest\_neighbor}
+\index{gmtMirrors!gmt\_m1!bending\_modes\_and\_partials}
 <<GMT M1 functions>>=
-void gmt_m1::nearest_neighbor(rtd *d__BMi,
+void gmt_m1::bending_modes_and_partials(rtd *d__BMi,
 			      rtd *d__partial_x_BMi,
 			      rtd *d__partial_y_BMi,
 			      int NI, rtd di, int k_mode)
@@ -1505,73 +1509,144 @@ __global__ void nearest_neighbor_kernel(rtd *BMi, rtd *partial_x_BMi, rtd *parti
   j = blockIdx.y * blockDim.y + threadIdx.y;
   if ( (i<NI) && (j<NI)) {
     k = i + j*NI;
-    o = (k_mode-1)*BM_N_SAMPLE;
 
-    xi = i - 0.5*(NI-1);
-    yi = j - 0.5*(NI-1);
-    xi *= di;
-    yi *= di;
-    rhoi = hypot(xi,yi);
+    <<nearest neighbor coordinates>>
 
-    h = 4*5e-2;
-
-    xi_E = xi + h;
-    yi_N = yi + h;
-    xi_W = xi - h;
-    yi_S = yi - h;
- 
     BMi[k] = 0;
     partial_x_BMi[k] = 0;
     partial_y_BMi[k] = 0;
+
     if (rhoi<=BM_radius) {
-      t = 0;
-      rho_t = hypot(x_BM[t]-xi , y_BM[t]-yi);
-
-      t_E = 0;
-      rho_t_E = hypot(x_BM[t_E]-xi_E, y_BM[t_E]-yi);
-      t_N = 0;
-      rho_t_N = hypot(x_BM[t_N]-xi  , y_BM[t_N]-yi_N);
-      t_W = 0;
-      rho_t_W = hypot(x_BM[t_W]-xi_W, y_BM[t_W]-yi);
-      t_E = 0;
-      rho_t_S = hypot(x_BM[t_E]-xi  , y_BM[t_E]-yi_S);
-
-      for (k_BM=0; k_BM<BM_N_SAMPLE; k_BM++) {
-	rho_k = hypot(xi-x_BM[k_BM] , yi-y_BM[k_BM]);
-	if (rho_k<rho_t) {
-	  t = k_BM;
-	  rho_t = rho_k;
-	}
-	rho_k_E = hypot(x_BM[k_BM]-xi_E, y_BM[k_BM]-yi);
-	if (rho_k_E<rho_t_E) {
-	  t_E = k_BM;
-	  rho_t_E = rho_k_E;
-	}
-	rho_k_N = hypot(x_BM[k_BM]-xi, y_BM[k_BM]-yi_N);
-	if (rho_k_N<rho_t_N) {
-	  t_N = k_BM;
-	  rho_t_N = rho_k_N;
-	}
-	rho_k_W = hypot(x_BM[k_BM]-xi_W, y_BM[k_BM]-yi);
-	if (rho_k_W<rho_t_W) {
-	  t_W = k_BM;
-	  rho_t_W = rho_k_W;
-	}
-	rho_k_S = hypot(x_BM[k_BM]-xi, y_BM[k_BM]-yi_S);
-	if (rho_k_S<rho_t_S) {
-	  t_S = k_BM;
-	  rho_t_S = rho_k_S;
-	}
-      }
+      <<nearest neighbor simple algorithm>>
+      o = (k_mode-1)*BM_N_SAMPLE;
       BMi[k] = BM[t+o];
       partial_x_BMi[k] = BM[t_W+o] - BM[t_E+o];
       partial_x_BMi[k] /= (x_BM[t_W] - x_BM[t_E]);
       partial_y_BMi[k] = BM[t_N+o] - BM[t_S+o];
       partial_y_BMi[k] /= (y_BM[t_N] - y_BM[t_S]);
     }
+
   }
 }
 @ 
+with the grid coordinates definition
+<<nearest neighbor coordinates>>=
+xi = i - 0.5*(NI-1);
+yi = j - 0.5*(NI-1);
+xi *= di;
+yi *= di;
+rhoi = hypot(xi,yi);
+
+h = 4*5e-2;
+
+xi_E = xi + h;
+yi_N = yi + h;
+xi_W = xi - h;
+yi_S = yi - h;
+@ 
+and with the nearest neighbor algorithm
+<<nearest neighbor simple algorithm>>=
+t = 0;
+rho_t = hypot(x_BM[t]-xi , y_BM[t]-yi);
+
+t_E = 0;
+rho_t_E = hypot(x_BM[t_E]-xi_E, y_BM[t_E]-yi);
+t_N = 0;
+rho_t_N = hypot(x_BM[t_N]-xi  , y_BM[t_N]-yi_N);
+t_W = 0;
+rho_t_W = hypot(x_BM[t_W]-xi_W, y_BM[t_W]-yi);
+t_S = 0;
+rho_t_S = hypot(x_BM[t_S]-xi  , y_BM[t_S]-yi_S);
+for (k_BM=0; k_BM<BM_N_SAMPLE; k_BM++) {
+  rho_k = hypot(xi-x_BM[k_BM] , yi-y_BM[k_BM]);
+  if (rho_k<rho_t) {
+    t = k_BM;
+    rho_t = rho_k;
+  }
+  rho_k_E = hypot(x_BM[k_BM]-xi_E, y_BM[k_BM]-yi);
+  if (rho_k_E<rho_t_E) {
+    t_E = k_BM;
+    rho_t_E = rho_k_E;
+  }
+  rho_k_N = hypot(x_BM[k_BM]-xi, y_BM[k_BM]-yi_N);
+  if (rho_k_N<rho_t_N) {
+    t_N = k_BM;
+    rho_t_N = rho_k_N;
+  }
+  rho_k_W = hypot(x_BM[k_BM]-xi_W, y_BM[k_BM]-yi);
+  if (rho_k_W<rho_t_W) {
+    t_W = k_BM;
+    rho_t_W = rho_k_W;
+  }
+  rho_k_S = hypot(x_BM[k_BM]-xi, y_BM[k_BM]-yi_S);
+  if (rho_k_S<rho_t_S) {
+    t_S = k_BM;
+    rho_t_S = rho_k_S;
+  }
+}
+@ 
+A bending mode surface is written as
+\begin{equation}
+  \label{eq:18}
+  \varphi(x,y) = \sum_{k=1}^{k=N} b_k B_k(x,y),
+\end{equation}
+where $N$ is the number of bending modes, $b_k$ are the bending mode coefficients and $B_k(x,y)$ are the bending modes. 
+\index{gmtMirrors!gmt\_m1!bending\_modes\_and\_partials\_surface}
+<<GMT M1 functions>>=
+void gmt_m1::bending_modes_and_partials_surface(rtd *d__BMi,
+			      rtd *d__partial_x_BMi,
+			      rtd *d__partial_y_BMi,
+			      int NI, rtd di, int N_mode,
+                              rtd *b)
+{
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(NI/N_THREAD+1,NI/N_THREAD+1);
+  nearest_neighbor_surface_kernel LLL gridDim, blockDim RRR (d__BMi,
+						     d__partial_x_BMi,
+						     d__partial_y_BMi,
+						     NI, di,
+						     d__x_BM, d__y_BM,
+						     d__BM, BM_N_SAMPLE,
+						     BM_radius, N_mode, b);
+}
+@
+with the kernel
+<<nearest neighbor surface kernel>>=
+__global__ void nearest_neighbor_surface_kernel(rtd *BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
+					const int NI, const rtd di,
+					double *x_BM, double *y_BM, double *BM,
+					const int BM_N_SAMPLE, const double BM_radius,
+					const int N_mode, rtd *b)
+{
+  int i, j, k, k_BM, t, o,
+    t_E, t_N, t_W, t_S, k_mode;
+  rtd xi, yi, rho_t, rho_k, rhoi, h,
+    xi_E, yi_N, xi_W, yi_S, 
+    rho_k_E, rho_k_N, rho_k_W, rho_k_S, 
+    rho_t_E, rho_t_N, rho_t_W, rho_t_S;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<NI) && (j<NI)) {
+    k = i + j*NI;
+
+    <<nearest neighbor coordinates>>
+
+    BMi[k] = 0;
+    partial_x_BMi[k] = 0;
+    partial_y_BMi[k] = 0;
+ 
+    if (rhoi<=BM_radius) {
+      <<nearest neighbor simple algorithm>>
+      for (k_mode=0; k_mode<N_mode; k_mode++) {
+        o = k_mode*BM_N_SAMPLE;
+        BMi[k] += b[k_mode]*BM[t+o];
+        partial_x_BMi[k] += b[k_mode]*(BM[t_W+o] - BM[t_E+o])/abs(x_BM[t_W] - x_BM[t_E]);
+        partial_y_BMi[k] += b[k_mode]*(BM[t_N+o] - BM[t_S+o])/abs(y_BM[t_N] - y_BM[t_S]);
+      }
+    }
+  }
+}
+@
 
 \section{Edge sensors}
 \label{sec:edge-sensors}

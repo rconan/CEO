@@ -205,6 +205,11 @@ cdef class GmtMirrors:
         void preset(bundle *, rtd )
         void track(float *, float *, int, int)
         void load_bending_modes()
+        void bending_modes_and_partials(rtd *, rtd *, rtd *, int, rtd, int)
+        void bending_modes_and_partials_surface(
+                                        rtd *, rtd *, 
+                                        rtd *, int, 
+                                        rtd, int, rtd*);
 @  where
 <<python GMT M12 functions>>=
 int M_ID
@@ -224,7 +229,6 @@ void blocking(bundle *)
 void global_tiptilt(float , float )
 void remove(int *, int )
 void keep(int *, int )
-void nearest_neighbor(rtd *, rtd *, rtd *, int, rtd, int);
 @ 
 \subsubsection{Class definition}
 \label{sec:class-definition-1}
@@ -277,7 +281,7 @@ cdef class GMT_M1:
         BM._c_gpu.dev_data = self._c_gmt_m12.d__BM
         return (x_BM,y_BM,BM)
 
-    def nearest_neighbor(self,int NI, double di, int k_mode=1):
+    def bending_modes_and_partials(self,int NI, double di, int k_mode=1):
         cdef:
             cuDoubleArray BMi
             cuDoubleArray partial_x_BMi
@@ -285,11 +289,30 @@ cdef class GMT_M1:
         BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
         partial_x_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
         partial_y_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
-        self._c_gmt_m12.nearest_neighbor(BMi._c_gpu.dev_data,
+        self._c_gmt_m12.bending_modes_and_partials(BMi._c_gpu.dev_data,
                                          partial_x_BMi._c_gpu.dev_data,
                                          partial_y_BMi._c_gpu.dev_data,
                                          NI, di, k_mode)
         return (BMi,partial_x_BMi,partial_y_BMi)
+
+    def bending_modes_and_partials_surface(self,int NI, double di, 
+                                           double[:] b):
+        cdef:
+            cuDoubleArray BMi_S
+            cuDoubleArray partial_x_BMi_S
+            cuDoubleArray partial_y_BMi_S
+            cuDoubleArray cu_b
+        BMi_S = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_x_BMi_S = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_y_BMi_S = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        cu_b = cuDoubleArray(host_data=b)
+        self._c_gmt_m12.bending_modes_and_partials_surface(
+                                         BMi_S._c_gpu.dev_data,
+                                         partial_x_BMi_S._c_gpu.dev_data,
+                                         partial_y_BMi_S._c_gpu.dev_data,
+                                         NI, di, len(b),
+                                         cu_b._c_gpu.dev_data)
+        return (BMi_S,partial_x_BMi_S,partial_y_BMi_S)
 @
 <<GMT M12 constructor>>=
 self.zernike = ZernikeS(radial_order,N_SURF=7)
