@@ -196,10 +196,15 @@ cdef class GmtMirrors:
 
 <<gmtMirrors.pxd contents>>=
     cdef cppclass gmt_m1:
+        double *d__x_BM
+        double *d__y_BM
+        double *d__BM
+        int BM_N_SAMPLE
         void test_ray_tracing()
         <<python GMT M12 functions>>
         void preset(bundle *, rtd )
         void track(float *, float *, int, int)
+        void load_bending_modes()
 @  where
 <<python GMT M12 functions>>=
 int M_ID
@@ -217,8 +222,9 @@ void reset()
 void trace(bundle *)
 void blocking(bundle *)
 void global_tiptilt(float , float )
-void remove(int *seg_ID, int N_ID)
-void keep(int *seg_ID, int N_ID)
+void remove(int *, int )
+void keep(int *, int )
+void nearest_neighbor(rtd *, rtd *, rtd *, int, rtd, int);
 @ 
 \subsubsection{Class definition}
 \label{sec:class-definition-1}
@@ -258,6 +264,32 @@ cdef class GMT_M1:
                               gy._c_gpu.dev_data,
                               x.size, segId)
         return gx.host(), gy.host()
+
+    def load_bending_modes(self):
+        cdef:
+            cuDoubleArray x_BM, y_BM, BM
+        self._c_gmt_m12.load_bending_modes()
+        x_BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE))
+        x_BM._c_gpu.dev_data = self._c_gmt_m12.d__x_BM
+        y_BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE))
+        y_BM._c_gpu.dev_data = self._c_gmt_m12.d__y_BM
+        BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE))
+        BM._c_gpu.dev_data = self._c_gmt_m12.d__BM
+        return (x_BM,y_BM,BM)
+
+    def nearest_neighbor(self,int NI, double di, int k_mode=1):
+        cdef:
+            cuDoubleArray BMi
+            cuDoubleArray partial_x_BMi
+            cuDoubleArray partial_y_BMi
+        BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_x_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_y_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        self._c_gmt_m12.nearest_neighbor(BMi._c_gpu.dev_data,
+                                         partial_x_BMi._c_gpu.dev_data,
+                                         partial_y_BMi._c_gpu.dev_data,
+                                         NI, di, k_mode)
+        return (BMi,partial_x_BMi,partial_y_BMi)
 @
 <<GMT M12 constructor>>=
 self.zernike = ZernikeS(radial_order,N_SURF=7)

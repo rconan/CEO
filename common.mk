@@ -53,6 +53,7 @@ libsrc = $(CEOPATH)/lib/libceo.a
 .nw.cu: 
 	$(TANGLE) -L -R$@ $< > $@
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
+	touch $(nwcysrc)
 
 .nw.mex:
 	$(TANGLE) -L -R$@ $< > $@
