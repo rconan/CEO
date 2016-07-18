@@ -216,6 +216,18 @@ if eval_perf_field == True:
         clb.set_label('nm WF RMS', fontsize=15)
         clb.ax.tick_params(labelsize=12)
 
+    sf_pist0 = sfgs.piston(where='segments', units_exponent=-9)
+
+    if VISU == True:
+        fig, ax2 = plt.subplots()
+        fig.set_size_inches((5,4))
+        contp = ax2.contourf(sfx, sfy, np.std(sf_pist0, axis=1).reshape(len(sfx),-1))
+        clb = fig.colorbar(contp, ax=ax2)
+        ax2.grid()
+        ax2.tick_params(labelsize=12)
+        ax2.set_xlabel('field angle [arcsec]', fontsize=15)
+        clb.set_label('nm WF', fontsize=15)
+        clb.ax.tick_params(labelsize=12)
 
 ## INTERACTION MATRICES CALIBRATION
 
@@ -630,7 +642,8 @@ if eval_perf_onaxis==True:
             seg_aTur_gs_iter = np.zeros((Zobj.n_mode,7,totSimulIter))
 
 if eval_perf_field == True:
-    wfe_sfgs_iter = np.zeros((sfgs.N_SRC, totSimulIter))
+    #wfe_sfgs_iter = np.zeros((sfgs.N_SRC, totSimulIter))
+    pist_sfgs_iter = np.zeros((sfgs.N_SRC, totSimulIter))
 
 elapsedTime = np.zeros(totSimulIter)
 
@@ -728,7 +741,8 @@ for jj in range(totSimulIter):
 
     if eval_perf_field==True:
         gmt.propagate(sfgs)
-        wfe_sfgs_iter[:,jj] = sfgs.wavefront.rms()
+        #wfe_sfgs_iter[:,jj] = sfgs.wavefront.rms()
+        pist_sfgs_iter[:,jj] = np.std(sfgs.piston(where='segments', units_exponent=-9) - sf_pist0, axis=1)
 
     #----- Segment Piston Sensors measurement and correction -------------
     if simul_SPS==True:
@@ -1061,8 +1075,10 @@ if eval_perf_onaxis == True:
         if simul_turb == True: tosave['seg_aTur_gs_iter']=seg_aTur_gs_iter
 
 if eval_perf_field == True:
-    tosave['wfe_sfgs_iter'] = wfe_sfgs_iter
-    tosave['wfe_sfgs_ref'] = sf_rms0
+    #tosave['wfe_sfgs_iter'] = wfe_sfgs_iter
+    #tosave['wfe_sfgs_ref'] = sf_rms0
+    tosave['pist_sfgs_iter'] = pist_sfgs_iter
+    tosave['pist_sfgs_ref'] = sf_pist0
 
 if scramble_tt == True:
     tosave.update(dict(tt_scramble_rms=tt_scramble_rms, TTscramble=TTscramble))
