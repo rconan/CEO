@@ -4,7 +4,7 @@ import numpy as np
 from scipy.optimize import brenth, leastsq
 from skimage.feature import blob_log
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GmtMirrors, SegmentPistonSensor, \
-constants, Telescope, cuFloatArray
+    constants, Telescope, cuFloatArray, Aperture, Transform_to_S, Intersect, Reflect, Refract, Transform_to_R
 
 class GMT_MX(GmtMirrors):
     """
@@ -70,8 +70,8 @@ class GMT_MX(GmtMirrors):
 
     >>> gpu_ps1d = src.wavefront.phase()
     """
-    def __init__(self, D, D_px, M1_radial_order=0, M2_radial_order=0):
-        super(GMT_MX,self).__init__(D,D_px,
+    def __init__(self, D=None, D_px=None, M1_radial_order=0, M2_radial_order=0):
+        super(GMT_MX,self).__init__(
                             M1_radial_order=M1_radial_order,
                             M2_radial_order=M2_radial_order)
 
@@ -1052,3 +1052,43 @@ class EdgeSensors:
         u1,v1,w1 = self.M.edge_sensors(self.x1,self.y1,self.z,edgeSensorId=6)
         u2,v2,w2 = self.M.edge_sensors(self.x2,self.y2,self.z,segId0=1,edgeSensorId=6)
         return np.concatenate((v0,v1-v2)),np.concatenate((w0,w1-w2))
+
+def Trace( src, S, global_CS=True):
+    n = len(S)
+    src.reset()
+    xyz = [ src.rays.coordinates.host() ]
+    for k in range(n):
+        #print 'Material refractive index: %f'%src.rays.refractive_index
+        if isinstance(S[k],Aperture):
+            S[k].vignetting(src)
+        elif isinstance(S[k],(GMT_M1,GMT_M2)):
+            S[k].trace(src.rays)
+            xyz.append( src.rays.coordinates.host() )
+        elif isinstance(S[k],(GmtMirrors,GMT_MX)):
+            #S[k].M2.blocking(src.rays)            
+            S[k].M1.trace(src.rays)            
+            xyz.append( src.rays.coordinates.host() )
+            S[k].M2.trace(src.rays)            
+            xyz.append( src.rays.coordinates.host() )
+        else:
+            _S_ = S[k]
+            Transform_to_S(src,_S_)
+            if not _S_.coord_break: 
+                Intersect(src,_S_)
+                n_S = _S_.refractive_index(src)
+                if n_S!=0:
+                    if n_S==-1:
+                        Reflect(src)
+                    else:
+                        mu = src.rays.refractive_index/n_S
+                        if mu!=1.0:
+                            Refract(src,mu)
+                            src.rays.refractive_index = n_S
+            if global_CS:
+                Transform_to_R(src,_S_)
+            xyz.append( src.rays.coordinates.host() )
+    vignet_idx = np.nonzero(src.rays.vignetting.host()[0]==0)[0]
+    n = len(xyz)
+    for k in range(n):
+        xyz[k] = np.delete(xyz[k],vignet_idx,axis=0)
+    return xyz

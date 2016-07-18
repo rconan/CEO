@@ -37,6 +37,8 @@
 <<GMT ray tracing kernel>>
 <<GMT blocking kernel>>
 <<GMT track kernel>>
+<<nearest neighbor kernel>>
+<<nearest neighbor surface kernel>>
 <<stereoscopic edge sensors initialization kernel>>
 <<stereoscopic edge sensors data kernel>>
 <<lateral edge sensors: laser coordinates kernel>>
@@ -66,13 +68,17 @@ struct gmt_m1 {
   <<GMT M12 functions>>
   void preset(bundle *rays, rtd margin);
   void edge_sensors_data(void);
+  void load_bending_modes(void);
+  void bending_modes_and_partials(rtd *d__BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
+			int NI, rtd di, int k_mode);
+  void bending_modes_and_partials_surface(
+                        rtd *d__BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
+			int NI, rtd di, int N_mode, rtd *b);
 };
 @  with
 <<GMT M12 functions>>=
-void setup(float _D_, int _D_px_);
-void setup(float _D_, int _D_px_, zernikeS *ZS);
-void setup(float _D_, int _D_px_, int N_SRC);
-void setup(float _D_, int _D_px_, zernikeS *ZS, int N_SRC);
+void setup();
+void setup(zernikeS *ZS);
 void cleanup(void);
 void update(vector _origin_, vector _euler_angles_,int idx);
 void reset(void);
@@ -191,11 +197,34 @@ double *d__C, *d__D;
 <<GMT M12 parameters>>=
 cublasHandle_t handle;
 @
+\end{itemize}
 \item a 7 element array where 1 means the segment is active and 0 means the segment is missing
 <<GMT M12 parameters>>=
 char *d__valid_segments;
 @
-\end{itemize}
+\item the bending modes variables:
+  \begin{itemize}
+  \item the bending modes x and y coordinates
+<<GMT M1 parameters>>=
+double *d__x_BM, *d__y_BM;
+@
+\item the bending modes 
+<<GMT M1 parameters>>=
+double *d__BM;
+@
+\item the radius of the circle circumscribing the bending modes
+<<GMT M1 parameters>>=
+double BM_radius;
+@
+\item the number of sampling points i.e. the length of [[x_BM]] and [[y_BM]] arrays
+<<GMT M1 parameters>>=
+int BM_N_SAMPLE;
+@
+\item the bending modes data ([[d__x_BM]],[[d__y_BM]] and [[d__BM]]) buffer
+<<GMT M1 parameters>>=
+double *d__BM_buffer;
+@
+  \end{itemize}
  \end{itemize}
 
 
@@ -212,7 +241,7 @@ The [[GMT_M1]] structure is initialized with the size of the square array contai
 The size must be 25.5m or more to contain M1 fully.
 \index{gmtMirrors!gmt\_m1!setup}
 <<GMT M1 functions>>=
-void gmt_m1::setup(float _D_, int _D_px_)
+void gmt_m1::setup()
 {
   ZS = NULL;
   <<M1 parameters>>
@@ -221,7 +250,7 @@ void gmt_m1::setup(float _D_, int _D_px_)
 @ or
 \index{gmtMirrors!gmt\_m1!setup}
 <<GMT M1 functions>>=
-void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_)
+void gmt_m1::setup( zernikeS *_ZS_)
 {
   ZS = _ZS_;
   <<M1 parameters>>
@@ -230,8 +259,6 @@ void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_)
 @ where
 <<M1 parameters>>=
 M_ID    = 1;
-D_px    = _D_px_;
-D       = _D_;
 D_assembly = 25.498;
 D_full  = 8.417;
 D_clear = 8.365;
@@ -246,26 +273,8 @@ conic_k = 1-0.9982857;
 height  = 0.0;
 idx_offset = 0;
 V = NULL;
-@
-If an array of sources is propagated through the telescope then
-\index{gmtMirrors!gmt\_m1!setup}
-<<GMT M1 functions>>=
-void gmt_m1::setup(float _D_, int _D_px_, int N_SRC)
-{
-  ZS = NULL;
-  <<M1 parameters>>
-  <<GMT setup common>>
-}
-@ or
-\index{gmtMirrors!gmt\_m1!setup}
-<<GMT M1 functions>>=
-void gmt_m1::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
-{
-  ZS = _ZS_;
-  <<M1 parameters>>
-  <<GMT setup common>>
-}
-@  where
+d__BM_buffer = NULL;
+@ and
 <<GMT setup common>>=
 vector __v0(0.0,0.0,0.0),
        __v(D_full*0.5,0.0,0.0),
@@ -439,6 +448,8 @@ Memory is freed with
 void gmt_m1::cleanup(void)
 {
   fprintf(stdout,"@(CEO)>gmt_m1: freeing memory!\n");
+  if (d__BM_buffer!=NULL)
+    HANDLE_ERROR( cudaFree( d__BM_buffer ) );
   <<GMT cleanup common>>
 }
 @ with
@@ -995,7 +1006,7 @@ forward_transform_centered(&xyz, &xyz,
 S += zernike_surface(&xyz, &d__origin, max_n,
                      d__a + iCoordSys*n_mode, R); 
 @
-Both above oprations are combined together with: 
+Both above operations are combined together with: 
 <<aspheric surface>>=
 <<aspheric surface (conic CS)>>
 <<aspheric surface (motion CS)>>
@@ -1395,7 +1406,248 @@ for (k=0;k<N;k++)
     <<global tip-tilt transformation>>
   }
 @
+
+\subsection{Bending modes}
+\label{sec:bending-modes}
+
+This section defines the routine to load the bending modes and interpolated the bending modes on a regular grid.
+
+\subsubsection{Loading the bending modes}
+\label{sec:load-bend-modes}
+
+\index{gmtMirrors!gmt\_m1!load\_bending\_modes}
+<<GMT M1 functions>>=
+void gmt_m1::load_bending_modes(void)
+{
+  FILE * pFile;
+  long lSize;
+  double * buffer;
+  size_t result;
+
+  pFile = fopen ( "bendingModes.bin" , "rb" );
+  if (pFile==NULL) {fputs ("File error",stderr); exit (1);}
+
+  // obtain file size:
+  fseek (pFile , 0 , SEEK_END);
+  lSize = ftell (pFile)/sizeof(double);
+  rewind (pFile);
+
+  fprintf(stdout,"lSize=%ld\n",lSize);
+
+  // allocate memory to contain the whole file:
+  buffer = (double*) malloc (lSize*sizeof(double));
+  if (buffer == NULL) {fputs ("Memory error",stderr); exit (2);}
+
+  // copy the file into the buffer:
+  result = fread (buffer,sizeof(double),lSize,pFile);
+  fprintf(stdout,"result=%ld\n",result);
+  if (result != lSize) {fputs ("Reading error",stderr); exit (3);}
+
+  /* the whole file is now loaded in the memory buffer. */
+  BM_radius = 4.181;
+  BM_N_SAMPLE = 27685;
+  HANDLE_ERROR( cudaMalloc((void**)&d__BM_buffer, lSize*sizeof(double)) );
+  HANDLE_ERROR( cudaMemcpy( d__BM_buffer  , buffer, lSize*sizeof(double),
+			    cudaMemcpyHostToDevice ) );
+  d__x_BM = d__BM_buffer;
+  d__y_BM = d__BM_buffer + BM_N_SAMPLE;
+  d__BM   = d__BM_buffer + BM_N_SAMPLE*2;
+
+  // terminate
+  fclose (pFile);
+  free (buffer);
+}
+@ 
+\subsubsection{Nearest neighbor interpolation}
+\label{sec:near-neighb-interp}
+
+The bending modes are interpolation on a regular $[[NI]]\times[[NI]]$ grid with spacing [[di]].
+The bending modes are computed on an irregular grid within a circle of diameter 8.362m.
+If a point lies outside the circle, the interpolation returns 0.
+The routine also returns the x and y derivatives of the bending modes using the centered finite difference:
+\begin{equation}
+  \label{eq:17}
+  {\partial B(x,y) \over \partial x} = {B(x+h,y) - B(x-h,y) \over 2h},
+\end{equation}
+with $h=5cm$ (the approximate spacing of the irregular grid).
+
+The interpolation algorithm uses a simple nearest neighbor interpolation method where the interpolated value at a given point is given by the value of the bending modes of the nearest point on the origin mesh.
+
+\index{gmtMirrors!gmt\_m1!bending\_modes\_and\_partials}
+<<GMT M1 functions>>=
+void gmt_m1::bending_modes_and_partials(rtd *d__BMi,
+			      rtd *d__partial_x_BMi,
+			      rtd *d__partial_y_BMi,
+			      int NI, rtd di, int k_mode)
+{
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(NI/N_THREAD+1,NI/N_THREAD+1);
+  nearest_neighbor_kernel LLL gridDim, blockDim RRR (d__BMi,
+						     d__partial_x_BMi,
+						     d__partial_y_BMi,
+						     NI, di,
+						     d__x_BM, d__y_BM,
+						     d__BM, BM_N_SAMPLE,
+						     BM_radius, k_mode);
+}
 @
+with the kernel
+<<nearest neighbor kernel>>=
+__global__ void nearest_neighbor_kernel(rtd *BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
+					const int NI, const rtd di,
+					double *x_BM, double *y_BM, double *BM,
+					const int BM_N_SAMPLE, const double BM_radius,
+					const int k_mode)
+{
+  int i, j, k, k_BM, t, o,
+    t_E, t_N, t_W, t_S;
+  rtd xi, yi, rho_t, rho_k, rhoi, h,
+    xi_E, yi_N, xi_W, yi_S, 
+    rho_k_E, rho_k_N, rho_k_W, rho_k_S, 
+    rho_t_E, rho_t_N, rho_t_W, rho_t_S;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<NI) && (j<NI)) {
+    k = i + j*NI;
+
+    <<nearest neighbor coordinates>>
+
+    BMi[k] = 0;
+    partial_x_BMi[k] = 0;
+    partial_y_BMi[k] = 0;
+
+    if (rhoi<=BM_radius) {
+      <<nearest neighbor simple algorithm>>
+      o = (k_mode-1)*BM_N_SAMPLE;
+      BMi[k] = BM[t+o];
+      partial_x_BMi[k] = BM[t_W+o] - BM[t_E+o];
+      partial_x_BMi[k] /= (x_BM[t_W] - x_BM[t_E]);
+      partial_y_BMi[k] = BM[t_N+o] - BM[t_S+o];
+      partial_y_BMi[k] /= (y_BM[t_N] - y_BM[t_S]);
+    }
+
+  }
+}
+@ 
+with the grid coordinates definition
+<<nearest neighbor coordinates>>=
+xi = i - 0.5*(NI-1);
+yi = j - 0.5*(NI-1);
+xi *= di;
+yi *= di;
+rhoi = hypot(xi,yi);
+
+h = 4*5e-2;
+
+xi_E = xi + h;
+yi_N = yi + h;
+xi_W = xi - h;
+yi_S = yi - h;
+@ 
+and with the nearest neighbor algorithm
+<<nearest neighbor simple algorithm>>=
+t = 0;
+rho_t = hypot(x_BM[t]-xi , y_BM[t]-yi);
+
+t_E = 0;
+rho_t_E = hypot(x_BM[t_E]-xi_E, y_BM[t_E]-yi);
+t_N = 0;
+rho_t_N = hypot(x_BM[t_N]-xi  , y_BM[t_N]-yi_N);
+t_W = 0;
+rho_t_W = hypot(x_BM[t_W]-xi_W, y_BM[t_W]-yi);
+t_S = 0;
+rho_t_S = hypot(x_BM[t_S]-xi  , y_BM[t_S]-yi_S);
+for (k_BM=0; k_BM<BM_N_SAMPLE; k_BM++) {
+  rho_k = hypot(xi-x_BM[k_BM] , yi-y_BM[k_BM]);
+  if (rho_k<rho_t) {
+    t = k_BM;
+    rho_t = rho_k;
+  }
+  rho_k_E = hypot(x_BM[k_BM]-xi_E, y_BM[k_BM]-yi);
+  if (rho_k_E<rho_t_E) {
+    t_E = k_BM;
+    rho_t_E = rho_k_E;
+  }
+  rho_k_N = hypot(x_BM[k_BM]-xi, y_BM[k_BM]-yi_N);
+  if (rho_k_N<rho_t_N) {
+    t_N = k_BM;
+    rho_t_N = rho_k_N;
+  }
+  rho_k_W = hypot(x_BM[k_BM]-xi_W, y_BM[k_BM]-yi);
+  if (rho_k_W<rho_t_W) {
+    t_W = k_BM;
+    rho_t_W = rho_k_W;
+  }
+  rho_k_S = hypot(x_BM[k_BM]-xi, y_BM[k_BM]-yi_S);
+  if (rho_k_S<rho_t_S) {
+    t_S = k_BM;
+    rho_t_S = rho_k_S;
+  }
+}
+@ 
+A bending mode surface is written as
+\begin{equation}
+  \label{eq:18}
+  \varphi(x,y) = \sum_{k=1}^{k=N} b_k B_k(x,y),
+\end{equation}
+where $N$ is the number of bending modes, $b_k$ are the bending mode coefficients and $B_k(x,y)$ are the bending modes. 
+\index{gmtMirrors!gmt\_m1!bending\_modes\_and\_partials\_surface}
+<<GMT M1 functions>>=
+void gmt_m1::bending_modes_and_partials_surface(rtd *d__BMi,
+			      rtd *d__partial_x_BMi,
+			      rtd *d__partial_y_BMi,
+			      int NI, rtd di, int N_mode,
+                              rtd *b)
+{
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(NI/N_THREAD+1,NI/N_THREAD+1);
+  nearest_neighbor_surface_kernel LLL gridDim, blockDim RRR (d__BMi,
+						     d__partial_x_BMi,
+						     d__partial_y_BMi,
+						     NI, di,
+						     d__x_BM, d__y_BM,
+						     d__BM, BM_N_SAMPLE,
+						     BM_radius, N_mode, b);
+}
+@
+with the kernel
+<<nearest neighbor surface kernel>>=
+__global__ void nearest_neighbor_surface_kernel(rtd *BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
+					const int NI, const rtd di,
+					double *x_BM, double *y_BM, double *BM,
+					const int BM_N_SAMPLE, const double BM_radius,
+					const int N_mode, rtd *b)
+{
+  int i, j, k, k_BM, t, o,
+    t_E, t_N, t_W, t_S, k_mode;
+  rtd xi, yi, rho_t, rho_k, rhoi, h,
+    xi_E, yi_N, xi_W, yi_S, 
+    rho_k_E, rho_k_N, rho_k_W, rho_k_S, 
+    rho_t_E, rho_t_N, rho_t_W, rho_t_S;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<NI) && (j<NI)) {
+    k = i + j*NI;
+
+    <<nearest neighbor coordinates>>
+
+    BMi[k] = 0;
+    partial_x_BMi[k] = 0;
+    partial_y_BMi[k] = 0;
+ 
+    if (rhoi<=BM_radius) {
+      <<nearest neighbor simple algorithm>>
+      for (k_mode=0; k_mode<N_mode; k_mode++) {
+        o = k_mode*BM_N_SAMPLE;
+        BMi[k] += b[k_mode]*BM[t+o];
+        partial_x_BMi[k] += b[k_mode]*(BM[t_W+o] - BM[t_E+o])/abs(x_BM[t_W] - x_BM[t_E]);
+        partial_y_BMi[k] += b[k_mode]*(BM[t_N+o] - BM[t_S+o])/abs(y_BM[t_N] - y_BM[t_S]);
+      }
+    }
+  }
+}
+@
+
 \section{Edge sensors}
 \label{sec:edge-sensors}
 
@@ -2376,7 +2628,7 @@ struct gmt_m2 {
 
 \index{gmtMirrors!gmt\_m2!setup}
 <<GMT M2 functions>>=
-void gmt_m2::setup(float _D_, int _D_px_)
+void gmt_m2::setup()
 {
   <<M2 parameters>>
   <<GMT setup common>>
@@ -2384,8 +2636,6 @@ void gmt_m2::setup(float _D_, int _D_px_)
 @ with
 <<M2 parameters>>=
  M_ID    = 2;
- D_px    = _D_px_;
- D       = _D_;
  D_assembly = 3.168;
  D_full  = 1.0425*1.005; // slightly larger to always encompass M1; needed for the Zernike
  D_clear = 1.0415;
@@ -2398,20 +2648,9 @@ void gmt_m2::setup(float _D_, int _D_px_)
  height  = 20.26247614;
  idx_offset = 3;
 @
-If an array of sources is propagated through the telescope then
 \index{gmtMirrors!gmt\_m2!setup}
 <<GMT M2 functions>>=
-void gmt_m2::setup(float _D_, int _D_px_, int N_SRC)
-{
-  ZS = NULL;
-  M_ID    = 2;
-  <<M2 parameters>>
-  <<GMT setup common>>
-}
-@
-\index{gmtMirrors!gmt\_m2!setup}
-<<GMT M2 functions>>=
-void gmt_m2::setup(float _D_, int _D_px_, zernikeS *_ZS_, int N_SRC)
+void gmt_m2::setup(zernikeS *_ZS_)
 {
   ZS = _ZS_;
   M_ID    = 2;

@@ -27,6 +27,8 @@ sobj    = $(nwsrc:%.nw=%.so)
 cusrc  = $(nwsrc:%.nw=%.cu)
 nwcysrc  = $(nwsrc:%.nw=%.cython.nw)
 texcysrc = $(nwcysrc:%.nw=%.tex)
+pxdcysrc  = $(nwcysrc:%.nw=%.pxd)
+pyxcysrc  = $(nwcysrc:%.nw=%.pyx)
 pxdsrc  = $(nwcysrc:%.cython.nw=%.pxd)
 pyxsrc  = $(nwcysrc:%.cython.nw=%.pyx)
 libsrc = $(CEOPATH)/lib/libceo.a 
@@ -51,6 +53,7 @@ libsrc = $(CEOPATH)/lib/libceo.a
 .nw.cu: 
 	$(TANGLE) -L -R$@ $< > $@
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
+	touch $(nwcysrc)
 
 .nw.mex:
 	$(TANGLE) -L -R$@ $< > $@
@@ -68,10 +71,10 @@ libsrc = $(CEOPATH)/lib/libceo.a
 	$(TANGLE) -R$@ $< > $@
 
 .nw.pxd:
-	$(TANGLE) -R$@ $(nwcysrc) > $@
-	cp $@ $(CEOPYPATH)/
+	$(TANGLE) -R$(pxdsrc) $< > $@
+	cp $@ $(CEOPYPATH)/$(pxdsrc)
 
 .nw.pyx:
-	$(TANGLE) -R$@  $(nwcysrc) > $@
-	cp $@ $(CEOPYPATH)/
+	$(TANGLE) -R$(pyxsrc)  $< > $@
+	cp $@ $(CEOPYPATH)/$(pyxsrc)
 

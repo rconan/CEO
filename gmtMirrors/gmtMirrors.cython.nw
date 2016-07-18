@@ -18,13 +18,16 @@ cdef extern from "gmtMirrors.h":
 
 \index{gmtMirrors!python!GmtMirrors}
 
+\subsection{PXD file}
+\label{sec:pxd-file-5}
+
 \subsubsection{Class definition}
 \label{sec:class-definition}
 
-<<class definition>>=
+<<class definitions>>=
 cdef class GmtMirrors:
     cdef:
-        readonly float D, D_px, focal_plane_distance, focal_plane_radius
+        readonly float focal_plane_distance, focal_plane_radius
         readonly GMT_M1 M1
         readonly GMT_M2 M2
 @
@@ -96,12 +99,9 @@ cdef class GmtMirrors:
 
     >>> gpu_ps1d = src.wavefront.phase()
     """
-    def __init__(self, float D, float D_px,
-                 int M1_radial_order=0, int M2_radial_order=0):
-        self.D = D
-        self.D_px = D_px
-        self.M1 = GMT_M1(D, D_px, radial_order=M1_radial_order)
-        self.M2 = GMT_M2(D, D_px, radial_order=M2_radial_order)
+    def __init__(self, int M1_radial_order=0, int M2_radial_order=0):
+        self.M1 = GMT_M1(radial_order=M1_radial_order)
+        self.M2 = GMT_M2(radial_order=M2_radial_order)
         self.focal_plane_distance = -5.830
         self.focal_plane_radius   =  2.197173
 
@@ -196,10 +196,20 @@ cdef class GmtMirrors:
 
 <<gmtMirrors.pxd contents>>=
     cdef cppclass gmt_m1:
+        double *d__x_BM
+        double *d__y_BM
+        double *d__BM
+        int BM_N_SAMPLE
         void test_ray_tracing()
         <<python GMT M12 functions>>
         void preset(bundle *, rtd )
         void track(float *, float *, int, int)
+        void load_bending_modes()
+        void bending_modes_and_partials(rtd *, rtd *, rtd *, int, rtd, int)
+        void bending_modes_and_partials_surface(
+                                        rtd *, rtd *, 
+                                        rtd *, int, 
+                                        rtd, int, rtd*);
 @  where
 <<python GMT M12 functions>>=
 int M_ID
@@ -209,18 +219,16 @@ coordinate_system conic_CS
 coordinate_system rigid_body_CS
 coordinate_system motion_CS
 coordinate_system TT_CS
-void setup(float , int )
-void setup(float , int , int)
-void setup(float , int, zernikeS *)
-void setup(float , int, zernikeS *, int)
+void setup()
+void setup( zernikeS *)
 void cleanup()
 void update(vector , vector ,int )
 void reset()
 void trace(bundle *)
 void blocking(bundle *)
 void global_tiptilt(float , float )
-void remove(int *seg_ID, int N_ID)
-void keep(int *seg_ID, int N_ID)
+void remove(int *, int )
+void keep(int *, int )
 @ 
 \subsubsection{Class definition}
 \label{sec:class-definition-1}
@@ -239,7 +247,7 @@ cdef class GMT_M1:
 cdef class GMT_M1:
     <<GMT M12 docstring>>
 
-    def __cinit__(self, float D, int D_px, int radial_order=0, int N_SRC=1):
+    def __cinit__(self, int radial_order=0):
         self._c_gmt_m12 = new gmt_m1()
         <<GMT M12 constructor>>
 
@@ -260,10 +268,55 @@ cdef class GMT_M1:
                               gy._c_gpu.dev_data,
                               x.size, segId)
         return gx.host(), gy.host()
+
+    def load_bending_modes(self):
+        cdef:
+            cuDoubleArray x_BM, y_BM, BM
+        self._c_gmt_m12.load_bending_modes()
+        x_BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE))
+        x_BM._c_gpu.dev_data = self._c_gmt_m12.d__x_BM
+        y_BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE))
+        y_BM._c_gpu.dev_data = self._c_gmt_m12.d__y_BM
+        BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE))
+        BM._c_gpu.dev_data = self._c_gmt_m12.d__BM
+        return (x_BM,y_BM,BM)
+
+    def bending_modes_and_partials(self,int NI, double di, int k_mode=1):
+        cdef:
+            cuDoubleArray BMi
+            cuDoubleArray partial_x_BMi
+            cuDoubleArray partial_y_BMi
+        BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_x_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_y_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        self._c_gmt_m12.bending_modes_and_partials(BMi._c_gpu.dev_data,
+                                         partial_x_BMi._c_gpu.dev_data,
+                                         partial_y_BMi._c_gpu.dev_data,
+                                         NI, di, k_mode)
+        return (BMi,partial_x_BMi,partial_y_BMi)
+
+    def bending_modes_and_partials_surface(self,int NI, double di, 
+                                           double[:] b):
+        cdef:
+            cuDoubleArray BMi_S
+            cuDoubleArray partial_x_BMi_S
+            cuDoubleArray partial_y_BMi_S
+            cuDoubleArray cu_b
+        BMi_S = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_x_BMi_S = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_y_BMi_S = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        cu_b = cuDoubleArray(host_data=b)
+        self._c_gmt_m12.bending_modes_and_partials_surface(
+                                         BMi_S._c_gpu.dev_data,
+                                         partial_x_BMi_S._c_gpu.dev_data,
+                                         partial_y_BMi_S._c_gpu.dev_data,
+                                         NI, di, len(b),
+                                         cu_b._c_gpu.dev_data)
+        return (BMi_S,partial_x_BMi_S,partial_y_BMi_S)
 @
 <<GMT M12 constructor>>=
 self.zernike = ZernikeS(radial_order,N_SURF=7)
-self._c_gmt_m12.setup(D, D_px, <zernikeS *> self.zernike._c_zernikeS, 0)
+self._c_gmt_m12.setup( <zernikeS *> self.zernike._c_zernikeS)
 
 self.aperture_CS   = Coordinate_system(7)
 self.conic_CS      = Coordinate_system(7)
@@ -490,6 +543,16 @@ cdef:
         void pointing_neutral(float, float)
         void coma_neutral(float, float)
 @
+\subsubsection{Class definition}
+\label{sec:class-definition-5}
+
+<<class definitions>>=
+cdef class GMT_M2:
+    cdef:
+        gmt_m2 *_c_gmt_m12
+    <<GMT M12 class properties>>
+@
+
 \subsection{PYX file}
 \label{sec:pyx-file-2}
 
@@ -497,10 +560,8 @@ cdef:
 # GMT M2
 cdef class GMT_M2:
     <<GMT M12 docstring>>
-    cdef gmt_m2 *_c_gmt_m12
-    <<GMT M12 class properties>>
 
-    def __cinit__(self, float D, int D_px, radial_order=0, int N_SRC=1):
+    def __cinit__(self, radial_order=0):
         self._c_gmt_m12 = new gmt_m2()
         <<GMT M12 constructor>>
 
