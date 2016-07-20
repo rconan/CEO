@@ -39,6 +39,7 @@
 <<GMT track kernel>>
 <<nearest neighbor kernel>>
 <<nearest neighbor surface kernel>>
+<<bilinear kernel>>
 <<stereoscopic edge sensors initialization kernel>>
 <<stereoscopic edge sensors data kernel>>
 <<lateral edge sensors: laser coordinates kernel>>
@@ -48,6 +49,11 @@
 <<lateral edge sensor laser vector kernel>>
 <<laser camera intersection kernel>>
 <<vignetting presetting kernel>>
+
+<<bending modes surface>>
+<<partial x bending modes surface>>
+<<partial y bending modes surface>>
+<<partial z bending modes surface>>
 
 <<GMT M1 functions>>
 <<GMT M2 functions>>
@@ -69,11 +75,14 @@ struct gmt_m1 {
   void preset(bundle *rays, rtd margin);
   void edge_sensors_data(void);
   void load_bending_modes(void);
+  void load_bending_modes_reg(void);
   void bending_modes_and_partials(rtd *d__BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
 			int NI, rtd di, int k_mode);
   void bending_modes_and_partials_surface(
                         rtd *d__BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
 			int NI, rtd di, int N_mode, rtd *b);
+  void bending_modes_and_partials_reg(rtd *d__BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
+			int NI, rtd di, int k_mode);
 };
 @  with
 <<GMT M12 functions>>=
@@ -1415,6 +1424,12 @@ This section defines the routine to load the bending modes and interpolated the 
 \subsubsection{Loading the bending modes}
 \label{sec:load-bend-modes}
 
+\paragraph{Irregular grid}
+\label{sec:irregular-grid}
+
+The bending modes are originally computed on a 27685 points irregular grid sampling a circle of 4.181m radius.
+The points coordinates and the bending modes are stored into the file \emph{bendingModes.bin}.
+They are loaded into the \emph{gmt\_m1} structure with:
 \index{gmtMirrors!gmt\_m1!load\_bending\_modes}
 <<GMT M1 functions>>=
 void gmt_m1::load_bending_modes(void)
@@ -1452,6 +1467,54 @@ void gmt_m1::load_bending_modes(void)
   d__x_BM = d__BM_buffer;
   d__y_BM = d__BM_buffer + BM_N_SAMPLE;
   d__BM   = d__BM_buffer + BM_N_SAMPLE*2;
+
+  // terminate
+  fclose (pFile);
+  free (buffer);
+}
+@
+\paragraph{Regular grid}
+\label{sec:regular-grid}
+
+The bending modes interpolated on a regular grid are saved in the file \emph{bendingModesReg.bin}.
+The regular grid is made of $169\times 169$ points.
+The range of the grid is $\pm$4.231m.
+The bending modes are loaded into the \emph{gmt\_m1} structure with:
+\index{gmtMirrors!gmt\_m1!load\_bending\_modes\_reg}
+<<GMT M1 functions>>=
+void gmt_m1::load_bending_modes_reg(void)
+{
+  FILE * pFile;
+  long lSize;
+  double * buffer;
+  size_t result;
+
+  pFile = fopen ( "bendingModesReg.bin" , "rb" );
+  if (pFile==NULL) {fputs ("File error",stderr); exit (1);}
+
+  // obtain file size:
+  fseek (pFile , 0 , SEEK_END);
+  lSize = ftell (pFile)/sizeof(double);
+  rewind (pFile);
+
+  fprintf(stdout,"lSize=%ld\n",lSize);
+
+  // allocate memory to contain the whole file:
+  buffer = (double*) malloc (lSize*sizeof(double));
+  if (buffer == NULL) {fputs ("Memory error",stderr); exit (2);}
+
+  // copy the file into the buffer:
+  result = fread (buffer,sizeof(double),lSize,pFile);
+  fprintf(stdout,"result=%ld\n",result);
+  if (result != lSize) {fputs ("Reading error",stderr); exit (3);}
+
+  /* the whole file is now loaded in the memory buffer. */
+  BM_radius = 0.5*8.462;//4.181;
+  BM_N_SAMPLE = 169;
+  HANDLE_ERROR( cudaMalloc((void**)&d__BM_buffer, lSize*sizeof(double)) );
+  HANDLE_ERROR( cudaMemcpy( d__BM_buffer  , buffer, lSize*sizeof(double),
+			    cudaMemcpyHostToDevice ) );
+  d__BM   = d__BM_buffer;
 
   // terminate
   fclose (pFile);
@@ -1647,6 +1710,246 @@ __global__ void nearest_neighbor_surface_kernel(rtd *BMi, rtd *partial_x_BMi, rt
   }
 }
 @
+\subsubsection{Bilinear interpolation}
+\label{sec:bilin-interp}
+
+The bending modes in this section are derived through linear interpolation of the bending modes computed on a regular grid.
+
+\paragraph{Bending modes and derivatives}
+\label{sec:bend-modes-deriv}
+
+The following method re--samples the bending modes on a $[[NI]]\times[[NI]]$ grid with step [[di]].
+The method also returns the x and y axis partial derivatives of the bending modes.
+
+\index{gmtMirrors!gmt\_m1!bending\_modes\_and\_partials\_reg}
+<<GMT M1 functions>>=
+void gmt_m1::bending_modes_and_partials_reg(rtd *d__BMi,
+			      rtd *d__partial_x_BMi,
+			      rtd *d__partial_y_BMi,
+			      int NI, rtd di, int k_mode)
+{
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(NI/N_THREAD+1,NI/N_THREAD+1);
+  bilinear_kernel LLL gridDim, blockDim RRR (d__BMi,
+					     d__partial_x_BMi,
+					     d__partial_y_BMi,
+					     NI, di,
+					     d__x_BM, d__y_BM,
+					     d__BM, BM_N_SAMPLE,
+					     BM_radius, k_mode);
+}
+@
+with the kernels
+<<bilinear kernel>>=
+__global__ void bilinear_kernel(rtd *BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
+				const int NI, const rtd di,
+				double *x_BM, double *y_BM, double *BM,
+				const int BM_N_SAMPLE, const double BM_radius,
+				const int k_mode)
+{
+  int i, j, k, ndx, o;
+  rtd xi, yi, rhoi, s, t, scale, fs, ft, onemt, onems, h;
+  rtd *z;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  if ( (i<NI) && (j<NI)) {
+    k = i*NI + j;
+
+    xi = i - 0.5*(NI-1);
+    yi = j - 0.5*(NI-1);
+    xi *= di;
+    yi *= di;
+    rhoi = hypot(xi,yi);
+
+    BMi[k] = 0;
+    partial_x_BMi[k] = 0;
+    partial_y_BMi[k] = 0;
+
+    if (rhoi<=4.181) {
+
+      o = (k_mode-1)*BM_N_SAMPLE*BM_N_SAMPLE;
+      z = BM + o;
+      scale = 0.5*di/BM_radius;
+      h = BM_radius*2/(BM_N_SAMPLE-1);
+
+      <<bending modes interpolation>>
+      <<bending modes x-derivative interpolation>>
+      <<bending modes y-derivative interpolation>>
+
+   }
+  }
+}
+@  
+where
+<<bending modes interpolation>>=
+s = (scale*(i + (1-NI)*0.5) + 0.5)*(BM_N_SAMPLE-1);
+t = (scale*(j + (1-NI)*0.5) + 0.5)*(BM_N_SAMPLE-1);
+<<bilinear locate>>
+BMi[k] = ( z[ndx]*onemt + z[ndx+1]*t )*onems +
+  ( z[ndx+BM_N_SAMPLE]*onemt + z[ndx+BM_N_SAMPLE+1]*t )*s;
+@ 
+<<bending modes x-derivative interpolation>>=
+s = (scale*(i + (1-NI)*0.5) + 0.5)*(BM_N_SAMPLE-1) + 1;
+t = (scale*(j + (1-NI)*0.5) + 0.5)*(BM_N_SAMPLE-1);
+<<bilinear locate>>
+partial_x_BMi[k] = ( z[ndx]*onemt + z[ndx+1]*t )*onems +
+    ( z[ndx+BM_N_SAMPLE]*onemt + z[ndx+BM_N_SAMPLE+1]*t )*s;
+s = (scale*(i + (1-NI)*0.5) + 0.5)*(BM_N_SAMPLE-1) - 1;
+t = (scale*(j + (1-NI)*0.5) + 0.5)*(BM_N_SAMPLE-1);
+<<bilinear locate>>
+partial_x_BMi[k] -= ( z[ndx]*onemt + z[ndx+1]*t )*onems +
+    ( z[ndx+BM_N_SAMPLE]*onemt + z[ndx+BM_N_SAMPLE+1]*t )*s;
+partial_x_BMi[k] /= 2*h;
+@ 
+<<bending modes y-derivative interpolation>>=
+s = (scale*(i + (1-NI)*0.5) + 0.5)*(BM_N_SAMPLE-1);
+t = (scale*(j + (1-NI)*0.5) + 0.5)*(BM_N_SAMPLE-1) + 1;
+<<bilinear locate>>
+partial_y_BMi[k] = ( z[ndx]*onemt + z[ndx+1]*t )*onems +
+    ( z[ndx+BM_N_SAMPLE]*onemt + z[ndx+BM_N_SAMPLE+1]*t )*s;
+s = (scale*(i + (1-NI)*0.5) + 0.5)*(BM_N_SAMPLE-1);
+t = (scale*(j + (1-NI)*0.5) + 0.5)*(BM_N_SAMPLE-1) - 1;
+<<bilinear locate>>
+partial_y_BMi[k] -= ( z[ndx]*onemt + z[ndx+1]*t )*onems +
+    ( z[ndx+BM_N_SAMPLE]*onemt + z[ndx+BM_N_SAMPLE+1]*t )*s;
+partial_y_BMi[k] /= 2*h;
+@ 
+and with 
+<<bilinear locate>>=
+if (s<0) { s=0.0; }
+fs  = floorf(s);
+if (t<0) { t=0.0; }
+ft  = floorf(t);
+ndx = __float2int_rd( ft + fs*BM_N_SAMPLE );
+
+if (s==(BM_N_SAMPLE-1)) { fs -= 1; ndx -= BM_N_SAMPLE; }
+if (t==(BM_N_SAMPLE-1)) { ft -= 1; ndx -= 1; }
+s -= fs;
+t -= ft;
+onemt = 1 - t;
+onems = 1 - s;
+@
+\paragraph{Bending mode surface}
+\label{sec:bending-mode-surface}
+
+A bending mode surface $S(\vec r)$ is given by a linear combination of bending modes $B_i(\vec r)$:
+\begin{equation}
+  \label{eq:21}
+  S(\vec r) = \sum_{i=1}^N b_i B_i(\vec r),
+\end{equation}
+where $b_i$ are the bending modes coefficients.
+The bending modes is an orthogonal set of vector, consequently the coefficients $b_i$ are given by
+\begin{equation}
+  \label{eq:22}
+  b_i = { \int \text{d}\vec r S(\vec r)B_i(\vec r) \over  \int \text{d}\vec r \left| B_i(\vec r) \right|^2 }.
+\end{equation}
+
+\index{gmtMirrors!gmt\_m1!bending\_modes\_surface}
+<<bending modes surface>>=
+__device__ inline rtd bending_modes_surface(vector *v, const int N_mode, rtd *b,
+                                            double *x_BM, double *y_BM, double *BM,
+                                            const int BM_N_SAMPLE, const double BM_radius)
+{
+  int k_mode, o, ndx;
+  rtd scale, S, s, t, fs, ft, onemt, onems;
+  rtd *z;
+  scale = 0.5/BM_radius;
+  s = (scale*v->x + 0.5)*(BM_N_SAMPLE-1);
+  t = (scale*v->y + 0.5)*(BM_N_SAMPLE-1);
+  <<bilinear locate>>
+  S = 0.0;
+  for (k_mode=0; k_mode<N_mode; k_mode++) {
+    o = k_mode*BM_N_SAMPLE*BM_N_SAMPLE;
+    z = BM + o;
+    S += b[k_mode]*( ( z[ndx]*onemt + z[ndx+1]*t )*onems +
+	      ( z[ndx+BM_N_SAMPLE]*onemt + z[ndx+BM_N_SAMPLE+1]*t )*s );
+  }
+  return S;
+}
+@				
+\index{gmtMirrors!gmt\_m1!partial\_x\_bending\_modes\_surface}
+<<partial x bending modes surface>>=
+__device__ inline rtd partial_x_bending_modes_surface(vector *v, const int N_mode, rtd *b,
+                                            double *x_BM, double *y_BM, double *BM,
+                                            const int BM_N_SAMPLE, const double BM_radius)
+{
+  int k_mode, o, ndx, ndx_a, ndx_b;
+  rtd scale, S, S_, s, t, fs, ft, onemt, onems,
+    s_a, s_b, onems_a, onems_b, h;
+  rtd *z;
+  scale = 0.5/BM_radius;
+  s = (scale*v->x + 0.5)*(BM_N_SAMPLE-1) + 1;
+  t = (scale*v->y + 0.5)*(BM_N_SAMPLE-1);
+  <<bilinear locate>>
+  ndx_a = ndx;
+  s_a = s;
+  onems_a = onems;
+  s = (scale*v->x + 0.5)*(BM_N_SAMPLE-1) - 1;
+  t = (scale*v->y + 0.5)*(BM_N_SAMPLE-1);
+  <<bilinear locate>>
+  ndx_b = ndx;
+  s_b = s;
+  onems_b = onems;
+  h = BM_radius*2/(BM_N_SAMPLE-1);
+  S = 0.0;
+  for (k_mode=0; k_mode<N_mode; k_mode++) {
+    o = k_mode*BM_N_SAMPLE*BM_N_SAMPLE;
+    z = BM + o;
+    S_ = ( ( z[ndx_a]*onemt + z[ndx_a+1]*t )*onems_a +
+	   ( z[ndx_a+BM_N_SAMPLE]*onemt + z[ndx_a+BM_N_SAMPLE+1]*t )*s_a );
+    S_ -= ( ( z[ndx_b]*onemt + z[ndx_b+1]*t )*onems_b +
+	   ( z[ndx_b+BM_N_SAMPLE]*onemt + z[ndx_b+BM_N_SAMPLE+1]*t )*s_b );
+    S_ /= 2*h;
+    S += b[k_mode]*S_;
+  }
+  return S;
+}
+@				
+\index{gmtMirrors!gmt\_m1!partial\_y\_bending\_modes\_surface}
+<<partial y bending modes surface>>=
+__device__ inline rtd partial_y_bending_modes_surface(vector *v, const int N_mode, rtd *b,
+                                            double *x_BM, double *y_BM, double *BM,
+                                            const int BM_N_SAMPLE, const double BM_radius)
+{
+  int k_mode, o, ndx, ndx_a, ndx_b;
+  rtd scale, S, S_, s, t, fs, ft, onemt, onems,
+    t_a, t_b, onemt_a, onemt_b, h;
+  rtd *z;
+  scale = 0.5/BM_radius;
+  s = (scale*v->x + 0.5)*(BM_N_SAMPLE-1);
+  t = (scale*v->y + 0.5)*(BM_N_SAMPLE-1) + 1;
+  <<bilinear locate>>
+  ndx_a = ndx;
+  t_a = t;
+  onemt_a = onemt;
+  s = (scale*v->x + 0.5)*(BM_N_SAMPLE-1);
+  t = (scale*v->y + 0.5)*(BM_N_SAMPLE-1) - 1;
+  <<bilinear locate>>
+  ndx_b = ndx;
+  t_b = t;
+  onemt_b = onemt;
+  h = BM_radius*2/(BM_N_SAMPLE-1);
+  S = 0.0;
+  for (k_mode=0; k_mode<N_mode; k_mode++) {
+    o = k_mode*BM_N_SAMPLE*BM_N_SAMPLE;
+    z = BM + o;
+    S_ = ( ( z[ndx_a]*onemt_a + z[ndx_a+1]*t_a )*onems +
+	   ( z[ndx_a+BM_N_SAMPLE]*onemt_a + z[ndx_a+BM_N_SAMPLE+1]*t_a )*s );
+    S_ -= ( ( z[ndx_b]*onemt_b + z[ndx_b+1]*t_b )*onems +
+	   ( z[ndx_b+BM_N_SAMPLE]*onemt_b + z[ndx_b+BM_N_SAMPLE+1]*t_b )*s );
+    S_ /= 2*h;
+    S += b[k_mode]*S_;
+  }
+  return S;
+}
+@				
+\index{gmtMirrors!gmt\_m1!partial\_y\_bending\_modes\_surface}
+<<partial z bending modes surface>>=
+__device__ inline rtd partial_z_bending_modes_surface(void)
+{
+  return 0.0;
+}
+@ 
 
 \section{Edge sensors}
 \label{sec:edge-sensors}

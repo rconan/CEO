@@ -205,7 +205,9 @@ cdef class GmtMirrors:
         void preset(bundle *, rtd )
         void track(float *, float *, int, int)
         void load_bending_modes()
+        void load_bending_modes_reg()
         void bending_modes_and_partials(rtd *, rtd *, rtd *, int, rtd, int)
+        void bending_modes_and_partials_reg(rtd *, rtd *, rtd *, int, rtd, int)
         void bending_modes_and_partials_surface(
                                         rtd *, rtd *, 
                                         rtd *, int, 
@@ -269,19 +271,25 @@ cdef class GMT_M1:
                               x.size, segId)
         return gx.host(), gy.host()
 
-    def load_bending_modes(self):
+    def load_bending_modes(self,grid='irregular'):
         cdef:
             cuDoubleArray x_BM, y_BM, BM
-        self._c_gmt_m12.load_bending_modes()
-        x_BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE))
-        x_BM._c_gpu.dev_data = self._c_gmt_m12.d__x_BM
-        y_BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE))
-        y_BM._c_gpu.dev_data = self._c_gmt_m12.d__y_BM
-        BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE))
-        BM._c_gpu.dev_data = self._c_gmt_m12.d__BM
-        return (x_BM,y_BM,BM)
+        if grid=='regular':
+            self._c_gmt_m12.load_bending_modes_reg()
+            BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE*self._c_gmt_m12.BM_N_SAMPLE))
+            BM._c_gpu.dev_data = self._c_gmt_m12.d__BM
+            return BM
+        else:
+            self._c_gmt_m12.load_bending_modes()
+            x_BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE))
+            x_BM._c_gpu.dev_data = self._c_gmt_m12.d__x_BM
+            y_BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE))
+            y_BM._c_gpu.dev_data = self._c_gmt_m12.d__y_BM
+            BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE))
+            BM._c_gpu.dev_data = self._c_gmt_m12.d__BM
+            return (x_BM,y_BM,BM)
 
-    def bending_modes_and_partials(self,int NI, double di, int k_mode=1):
+    def bending_modes_and_partials(self,int NI, double di, int k_mode=1,grid='irregular'):
         cdef:
             cuDoubleArray BMi
             cuDoubleArray partial_x_BMi
@@ -289,7 +297,13 @@ cdef class GMT_M1:
         BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
         partial_x_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
         partial_y_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
-        self._c_gmt_m12.bending_modes_and_partials(BMi._c_gpu.dev_data,
+        if grid=='regular':
+            self._c_gmt_m12.bending_modes_and_partials_reg(BMi._c_gpu.dev_data,
+                                         partial_x_BMi._c_gpu.dev_data,
+                                         partial_y_BMi._c_gpu.dev_data,
+                                         NI, di, k_mode)
+        else:
+            self._c_gmt_m12.bending_modes_and_partials(BMi._c_gpu.dev_data,
                                          partial_x_BMi._c_gpu.dev_data,
                                          partial_y_BMi._c_gpu.dev_data,
                                          NI, di, k_mode)
