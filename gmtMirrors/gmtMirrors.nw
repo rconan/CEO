@@ -255,6 +255,7 @@ void gmt_m1::setup()
   ZS = NULL;
   <<M1 parameters>>
   <<GMT setup common>>
+  load_bending_modes_reg();
 }
 @ or
 \index{gmtMirrors!gmt\_m1!setup}
@@ -1447,7 +1448,7 @@ void gmt_m1::load_bending_modes(void)
   lSize = ftell (pFile)/sizeof(double);
   rewind (pFile);
 
-  fprintf(stdout,"lSize=%ld\n",lSize);
+  //fprintf(stdout,"lSize=%ld\n",lSize);
 
   // allocate memory to contain the whole file:
   buffer = (double*) malloc (lSize*sizeof(double));
@@ -1455,7 +1456,7 @@ void gmt_m1::load_bending_modes(void)
 
   // copy the file into the buffer:
   result = fread (buffer,sizeof(double),lSize,pFile);
-  fprintf(stdout,"result=%ld\n",result);
+  //fprintf(stdout,"result=%ld\n",result);
   if (result != lSize) {fputs ("Reading error",stderr); exit (3);}
 
   /* the whole file is now loaded in the memory buffer. */
@@ -1497,7 +1498,7 @@ void gmt_m1::load_bending_modes_reg(void)
   lSize = ftell (pFile)/sizeof(double);
   rewind (pFile);
 
-  fprintf(stdout,"lSize=%ld\n",lSize);
+  //fprintf(stdout,"lSize=%ld\n",lSize);
 
   // allocate memory to contain the whole file:
   buffer = (double*) malloc (lSize*sizeof(double));
@@ -1505,7 +1506,7 @@ void gmt_m1::load_bending_modes_reg(void)
 
   // copy the file into the buffer:
   result = fread (buffer,sizeof(double),lSize,pFile);
-  fprintf(stdout,"result=%ld\n",result);
+  //fprintf(stdout,"result=%ld\n",result);
   if (result != lSize) {fputs ("Reading error",stderr); exit (3);}
 
   /* the whole file is now loaded in the memory buffer. */
@@ -1734,7 +1735,6 @@ void gmt_m1::bending_modes_and_partials_reg(rtd *d__BMi,
 					     d__partial_x_BMi,
 					     d__partial_y_BMi,
 					     NI, di,
-					     d__x_BM, d__y_BM,
 					     d__BM, BM_N_SAMPLE,
 					     BM_radius, k_mode);
 }
@@ -1743,7 +1743,7 @@ with the kernels
 <<bilinear kernel>>=
 __global__ void bilinear_kernel(rtd *BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
 				const int NI, const rtd di,
-				double *x_BM, double *y_BM, double *BM,
+				double *BM,
 				const int BM_N_SAMPLE, const double BM_radius,
 				const int k_mode)
 {
@@ -1847,7 +1847,7 @@ The bending modes is an orthogonal set of vector, consequently the coefficients 
 \index{gmtMirrors!gmt\_m1!bending\_modes\_surface}
 <<bending modes surface>>=
 __device__ inline rtd bending_modes_surface(vector *v, const int N_mode, rtd *b,
-                                            double *x_BM, double *y_BM, double *BM,
+                                            double *BM,
                                             const int BM_N_SAMPLE, const double BM_radius)
 {
   int k_mode, o, ndx;
@@ -1864,13 +1864,13 @@ __device__ inline rtd bending_modes_surface(vector *v, const int N_mode, rtd *b,
     S += b[k_mode]*( ( z[ndx]*onemt + z[ndx+1]*t )*onems +
 	      ( z[ndx+BM_N_SAMPLE]*onemt + z[ndx+BM_N_SAMPLE+1]*t )*s );
   }
-  return S;
+  return -S;
 }
 @				
 \index{gmtMirrors!gmt\_m1!partial\_x\_bending\_modes\_surface}
 <<partial x bending modes surface>>=
 __device__ inline rtd partial_x_bending_modes_surface(vector *v, const int N_mode, rtd *b,
-                                            double *x_BM, double *y_BM, double *BM,
+                                            double *BM,
                                             const int BM_N_SAMPLE, const double BM_radius)
 {
   int k_mode, o, ndx, ndx_a, ndx_b;
@@ -1902,13 +1902,13 @@ __device__ inline rtd partial_x_bending_modes_surface(vector *v, const int N_mod
     S_ /= 2*h;
     S += b[k_mode]*S_;
   }
-  return S;
+  return -S;
 }
 @				
 \index{gmtMirrors!gmt\_m1!partial\_y\_bending\_modes\_surface}
 <<partial y bending modes surface>>=
 __device__ inline rtd partial_y_bending_modes_surface(vector *v, const int N_mode, rtd *b,
-                                            double *x_BM, double *y_BM, double *BM,
+                                            double *BM,
                                             const int BM_N_SAMPLE, const double BM_radius)
 {
   int k_mode, o, ndx, ndx_a, ndx_b;
@@ -1940,7 +1940,7 @@ __device__ inline rtd partial_y_bending_modes_surface(vector *v, const int N_mod
     S_ /= 2*h;
     S += b[k_mode]*S_;
   }
-  return S;
+  return -S;
 }
 @				
 \index{gmtMirrors!gmt\_m1!partial\_y\_bending\_modes\_surface}
