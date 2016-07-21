@@ -99,9 +99,10 @@ cdef class GmtMirrors:
 
     >>> gpu_ps1d = src.wavefront.phase()
     """
-    def __init__(self, int M1_radial_order=0, int M2_radial_order=0):
-        self.M1 = GMT_M1(radial_order=M1_radial_order)
-        self.M2 = GMT_M2(radial_order=M2_radial_order)
+    def __init__(self, int M1_radial_order=0, int M2_radial_order=0,
+                 str M1_mirror_modes="zernike", str M2_mirror_modes="zernike"):
+        self.M1 = GMT_M1(radial_order=M1_radial_order, mirror_modes=M1_mirror_modes)
+        self.M2 = GMT_M2(radial_order=M2_radial_order, mirror_modes=M2_mirror_modes)
         self.focal_plane_distance = -5.830
         self.focal_plane_radius   =  2.197173
 
@@ -186,6 +187,85 @@ cdef class GmtMirrors:
                                                           src._c_source.rays.d__piston_mask)
         return sxy
 @
+\section{Bending modes}
+\label{sec:bending-modes}
+
+\index{gmtMirrors!python!bending\_modes}
+
+\subsection{PXD file}
+\label{sec:pxd-file-6}
+
+<<gmtMirrors.pxd contents>>=
+    cdef cppclass bending_modes:
+        double *d__x_BM
+        double *d__y_BM
+        double *d__BM
+        int BM_N_SAMPLE
+        void setup()
+        void cleanup()
+        void load()
+        void load_reg()
+        void nearest_neighbor(rtd *, rtd *, rtd *,
+                              int , rtd , int)
+        void bilinear(rtd *, rtd *, rtd *,
+                      int , rtd , int)
+@
+\subsubsection{Class definition}
+\label{sec:class-definition-6}
+
+<<class definitions>>=
+cdef class Bending_modes:
+    cdef:
+        bending_modes *_c_bending_modes
+
+@
+\subsection{PYX file}
+\label{sec:pyx-file-6}
+
+<<gmtMirrors.pyx>>=
+cdef class Bending_modes:
+
+    def __cinit__(self):
+        self._c_bending_modes = new bending_modes()
+
+    def load(self,grid='irregular'):
+        cdef:
+            cuDoubleArray x_BM, y_BM, BM
+        if grid=='regular':
+            self._c_bending_modes.load_reg()
+            BM = cuDoubleArray(shape=(1,self._c_bending_modes.BM_N_SAMPLE*self._c_bending_modes.BM_N_SAMPLE))
+            BM._c_gpu.dev_data = self._c_bending_modes.d__BM
+            return BM
+        else:
+            self._c_bending_modes.load()
+            x_BM = cuDoubleArray(shape=(1,self._c_bending_modes.BM_N_SAMPLE))
+            x_BM._c_gpu.dev_data = self._c_bending_modes.d__x_BM
+            y_BM = cuDoubleArray(shape=(1,self._c_bending_modes.BM_N_SAMPLE))
+            y_BM._c_gpu.dev_data = self._c_bending_modes.d__y_BM
+            BM = cuDoubleArray(shape=(1,self._c_bending_modes.BM_N_SAMPLE))
+            BM._c_gpu.dev_data = self._c_bending_modes.d__BM
+            return (x_BM,y_BM,BM)
+
+    def interpolate(self,int NI, double di, int k_mode=1,grid='irregular'):
+        cdef:
+            cuDoubleArray BMi
+            cuDoubleArray partial_x_BMi
+            cuDoubleArray partial_y_BMi
+        BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_x_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_y_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        if grid=='regular':
+            self._c_bending_modes.bilinear(BMi._c_gpu.dev_data,
+                                     partial_x_BMi._c_gpu.dev_data,
+                                     partial_y_BMi._c_gpu.dev_data,
+                                     NI, di, k_mode)
+        else:
+            self._c_bending_modes.nearest_neighbor(BMi._c_gpu.dev_data,
+                                                   partial_x_BMi._c_gpu.dev_data,
+                                                   partial_y_BMi._c_gpu.dev_data,
+                                                   NI, di, k_mode)
+        return (BMi,partial_x_BMi,partial_y_BMi)
+@ 
 \section{GMT M1}
 \label{sec:gmt-m1-1}
 
@@ -249,7 +329,7 @@ cdef class GMT_M1:
 cdef class GMT_M1:
     <<GMT M12 docstring>>
 
-    def __cinit__(self, int radial_order=0):
+    def __cinit__(self, int radial_order=0, str mirror_modes="zernike"):
         self._c_gmt_m12 = new gmt_m1()
         <<GMT M12 constructor>>
 
@@ -270,67 +350,13 @@ cdef class GMT_M1:
                               gy._c_gpu.dev_data,
                               x.size, segId)
         return gx.host(), gy.host()
-
-    def load_bending_modes(self,grid='irregular'):
-        cdef:
-            cuDoubleArray x_BM, y_BM, BM
-        if grid=='regular':
-            self._c_gmt_m12.load_bending_modes_reg()
-            BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE*self._c_gmt_m12.BM_N_SAMPLE))
-            BM._c_gpu.dev_data = self._c_gmt_m12.d__BM
-            return BM
-        else:
-            self._c_gmt_m12.load_bending_modes()
-            x_BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE))
-            x_BM._c_gpu.dev_data = self._c_gmt_m12.d__x_BM
-            y_BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE))
-            y_BM._c_gpu.dev_data = self._c_gmt_m12.d__y_BM
-            BM = cuDoubleArray(shape=(1,self._c_gmt_m12.BM_N_SAMPLE))
-            BM._c_gpu.dev_data = self._c_gmt_m12.d__BM
-            return (x_BM,y_BM,BM)
-
-    def bending_modes_and_partials(self,int NI, double di, int k_mode=1,grid='irregular'):
-        cdef:
-            cuDoubleArray BMi
-            cuDoubleArray partial_x_BMi
-            cuDoubleArray partial_y_BMi
-        BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
-        partial_x_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
-        partial_y_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
-        if grid=='regular':
-            self._c_gmt_m12.bending_modes_and_partials_reg(BMi._c_gpu.dev_data,
-                                         partial_x_BMi._c_gpu.dev_data,
-                                         partial_y_BMi._c_gpu.dev_data,
-                                         NI, di, k_mode)
-        else:
-            self._c_gmt_m12.bending_modes_and_partials(BMi._c_gpu.dev_data,
-                                         partial_x_BMi._c_gpu.dev_data,
-                                         partial_y_BMi._c_gpu.dev_data,
-                                         NI, di, k_mode)
-        return (BMi,partial_x_BMi,partial_y_BMi)
-
-    def bending_modes_and_partials_surface(self,int NI, double di, 
-                                           double[:] b):
-        cdef:
-            cuDoubleArray BMi_S
-            cuDoubleArray partial_x_BMi_S
-            cuDoubleArray partial_y_BMi_S
-            cuDoubleArray cu_b
-        BMi_S = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
-        partial_x_BMi_S = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
-        partial_y_BMi_S = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
-        cu_b = cuDoubleArray(host_data=b)
-        self._c_gmt_m12.bending_modes_and_partials_surface(
-                                         BMi_S._c_gpu.dev_data,
-                                         partial_x_BMi_S._c_gpu.dev_data,
-                                         partial_y_BMi_S._c_gpu.dev_data,
-                                         NI, di, len(b),
-                                         cu_b._c_gpu.dev_data)
-        return (BMi_S,partial_x_BMi_S,partial_y_BMi_S)
 @
 <<GMT M12 constructor>>=
-self.zernike = ZernikeS(radial_order,N_SURF=7)
-self._c_gmt_m12.setup( <zernikeS *> self.zernike._c_zernikeS)
+if mirror_modes=="zernike":
+    self.zernike = ZernikeS(radial_order,N_SURF=7)
+    self._c_gmt_m12.setup( <zernikeS *> self.zernike._c_zernikeS)
+else:
+    self._c_gmt_m12.setup()
 
 self.aperture_CS   = Coordinate_system(7)
 self.conic_CS      = Coordinate_system(7)
@@ -575,7 +601,7 @@ cdef class GMT_M2:
 cdef class GMT_M2:
     <<GMT M12 docstring>>
 
-    def __cinit__(self, radial_order=0):
+    def __cinit__(self, radial_order=0, str mirror_modes="zernike"):
         self._c_gmt_m12 = new gmt_m2()
         <<GMT M12 constructor>>
 

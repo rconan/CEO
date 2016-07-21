@@ -70,10 +70,13 @@ class GMT_MX(GmtMirrors):
 
     >>> gpu_ps1d = src.wavefront.phase()
     """
-    def __init__(self, D=None, D_px=None, M1_radial_order=0, M2_radial_order=0):
+    def __init__(self, D=None, D_px=None, M1_radial_order=0, M2_radial_order=0,
+                 M1_mirror_modes="zernike", M2_mirror_modes="zernike"):
         super(GMT_MX,self).__init__(
                             M1_radial_order=M1_radial_order,
-                            M2_radial_order=M2_radial_order)
+                            M2_radial_order=M2_radial_order,
+                            M1_mirror_modes=M1_mirror_modes,
+                            M2_mirror_modes=M2_mirror_modes)
 
     def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,agws=None,recmat=None,first_mode=3,minus_M2_TT=False):
         """

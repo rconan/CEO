@@ -1,4 +1,4 @@
-% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+ -*- mode: Noweb; noweb-code-mode: c-mode -*-
 
 @
 \index{gmtMirrors}
@@ -20,6 +20,12 @@
 #include "source.h"
 #endif
 
+<<bending modes surface>>
+<<partial x bending modes surface>>
+<<partial y bending modes surface>>
+<<partial z bending modes surface>>
+
+<<bending modes structure>>
 <<GMT M1 structure>>
 <<GMT M2 structure>>
 <<stereoscopic edge sensors structure>>
@@ -38,7 +44,6 @@
 <<GMT blocking kernel>>
 <<GMT track kernel>>
 <<nearest neighbor kernel>>
-<<nearest neighbor surface kernel>>
 <<bilinear kernel>>
 <<stereoscopic edge sensors initialization kernel>>
 <<stereoscopic edge sensors data kernel>>
@@ -50,11 +55,7 @@
 <<laser camera intersection kernel>>
 <<vignetting presetting kernel>>
 
-<<bending modes surface>>
-<<partial x bending modes surface>>
-<<partial y bending modes surface>>
-<<partial z bending modes surface>>
-
+<<bending modes functions>>
 <<GMT M1 functions>>
 <<GMT M2 functions>>
 
@@ -74,15 +75,6 @@ struct gmt_m1 {
   <<GMT M12 functions>>
   void preset(bundle *rays, rtd margin);
   void edge_sensors_data(void);
-  void load_bending_modes(void);
-  void load_bending_modes_reg(void);
-  void bending_modes_and_partials(rtd *d__BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
-			int NI, rtd di, int k_mode);
-  void bending_modes_and_partials_surface(
-                        rtd *d__BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
-			int NI, rtd di, int N_mode, rtd *b);
-  void bending_modes_and_partials_reg(rtd *d__BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
-			int NI, rtd di, int k_mode);
 };
 @  with
 <<GMT M12 functions>>=
@@ -184,7 +176,7 @@ mask *V;
 <<GMT M12 parameters>>=
 int idx_offset;
 @
-\item an array of Zernike surface, one per segment, [[ZS]]:
+\item a Zernike surface [[ZS]]:
 <<GMT M12 parameters>>=
 zernikeS *ZS;
 @
@@ -211,29 +203,14 @@ cublasHandle_t handle;
 <<GMT M12 parameters>>=
 char *d__valid_segments;
 @
-\item the bending modes variables:
-  \begin{itemize}
-  \item the bending modes x and y coordinates
-<<GMT M1 parameters>>=
-double *d__x_BM, *d__y_BM;
+\item the mirror modes type (Zernike polynomials or bending modes)
+<<GMT M12 parameters>>=
+char zernike_modes, bending_modes;
 @
-\item the bending modes 
-<<GMT M1 parameters>>=
-double *d__BM;
+\item a bending modes structure [[BS]]:
+<<GMT M12 parameters>>=
+//bending_modes *BS;
 @
-\item the radius of the circle circumscribing the bending modes
-<<GMT M1 parameters>>=
-double BM_radius;
-@
-\item the number of sampling points i.e. the length of [[x_BM]] and [[y_BM]] arrays
-<<GMT M1 parameters>>=
-int BM_N_SAMPLE;
-@
-\item the bending modes data ([[d__x_BM]],[[d__y_BM]] and [[d__BM]]) buffer
-<<GMT M1 parameters>>=
-double *d__BM_buffer;
-@
-  \end{itemize}
  \end{itemize}
 
 
@@ -255,6 +232,7 @@ void gmt_m1::setup()
   ZS = NULL;
   <<M1 parameters>>
   <<GMT setup common>>
+  bending_modes = 1;
 }
 @ or
 \index{gmtMirrors!gmt\_m1!setup}
@@ -282,9 +260,10 @@ conic_k = 1-0.9982857;
 height  = 0.0;
 idx_offset = 0;
 V = NULL;
-d__BM_buffer = NULL;
 @ and
 <<GMT setup common>>=
+bending_modes = 0;
+zernike_modes = 1;
 vector __v0(0.0,0.0,0.0),
        __v(D_full*0.5,0.0,0.0),
        origin[12],
@@ -457,8 +436,6 @@ Memory is freed with
 void gmt_m1::cleanup(void)
 {
   fprintf(stdout,"@(CEO)>gmt_m1: freeing memory!\n");
-  if (d__BM_buffer!=NULL)
-    HANDLE_ERROR( cudaFree( d__BM_buffer ) );
   <<GMT cleanup common>>
 }
 @ with
@@ -656,16 +633,14 @@ void gmt_m1::trace(bundle *rays)
 						   rigid_body_CS.d__R,
 						   rigid_body_CS.d__origin,
 						   motion_CS.d__R,
-						   motion_CS.d__origin,
-						   ZS->max_n, ZS->n_mode,
-						   ZS->d__a, ZS->d__cx, ZS->d__cy,
-						   0.5*D_full);
+						   motion_CS.d__origin);
  blockDim = dim3(N_THREAD,N_THREAD);
  gridDim  = dim3(rays->N_RAY/N_THREAD2+1,1,rays->N_BUNDLE);
  HANDLE_ERROR( cudaMemset(V->m, 0, sizeof(char)*rays->N_RAY*rays->N_BUNDLE ) );
  HANDLE_ERROR( cudaMemset(rays->d__piston_mask, 0,
 			  sizeof(int)*rays->N_RAY*rays->N_BUNDLE ) );
-m1_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY,
+if (zernike_modes)
+  m1_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY,
 					    Rri2, R2,
 					    aperture_CS.d__R,
 					    aperture_CS.d__origin,
@@ -683,6 +658,28 @@ m1_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY,
 					    rays->d__chief_ray,
 					    rays->d__piston_mask,
 					    d__valid_segments);
+/*
+if (bending_modes)
+  m1_bm_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY,
+					    Rri2, R2,
+					    aperture_CS.d__R,
+					    aperture_CS.d__origin,
+					    conic_CS.d__R,
+					    conic_CS.d__origin,
+					    conic_k, conic_c,
+					    d__conic_origin,
+					    rigid_body_CS.d__R,
+					    rigid_body_CS.d__origin,
+					    motion_CS.d__R,
+					    motion_CS.d__origin,
+ const int N_mode, rtd *b,
+                                            double *BM,
+                                            const int BM_N_SAMPLE, const double BM_radius
+
+					    rays->d__chief_ray,
+					    rays->d__piston_mask,
+					    d__valid_segments);
+*/
 intersection LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY);
 float previous_nnz = rays->V.nnz;
 //fprintf(stdout,"M%d previous nnz rays: %f\n",M_ID,previous_nnz);
@@ -747,6 +744,61 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
       }
   }
 }
+@ for the bending modes, with the kernel
+<<GMT ray tracing kernel>>=
+__global__ void m1_bm_trace_kernel(char *mask, ray *d__ray, int N_RAY,
+				   rtd inner2, rtd outer2,
+				   rtd *d__aperture_R, vector *d__aperture_origin,
+				   rtd *d__conic_R, vector *d__conic_origin,
+				   const rtd Fk, const rtd Fc,
+				   vector *d__conic_self_origin,
+				   rtd *d__rigid_body_R, vector *d__rigid_body_origin,
+				   rtd *d__motion_R, vector *d__motion_origin,
+				   const int N_mode, rtd *b, double *BM,
+				   const int BM_N_SAMPLE, const double BM_radius,
+				   ray *d__chief_ray, int *d__piston_mask,
+				   char *d__valid_segments)
+{
+  int i, j, ij, iCoordSys, iSource;
+  rtd rho2;
+  rtd x, y, z, x1, y1, s0, k, l, m;
+  rtd s1, S, K, L ,M, dSds;
+  rtd G2, a;
+  vector d__origin, xyz, klm, xyz_GS, klm_GS, Snormal;
+
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = threadIdx.y;
+  //  iCoordSys = blockIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
+  j = ij;
+  ij += iSource*N_RAY;
+  if  ( ( j<N_RAY ) && (d__ray[ij].v) )// & (iCoordSys<1) )
+  {
+
+    for (iCoordSys=0; iCoordSys<7 ; iCoordSys++)
+      {
+        if (d__valid_segments[iCoordSys]>0) {
+	d__origin = d__conic_self_origin[iCoordSys];
+
+        <<from global CS to motion CS>>
+
+	<<from motion CS to aperture intersection>>
+
+	if (rho2<=outer2)
+	  {
+	    mask[ij] = 1;
+	    d__piston_mask[ij] = iCoordSys + 1;
+
+            <<from motion CS to conic intersection and back to global CS (bending modes)>>
+	    d__ray[ij].optical_path_difference +=
+		d__ray[ij].optical_path_length - d__chief_ray[iSource].optical_path_length;
+	    return;
+	  }
+        }
+      }
+  }
+}
 @ and the chief ray kernel
 <<GMT chief ray tracing kernel>>=
 __global__ void m1_trace_chief_kernel(char *mask, ray *d__ray, int N_RAY,
@@ -754,9 +806,7 @@ __global__ void m1_trace_chief_kernel(char *mask, ray *d__ray, int N_RAY,
 				      const rtd Fk, const rtd Fc,
 				      vector *d__conic_self_origin,
 				      rtd *d__rigid_body_R, vector *d__rigid_body_origin,
-				      rtd *d__motion_R, vector *d__motion_origin,
-				      int max_n, int n_mode,
-				      rtd *d__a, rtd *d__cx, rtd *d__cy, rtd R)
+				      rtd *d__motion_R, vector *d__motion_origin)
 {
   int j, ij, iCoordSys, iSource;
   rtd x1, y1, s0, k, l, m;
@@ -875,7 +925,9 @@ The intersection with and reflection from the surface is done with
 <<from conic CS to motion CS>>
 <<from motion CS to rigid body CS>>
 <<from rigid body CS to global CS>>
-@ 
+@
+\begin{itemize}
+\item Zernike modes:
 <<from motion CS to conic intersection and back to global CS>>=
 klm.x = klm_GS.x;
 klm.y =	klm_GS.y;
@@ -894,6 +946,27 @@ xyz_GS.z = xyz.z;
 <<from motion CS to rigid body CS>>
 <<from rigid body CS to global CS>>
 @
+\item bending modes:
+<<from motion CS to conic intersection and back to global CS (bending modes)>>=
+klm.x = klm_GS.x;
+klm.y =	klm_GS.y;
+klm.z =	klm_GS.z;
+xyz.x = xyz_GS.x;
+xyz.y =	xyz_GS.y;
+xyz.z =	xyz_GS.z;
+<<GMT intersection with aspheric (bending modes)>>
+<<reflection from the surface>>
+klm_GS.x = klm.x;
+klm_GS.y = klm.y;
+klm_GS.z = klm.z;
+xyz_GS.x = xyz.x;
+xyz_GS.y = xyz.y;
+xyz_GS.z = xyz.z;
+<<from motion CS to rigid body CS>>
+<<from rigid body CS to global CS>>
+@
+\end{itemize}
+
 <<from motion CS to conic CS>>=
 // CONIC >>>
 backward_transform_centered(&xyz, &xyz_GS,
@@ -966,6 +1039,8 @@ x1 = x + k*s0;
 y1 = y + l*s0;
 @
 The intersection with the plane $z=0$ in the conic coordinate transformed is computed with
+\begin{itemize}
+ \item Zernike modes:
 <<GMT intersection with aspheric>>=
 k  = klm.x;
 l  = klm.y;
@@ -997,9 +1072,43 @@ for (j=0; j<SNELL_N_ITERATION; j++)
     }
   s0 = s1;
 }
+@
+\item bending modes:
+<<GMT intersection with aspheric (bending modes)>>=
+k  = klm.x;
+l  = klm.y;
+m  = klm.z;
+if (m==0) { return; }
+s0 = -xyz.z/m;
+x1 = xyz.x + k*s0;
+y1 = xyz.y + l*s0;
+d__ray[ij].optical_path_length = s0;
+s0 = s1 = 0;
+for (j=0; j<SNELL_N_ITERATION; j++)
+{
+  xyz.x = x1 + k*s0;
+  xyz.y = y1 + l*s0;
+  xyz.z = m*s0;
+  <<aspheric surface and derivatives (bending modes)>>
+  dSds = K*k + L*l + M*m;
+  if (dSds==0) { break; }
+  s1 = s0 - S/dSds;
+  if (abs(s1-s0)<TOL)
+    {
+      xyz.x = x1 + k*s1;
+      xyz.y = y1 + l*s1;
+      xyz.z = m*s1;
+      <<aspheric surface derivatives (bending modes)>>
+      d__ray[ij].optical_path_length += s1;
+      d__ray[ij].n_iteration = j;
+      break;
+    }
+  s0 = s1;
+}
 @ 
-The aspheric surface is the sum of a conic and a Zernike surface.
-The conic surface is defined in the conic CS whereas the Zernike surface is defined in the motion CS. 
+\end{itemize}
+The aspheric surface is the sum of a conic and an aspheric surface (Zernike of bending modes).
+The conic surface is defined in the conic CS whereas the aspheric surface is defined in the motion CS. 
 The coordinates are transformed into the conic CS where the surface height is computed:
 <<aspheric surface (conic CS)>>=
 // CONIC >>>
@@ -1008,6 +1117,8 @@ backward_transform_centered(&xyz, &xyz,
 S = conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
 @
 The coordinates are transformed back into the motion CS where the Zernike height is added to the conic height:
+\begin{itemize}
+\item Zernike modes:
 <<aspheric surface (motion CS)>>=
 // CONIC <<<
 forward_transform_centered(&xyz, &xyz,
@@ -1015,12 +1126,33 @@ forward_transform_centered(&xyz, &xyz,
 S += zernike_surface(&xyz, &d__origin, max_n,
                      d__a + iCoordSys*n_mode, R); 
 @
+\item bending modes:
+<<aspheric surface (motion CS, bending modes)>>=
+// CONIC <<<
+forward_transform_centered(&xyz, &xyz,
+                           d__conic_R+iCoordSys*9);
+
+S += bending_modes_surface(&xyz, N_mode, b + iCoordSys*N_mode, 
+			   BM, BM_N_SAMPLE, BM_radius); 
+
+@
+\end{itemize}
 Both above operations are combined together with: 
+\begin{itemize}
+\item Zernike modes:
 <<aspheric surface>>=
 <<aspheric surface (conic CS)>>
 <<aspheric surface (motion CS)>>
 @
-  The surface derivatives follow the same procedure than the surface but before adding the Zernike derivatives to the conic derivatives, the conic gradient vector is tranformed back into the motion CS:
+\item bending modes:
+<<aspheric surface (bending modes)>>=
+<<aspheric surface (conic CS)>>
+<<aspheric surface (motion CS, bending modes)>>
+@
+\end{itemize}
+  The surface derivatives follow the same procedure than the surface but before adding the aspheric derivatives to the conic derivatives, the conic gradient vector is tranformed back into the motion CS:
+\begin{itemize}
+\item Zernike modes:
 <<aspheric surface derivatives>>=
 // CONIC >>>
 backward_transform_centered(&xyz, &xyz,
@@ -1044,8 +1176,38 @@ K += partial_x_zernike_surface(&xyz, &d__origin, max_n,
 L += partial_y_zernike_surface(&xyz, &d__origin, max_n,
                                d__cy + iCoordSys*b_n_mode, R);
 M += partial_z_zernike_surface();
-@
+@ 
+\item bending modes:
+<<aspheric surface derivatives (bending modes)>>=
+// CONIC >>>
+backward_transform_centered(&xyz, &xyz,
+			    d__conic_R+iCoordSys*9);
+K = partial_x_conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
+L = partial_y_conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
+M = partial_z_conic_surface();
+// CONIC <<<
+forward_transform_centered(&xyz, &xyz,
+                           d__conic_R+iCoordSys*9);
+Snormal.x = K;
+Snormal.y = L;
+Snormal.z = M;
+forward_transform_centered(&Snormal, &Snormal,
+			   d__conic_R+iCoordSys*9);
+K = Snormal.x;
+L = Snormal.y;
+M = Snormal.z;
+
+K += partial_x_bending_modes_surface(&xyz, N_mode, b + iCoordSys*N_mode, 
+				     BM, BM_N_SAMPLE, BM_radius);
+L += partial_y_bending_modes_surface(&xyz, N_mode, b + iCoordSys*N_mode, 
+				     BM, BM_N_SAMPLE, BM_radius);
+M += partial_z_bending_modes_surface();
+
+@ 
+\end{itemize}
 The surface and the surface derivatives are computed together with:
+\begin{itemize}
+\item Zernike modes:
 <<aspheric surface and derivatives (3 steps)>>=
 <<aspheric surface (conic CS)>>
 K = partial_x_conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
@@ -1066,6 +1228,29 @@ L += partial_y_zernike_surface(&xyz, &d__origin, max_n,
                                d__cy + iCoordSys*b_n_mode, R);
 M += partial_z_zernike_surface();
 @
+\item bending modes:
+<<aspheric surface and derivatives (bending modes)>>=
+<<aspheric surface (conic CS)>>
+K = partial_x_conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
+L = partial_y_conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
+M = partial_z_conic_surface();
+<<aspheric surface (motion CS, bending modes)>>
+Snormal.x = K;
+Snormal.y = L;
+Snormal.z = M;
+forward_transform_centered(&Snormal, &Snormal,
+			   d__conic_R+iCoordSys*9);
+K = Snormal.x;
+L = Snormal.y;
+M = Snormal.z;
+
+K += partial_x_bending_modes_surface(&xyz, N_mode, b + iCoordSys*N_mode, 
+			       BM, BM_N_SAMPLE, BM_radius);
+L += partial_y_bending_modes_surface(&xyz, N_mode, b + iCoordSys*N_mode, 
+			       BM, BM_N_SAMPLE, BM_radius);
+M += partial_z_bending_modes_surface();
+@
+\end{itemize}
 This is the algorithm to compute the coordinates of the intersection of a ray with a conic surface: 
 <<GMT intersection with conic>>=
 k  = klm.x;
@@ -1419,8 +1604,71 @@ for (k=0;k<N;k++)
 \subsection{Bending modes}
 \label{sec:bending-modes}
 
-This section defines the routine to load the bending modes and interpolated the bending modes on a regular grid.
+This section defines the routine to load the bending modes and interpolated the bending modes;
+The parameters and routines associated to the bending modes are gatherered in the \emph{bending\_modes} structure:
+\index{gmtMirrors!bending\_modes!load\_bending\_modes}
+<<bending modes structure>>=
+struct bending_modes {
+  <<bending modes parameters>>	
+  void setup(void);
+  void cleanup(void);
+  void load(void);
+  void load_reg(void);
+  void nearest_neighbor(rtd *d__BMi,
+		   rtd *d__partial_x_BMi,
+		   rtd *d__partial_y_BMi,
+		   int NI, rtd di, int k_mode);
+  void bilinear(rtd *d__BMi,
+	   rtd *d__partial_x_BMi,
+	   rtd *d__partial_y_BMi,
+	   int NI, rtd di, int k_mode);
+};
+@
+The bending modes parameters are: 
+  \begin{itemize}
+  \item the bending modes x and y coordinates
+<<bending modes parameters>>=
+double *d__x_BM, *d__y_BM;
+@
+\item the bending modes 
+<<bending modes parameters>>=
+double *d__BM;
+@
+\item the radius of the circle circumscribing the bending modes
+<<bending modes parameters>>=
+double BM_radius;
+@
+\item the number of sampling points i.e. the length of [[x_BM]] and [[y_BM]] arrays
+<<bending modes parameters>>=
+int BM_N_SAMPLE;
+@
+\item the bending modes data ([[d__x_BM]],[[d__y_BM]] and [[d__BM]]) buffer
+<<bending modes parameters>>=
+double *d__BM_buffer;
+@
+  \end{itemize}
 
+\subsubsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
+The bending modes are loaded with:
+\index{gmtMirrors!bending\_modes!setup}
+<<bending modes functions>>=
+void bending_modes::setup(void)
+{
+  load_reg();
+}
+@
+Memory is freed with
+\index{gmtMirrors!bending\_modes!cleanup}
+<<bending modes functions>>=
+void bending_modes::cleanup(void)
+{
+  fprintf(stdout,"@(CEO)>bending_modes: freeing memory!\n");
+  if (d__BM_buffer!=NULL)
+    HANDLE_ERROR( cudaFree( d__BM_buffer ) );
+}
+@
 \subsubsection{Loading the bending modes}
 \label{sec:load-bend-modes}
 
@@ -1430,9 +1678,9 @@ This section defines the routine to load the bending modes and interpolated the 
 The bending modes are originally computed on a 27685 points irregular grid sampling a circle of 4.181m radius.
 The points coordinates and the bending modes are stored into the file \emph{bendingModes.bin}.
 They are loaded into the \emph{gmt\_m1} structure with:
-\index{gmtMirrors!gmt\_m1!load\_bending\_modes}
-<<GMT M1 functions>>=
-void gmt_m1::load_bending_modes(void)
+\index{gmtMirrors!bending\_modes!load\_bending\_modes}
+<<bending modes functions>>=
+void bending_modes::load(void)
 {
   FILE * pFile;
   long lSize;
@@ -1480,9 +1728,9 @@ The bending modes interpolated on a regular grid are saved in the file \emph{ben
 The regular grid is made of $169\times 169$ points.
 The range of the grid is $\pm$4.231m.
 The bending modes are loaded into the \emph{gmt\_m1} structure with:
-\index{gmtMirrors!gmt\_m1!load\_bending\_modes\_reg}
-<<GMT M1 functions>>=
-void gmt_m1::load_bending_modes_reg(void)
+\index{gmtMirrors!bending\_modes!load\_bending\_modes\_reg}
+<<bending modes functions>>=
+void bending_modes::load_reg(void)
 {
   FILE * pFile;
   long lSize;
@@ -1536,9 +1784,9 @@ with $h=5cm$ (the approximate spacing of the irregular grid).
 
 The interpolation algorithm uses a simple nearest neighbor interpolation method where the interpolated value at a given point is given by the value of the bending modes of the nearest point on the origin mesh.
 
-\index{gmtMirrors!gmt\_m1!bending\_modes\_and\_partials}
-<<GMT M1 functions>>=
-void gmt_m1::bending_modes_and_partials(rtd *d__BMi,
+\index{gmtMirrors!bending\_modes!nearest\_neighbor}
+<<bending modes functions>>=
+void bending_modes::nearest_neighbor(rtd *d__BMi,
 			      rtd *d__partial_x_BMi,
 			      rtd *d__partial_y_BMi,
 			      int NI, rtd di, int k_mode)
@@ -1648,68 +1896,7 @@ for (k_BM=0; k_BM<BM_N_SAMPLE; k_BM++) {
   }
 }
 @ 
-A bending mode surface is written as
-\begin{equation}
-  \label{eq:18}
-  \varphi(x,y) = \sum_{k=1}^{k=N} b_k B_k(x,y),
-\end{equation}
-where $N$ is the number of bending modes, $b_k$ are the bending mode coefficients and $B_k(x,y)$ are the bending modes. 
-\index{gmtMirrors!gmt\_m1!bending\_modes\_and\_partials\_surface}
-<<GMT M1 functions>>=
-void gmt_m1::bending_modes_and_partials_surface(rtd *d__BMi,
-			      rtd *d__partial_x_BMi,
-			      rtd *d__partial_y_BMi,
-			      int NI, rtd di, int N_mode,
-                              rtd *b)
-{
-  dim3 blockDim(N_THREAD,N_THREAD);
-  dim3 gridDim(NI/N_THREAD+1,NI/N_THREAD+1);
-  nearest_neighbor_surface_kernel LLL gridDim, blockDim RRR (d__BMi,
-						     d__partial_x_BMi,
-						     d__partial_y_BMi,
-						     NI, di,
-						     d__x_BM, d__y_BM,
-						     d__BM, BM_N_SAMPLE,
-						     BM_radius, N_mode, b);
-}
-@
-with the kernel
-<<nearest neighbor surface kernel>>=
-__global__ void nearest_neighbor_surface_kernel(rtd *BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
-					const int NI, const rtd di,
-					double *x_BM, double *y_BM, double *BM,
-					const int BM_N_SAMPLE, const double BM_radius,
-					const int N_mode, rtd *b)
-{
-  int i, j, k, k_BM, t, o,
-    t_E, t_N, t_W, t_S, k_mode;
-  rtd xi, yi, rho_t, rho_k, rhoi, h,
-    xi_E, yi_N, xi_W, yi_S, 
-    rho_k_E, rho_k_N, rho_k_W, rho_k_S, 
-    rho_t_E, rho_t_N, rho_t_W, rho_t_S;
-  i = blockIdx.x * blockDim.x + threadIdx.x;
-  j = blockIdx.y * blockDim.y + threadIdx.y;
-  if ( (i<NI) && (j<NI)) {
-    k = i + j*NI;
 
-    <<nearest neighbor coordinates>>
-
-    BMi[k] = 0;
-    partial_x_BMi[k] = 0;
-    partial_y_BMi[k] = 0;
- 
-    if (rhoi<=BM_radius) {
-      <<nearest neighbor simple algorithm>>
-      for (k_mode=0; k_mode<N_mode; k_mode++) {
-        o = k_mode*BM_N_SAMPLE;
-        BMi[k] += b[k_mode]*BM[t+o];
-        partial_x_BMi[k] += b[k_mode]*(BM[t_W+o] - BM[t_E+o])/abs(x_BM[t_W] - x_BM[t_E]);
-        partial_y_BMi[k] += b[k_mode]*(BM[t_N+o] - BM[t_S+o])/abs(y_BM[t_N] - y_BM[t_S]);
-      }
-    }
-  }
-}
-@
 \subsubsection{Bilinear interpolation}
 \label{sec:bilin-interp}
 
@@ -1721,12 +1908,12 @@ The bending modes in this section are derived through linear interpolation of th
 The following method re--samples the bending modes on a $[[NI]]\times[[NI]]$ grid with step [[di]].
 The method also returns the x and y axis partial derivatives of the bending modes.
 
-\index{gmtMirrors!gmt\_m1!bending\_modes\_and\_partials\_reg}
-<<GMT M1 functions>>=
-void gmt_m1::bending_modes_and_partials_reg(rtd *d__BMi,
-			      rtd *d__partial_x_BMi,
-			      rtd *d__partial_y_BMi,
-			      int NI, rtd di, int k_mode)
+\index{gmtMirrors!bending\_modes!bilinear}
+<<bending modes functions>>=
+void bending_modes::bilinear(rtd *d__BMi,
+			     rtd *d__partial_x_BMi,
+			     rtd *d__partial_y_BMi,
+			     int NI, rtd di, int k_mode)
 {
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(NI/N_THREAD+1,NI/N_THREAD+1);
@@ -1734,7 +1921,6 @@ void gmt_m1::bending_modes_and_partials_reg(rtd *d__BMi,
 					     d__partial_x_BMi,
 					     d__partial_y_BMi,
 					     NI, di,
-					     d__x_BM, d__y_BM,
 					     d__BM, BM_N_SAMPLE,
 					     BM_radius, k_mode);
 }
@@ -1743,7 +1929,7 @@ with the kernels
 <<bilinear kernel>>=
 __global__ void bilinear_kernel(rtd *BMi, rtd *partial_x_BMi, rtd *partial_y_BMi,
 				const int NI, const rtd di,
-				double *x_BM, double *y_BM, double *BM,
+				double *BM,
 				const int BM_N_SAMPLE, const double BM_radius,
 				const int k_mode)
 {
@@ -1844,10 +2030,10 @@ The bending modes is an orthogonal set of vector, consequently the coefficients 
   b_i = { \int \text{d}\vec r S(\vec r)B_i(\vec r) \over  \int \text{d}\vec r \left| B_i(\vec r) \right|^2 }.
 \end{equation}
 
-\index{gmtMirrors!gmt\_m1!bending\_modes\_surface}
+\index{gmtMirrors!bending\_modes\_surface}
 <<bending modes surface>>=
 __device__ inline rtd bending_modes_surface(vector *v, const int N_mode, rtd *b,
-                                            double *x_BM, double *y_BM, double *BM,
+                                            double *BM,
                                             const int BM_N_SAMPLE, const double BM_radius)
 {
   int k_mode, o, ndx;
@@ -1867,11 +2053,11 @@ __device__ inline rtd bending_modes_surface(vector *v, const int N_mode, rtd *b,
   return S;
 }
 @				
-\index{gmtMirrors!gmt\_m1!partial\_x\_bending\_modes\_surface}
+\index{gmtMirrors!partial\_x\_bending\_modes\_surface}
 <<partial x bending modes surface>>=
 __device__ inline rtd partial_x_bending_modes_surface(vector *v, const int N_mode, rtd *b,
-                                            double *x_BM, double *y_BM, double *BM,
-                                            const int BM_N_SAMPLE, const double BM_radius)
+						      double *BM,
+						      const int BM_N_SAMPLE, const double BM_radius)
 {
   int k_mode, o, ndx, ndx_a, ndx_b;
   rtd scale, S, S_, s, t, fs, ft, onemt, onems,
@@ -1905,11 +2091,11 @@ __device__ inline rtd partial_x_bending_modes_surface(vector *v, const int N_mod
   return S;
 }
 @				
-\index{gmtMirrors!gmt\_m1!partial\_y\_bending\_modes\_surface}
+\index{gmtMirrors!partial\_y\_bending\_modes\_surface}
 <<partial y bending modes surface>>=
 __device__ inline rtd partial_y_bending_modes_surface(vector *v, const int N_mode, rtd *b,
-                                            double *x_BM, double *y_BM, double *BM,
-                                            const int BM_N_SAMPLE, const double BM_radius)
+						      double *BM,
+						      const int BM_N_SAMPLE, const double BM_radius)
 {
   int k_mode, o, ndx, ndx_a, ndx_b;
   rtd scale, S, S_, s, t, fs, ft, onemt, onems,
@@ -1943,7 +2129,7 @@ __device__ inline rtd partial_y_bending_modes_surface(vector *v, const int N_mod
   return S;
 }
 @				
-\index{gmtMirrors!gmt\_m1!partial\_y\_bending\_modes\_surface}
+\index{gmtMirrors!partial\_y\_bending\_modes\_surface}
 <<partial z bending modes surface>>=
 __device__ inline rtd partial_z_bending_modes_surface(void)
 {

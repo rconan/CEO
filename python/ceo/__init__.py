@@ -10,7 +10,7 @@ from pyramid import Pyramid
 from segmentPistonSensor import SegmentPistonSensor
 from aaStats import AaStats, PaStats
 from LMMSE import Lmmse, LmmseSH, BilinearInterpolation
-from gmtMirrors import GmtMirrors, GMT_M1, GMT_M2, StereoscopicEdgeSensors, LateralEdgeSensors, DistanceEdgeSensors
+from gmtMirrors import Bending_modes, GmtMirrors, GMT_M1, GMT_M2, StereoscopicEdgeSensors, LateralEdgeSensors, DistanceEdgeSensors
 from GMTLIB import GMT_MX, JGMT_MX, TT7, IdealSegmentPistonSensor, SegmentTipTiltSensor, EdgeSensors, DispersedFringeSensor, Trace
 import phaseStats
                                 
