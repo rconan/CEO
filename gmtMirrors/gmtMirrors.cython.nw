@@ -149,9 +149,9 @@ cdef class GmtMirrors:
         Reset M1 and M2 mirror segments to their original locations and shapes
         """
         self.M1.motion_CS.reset()
-        self.M1.zernike.reset()
+        self.M1.modes.reset()
         self.M2.motion_CS.reset()
-        self.M2.zernike.reset()
+        self.M2. modes.reset()
 
     def dump_log(self, bytes filename):
         """
@@ -204,7 +204,7 @@ cdef class GmtMirrors:
         double *d__y_BM
         double *d__BM
         int BM_N_SAMPLE
-        void setup(int)
+        void setup(int, int)
         void cleanup()
         void load()
         void load_reg()
@@ -221,7 +221,7 @@ cdef class GmtMirrors:
 cdef class BendingModes:
     cdef:
         bending_modes *_c_bending_modes
-        public rtd[:,:] b
+        public rtd[:,:] a
 @
 
 \subsection{PYX file}
@@ -232,8 +232,8 @@ cdef class BendingModes:
 
     def __cinit__(self, int N_MODE=0, int N_SURF=1):
         self._c_bending_modes = new bending_modes()
-        self._c_bending_modes.setup(N_MODE);
-        self.b = np.zeros((N_SURF, N_MODE), dtype=np.float64)
+        self._c_bending_modes.setup(N_MODE, N_SURF);
+        self.a = np.zeros((N_SURF, N_MODE), dtype=np.float64)
 
     def __dealloc__(self):
         self._c_bending_modes.cleanup();
@@ -280,7 +280,14 @@ cdef class BendingModes:
         """
         Updates the bending modes surface based on the bending modes coefficients
         """
-        self._c_bending_modes.update(&self.b[0,0])
+        self._c_bending_modes.update(&self.a[0,0])
+
+    def reset(self):
+        """
+        Resets the bending modes coefficients to zero and update the bending modes surface
+        """
+        self.a[:] = 0
+        self._c_bending_modes.update(&self.a[0,0])
 @ 
 \section{GMT M1}
 \label{sec:gmt-m1-1}
@@ -330,6 +337,19 @@ cdef class GMT_M1:
         gmt_m1 *_c_gmt_m12
     <<GMT M12 class properties>>
 @
+@ with
+<<GMT M12 class properties>>=
+cdef:
+    public ZernikeS zernike
+    public BendingModes BM
+    public Coordinate_system aperture_CS
+    public Coordinate_system conic_CS
+    public Coordinate_system rigid_body_CS
+    public Coordinate_system motion_CS
+    public Coordinate_system TT_CS
+    public dict D
+    public str mirror_modes_type
+@
 \subsection{PYX file}
 \label{sec:pyx-file-1}
 
@@ -361,6 +381,7 @@ cdef class GMT_M1:
         return gx.host(), gy.host()
 @
 <<GMT M12 constructor>>=
+self.mirror_modes_type = mirror_modes
 if mirror_modes=="zernike":
     self.zernike = ZernikeS(radial_order,N_SURF=7)
     self._c_gmt_m12.setup( <zernikeS *> self.zernike._c_zernikeS)
@@ -495,6 +516,13 @@ property conic_k:
     def __get__(self):
         return self._c_gmt_m12.conic_k
 
+property modes:
+    def __get__(self):
+        if self.mirror_modes_type=="zernike":
+            return self.zernike
+        elif self.mirror_modes_type=="bending modes":
+            return self.BM
+
 property M_ID:
     def __get__(self):
         return self._c_gmt_m12.M_ID
@@ -569,17 +597,6 @@ M2 pointing neutral and coma neutral tip-tilt are realized with
 >>> M2.pointing_neutral(theta,-theta)
 >>> M2.coma_neutral(theta,-theta)
 """
-@ and with
-<<GMT M12 class properties>>=
-cdef:
-    public ZernikeS zernike
-    public BendingModes BM
-    public Coordinate_system aperture_CS
-    public Coordinate_system conic_CS
-    public Coordinate_system rigid_body_CS
-    public Coordinate_system motion_CS
-    public Coordinate_system TT_CS
-    public dict D
 @
 
 \section{GMT M2}

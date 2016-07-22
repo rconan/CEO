@@ -1613,6 +1613,7 @@ The parameters and routines associated to the bending modes are gatherered in th
 struct bending_modes {
   <<bending modes parameters>>	
   void setup(int n_mode);
+  void setup(int n_mode, int N_SET);
   void cleanup(void);
   void load(void);
   void load_reg(void);
@@ -1672,14 +1673,26 @@ The bending modes are loaded with:
 void bending_modes::setup(int _n_mode_)
 {
   N = 1;
-  n_mode = _n_mode_;
-  int n_byte = sizeof(rtd)*n_mode;
-  b = (rtd *)malloc( n_byte );
-  HANDLE_ERROR( cudaMalloc((void**)&d__b, n_byte ) );
-  HANDLE_ERROR( cudaMemcpy( d__b, b,
-			    n_byte, cudaMemcpyHostToDevice ) );
-  load_reg();
+  <<bending modes setup common>>
 }
+@ 
+or for a set of [[N]] bending modes 
+<<bending modes functions>>=
+void bending_modes::setup(int _n_mode_, int N_SET)
+{
+  N = N_SET;
+  <<bending modes setup common>>
+} 
+@
+with 
+<<bending modes setup common>>=
+n_mode = _n_mode_;
+int n_byte = sizeof(rtd)*n_mode*N;
+b = (rtd *)malloc( n_byte );
+HANDLE_ERROR( cudaMalloc((void**)&d__b, n_byte ) );
+HANDLE_ERROR( cudaMemcpy( d__b, b,
+              n_byte, cudaMemcpyHostToDevice ) );
+load_reg();
 @
 Memory is freed with
 \index{gmtMirrors!bending\_modes!cleanup}
