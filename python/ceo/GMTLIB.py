@@ -203,8 +203,8 @@ class GMT_MX(GmtMirrors):
             return 0.5*(s_push-s_pull)/stroke
 
         def M1_zernike_update(_stroke_):
-            self.M1.zernike.a[kSeg,kMode] = _stroke_
-            self.M1.zernike.update()
+            self.M1.modes.a[kSeg,kMode] = _stroke_
+            self.M1.modes.update()
 
         def M2_zernike_update(_stroke_):
             self.M2.zernike.a[kSeg,kMode] = _stroke_
@@ -283,6 +283,17 @@ class GMT_MX(GmtMirrors):
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
                     for kMode in range(first_mode, n_mode):
+                        sys.stdout.write("%d "%(kMode+1))
+                        D[:,idx] = np.ravel( pushpull( M1_zernike_update ) )
+                        idx += 1
+                    sys.stdout.write("\n")
+            if mode=="bending modes":
+                n_mode = self.M1.BM.n_mode
+                D = np.zeros((wfs.valid_lenslet.nnz*2,n_mode*7))
+                idx = 0;
+                for kSeg in range(7):
+                    sys.stdout.write("Segment #%d: "%kSeg)
+                    for kMode in range(n_mode):
                         sys.stdout.write("%d "%(kMode+1))
                         D[:,idx] = np.ravel( pushpull( M1_zernike_update ) )
                         idx += 1
