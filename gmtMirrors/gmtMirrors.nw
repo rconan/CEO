@@ -78,7 +78,8 @@ struct gmt_m1 {
 };
 @  with
 <<GMT M12 functions>>=
-void setup();
+void setup(void);
+void setup(struct bending_modes *_BS_);
 void setup(zernikeS *ZS);
 void cleanup(void);
 void update(vector _origin_, vector _euler_angles_,int idx);
@@ -203,13 +204,9 @@ cublasHandle_t handle;
 <<GMT M12 parameters>>=
 char *d__valid_segments;
 @
-\item the mirror modes type (Zernike polynomials or bending modes)
-<<GMT M12 parameters>>=
-char zernike_modes, bending_modes;
-@
 \item a bending modes structure [[BS]]:
 <<GMT M12 parameters>>=
-//bending_modes *BS;
+struct bending_modes *BS;
 @
  \end{itemize}
 
@@ -223,16 +220,23 @@ The center aperture is centered on the vertex of the conic surface that defines 
 The vertex is set as the origin of the global coordinate system (GCS).
 The center of the peripheral segments are evenly located on a circle of radius 8.710m with a phase of 30 degrees.
 The peripheral segments also tilted inwards by 13.522 degrees.
-The [[GMT_M1]] structure is initialized with the size of the square array containing M1 in meter and pixel.
-The size must be 25.5m or more to contain M1 fully.
 \index{gmtMirrors!gmt\_m1!setup}
 <<GMT M1 functions>>=
-void gmt_m1::setup()
+void gmt_m1::setup(void)
 {
+  BS = NULL;
   ZS = NULL;
   <<M1 parameters>>
   <<GMT setup common>>
-  bending_modes = 1;
+}
+@ 
+<<GMT M1 functions>>=
+void gmt_m1::setup(struct bending_modes *_BS_)
+{
+  BS = _BS_;
+  ZS = NULL;
+  <<M1 parameters>>
+  <<GMT setup common>>
 }
 @ or
 \index{gmtMirrors!gmt\_m1!setup}
@@ -240,6 +244,7 @@ void gmt_m1::setup()
 void gmt_m1::setup( zernikeS *_ZS_)
 {
   ZS = _ZS_;
+  BS = NULL;
   <<M1 parameters>>
   <<GMT setup common>>
 }
@@ -262,8 +267,6 @@ idx_offset = 0;
 V = NULL;
 @ and
 <<GMT setup common>>=
-bending_modes = 0;
-zernike_modes = 1;
 vector __v0(0.0,0.0,0.0),
        __v(D_full*0.5,0.0,0.0),
        origin[12],
@@ -639,7 +642,7 @@ void gmt_m1::trace(bundle *rays)
  HANDLE_ERROR( cudaMemset(V->m, 0, sizeof(char)*rays->N_RAY*rays->N_BUNDLE ) );
  HANDLE_ERROR( cudaMemset(rays->d__piston_mask, 0,
 			  sizeof(int)*rays->N_RAY*rays->N_BUNDLE ) );
-if (zernike_modes)
+if (ZS!=NULL)
   m1_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY,
 					    Rri2, R2,
 					    aperture_CS.d__R,
@@ -658,8 +661,8 @@ if (zernike_modes)
 					    rays->d__chief_ray,
 					    rays->d__piston_mask,
 					    d__valid_segments);
-/*
-if (bending_modes)
+
+if (BS!=NULL)
   m1_bm_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY,
 					    Rri2, R2,
 					    aperture_CS.d__R,
@@ -672,14 +675,13 @@ if (bending_modes)
 					    rigid_body_CS.d__origin,
 					    motion_CS.d__R,
 					    motion_CS.d__origin,
- const int N_mode, rtd *b,
-                                            double *BM,
-                                            const int BM_N_SAMPLE, const double BM_radius
-
+                                            BS->n_mode, BS->d__b,
+                                            BS->d__BM,
+                                            BS->BM_N_SAMPLE, BS->BM_radius,
 					    rays->d__chief_ray,
 					    rays->d__piston_mask,
 					    d__valid_segments);
-*/
+
 intersection LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY);
 float previous_nnz = rays->V.nnz;
 //fprintf(stdout,"M%d previous nnz rays: %f\n",M_ID,previous_nnz);
@@ -1610,7 +1612,7 @@ The parameters and routines associated to the bending modes are gatherered in th
 <<bending modes structure>>=
 struct bending_modes {
   <<bending modes parameters>>	
-  void setup(void);
+  void setup(int n_mode);
   void cleanup(void);
   void load(void);
   void load_reg(void);
@@ -1622,6 +1624,7 @@ struct bending_modes {
 	   rtd *d__partial_x_BMi,
 	   rtd *d__partial_y_BMi,
 	   int NI, rtd di, int k_mode);
+  void update(rtd *b);
 };
 @
 The bending modes parameters are: 
@@ -1646,7 +1649,19 @@ int BM_N_SAMPLE;
 <<bending modes parameters>>=
 double *d__BM_buffer;
 @
-  \end{itemize}
+\item the number of bending modes
+<<bending modes parameters>>=
+int n_mode;
+@
+\item the bending modes coefficients [[b]]
+<<bending modes parameters>>=
+rtd *b, *d__b;
+@
+\item the number of bending modes set [[N]]
+<<bending modes parameters>>=
+int N;
+@
+\end{itemize}
 
 \subsubsection{Setup \& Cleanup}
 \label{sec:setup--cleanup}
@@ -1654,8 +1669,15 @@ double *d__BM_buffer;
 The bending modes are loaded with:
 \index{gmtMirrors!bending\_modes!setup}
 <<bending modes functions>>=
-void bending_modes::setup(void)
+void bending_modes::setup(int _n_mode_)
 {
+  N = 1;
+  n_mode = _n_mode_;
+  int n_byte = sizeof(rtd)*n_mode;
+  b = (rtd *)malloc( n_byte );
+  HANDLE_ERROR( cudaMalloc((void**)&d__b, n_byte ) );
+  HANDLE_ERROR( cudaMemcpy( d__b, b,
+			    n_byte, cudaMemcpyHostToDevice ) );
   load_reg();
 }
 @
@@ -1665,10 +1687,22 @@ Memory is freed with
 void bending_modes::cleanup(void)
 {
   fprintf(stdout,"@(CEO)>bending_modes: freeing memory!\n");
-  if (d__BM_buffer!=NULL)
-    HANDLE_ERROR( cudaFree( d__BM_buffer ) );
+  free( b );
+  HANDLE_ERROR( cudaFree( d__b ) );
+  HANDLE_ERROR( cudaFree( d__BM_buffer ) );
 }
 @
+\subsubsection{Update}
+\label{sec:update}
+
+<<bending modes functions>>=
+void bending_modes::update(rtd *b)
+{
+  int n_byte = sizeof(rtd)*n_mode*N;
+  HANDLE_ERROR( cudaMemcpy( d__b, b,
+			    n_byte, cudaMemcpyHostToDevice ) );
+}
+@ 
 \subsubsection{Loading the bending modes}
 \label{sec:load-bend-modes}
 
@@ -1695,7 +1729,7 @@ void bending_modes::load(void)
   lSize = ftell (pFile)/sizeof(double);
   rewind (pFile);
 
-  fprintf(stdout,"lSize=%ld\n",lSize);
+  //  fprintf(stdout,"lSize=%ld\n",lSize);
 
   // allocate memory to contain the whole file:
   buffer = (double*) malloc (lSize*sizeof(double));
@@ -1703,7 +1737,7 @@ void bending_modes::load(void)
 
   // copy the file into the buffer:
   result = fread (buffer,sizeof(double),lSize,pFile);
-  fprintf(stdout,"result=%ld\n",result);
+  //  fprintf(stdout,"result=%ld\n",result);
   if (result != lSize) {fputs ("Reading error",stderr); exit (3);}
 
   /* the whole file is now loaded in the memory buffer. */
@@ -1737,6 +1771,8 @@ void bending_modes::load_reg(void)
   double * buffer;
   size_t result;
 
+  fprintf(stdout,"@(CEO)>bending_modes: loading bending modes from bendingModesReg.bin\n");
+
   pFile = fopen ( "bendingModesReg.bin" , "rb" );
   if (pFile==NULL) {fputs ("File error",stderr); exit (1);}
 
@@ -1745,7 +1781,7 @@ void bending_modes::load_reg(void)
   lSize = ftell (pFile)/sizeof(double);
   rewind (pFile);
 
-  fprintf(stdout,"lSize=%ld\n",lSize);
+  //  fprintf(stdout,"lSize=%ld\n",lSize);
 
   // allocate memory to contain the whole file:
   buffer = (double*) malloc (lSize*sizeof(double));
@@ -1753,7 +1789,7 @@ void bending_modes::load_reg(void)
 
   // copy the file into the buffer:
   result = fread (buffer,sizeof(double),lSize,pFile);
-  fprintf(stdout,"result=%ld\n",result);
+  //  fprintf(stdout,"result=%ld\n",result);
   if (result != lSize) {fputs ("Reading error",stderr); exit (3);}
 
   /* the whole file is now loaded in the memory buffer. */
@@ -2050,7 +2086,7 @@ __device__ inline rtd bending_modes_surface(vector *v, const int N_mode, rtd *b,
     S += b[k_mode]*( ( z[ndx]*onemt + z[ndx+1]*t )*onems +
 	      ( z[ndx+BM_N_SAMPLE]*onemt + z[ndx+BM_N_SAMPLE+1]*t )*s );
   }
-  return S;
+  return -S;
 }
 @				
 \index{gmtMirrors!partial\_x\_bending\_modes\_surface}
@@ -2088,7 +2124,7 @@ __device__ inline rtd partial_x_bending_modes_surface(vector *v, const int N_mod
     S_ /= 2*h;
     S += b[k_mode]*S_;
   }
-  return S;
+  return -S;
 }
 @				
 \index{gmtMirrors!partial\_y\_bending\_modes\_surface}
@@ -2126,7 +2162,7 @@ __device__ inline rtd partial_y_bending_modes_surface(vector *v, const int N_mod
     S_ /= 2*h;
     S += b[k_mode]*S_;
   }
-  return S;
+  return -S;
 }
 @				
 \index{gmtMirrors!partial\_y\_bending\_modes\_surface}
@@ -3117,8 +3153,18 @@ struct gmt_m2 {
 
 \index{gmtMirrors!gmt\_m2!setup}
 <<GMT M2 functions>>=
-void gmt_m2::setup()
+void gmt_m2::setup(void)
 {
+  BS = NULL;
+  ZS = NULL;
+  <<M2 parameters>>
+  <<GMT setup common>>
+}
+@ 
+<<GMT M2 functions>>=
+void gmt_m2::setup(struct bending_modes *_BS_)
+{
+  ZS = NULL;
   <<M2 parameters>>
   <<GMT setup common>>
 }
