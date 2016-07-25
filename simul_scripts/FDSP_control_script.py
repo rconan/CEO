@@ -643,7 +643,7 @@ if eval_perf_onaxis==True:
 
 if eval_perf_field == True:
     #wfe_sfgs_iter = np.zeros((sfgs.N_SRC, totSimulIter))
-    pist_sfgs_iter = np.zeros((sfgs.N_SRC, totSimulIter))
+    pist_sfgs_iter = np.zeros((sfgs.N_SRC, 7, totSimulIter))
 
 elapsedTime = np.zeros(totSimulIter)
 
@@ -677,6 +677,8 @@ for jj in range(totSimulIter):
             if eval_perf_modal==True:
                 PhaseTur = ongs.phase.host(units='nm')-ph_fda_on*1e3
                 seg_aTur_gs_iter[:,:,jj] = Zobj.fitting(PhaseTur)
+	if eval_perf_field==True:
+	    atm.ray_tracing(sfgs, p,nPx,p,nPx, jj*Tsim)
 
     #----- Update M1  positions -------------------------------------
     for idx in range(7): gmt.M1.update(origin =  M1TrVec[idx,:].tolist(), 
@@ -742,7 +744,7 @@ for jj in range(totSimulIter):
     if eval_perf_field==True:
         gmt.propagate(sfgs)
         #wfe_sfgs_iter[:,jj] = sfgs.wavefront.rms()
-        pist_sfgs_iter[:,jj] = np.std(sfgs.piston(where='segments', units_exponent=-9) - sf_pist0, axis=1)
+        pist_sfgs_iter[:,:,jj] = sfgs.piston(where='segments', units_exponent=-9) - sf_pist0
 
     #----- Segment Piston Sensors measurement and correction -------------
     if simul_SPS==True:
