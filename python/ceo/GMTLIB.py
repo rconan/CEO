@@ -70,10 +70,15 @@ class GMT_MX(GmtMirrors):
 
     >>> gpu_ps1d = src.wavefront.phase()
     """
-    def __init__(self, D=None, D_px=None, M1_radial_order=0, M2_radial_order=0):
+    def __init__(self, D=None, D_px=None, M1_radial_order=0, M2_radial_order=0,
+                 M1_mirror_modes="zernike", M2_mirror_modes="zernike",
+                 M1_N_MODE=0):
         super(GMT_MX,self).__init__(
                             M1_radial_order=M1_radial_order,
-                            M2_radial_order=M2_radial_order)
+                            M2_radial_order=M2_radial_order,
+                            M1_mirror_modes=M1_mirror_modes,
+                            M2_mirror_modes=M2_mirror_modes,
+                            M1_N_MODE=M1_N_MODE)
 
     def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,agws=None,recmat=None,first_mode=3,minus_M2_TT=False):
         """
@@ -198,8 +203,8 @@ class GMT_MX(GmtMirrors):
             return 0.5*(s_push-s_pull)/stroke
 
         def M1_zernike_update(_stroke_):
-            self.M1.zernike.a[kSeg,kMode] = _stroke_
-            self.M1.zernike.update()
+            self.M1.modes.a[kSeg,kMode] = _stroke_
+            self.M1.modes.update()
 
         def M2_zernike_update(_stroke_):
             self.M2.zernike.a[kSeg,kMode] = _stroke_
@@ -278,6 +283,17 @@ class GMT_MX(GmtMirrors):
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
                     for kMode in range(first_mode, n_mode):
+                        sys.stdout.write("%d "%(kMode+1))
+                        D[:,idx] = np.ravel( pushpull( M1_zernike_update ) )
+                        idx += 1
+                    sys.stdout.write("\n")
+            if mode=="bending modes":
+                n_mode = self.M1.BM.n_mode
+                D = np.zeros((wfs.valid_lenslet.nnz*2,n_mode*7))
+                idx = 0;
+                for kSeg in range(7):
+                    sys.stdout.write("Segment #%d: "%kSeg)
+                    for kMode in range(n_mode):
                         sys.stdout.write("%d "%(kMode+1))
                         D[:,idx] = np.ravel( pushpull( M1_zernike_update ) )
                         idx += 1
@@ -450,8 +466,9 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
         sys.stdout.write("------------\n")
-        self[mirror].D.update({mode:D})
-        #return D
+        #self[mirror].D.update({mode:D})
+        return D
+
 # JGMT_MX
 from utilities import JSONAbstract
 class JGMT_MX(JSONAbstract,GMT_MX):
