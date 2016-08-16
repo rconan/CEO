@@ -268,8 +268,8 @@ class GMT_MX(GmtMirrors):
             self.M2.zernike.a[kSeg,kMode] = _stroke_
             self.M2.zernike.update()
 
-        if minus_M2_TT:
-            pushpull = pushpull_minus_M2TT
+        #if minus_M2_TT:
+        #    pushpull = pushpull_minus_M2TT
 
         sys.stdout.write("___ %s ___ (%s)\n"%(mirror,mode))
         if mirror=="M1":
@@ -998,11 +998,11 @@ class IdealSegmentPistonSensor:
     >>> SPS.piston(src,segment='edge')
     """
 
-    def __init__(self, gmt, src, W=1.5, L=1.5):
+    def __init__(self, src, D, D_px, W=1.5, L=1.5):
         def ROT(o):
             return np.array([ [ math.cos(o), math.sin(o)], [-math.sin(o),math.cos(o)] ])
-        n = gmt.D_px
-        R = gmt.D/2
+        n = D_px
+        R = D/2
         u = np.linspace(-1,1,n)*R
         x,y = np.meshgrid(u,u)
         xy = np.array( [ x.flatten(), y.flatten()] )
