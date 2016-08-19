@@ -458,6 +458,7 @@ cdef class Quaternion:
         coordinate_system ref_frame
         void setup(rtd , rtd , vector , vector , vector, rtd)
         void setup(rtd , rtd , vector , vector , vector, rtd, int, rtd *)
+        void reverse_setup(rtd , rtd , vector , vector , vector, rtd, int, rtd *)
         void cleanup()
         void trace(bundle *)
 @ 
@@ -469,7 +470,7 @@ cdef class Conic:
         public Coordinate_system ref_frame
         readonly Coordinates origin
         public bint coord_break
-        public bint tilted_surface
+        public int  rotation_order
         public dict material
 @
 <<rayTracing.pyx>>=
@@ -516,7 +517,7 @@ cdef class Conic:
                   str material = '',
                   rtd refractive_index = 0.0,
                   bint coord_break = False,
-                  bint tilted_surface = False,
+                  int rotation_order = 1,
 		  rtd[:] asphere_a = np.empty(0)):
         self._c_conic = new conic()
         cdef vector __origin
@@ -532,15 +533,20 @@ cdef class Conic:
         __conic_origin.y = <rtd>conic_origin[1]
         __conic_origin.z = <rtd>conic_origin[2]
         with boundscheck(False), wraparound(False):
-            self._c_conic.setup(c, k, __origin, __euler_angles, 
-                                __conic_origin, refractive_index,
-                                asphere_a.size, &asphere_a[0])
+            if rotation_order == 1:
+                self._c_conic.setup(c, k, __origin, __euler_angles, 
+                                    __conic_origin, refractive_index,
+                                    asphere_a.size, &asphere_a[0])
+            else:
+                self._c_conic.reverse_setup(c, k, __origin, __euler_angles, 
+                                    __conic_origin, refractive_index,
+                                    asphere_a.size, &asphere_a[0])
         self.ref_frame = Coordinate_system(1)
         self.ref_frame.init( &(self._c_conic.ref_frame) )
         self.origin = Coordinates((1,3))
         self.origin.v = &(self._c_conic.origin)
         self.coord_break = coord_break
-        self.material = {'name': material, 'formula': 15, 'c': []}
+        self.material = {'name': material, 'formula': 15, 'c': [], 'temp': 20.0, 'pres': 1.0}
 
     def __dealloc__(self):
         self._c_conic.cleanup()
@@ -571,12 +577,20 @@ cdef class Conic:
         self._c_conic.trace(&(src._c_source.rays))
 
     def refractive_index(self, Source src = None):
-        if self.material is None:
-            return self._c_conic.refractive_index
-        else:
-            return glass_index(self.material['formula'],
-                               src.wavelength*1e6,
-                               None,None,
+        # if self.material["name"] == "BK7":
+        #     return 1.5149229764
+        # elif self.material["name"] == "LLF6":
+        #     return 1.5292052002
+        # elif self.material["name"] == "SILICA":
+        #     return 1.4568110443
+        # elif self.material is None:
+        #     return self._c_conic.refractive_index
+        # else:
+
+        print self.material['name']
+        return glass_index(self.material['formula'],
+                               round(src.wavelength*1e6, 2),
+                               self.material['temp'],self.material['pres'],
                                self.material['c'])
 @
 \subsubsection{Aperture}
@@ -1092,6 +1106,7 @@ struct coordinate_system{
   <<coordinate system data>>
   void setup(void);
   void setup(vector _origin_, vector _euler_angles_);
+  void reverse_setup(vector _origin_, vector _euler_angles_);
   void setup(vector *_origin_, vector *_euler_angles_, int _N_);
   void setup(vector *_origin_, vector *_euler_angles_, int _N_, char *_tag_);
   void cleanup(void);
@@ -1121,6 +1136,24 @@ void coordinate_system::setup(vector _origin_, vector _euler_angles_)
   memcpy( origin , &_origin_ , n_byte);
   memcpy(euler_angles,  &_euler_angles_, n_byte);
   <<rotation matrix eval>>
+  strcpy(tag,"coordinate_system");
+  info();
+}
+@
+\item a single origin and backward orientation,
+\index{rayTracing!coordinate\_system!setup}
+<<coordinate system functions>>=
+void coordinate_system::reverse_setup(vector _origin_, vector _euler_angles_)
+{
+  N = 1;
+  HANDLE_ERROR( cudaMalloc((void**)&d__R, sizeof(rtd)*9*N ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector)*N ) );
+  int n_byte = sizeof(vector)*N;
+  origin = (vector *)malloc( n_byte );
+  euler_angles = (vector *)malloc( n_byte );
+  memcpy( origin , &_origin_ , n_byte);
+  memcpy(euler_angles,  &_euler_angles_, n_byte);
+  <<reverse rotation matrix eval>>
   strcpy(tag,"coordinate_system");
   info();
 }
@@ -1253,6 +1286,37 @@ HANDLE_ERROR( cudaMemcpy( d__R, R,
 HANDLE_ERROR( cudaMemcpy( d__origin, origin,
 			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
 @ where the elements of $R$ are stored in the row major format.
+<<reverse rotation matrix eval>>=
+R = (rtd *)malloc( sizeof(rtd)*9*N );
+rtd ca, sa, cb, sb, cg, sg;
+int k, idx;
+for (k=0; k<N; k++)
+  {
+    idx = k;
+    <<reverse rotation matrix definition>>
+  }
+<<CS from host to device>>
+/* for (k=0;k<9*N;k++) */
+/*    *(float_R+k) = (float) R[k]; */
+@ with
+<<reverse rotation matrix definition>>=
+ca = cos(euler_angles[idx].x);
+sa = sin(euler_angles[idx].x);
+cb = cos(euler_angles[idx].y);
+sb = sin(euler_angles[idx].y);
+cg = cos(euler_angles[idx].z);
+sg = sin(euler_angles[idx].z);
+idx *= 9;
+R[idx++] = cg*cb;
+R[idx++] = -sg*cb;
+R[idx++] = sb;
+R[idx++] = cg*sa*sb + ca*sg;
+R[idx++] = -sa*sb*sg + ca*cg;
+R[idx++] = -cb*sa;
+R[idx++] = -ca*cg*sb + sa*sg;
+R[idx++] = ca*sb*sg + cg*sa;
+R[idx++] = cb*ca;
+@
 \index{rayTracing!coordinate\_system!cleanup}
 <<coordinate system functions>>=
 void coordinate_system::cleanup(void)
@@ -1275,7 +1339,7 @@ void coordinate_system::update(void)
   for (k=0; k<N; k++)
     {
       idx = k;
-      <<rotation matrix definition>>
+      <<reverse rotation matrix definition>>
     }
   <<CS from host to device>>
 }
@@ -1358,6 +1422,9 @@ struct conic {
   void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
              vector conic_origin, rtd _refractive_index_,
 	     int asphere_N, rtd *asphere_a);
+  void reverse_setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
+             vector conic_origin, rtd _refractive_index_,
+	     int asphere_N, rtd *asphere_a);
   void cleanup(void);
   void trace(bundle *src);
   void info(void);
@@ -1398,6 +1465,7 @@ __host__ __device__ inline rtd conic_equation(vector *v, vector *v0,
   rtd rho2, asphere;
   rho2    = v->rho2_shift(v0->x,v0->y);
   asphere = even_asphere(rho2, N, a);
+  // printf("asphere: %f\n", asphere);
   rho2   *= c;
   if (c==0)
     return 0.0 + asphere;
@@ -1704,9 +1772,29 @@ void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_,
   refractive_index = _refractive_index_;
   even_asphere_N = asphere_N;
   HANDLE_ERROR( cudaMalloc((void**)&d__even_asphere_a, sizeof(rtd)*even_asphere_N ) );
-  HANDLE_ERROR( cudaMemcpy( d__even_asphere_a, &asphere_a,
+  HANDLE_ERROR( cudaMemcpy( d__even_asphere_a, asphere_a,
 			    sizeof(rtd)*even_asphere_N, cudaMemcpyHostToDevice ) );
 }
+@ The parameters of an even asphere surface with a backward rotation are set with
+<<conic functions>>=
+void conic::reverse_setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
+                  vector conic_origin, rtd _refractive_index_,
+                  int asphere_N, rtd *asphere_a)
+{
+  c = _c_;
+  k = _k_;
+  origin.x = conic_origin.x;
+  origin.y = conic_origin.y;
+  origin.z = conic_origin.z;
+  ref_frame.reverse_setup(_origin_, _euler_angles_);
+  <<conic allocation>>
+  refractive_index = _refractive_index_;
+  even_asphere_N = asphere_N;
+  HANDLE_ERROR( cudaMalloc((void**)&d__even_asphere_a, sizeof(rtd)*even_asphere_N ) );
+  HANDLE_ERROR( cudaMemcpy( d__even_asphere_a, asphere_a,
+			    sizeof(rtd)*even_asphere_N, cudaMemcpyHostToDevice ) );
+}
+
 @
 A conic surface that sets in the GCS is simply defined with
 \index{rayTracing!conic!setup}
