@@ -4,10 +4,6 @@
 import glob
 import unix
 
-from cffi import FFI
-cffi = FFI()
-
-cffi.cdef(unix.cat("glass.hh"))
 
 class AttrDict(dict):
     def __init__(self, *args, **kwargs):
@@ -78,5 +74,11 @@ def GlassIndex(glassfiles):
 
     return glassindex
 
-# GlassFiles = GlassLoader(".")
+# GlassFiles = GlassLoader("glass")
 # GlassIndex = GlassIndex(GlassFiles)
+# 
+# from refractors import glass_index
+# 
+# print GlassIndex["BK7"]
+
+# print glass_index(GlassIndex["BK7"]["formula"], 6.399999961100001, None, None, GlassIndex["BK7"]["c"])
