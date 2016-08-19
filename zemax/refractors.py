@@ -16,6 +16,7 @@ SchottE2    =  12
 SchottE3    =  13
 Mirror      =  14
 Default     =  15
+Vacuum      =  16
 
 def schott(y, t, p, c):
     n2 =  c[0] \
@@ -135,37 +136,47 @@ def handbook2(y, t, p, c):
 
     return sqrt(n2)
 
+# The following two formulas can be found here:
+#   http://www.zemax.com/os/resources/learn/knowledgebase/how-zemax-calculates-refractive-index-at-arbitrary
+
+def solve_n_air(n_ref, temp, pres):
+    return 1 + ((n_ref - 1) * pres) / (1.0 + (temp - 15) * 3.4785e-3)
+
+def solve_n_ref(l):
+    return 1 + ( 6432.8 + (2949810*l**2)/(146*l**2 - 1) \
+                        + (25540*l**2)/(41*l**2 - 1) ) \
+             * 1.0e-8
 
 def glass_index(formula, wave, temp, pres, c):
     if   formula == Schott:
-        return schott(wave, temp, pres, c)
+        n_glass = schott(wave, temp, pres, c)
     elif formula == Sellmeier1:
-        return sellmeier1(wave, temp,pres, c)
+        n_glass = sellmeier1(wave, temp,pres, c)
     elif formula == Herzberger:
-        return herzberger(wave, temp, pres, c)
+        n_glass = herzberger(wave, temp, pres, c)
     elif formula == Sellmeier2:
-        return sellmeier2(wave, temp, pres, c)
+        n_glass = sellmeier2(wave, temp, pres, c)
     elif formula == Conrady:
-        return conrady(wave, temp, pres, c)
+        n_glass = conrady(wave, temp, pres, c)
     elif formula == Sellmeier3:
-        return sellmeier3(wave, temp, pres, c)
+        n_glass = sellmeier3(wave, temp, pres, c)
     elif formula == Handbook1:
-        return handbook1(wave, temp, pres, c)
+        n_glass = handbook1(wave, temp, pres, c)
     elif formula == handbook2:
-        return handbook2(wave, temp, pres, c)
+        n_glass = handbook2(wave, temp, pres, c)
     elif formula == Sellmeier4:
-        return sellmeier4(wave, temp, pres, c)
+        n_glass = sellmeier4(wave, temp, pres, c)
     elif formula == SchottE1:
-        return schottE1(wave, temp, pres, c)
+        n_glass = schottE1(wave, temp, pres, c)
     elif formula == Sellmeier5:
-        return sellmeier5(wave, temp, pres, c)
+        n_glass = sellmeier5(wave, temp, pres, c)
     elif formula == SchottE2:
-        return schottE1(wave, temp, pres, c)
+        n_glass = schottE1(wave, temp, pres, c)
     elif formula == SchottE3:
-        return schottE1(wave, temp, pres, c)
+        n_glass = schottE1(wave, temp, pres, c)
     elif formula == Mirror:
-        return -1
+        n_glass = -1
     elif formula == Default:
-        return 1
+        n_glass = 1.0
 
-    return 0.0
+    return n_glass / n_air
