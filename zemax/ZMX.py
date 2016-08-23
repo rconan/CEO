@@ -404,8 +404,28 @@ def update_material(surf, GlassIndex):
 
     surf.material['temp'] = temp
     surf.material['pres'] = pres
+    surf.material['D0'] = 0
+    surf.material['D1'] = 0
+    surf.material['D2'] = 0
+    surf.material['E0'] = 0
+    surf.material['E1'] = 0
+    surf.material['Ltk'] = 0
 
     if surf.material['name'] != '':
         G = GlassIndex[surf.material['name']]
         surf.material['formula'] = G['formula']
         surf.material['c'] = G['c']
+
+        if G.has_key('D0'):
+            surf.material['D0'] = float(G['D0'])
+            surf.material['D1'] = float(G['D1'])
+            surf.material['D2'] = float(G['D2'])
+            surf.material['E0'] = float(G['E0'])
+            surf.material['E1'] = float(G['E1'])
+            surf.material['Ltk'] = float(G['Ltk'])
+
+
+
+
+
+
