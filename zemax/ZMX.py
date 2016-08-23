@@ -12,6 +12,8 @@ from raytrace import raytrace
 UNITS    = { "MM": 1e-3, "METER": 1.0 }
 GlassDir = "glass"
 
+temp = 20.0
+pres = 1.0
 
 class ZemaxModel():
     def __init__(self, filename, src, field=1):
@@ -46,10 +48,10 @@ class ZemaxModel():
 
         for line in unix.cat(filename).split('\n'):
             line = line.split()
-            print line
-            #if len(line): getattr(self, line[0])(*line[1:])        # Call internal methods to parse lines
 
-        #self.surfaces.append(getConic(self.current))
+            if len(line): getattr(self, line[0])(*line[1:])        # Call internal methods to parse lines
+
+        self.surfaces.append(getConic(self.current))
 
     def BLNK(self, *line): pass
     def ELOB(self, *line): pass
@@ -73,9 +75,9 @@ class ZemaxModel():
         self.GlassIndex = agf.GlassIndex(glassfiles)
 
         MIRROR = { 'formula': 14, 'c': [] }
-        VACUUM = { 'formula': 16, 'c': [] }
+        # VACUUM = { 'formula': 16, 'c': [] }
         self.GlassIndex["MIRROR"] = MIRROR
-        self.GlassIndex["VACUUM"] = VACUUM
+        # self.GlassIndex["VACUUM"] = VACUUM
 
     def GLCZ(self, *line): pass
     def MOFF(self, *line): pass
@@ -96,9 +98,15 @@ class ZemaxModel():
         global UNITS
         self.unit = UNITS[lens_unit]
 
-    def ENVD(self, temp, pres, *line):
-        self.temperature = temp
-        self.pressure = pres
+    def ENVD(self, temperature, pressure, *line):
+        global temp
+        global pres
+
+        temp = float(temperature)
+        pres = float(pressure)
+
+        self.temperature = temperature
+        self.pressure = pressure
 
     def ENPD(self, size, *line):
         self.pupilDiameter = size
@@ -391,6 +399,12 @@ def getConic(surf):
     return ZmxSurf2CEO(surf).conic
 
 def update_material(surf, GlassIndex):
+    global temp
+    global pres
+
+    surf.material['temp'] = temp
+    surf.material['pres'] = pres
+
     if surf.material['name'] != '':
         G = GlassIndex[surf.material['name']]
         surf.material['formula'] = G['formula']
