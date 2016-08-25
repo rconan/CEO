@@ -48,7 +48,7 @@ class AGF(object):
         self.current["c"] = [float(x) for x in line]
 
     def TD(self, op, D0, D1, D2, E0, E1, Ltk, temp, *line):
-        self.current.update({ "D0": D0, "D1": D1, "D2": D2, "E0": E0, "E1": E1, "Ltk": Ltk, "temp": temp })
+        self.current.update({ "D0": float(D0), "D1": float(D1), "D2": float(D2), "E0": float(E0), "E1": float(E1), "Ltk": float(Ltk), "temp": float(temp) })
 
     def CC(self, *line): pass
     def LD(self, op, name, *line): pass
@@ -76,9 +76,17 @@ def GlassIndex(glassfiles):
 
 # GlassFiles = GlassLoader("glass")
 # GlassIndex = GlassIndex(GlassFiles)
-# 
+#  
 # from refractors import glass_index
 # 
-# print GlassIndex["BK7"]
+# BK7 = GlassIndex["BK7"]
+# 
+# print glass_index(GlassIndex["BK7"]["formula"], 0.55, 30, 2, GlassIndex["BK7"]["c"], BK7["D0"], BK7["D1"], BK7["D2"], BK7["E0"], BK7["E1"], BK7["Ltk"])
+# 1.51814374838
 
-# print glass_index(GlassIndex["BK7"]["formula"], 6.399999961100001, None, None, GlassIndex["BK7"]["c"])
+"""
+VACUUM: 0.9997862439
+BK7: 1.5149229764
+LLF6: 1.529205002
+SILICA: 1.4568110443
+"""
