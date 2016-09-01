@@ -4,7 +4,8 @@ import numpy as np
 from scipy.optimize import brenth, leastsq
 from skimage.feature import blob_log
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GmtMirrors, SegmentPistonSensor, \
-    constants, Telescope, cuFloatArray, Aperture, Transform_to_S, Intersect, Reflect, Refract, Transform_to_R
+    constants, Telescope, cuFloatArray, Aperture, Transform_to_S, Intersect, Reflect, Refract, Transform_to_R, \
+    GeometricShackHartmann
 
 class GMT_MX(GmtMirrors):
     """
@@ -110,7 +111,7 @@ class GMT_MX(GmtMirrors):
                 gs.reset()
                 self.propagate(gs)
                 wfs.reset()
-                if isinstance(wfs, ShackHartmann) == True:
+                if isinstance(wfs, (ShackHartmann, GeometricShackHartmann)) == True:
                     wfs.analyze(gs)
                     return wfs.valid_slopes.host()
                 elif isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
@@ -179,7 +180,7 @@ class GMT_MX(GmtMirrors):
                 gs.reset()
                 self.propagate(gs)
 		wfs.reset()
-                if isinstance(wfs, ShackHartmann) == True:
+                if isinstance(wfs, (ShackHartmann, GeometricShackHartmann)) == True:
                     wfs.analyze(gs)
                     return wfs.valid_slopes.host()
                 elif isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
@@ -455,7 +456,7 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="segment tip-tilt":
-                if isinstance(wfs, ShackHartmann) == True:
+                if isinstance(wfs, (ShackHartmann, GeometricShackHartmann)) == True:
                     n_meas = wfs.valid_lenslet.nnz*2 
                 elif isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
                     if segment=="edge":
@@ -505,7 +506,7 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
 	    if mode=="segment piston":
-                if isinstance(wfs, ShackHartmann) == True:
+                if isinstance(wfs, (ShackHartmann, GeometricShackHartmann)) == True:
                     n_meas = wfs.valid_lenslet.nnz*2 
                 elif isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
                     if segment=="edge":
