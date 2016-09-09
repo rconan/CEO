@@ -33,8 +33,8 @@ cdef extern from "source.h":
     cdef cppclass bundle:
         int N_RAY, N_BUNDLE
 	int *d__piston_mask
-        rtd refractive_index
-        rtd *d__sphere_radius, L
+        rtd refractive_index, L
+        rtd *d__sphere_radius
         rtd *d__sphere_distance
         vector *d__sphere_origin
         ray *d__ray
@@ -865,6 +865,30 @@ cdef class Source:
                 for s in range(7):
                     rms[k,s] = np.std(phase[k,Q[s,:]])
         return np.array(rms)*10**-units_exponent
+
+    def segmentsWavefrontGradient(self):
+        """
+        Computes the average finite difference of the wavefront
+
+        Parameters
+        ----------
+        NL : int
+            The linear size of the lenslet array
+        d : float
+            The lenslet pitch
+
+        Returns
+        -------
+        cuFloatArray
+            The wavefront gradient average in an array of size [N_SRCxNLx2,NL]
+        """
+        cdef cuFloatArray sxy
+        sxy = cuFloatArray( host_data=np.zeros((7*self.N_SRC*2,1) ) )
+        self._c_source.wavefront.segments_gradient_average(sxy._c_gpu.dev_data,
+                                                          sxy._c_gpu.dev_data+7,
+                                                          self._c_source.rays.L,
+                                                          self._c_source.rays.d__piston_mask)
+        return sxy
 @
 \index{source!python!JSource}
 <<source.pyx>>=
