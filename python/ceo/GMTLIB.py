@@ -111,12 +111,8 @@ class GMT_MX(GmtMirrors):
                 gs.reset()
                 self.propagate(gs)
                 wfs.reset()
-                if isinstance(wfs, (ShackHartmann, GeometricShackHartmann)) == True:
-                    wfs.analyze(gs)
-                    return wfs.valid_slopes.host()
-                elif isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
-                    return wfs.piston(gs, segment=segment).ravel()
-                else: sys.exit("WFS type not recognized...") 
+                wfs.analyze(gs, segment=segment)
+                return wfs.get_measurement()
             s_push = get_slopes(+1)
             s_pull = get_slopes(-1)
             return 0.5*(s_push-s_pull)/stroke
@@ -130,7 +126,7 @@ class GMT_MX(GmtMirrors):
 		    self.propagate(gs)
         	    wfs.reset()
         	    wfs.analyze(gs)
-        	    slopevec = wfs.valid_slopes.host().ravel()
+        	    slopevec = wfs.get_measurement()
         	    myTTest1 += np.dot(recmat, slopevec)
         	    myTTest = myTTest1.reshape((7,2))
         	    for idx in range(7): self.M2.update(euler_angles=
@@ -143,7 +139,7 @@ class GMT_MX(GmtMirrors):
                 self.propagate(gs)
                 wfs.reset()
                 wfs.analyze(gs)
-                return wfs.valid_slopes.host().ravel()
+                return wfs.get_measurement()
 
         def TT7_pushpull(action):
             def get_slopes(stroke_sign):
@@ -166,7 +162,7 @@ class GMT_MX(GmtMirrors):
 		    self.propagate(cl_gs)
 		    cl_wfs.reset()
 		    cl_wfs.analyze(cl_gs)
-		    slopevec = cl_wfs.valid_slopes.host().ravel()
+		    slopevec = cl_wfs.get_measurement()
 		    if ii == 0:
 			myZest1 = np.dot(cl_recmat, slopevec)
 		    else:
@@ -180,12 +176,8 @@ class GMT_MX(GmtMirrors):
                 gs.reset()
                 self.propagate(gs)
 		wfs.reset()
-                if isinstance(wfs, (ShackHartmann, GeometricShackHartmann)) == True:
-                    wfs.analyze(gs)
-                    return wfs.valid_slopes.host()
-                elif isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
-                    return wfs.piston(gs, segment=segment).ravel()
-                else: sys.exit("WFS type not recognized...") 
+                wfs.analyze(gs, segment=segment)
+                return wfs.get_measurement()
             s_push = get_slopes(+1)
             s_pull = get_slopes(-1)
             return 0.5*(s_push-s_pull)/stroke
@@ -212,7 +204,7 @@ class GMT_MX(GmtMirrors):
 		    self.propagate(cl_gs)
         	    cl_wfs.reset()
         	    cl_wfs.analyze(cl_gs)
-        	    slopevec = cl_wfs.valid_slopes.host().ravel()
+        	    slopevec = cl_wfs.get_measurement()
         	    myTTest1 += np.dot(cl_recmat, slopevec)
         	    myTTest = myTTest1.reshape((7,2))
         	    for idx in range(7): self.M2.update(euler_angles=
@@ -225,7 +217,7 @@ class GMT_MX(GmtMirrors):
 		    self.propagate(cl_gs)
 		    cl_wfs.reset()
 		    cl_wfs.analyze(cl_gs)
-		    slopevec = cl_wfs.valid_slopes.host().ravel()
+		    slopevec = cl_wfs.get_measurement()
 		    if ii == 0:
 			myZest1 = np.dot(cl_recmat, slopevec)
 		    else:
@@ -905,7 +897,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
 		    fftlet_shape = (self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE)
 		    self.fftlet_fit_images[:,:,k] = self.gaussian_func(*params)(*np.indices(fftlet_shape))
 
-    def analyze(self, src, **kwargs):
+    def analyze(self, src, segment='edge'):
 	"""
 	Propagates the guide star to the SPS detector (noiseless) and processes the frame
 
@@ -914,12 +906,17 @@ class DispersedFringeSensor(SegmentPistonSensor):
         src : Source
             The piston sensing guide star object
 	"""
-	self.reset()
-	self.propagate(src)
-	self.fft()
-	self.process(**kwargs)
+        assert segment=="full" or segment=="edge", "segment parameter is either ""full"" or ""edge"""
+        if segment=="full":
+            p = src.piston(where='segments')
+            self.measurement = p.ravel()
+        elif segment=="edge":
+            self.reset()
+            self.propagate(src)
+            self.fft()
+            self.process()
 
-    def piston(self, src, segment='edge', **kwargs):
+    def piston(self, src, segment='edge'):
         """
         Return either M1 segment piston or M1 differential piston. This method was created to provide same functionality as the IdealSegmentPistonSensor method.
 
@@ -938,11 +935,16 @@ class DispersedFringeSensor(SegmentPistonSensor):
         assert segment=="full" or segment=="edge", "segment parameter is either ""full"" or ""edge"""
         if segment=="full":
             p = src.piston(where='segments')
-        if segment=="edge":
-	    self.analyze(src, **kwargs)
+        elif segment=="edge":
+	    self.analyze(src)
 	    p = self.measurement.reshape(-1,12)
 	return p
 
+    def get_measurement(self):
+        """
+        Returns the measurement vector
+        """
+        return self.measurement.ravel()
 
 class IdealSegmentPistonSensor:
     """
@@ -1056,7 +1058,7 @@ class IdealSegmentPistonSensor:
         assert segment=="full" or segment=="edge", "segment parameter is either ""full"" or ""edge"""
         if segment=="full":
             p = src.piston(where='segments')
-        if segment=="edge":
+        elif segment=="edge":
             W = src.wavefront.phase.host()
             p = np.zeros((src.N_SRC,12))
             for k_SRC in range(src.N_SRC):
@@ -1069,6 +1071,19 @@ class IdealSegmentPistonSensor:
                     p[k_SRC,2*k+1] = np.sum( W[k_SRC,:]*_P_[k,:]*_M_[k+6,:] )/np.sum( _P_[k,:]*_M_[k+6,:] ) - \
                                np.sum( W[k_SRC,:]*_P_[(k+1)%6,:]*_M_[k+6,:] )/np.sum( _P_[(k+1)%6,:]*_M_[k+6,:] )
         return p
+
+    def analyze(self, src, **kwargs):
+        """
+        Computes either M1 segment piston or M1 differential piston (calling the "piston" method), and stores the result in the "measurement" property.
+        """
+        p = self.piston(src, **kwargs)
+        self.measurement = p.ravel()
+
+    def get_measurement(self):
+        """
+        Returns the measurement vector
+        """
+        return self.measurement
 
 class SegmentTipTiltSensor:
     """
