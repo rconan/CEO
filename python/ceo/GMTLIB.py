@@ -141,17 +141,6 @@ class GMT_MX(GmtMirrors):
                 wfs.analyze(gs)
                 return wfs.get_measurement()
 
-        def TT7_pushpull(action):
-            def get_slopes(stroke_sign):
-                self.reset()
-                action(stroke_sign*stroke)
-                self.propagate(gs)
-                wfs.reset()
-                wfs.analyze(gs)
-                return wfs.c7
-            s_push = get_slopes(+1)
-            s_pull = get_slopes(-1)
-            return 0.5*(s_push-s_pull)/stroke
 
         def SPS_pushpull(action):
 	    def close_M2_zern_loop():
@@ -492,9 +481,9 @@ class GMT_MX(GmtMirrors):
                 sys.stdout.write("Segment #:")
                 for kSeg in range(1,8):
                     sys.stdout.write("%d "%kSeg)
-                    D[:,idx] = TT7_pushpull( Rx )
+                    D[:,idx] = pushpull( Rx )
                     idx += 1
-                    D[:,idx] = TT7_pushpull( Ry )
+                    D[:,idx] = pushpull( Ry )
                     idx += 1
                 sys.stdout.write("\n")
 	    if mode=="segment piston":
@@ -596,13 +585,16 @@ class TT7(ShackHartmann):
         gmt.reset()
         ShackHartmann.reset(self)
 
-    def analyze(self, gs):
+    def analyze(self, gs, **kwargs):
         ShackHartmann.analyze(self,gs)
         nvl = self.n_valid_lenslet
         c = self.valid_slopes.host()
         w = np.sum(self.M,axis=0)
         self.c7 = np.concatenate((np.dot(c[0,:nvl],self.M)/w,
                                   np.dot(c[0,nvl:],self.M)/w))
+
+    def get_measurement(self):
+        return self.c7
 
 class DispersedFringeSensor(SegmentPistonSensor):
     """
