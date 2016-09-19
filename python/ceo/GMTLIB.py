@@ -171,16 +171,6 @@ class GMT_MX(GmtMirrors):
             s_pull = get_slopes(-1)
             return 0.5*(s_push-s_pull)/stroke
 
-        def STS_pushpull(action):
-            def get_slopes(stroke_sign):
-                self.reset()
-                action(stroke_sign*stroke)
-                gs.reset()
-                self.propagate(gs)
-                return wfs.tiptilt(gs).ravel()
-            s_push = get_slopes(+1)
-            s_pull = get_slopes(-1)
-            return 0.5*(s_push-s_pull)/stroke
 
         def FDSP_pushpull(action):
 	    def close_M2_segTT_loop():
@@ -518,9 +508,9 @@ class GMT_MX(GmtMirrors):
                 sys.stdout.write("Segment #:")
                 for kSeg in range(1,8):
                     sys.stdout.write("%d "%kSeg)
-                    D[:,idx] = STS_pushpull( Rx )
+                    D[:,idx] = pushpull( Rx )
                     idx += 1
-                    D[:,idx] = STS_pushpull( Ry )
+                    D[:,idx] = pushpull( Ry )
                     idx += 1
                 sys.stdout.write("\n")
         sys.stdout.write("------------\n")
@@ -1085,6 +1075,9 @@ class SegmentTipTiltSensor:
     def __init__(self):
         pass
 
+    def reset(self):
+        pass
+
     def tiptilt(self,src):
         """
         Return the tip and tilt of the wavefront on each segment
@@ -1114,6 +1107,12 @@ class SegmentTipTiltSensor:
         a23[:7,:] = np.sum(W*Z2,axis=1)/np.sum(Z2*Z2,axis=1)
         a23[7:,:] = np.sum(W*Z3,axis=1)/np.sum(Z3*Z3,axis=1)
         return a23
+
+    def analyze(self, gs, **kwargs):
+        self.measurement = self.tiptilt(gs)
+
+    def get_measurement(self):
+        return self.measurement.ravel()
 
 class EdgeSensors:
 
