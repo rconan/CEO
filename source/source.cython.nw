@@ -33,7 +33,7 @@ cdef extern from "source.h":
     cdef cppclass bundle:
         int N_RAY, N_BUNDLE
 	int *d__piston_mask
-        rtd refractive_index
+        rtd refractive_index, L
         rtd *d__sphere_radius
         rtd *d__sphere_distance
         vector *d__sphere_origin
@@ -123,6 +123,8 @@ cdef class Bundle:
         The distance from the last surface to the reference sphere used to compute the optical path difference
     piston_mask : numpy ndarray
         A 7 columns array where each column is a mask corresponding to 1 segment
+    L : rtd, read only
+        The size in meter of the box encompassing the ray bundle
     """
 
     def __cinit__(self, Source src):
@@ -309,6 +311,10 @@ property refractive_index:
         return self._c_bundle.refractive_index
     def __set__(self,rtd value):
         self._c_bundle.refractive_index = value
+
+property L:
+    def __get__(self):
+        return self._c_bundle.L
 @
 
 \section{Complex amplitude}
@@ -635,7 +641,7 @@ cdef class Source:
     def __cinit__(self, *args, **kwargs):
         self._c_source = new source()
 
-    def __init__(self,char *_photometric_band,
+    def __init__(self,char *photometric_band,
                  zenith=0, azimuth=0,
                  magnitude=None,
                  height=float("inf"),
@@ -655,7 +661,7 @@ cdef class Source:
         self.size = self._zenith_.size
         cdef vector _origin_
         if rays_box_size is None:
-            self._c_source.setup(_photometric_band,
+            self._c_source.setup(photometric_band,
                                  &self._zenith_[0],
                                  &self._azimuth_[0], height,
                                  self.size, np.prod(resolution))
@@ -663,7 +669,7 @@ cdef class Source:
             _origin_.x = <float>rays_origin[0]
             _origin_.y = <float>rays_origin[1]
             _origin_.z = <float>rays_origin[2]
-            self._c_source.setup(_photometric_band,
+            self._c_source.setup(photometric_band,
                                  &self._zenith_[0],
                                  &self._azimuth_[0], height,
                                  self.size,
@@ -859,6 +865,30 @@ cdef class Source:
                 for s in range(7):
                     rms[k,s] = np.std(phase[k,Q[s,:]])
         return np.array(rms)*10**-units_exponent
+
+    def segmentsWavefrontGradient(self):
+        """
+        Computes the average finite difference of the wavefront
+
+        Parameters
+        ----------
+        NL : int
+            The linear size of the lenslet array
+        d : float
+            The lenslet pitch
+
+        Returns
+        -------
+        cuFloatArray
+            The wavefront gradient average in an array of size [N_SRCxNLx2,NL]
+        """
+        cdef cuFloatArray sxy
+        sxy = cuFloatArray( host_data=np.zeros((7*self.N_SRC*2,1) ) )
+        self._c_source.wavefront.segments_gradient_average(sxy._c_gpu.dev_data,
+                                                          sxy._c_gpu.dev_data+7,
+                                                          self._c_source.rays.L,
+                                                          self._c_source.rays.d__piston_mask)
+        return sxy
 @
 \index{source!python!JSource}
 <<source.pyx>>=

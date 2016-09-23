@@ -95,7 +95,7 @@ cdef class Imaging:
     def __cinit__(self, *args, **kwargs):
         self._c_imaging = new imaging()
 
-    def __init__(self, int N_SIDE_LENSLET, int N_PX_PUPIL,
+    def __init__(self, int N_SIDE_LENSLET=1, int N_PX_PUPIL=128,
 		 DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1,
 		 N_SOURCE=1,
 		 ShackHartmann wfs=None,
@@ -133,6 +133,12 @@ cdef class Imaging:
     def __dealloc__(self):
         if not self.isPtr:
             self._c_imaging.cleanup()
+
+    def calibrate(self, Source src, args=None):
+        pass
+
+    def process(self):
+        pass
 
     def propagate(self, Source src):
         """
@@ -228,26 +234,33 @@ cdef class Imaging:
             The 80% ensquared energy patch size in pixel (default) or units if given
         """
         cdef:
-            int n, m
-            double q
+            int k, n, m
+            double[::1] q 
             double[:,::1] x, y, gate
             double[:] u, v
         psf   = self.frame.host()
         n,m   = psf.shape
+        n /= self.N_SOURCE
         #u     = np.linspace(-1.0,1.0,n)*(n/2.0)
         #v     = np.linspace(-1.0,1.0,m)*(m/2.0)
         u     = np.arange(n,dtype=np.float64)-(n-1)*0.5
         v     = np.arange(m,dtype=np.float64)-(m-1)*0.5
         x,y   = np.meshgrid(u,v)
-        def ee80_fun(float ee_Delta):
+        psf = psf.reshape(self.N_SOURCE,n,m)
+        def ee80_fun(float ee_Delta, _psf_):
             _ee_Delta_ = ee_Delta/2.0
-            gate = np.logical_and(np.abs(x)<=_ee_Delta_,np.abs(y)<=_ee_Delta_)
-            return np.sum(psf*gate)/(self._c_imaging.N_PHOTON_PER_FRAME*self._c_imaging.N_FRAME) - 0.8
-        try:
-            q = bisect(ee80_fun,3,n)
-        except ValueError:
-            q = np.float('inf')
-        return q*units
+            #gate = np.logical_and(np.abs(x)<=_ee_Delta_,np.abs(y)<=_ee_Delta_)
+            gate = np.hypot(x,y)<=_ee_Delta_
+            return np.sum(_psf_*gate)/(self._c_imaging.N_PHOTON_PER_FRAME*\
+                                       self._c_imaging.N_FRAME/\
+                                       self.N_SOURCE) - 0.8
+        q = np.zeros(self.N_SOURCE)
+        for k in range(self.N_SOURCE):
+            try:
+                q[k] = bisect(ee80_fun,3,n,args=(psf[k,:,:]))
+            except ValueError:
+                q[k] = np.float('inf')
+        return np.asarray(q)*units
 
     property photoelectron_gain:
         def __get__(self):
@@ -258,6 +271,10 @@ cdef class Imaging:
     property N_FRAME:
         def __get__(self):
             return self._c_imaging.N_FRAME
+
+    property N_PHOTON_PER_FRAME:
+        def __get__(self):
+            return self._c_imaging.N_PHOTON_PER_FRAME
 @
 \index{imaging!python!JImaging}
 <<imaging.pyx>>=
