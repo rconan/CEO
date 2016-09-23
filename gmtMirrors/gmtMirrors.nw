@@ -55,6 +55,7 @@
 <<laser camera intersection kernel>>
 <<vignetting presetting kernel>>
 
+<<bending modes surface update>>
 <<bending modes functions>>
 <<GMT M1 functions>>
 <<GMT M2 functions>>
@@ -124,8 +125,8 @@ rtd L;
 @
 \item the size of the square array containing M1 in meter and pixel [[D]] and [[D_px]]:
 <<GMT M12 parameters>>=
-rtd D;
-int D_px;
+  //rtd D;
+  //int D_px;
 @
 \item the mirror total area as seen by an on--axis source in square meter and number of pixel
 <<GMT M12 parameters>>=
@@ -676,7 +677,7 @@ if (BS!=NULL)
 					    motion_CS.d__R,
 					    motion_CS.d__origin,
                                             BS->n_mode, BS->d__b,
-                                            BS->d__BM,
+                                            BS->d__BMS,
                                             BS->BM_N_SAMPLE, BS->BM_radius,
 					    rays->d__chief_ray,
 					    rays->d__piston_mask,
@@ -1135,7 +1136,8 @@ forward_transform_centered(&xyz, &xyz,
                            d__conic_R+iCoordSys*9);
 
 S += bending_modes_surface(&xyz, N_mode, b + iCoordSys*N_mode, 
-			   BM, BM_N_SAMPLE, BM_radius); 
+			   BM + iCoordSys*BM_N_SAMPLE*BM_N_SAMPLE,
+			   BM_N_SAMPLE, BM_radius); 
 
 @
 \end{itemize}
@@ -1200,9 +1202,11 @@ L = Snormal.y;
 M = Snormal.z;
 
 K += partial_x_bending_modes_surface(&xyz, N_mode, b + iCoordSys*N_mode, 
-				     BM, BM_N_SAMPLE, BM_radius);
+				     BM + iCoordSys*BM_N_SAMPLE*BM_N_SAMPLE,
+				     BM_N_SAMPLE, BM_radius);
 L += partial_y_bending_modes_surface(&xyz, N_mode, b + iCoordSys*N_mode, 
-				     BM, BM_N_SAMPLE, BM_radius);
+				     BM + iCoordSys*BM_N_SAMPLE*BM_N_SAMPLE,
+				     BM_N_SAMPLE, BM_radius);
 M += partial_z_bending_modes_surface();
 
 @ 
@@ -1247,9 +1251,11 @@ L = Snormal.y;
 M = Snormal.z;
 
 K += partial_x_bending_modes_surface(&xyz, N_mode, b + iCoordSys*N_mode, 
-			       BM, BM_N_SAMPLE, BM_radius);
+				     BM + iCoordSys*BM_N_SAMPLE*BM_N_SAMPLE, 
+				     BM_N_SAMPLE, BM_radius);
 L += partial_y_bending_modes_surface(&xyz, N_mode, b + iCoordSys*N_mode, 
-			       BM, BM_N_SAMPLE, BM_radius);
+				     BM + iCoordSys*BM_N_SAMPLE*BM_N_SAMPLE,
+				     BM_N_SAMPLE, BM_radius);
 M += partial_z_bending_modes_surface();
 @
 \end{itemize}
@@ -1638,6 +1644,10 @@ double *d__x_BM, *d__y_BM;
 <<bending modes parameters>>=
 double *d__BM;
 @
+\item the bending modes surface
+<<bending modes parameters>>=
+double *d__BMS;
+@
 \item the radius of the circle circumscribing the bending modes
 <<bending modes parameters>>=
 double BM_radius;
@@ -1694,6 +1704,9 @@ HANDLE_ERROR( cudaMemcpy( d__b, b,
               n_byte, cudaMemcpyHostToDevice ) );
 HANDLE_ERROR( cudaMemset(d__b, 0, n_byte ) );
 load_reg();
+n_byte = BM_N_SAMPLE*BM_N_SAMPLE*N*sizeof(double);
+HANDLE_ERROR( cudaMalloc((void**)&d__BMS, n_byte ) );
+HANDLE_ERROR( cudaMemset(d__BMS, 0, n_byte ) );
 @
 Memory is freed with
 \index{gmtMirrors!bending\_modes!cleanup}
@@ -1704,17 +1717,45 @@ void bending_modes::cleanup(void)
   free( b );
   HANDLE_ERROR( cudaFree( d__b ) );
   HANDLE_ERROR( cudaFree( d__BM_buffer ) );
+  HANDLE_ERROR( cudaFree( d__BMS ) );
 }
 @
 \subsubsection{Update}
 \label{sec:update}
 
+The bending mode coefficients [[d__b]] and the associated surface [[d__BMS]] are updated with:
 <<bending modes functions>>=
 void bending_modes::update(rtd *b)
 {
   int n_byte = sizeof(rtd)*n_mode*N;
   HANDLE_ERROR( cudaMemcpy( d__b, b,
 			    n_byte, cudaMemcpyHostToDevice ) );
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(BM_N_SAMPLE/N_THREAD+1,BM_N_SAMPLE/N_THREAD+1,N);
+  
+  surface_update LLL gridDim, blockDim RRR 
+    (d__BMS, n_mode, d__b, d__BM, BM_N_SAMPLE);
+}
+@ with the kernel
+<<bending modes surface update>>=
+__global__ void surface_update(double *BMS, const int N_mode, rtd *b,
+					     double *BM, int N_SAMPLE)
+{
+  int i, j, k, kz, l, k_mode, o;
+  rtd *z;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  l = blockIdx.z;
+  if ( (i<N_SAMPLE) && (j<N_SAMPLE)) {
+    k = kz = i*N_SAMPLE + j;
+    k += l*N_SAMPLE*N_SAMPLE;
+    BMS[k] = 0.0;
+    for (k_mode=0; k_mode<N_mode; k_mode++) {
+      o = k_mode*N_SAMPLE*N_SAMPLE;
+      z = BM + o;
+      BMS[k] += b[k_mode + l*N_mode]*z[kz];
+    }
+  }
 }
 @ 
 \subsubsection{Loading the bending modes}
@@ -2092,20 +2133,16 @@ __device__ inline rtd bending_modes_surface(vector *v, const int N_mode, rtd *b,
                                             double *BM,
                                             const int BM_N_SAMPLE, const double BM_radius)
 {
-  int k_mode, o, ndx;
+  int ndx;
   rtd scale, S, s, t, fs, ft, onemt, onems;
   rtd *z;
   scale = 0.5/BM_radius;
   s = (scale*v->x + 0.5)*(BM_N_SAMPLE-1);
   t = (scale*v->y + 0.5)*(BM_N_SAMPLE-1);
   <<bilinear locate>>
-  S = 0.0;
-  for (k_mode=0; k_mode<N_mode; k_mode++) {
-    o = k_mode*BM_N_SAMPLE*BM_N_SAMPLE;
-    z = BM + o;
-    S += b[k_mode]*( ( z[ndx]*onemt + z[ndx+1]*t )*onems +
-	      ( z[ndx+BM_N_SAMPLE]*onemt + z[ndx+BM_N_SAMPLE+1]*t )*s );
-  }
+  z = BM;
+  S = ( ( z[ndx]*onemt + z[ndx+1]*t )*onems +
+	( z[ndx+BM_N_SAMPLE]*onemt + z[ndx+BM_N_SAMPLE+1]*t )*s );
   return -S;
 }
 @				
@@ -2115,7 +2152,7 @@ __device__ inline rtd partial_x_bending_modes_surface(vector *v, const int N_mod
 						      double *BM,
 						      const int BM_N_SAMPLE, const double BM_radius)
 {
-  int k_mode, o, ndx, ndx_a, ndx_b;
+  int ndx, ndx_a, ndx_b;
   rtd scale, S, S_, s, t, fs, ft, onemt, onems,
     s_a, s_b, onems_a, onems_b, h;
   rtd *z;
@@ -2133,17 +2170,13 @@ __device__ inline rtd partial_x_bending_modes_surface(vector *v, const int N_mod
   s_b = s;
   onems_b = onems;
   h = BM_radius*2/(BM_N_SAMPLE-1);
-  S = 0.0;
-  for (k_mode=0; k_mode<N_mode; k_mode++) {
-    o = k_mode*BM_N_SAMPLE*BM_N_SAMPLE;
-    z = BM + o;
-    S_ = ( ( z[ndx_a]*onemt + z[ndx_a+1]*t )*onems_a +
-	   ( z[ndx_a+BM_N_SAMPLE]*onemt + z[ndx_a+BM_N_SAMPLE+1]*t )*s_a );
-    S_ -= ( ( z[ndx_b]*onemt + z[ndx_b+1]*t )*onems_b +
-	   ( z[ndx_b+BM_N_SAMPLE]*onemt + z[ndx_b+BM_N_SAMPLE+1]*t )*s_b );
-    S_ /= 2*h;
-    S += b[k_mode]*S_;
-  }
+  z = BM;
+  S_ = ( ( z[ndx_a]*onemt + z[ndx_a+1]*t )*onems_a +
+	 ( z[ndx_a+BM_N_SAMPLE]*onemt + z[ndx_a+BM_N_SAMPLE+1]*t )*s_a );
+  S_ -= ( ( z[ndx_b]*onemt + z[ndx_b+1]*t )*onems_b +
+	  ( z[ndx_b+BM_N_SAMPLE]*onemt + z[ndx_b+BM_N_SAMPLE+1]*t )*s_b );
+  S_ /= 2*h;
+  S = S_;
   return -S;
 }
 @				
@@ -2153,7 +2186,7 @@ __device__ inline rtd partial_y_bending_modes_surface(vector *v, const int N_mod
 						      double *BM,
 						      const int BM_N_SAMPLE, const double BM_radius)
 {
-  int k_mode, o, ndx, ndx_a, ndx_b;
+  int ndx, ndx_a, ndx_b;
   rtd scale, S, S_, s, t, fs, ft, onemt, onems,
     t_a, t_b, onemt_a, onemt_b, h;
   rtd *z;
@@ -2171,17 +2204,13 @@ __device__ inline rtd partial_y_bending_modes_surface(vector *v, const int N_mod
   t_b = t;
   onemt_b = onemt;
   h = BM_radius*2/(BM_N_SAMPLE-1);
-  S = 0.0;
-  for (k_mode=0; k_mode<N_mode; k_mode++) {
-    o = k_mode*BM_N_SAMPLE*BM_N_SAMPLE;
-    z = BM + o;
-    S_ = ( ( z[ndx_a]*onemt_a + z[ndx_a+1]*t_a )*onems +
-	   ( z[ndx_a+BM_N_SAMPLE]*onemt_a + z[ndx_a+BM_N_SAMPLE+1]*t_a )*s );
-    S_ -= ( ( z[ndx_b]*onemt_b + z[ndx_b+1]*t_b )*onems +
-	   ( z[ndx_b+BM_N_SAMPLE]*onemt_b + z[ndx_b+BM_N_SAMPLE+1]*t_b )*s );
-    S_ /= 2*h;
-    S += b[k_mode]*S_;
-  }
+  z = BM;
+  S_ = ( ( z[ndx_a]*onemt_a + z[ndx_a+1]*t_a )*onems +
+	 ( z[ndx_a+BM_N_SAMPLE]*onemt_a + z[ndx_a+BM_N_SAMPLE+1]*t_a )*s );
+  S_ -= ( ( z[ndx_b]*onemt_b + z[ndx_b+1]*t_b )*onems +
+	  ( z[ndx_b+BM_N_SAMPLE]*onemt_b + z[ndx_b+BM_N_SAMPLE+1]*t_b )*s );
+  S_ /= 2*h;
+  S = S_;
   return -S;
 }
 @				
