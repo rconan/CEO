@@ -71,6 +71,8 @@ struct imaging {
 <<imaging.cu>>=
 #include "imaging.h"
 
+<<pointing kernel>>
+
 <<detector Poisson and Gaussian noise>>
 <<imaging complex amplitude>>
 <<intensity>>
@@ -140,7 +142,9 @@ int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_LENSLET,
 cufftHandle plan;
 float N_PHOTON_PER_SECOND_PER_FRAME, N_PHOTON_PER_FRAME;
 float2 *d__wave_PUPIL;
-float  *d__frame, zenith, azimuth, theta_x, theta_y, pixel_scale, photoelectron_gain;
+float  *d__frame, zenith, azimuth, theta_x, theta_y, 
+  *d__zenith, *d__azimuth, *d__theta_x, *d__theta_y,
+  pixel_scale, photoelectron_gain;
 char absolute_pointing;
 curandState *devStates;
 @
@@ -215,7 +219,7 @@ void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
 @
 <<setup common>>=
 LOCAL_RAND_SEED = RAND_SEED;
-zenith = -1.0;
+d__zenith = NULL;
 pixel_scale = 0.0;
 absolute_pointing = 0;
 photoelectron_gain = 1.0;
@@ -249,7 +253,7 @@ void imaging::setupSegmentPistonSensor(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
   N_LENSLET   = N_SIDE_LENSLET*N_SIDE_LENSLET;
   N_FRAME     = 0;
 
-  zenith = -1.0;
+  d__zenith = NULL;
   pixel_scale = 0.0;
   absolute_pointing = 0;
   photoelectron_gain = 1.0;
@@ -274,10 +278,31 @@ void imaging::setupSegmentPistonSensor(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
 The pointing direction is set with:
 <<pointing direction>>=
 void imaging::set_pointing_direction(float zen, float azim) {
+  if (d__zenith==NULL) {
+      int n_byte = sizeof(float) * N_SOURCE;
+      HANDLE_ERROR( cudaMalloc( (void**)&d__zenith  , n_byte) );      
+      HANDLE_ERROR( cudaMalloc( (void**)&d__azimuth , n_byte) );      
+      HANDLE_ERROR( cudaMalloc( (void**)&d__theta_x , n_byte) );      
+      HANDLE_ERROR( cudaMalloc( (void**)&d__theta_y , n_byte) );      
+      HANDLE_ERROR( cudaMemcpy( d__zenith, &zen, n_byte,
+			    cudaMemcpyHostToDevice ) );
+      HANDLE_ERROR( cudaMemcpy( d__azimuth, &azim, n_byte,
+			    cudaMemcpyHostToDevice ) );
+    }
+  pointing_kern LLL 1, N_SOURCE RRR (d__theta_x, d__theta_y, d__zenith, d__azimuth);
   zenith = zen;
   azimuth = azim;
   theta_x = tanf(zenith)*cosf(azimuth);
   theta_y = tanf(zenith)*sinf(azimuth);
+}
+@ with the kernel
+<<pointing kernel>>=
+__global__ void pointing_kern(float *theta_x, float *theta_y, float  *zenith, float *azimuth)
+{
+  int k;
+  k = threadIdx.x;
+  theta_x[k] = tanf(zenith[k])*cosf(azimuth[k]);
+  theta_y[k] = tanf(zenith[k])*sinf(azimuth[k]);
 }
 @
 Dynamically allocated variables are freed with the cleanup routine:
@@ -289,6 +314,12 @@ void imaging::cleanup(void) {
   cudaFree( d__wave_PUPIL );
   cudaFree( d__frame );
   cudaFree( devStates );
+  if (d__zenith!=NULL) {
+    cudaFree(d__zenith);
+    cudaFree(d__azimuth);
+    cudaFree(d__theta_x);
+    cudaFree(d__theta_y);
+  }
 }
 void imaging::cleanupSegmentPistonSensor(void) {
   cufftDestroy(plan);
@@ -307,14 +338,16 @@ void imaging::propagate(source *src) {
   int M = N_PX_IMAGE/N_PX_CAMERA;
   /* if ( (pixel_scale>0) && (zenith<0) ) */
   /*   set_pointing_direction(0.0,0.0); */
-  /* if (pixel_scale>0 ) { */
-  /*     printf(" pixel scale: %.2E\n",pixel_scale); */
-  /* float dx, dy, dx_int, dy_int; */
-  /* <<angular offset>> */
-  /* printf("ANGULAR OFFSET:\n"); */
-  /* printf(" . x: %3.0f + %4.3f\n",dx_int,dx); */
-  /* printf(" . y: %3.0f + %4.3f\n",dy_int,dy); */
-  /*   } */
+  /*
+  if (pixel_scale>0 ) {
+      printf(" pixel scale: %.2E\n",pixel_scale);
+  float dx, dy, dx_int, dy_int;
+  <<angular offset>>
+  printf("ANGULAR OFFSET:\n");
+  printf(" . x: %3.0f + %4.3f\n",dx_int,dx);
+  printf(" . y: %3.0f + %4.3f\n",dy_int,dy);
+    }
+  */
   dim3 gridDim;
   dim3 blockDim(16,16);
   gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
@@ -1010,13 +1043,14 @@ __global__ void binning(float *frame, const float2 *wave, int N_DFT,
       jj = threadIdx.y;
 
       bin[ii][jj] = 0.0;
+      <<angular offset>>
       for (i=0;i<M;i++)
       	{
-      	  iPxL = u*M + i - offset;
+      	  iPxL = u*M + i - offset + dx_int;
       	  if ( iPxL>=0 && iPxL<N_DFT)
       	    for (j=0;j<M;j++)
       	      {
-      		jPxL = v*M + j - offset;
+      		jPxL = v*M + j - offset + dy_int;
       		if ( jPxL>=0 && jPxL<N_DFT)
       		  {
       		    ij_DFT = lenslet2row(iPxL,jPxL,N_DFT,
@@ -1025,9 +1059,8 @@ __global__ void binning(float *frame, const float2 *wave, int N_DFT,
       		  }
       	      }
       	}
-      <<angular offset>>
-      u += dx_int;
-      v += dy_int;
+      /* u += dx_int; */
+      /* v += dy_int; */
       ij_CAM = lenslet2array(u,v,N_PX_CAMERA,
 			     iLenslet,jLenslet,N_SIDE_LENSLET,iSource);
       frame[ij_CAM] +=   bin[ii][jj]/(N_DFT*N_DFT);
