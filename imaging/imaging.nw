@@ -836,7 +836,8 @@ The device is pointing in the direction given by the vector $\vec\theta_d$.
 The angular displacement in the image plane is: $$\vec\delta=\delta_M\vec\theta_\ast-\vec\theta_d.$$
 The pointing of the imaging device can be either absolute $\delta_M=1$ i.e. with respect to the zenith direction or relative to the source direction i.e. $\delta_M=0$ the default.
 If $p$ is the angular pixel scale on the camera, then the displacement in pixel is $\vec d=\vec\delta/p$.
-The pixel displacement is divided into the integer pixel displacement on the camera, $\text{round}(\vec d)$, and the displacement in the imagelets,  $M\left(\vec d - \text{round}(\vec d)\right)$ with $M=[[N_PX_IMAGE]]/[[N_PX_CAMERA]]$.
+%The pixel displacement is divided into the integer pixel displacement on the camera, $\text{round}(\vec d)$, and the displacement in the imagelets,  $M\left(\vec d - \text{round}(\vec d)\right)$ with $M=[[N_PX_IMAGE]]/[[N_PX_CAMERA]]$.
+The pixel displacement is divided into the integer pixel displacement on the camera, $\text{round}(\vec d)$, and the displacement in the imagelets,  $\left(\vec d - \text{round}(\vec d)\right)$.
 The displacement in pixel is computed with:
 <<angular offset>>=
 if (pixel_scale>0) {
@@ -844,12 +845,12 @@ if (pixel_scale>0) {
   dx /= pixel_scale;
   dx_int = rintf( dx );
   dx -= dx_int;
-  dx *= M;
+  //dx *= M;
   dy  = absolute_pointing*src[iSource].theta_y - theta_y[iSource];
   dy /= pixel_scale;
   dy_int = rintf( dy );
   dy -= dy_int;
-  dy *= M;
+  //dy *= M;
 }
 @
 <<imaging complex amplitude>>=
@@ -1060,11 +1061,11 @@ __global__ void binning(float *frame, const float2 *wave, int N_DFT,
       <<angular offset>>
       for (i=0;i<M;i++)
       	{
-      	  iPxL = u*M + i - offset + dx_int;
+      	  iPxL = u*M + i - offset - dx_int;
       	  if ( iPxL>=0 && iPxL<N_DFT)
       	    for (j=0;j<M;j++)
       	      {
-      		jPxL = v*M + j - offset + dy_int;
+      		jPxL = v*M + j - offset - dy_int;
       		if ( jPxL>=0 && jPxL<N_DFT)
       		  {
       		    ij_DFT = lenslet2row(iPxL,jPxL,N_DFT,
