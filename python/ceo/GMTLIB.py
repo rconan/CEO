@@ -3,9 +3,8 @@ import math
 import numpy as np
 from scipy.optimize import brenth, leastsq
 from skimage.feature import blob_log
-from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GmtMirrors, SegmentPistonSensor, \
-    constants, Telescope, cuFloatArray, Aperture, Transform_to_S, Intersect, Reflect, Refract, Transform_to_R, \
-    GeometricShackHartmann
+from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann, GmtMirrors, SegmentPistonSensor, \
+    constants, Telescope, cuFloatArray, Aperture, Transform_to_S, Intersect, Reflect, Refract, Transform_to_R
 
 class GMT_MX(GmtMirrors):
     """
@@ -72,7 +71,7 @@ class GMT_MX(GmtMirrors):
     >>> gpu_ps1d = src.wavefront.phase()
     """
     def __init__(self, D=None, D_px=None, M1_radial_order=0, M2_radial_order=0,
-                 M1_mirror_modes="zernike", M2_mirror_modes="zernike",
+                 M1_mirror_modes=u"zernike", M2_mirror_modes=u"zernike",
                  M1_N_MODE=0):
         super(GMT_MX,self).__init__(
                             M1_radial_order=M1_radial_order,
@@ -113,6 +112,7 @@ class GMT_MX(GmtMirrors):
                 wfs.reset()
                 wfs.analyze(gs, segment=segment)
                 return wfs.get_measurement()
+
             s_push = get_slopes(+1)
             s_pull = get_slopes(-1)
             return 0.5*(s_push-s_pull)/stroke
@@ -246,11 +246,13 @@ class GMT_MX(GmtMirrors):
         sys.stdout.write("___ %s ___ (%s)\n"%(mirror,mode))
         if mirror=="M1":
             if mode=="global tip-tilt":
-                D = np.zeros((wfs.get_measurement_size(),2))
+                #D = np.zeros((wfs.get_measurement_size(),2))
+                D = np.zeros((wfs.n_valid_slopes,2))
                 D[:,0] = pushpull( lambda x : self.M1.global_tiptilt(x,0) )
                 D[:,1] = pushpull( lambda x : self.M1.global_tiptilt(0,x) )
             if mode=="Txyz":
-                D = np.zeros((wfs.get_measurement_size(),3*7-1))
+                #D = np.zeros((wfs.get_measurement_size(),3*7-1))
+                D = np.zeros((wfs.n_valid_slopes,3*7-1))
                 idx = 0
                 Tx = lambda x : self.M1.update(origin=[x,0,0],euler_angles=[0,0,0],idx=kSeg)
                 Ty = lambda x : self.M1.update(origin=[0,x,0],euler_angles=[0,0,0],idx=kSeg)
@@ -267,7 +269,8 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                 sys.stdout.write("\n")
             if mode=="Rxyz":
-                D = np.zeros((wfs.get_measurement_size(),3*7-1))
+                #D = np.zeros((wfs.get_measurement_size(),3*7-1))
+                D = np.zeros((wfs.n_valid_slopes,3*7-1))
                 idx = 0
                 Rx = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
                 Ry = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
@@ -284,7 +287,8 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                 sys.stdout.write("\n")
             if mode=="Rz":
-                D = np.zeros((wfs.get_measurement_size(),7))
+                #D = np.zeros((wfs.get_measurement_size(),7))
+                D = np.zeros((wfs.n_valid_slopes,7))
                 idx = 0
                 Rz = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,0,x],idx=kSeg)
                 sys.stdout.write("Segment #:")
@@ -294,7 +298,8 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="segment tip-tilt":
-                D = np.zeros((wfs.get_measurement_size(),2*7))
+                #D = np.zeros((wfs.get_measurement_size(),2*7))
+                D = np.zeros((wfs.n_valid_slopes,2*7))
                 idx = 0
                 Rx = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
                 Ry = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
@@ -308,7 +313,8 @@ class GMT_MX(GmtMirrors):
                 sys.stdout.write("\n")
             if mode=="zernike":
                 n_mode = self.M1.zernike.n_mode
-                D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
+                #D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
+                D = np.zeros((wfs.n_valid_slopes,(n_mode-first_mode)*7))
                 idx = 0;
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
@@ -319,7 +325,8 @@ class GMT_MX(GmtMirrors):
                     sys.stdout.write("\n")
             if mode=="bending modes":
                 n_mode = self.M1.BM.n_mode
-                D = np.zeros((wfs.get_measurement_size(),n_mode*7))
+                #D = np.zeros((wfs.get_measurement_size(),n_mode*7))
+                D = np.zeros((wfs.n_valid_slopes,n_mode*7))
                 idx = 0;
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
@@ -372,19 +379,23 @@ class GMT_MX(GmtMirrors):
 
         if mirror=="M2":
             if mode=="global tip-tilt":
-                D = np.zeros((wfs.get_measurement_size(),2))
+                #D = np.zeros((wfs.get_measurement_size(),2))
+                D = np.zeros((wfs.n_valid_slopes,2))
                 D[:,0] = pushpull( lambda x : self.M2.global_tiptilt(x,0) )
                 D[:,1] = pushpull( lambda x : self.M2.global_tiptilt(0,x) )
             if mode=="pointing neutral":
-                D = np.zeros((wfs.get_measurement_size(),2))
+                #D = np.zeros((wfs.get_measurement_size(),2))
+                D = np.zeros((wfs.n_valid_slopes,2))
                 D[:,0] = pushpull( lambda x : self.M2.pointing_neutral(x,0) )
                 D[:,1] = pushpull( lambda x : self.M2.pointing_neutral(0,x) )
             if mode=="coma neutral":
-                D = np.zeros((wfs.get_measurement_size(),2))
+                #D = np.zeros((wfs.get_measurement_size(),2))
+                D = np.zeros((wfs.n_valid_slopes,2))
                 D[:,0] = pushpull( lambda x : self.M2.coma_neutral(x,0) )
                 D[:,1] = pushpull( lambda x : self.M2.coma_neutral(0,x) )
             if mode=="Txyz":
-                D = np.zeros((wfs.get_measurement_size(),3*7))
+                #D = np.zeros((wfs.get_measurement_size(),3*7))
+                D = np.zeros((wfs.n_valid_slopes,3*7))
                 idx = 0
                 Tx = lambda x : self.M2.update(origin=[x,0,0],euler_angles=[0,0,0],idx=kSeg)
                 Ty = lambda x : self.M2.update(origin=[0,x,0],euler_angles=[0,0,0],idx=kSeg)
@@ -400,7 +411,8 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="Rxyz":
-                D = np.zeros((wfs.get_measurement_size(),3*7-1))
+                #D = np.zeros((wfs.get_measurement_size(),3*7-1))
+                D = np.zeros((wfs.n_valid_slopes,3*7-1))
                 idx = 0
                 Rx = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
                 Ry = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
@@ -417,7 +429,8 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                 sys.stdout.write("\n")
             if mode=="Rz":
-                D = np.zeros((wfs.get_measurement_size(),7))
+                #D = np.zeros((wfs.get_measurement_size(),7))
+                D = np.zeros((wfs.n_valid_slopes,7))
                 idx = 0
                 Rz = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,0,x],idx=kSeg)
                 sys.stdout.write("Segment #:")
@@ -427,7 +440,8 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="segment tip-tilt":
-                if isinstance(wfs, (ShackHartmann, GeometricShackHartmann)) == True:
+
+                if isinstance(wfs, (ShackHartmann,GeometricShackHartmann)):
                     n_meas = wfs.valid_lenslet.nnz*2 
                 elif isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
                     if segment=="edge":
@@ -454,7 +468,7 @@ class GMT_MX(GmtMirrors):
                 sys.stdout.write("\n")
             if mode=="zernike":
                 n_mode = self.M2.zernike.n_mode
-                D = np.zeros((wfs.valid_lenslet.nnz*2,(n_mode-first_mode)*7))
+                D = np.zeros((wfs.n_valid_slopes,(n_mode-first_mode)*7))
                 idx = 0;
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
@@ -514,8 +528,8 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
         sys.stdout.write("------------\n")
-        #self[mirror].D.update({mode:D})
-        return D
+        self[mirror].D.update({mode:D})
+        #return D
 
 # JGMT_MX
 from utilities import JSONAbstract
@@ -529,7 +543,7 @@ class JGMT_MX(JSONAbstract,GMT_MX):
                         M2_radial_order=self.jprms["M2"]["Zernike radial order"])
 
 
-class TT7(ShackHartmann):
+class SHTT7(ShackHartmann):
 
     def __init__(self, N_SIDE_LENSLET, N_PX_LENSLET, d,
 	          DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, N_GS=1):
@@ -583,6 +597,48 @@ class TT7(ShackHartmann):
         self.c7 = np.concatenate((np.dot(c[0,:nvl],self.M)/w,
                                   np.dot(c[0,nvl:],self.M)/w))
 
+from abc import ABCMeta, abstractmethod
+class Sensor:
+    __metaclass__ = ABCMeta
+    @abstractmethod
+    def calibrate(self):
+        pass
+    @abstractmethod
+    def reset(self):
+        pass
+    @abstractmethod
+    def analyze(self):
+        pass
+    @abstractmethod
+    def propagate(self):
+        pass
+    @abstractmethod
+    def process(self):
+        pass
+
+class TT7(Sensor):
+
+    def __init__(self,**kwargs):
+        self.n_valid_slopes   = 14
+        self.reference_slopes = np.zeros((14,1))
+
+    def calibrate(self, src, threshold=None):
+        data = src.segmentsWavefrontGradient()
+        self.reference_slopes = data.host()
+
+    def reset(self):
+        pass
+
+    def analyze(self, src):
+        data = src.segmentsWavefrontGradient()
+	self.valid_slopes = cuFloatArray(host_data = data.host() - self.reference_slopes)
+
+    def propagate(self, src):
+        data = src.segmentsWavefrontGradient()
+	self.valid_slopes = cuFloatArray(host_data = data.host() - self.reference_slopes)
+
+    def process(self):
+        pass
     def get_measurement(self):
         return self.c7
 
