@@ -246,11 +246,11 @@ class GMT_MX(GmtMirrors):
         sys.stdout.write("___ %s ___ (%s)\n"%(mirror,mode))
         if mirror=="M1":
             if mode=="global tip-tilt":
-                D = np.zeros((wfs.valid_lenslet.nnz*2,2))
+                D = np.zeros((wfs.get_measurement_size(),2))
                 D[:,0] = pushpull( lambda x : self.M1.global_tiptilt(x,0) )
                 D[:,1] = pushpull( lambda x : self.M1.global_tiptilt(0,x) )
             if mode=="Txyz":
-                D = np.zeros((wfs.valid_lenslet.nnz*2,3*7-1))
+                D = np.zeros((wfs.get_measurement_size(),3*7-1))
                 idx = 0
                 Tx = lambda x : self.M1.update(origin=[x,0,0],euler_angles=[0,0,0],idx=kSeg)
                 Ty = lambda x : self.M1.update(origin=[0,x,0],euler_angles=[0,0,0],idx=kSeg)
@@ -267,7 +267,7 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                 sys.stdout.write("\n")
             if mode=="Rxyz":
-                D = np.zeros((wfs.valid_lenslet.nnz*2,3*7-1))
+                D = np.zeros((wfs.get_measurement_size(),3*7-1))
                 idx = 0
                 Rx = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
                 Ry = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
@@ -284,7 +284,7 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                 sys.stdout.write("\n")
             if mode=="Rz":
-                D = np.zeros((wfs.valid_lenslet.nnz*2,7))
+                D = np.zeros((wfs.get_measurement_size(),7))
                 idx = 0
                 Rz = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,0,x],idx=kSeg)
                 sys.stdout.write("Segment #:")
@@ -294,7 +294,7 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="segment tip-tilt":
-                D = np.zeros((wfs.valid_lenslet.nnz*2,2*7))
+                D = np.zeros((wfs.get_measurement_size(),2*7))
                 idx = 0
                 Rx = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
                 Ry = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
@@ -308,7 +308,7 @@ class GMT_MX(GmtMirrors):
                 sys.stdout.write("\n")
             if mode=="zernike":
                 n_mode = self.M1.zernike.n_mode
-                D = np.zeros((wfs.valid_lenslet.nnz*2,(n_mode-first_mode)*7))
+                D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
                 idx = 0;
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
@@ -319,7 +319,7 @@ class GMT_MX(GmtMirrors):
                     sys.stdout.write("\n")
             if mode=="bending modes":
                 n_mode = self.M1.BM.n_mode
-                D = np.zeros((wfs.valid_lenslet.nnz*2,n_mode*7))
+                D = np.zeros((wfs.get_measurement_size(),n_mode*7))
                 idx = 0;
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
@@ -372,19 +372,19 @@ class GMT_MX(GmtMirrors):
 
         if mirror=="M2":
             if mode=="global tip-tilt":
-                D = np.zeros((wfs.valid_lenslet.nnz*2,2))
+                D = np.zeros((wfs.get_measurement_size(),2))
                 D[:,0] = pushpull( lambda x : self.M2.global_tiptilt(x,0) )
                 D[:,1] = pushpull( lambda x : self.M2.global_tiptilt(0,x) )
             if mode=="pointing neutral":
-                D = np.zeros((wfs.valid_lenslet.nnz*2,2))
+                D = np.zeros((wfs.get_measurement_size(),2))
                 D[:,0] = pushpull( lambda x : self.M2.pointing_neutral(x,0) )
                 D[:,1] = pushpull( lambda x : self.M2.pointing_neutral(0,x) )
             if mode=="coma neutral":
-                D = np.zeros((wfs.valid_lenslet.nnz*2,2))
+                D = np.zeros((wfs.get_measurement_size(),2))
                 D[:,0] = pushpull( lambda x : self.M2.coma_neutral(x,0) )
                 D[:,1] = pushpull( lambda x : self.M2.coma_neutral(0,x) )
             if mode=="Txyz":
-                D = np.zeros((wfs.valid_lenslet.nnz*2,3*7))
+                D = np.zeros((wfs.get_measurement_size(),3*7))
                 idx = 0
                 Tx = lambda x : self.M2.update(origin=[x,0,0],euler_angles=[0,0,0],idx=kSeg)
                 Ty = lambda x : self.M2.update(origin=[0,x,0],euler_angles=[0,0,0],idx=kSeg)
@@ -400,7 +400,7 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="Rxyz":
-                D = np.zeros((wfs.valid_lenslet.nnz*2,3*7-1))
+                D = np.zeros((wfs.get_measurement_size(),3*7-1))
                 idx = 0
                 Rx = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
                 Ry = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
@@ -417,7 +417,7 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                 sys.stdout.write("\n")
             if mode=="Rz":
-                D = np.zeros((wfs.valid_lenslet.nnz*2,7))
+                D = np.zeros((wfs.get_measurement_size(),7))
                 idx = 0
                 Rz = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,0,x],idx=kSeg)
                 sys.stdout.write("Segment #:")
