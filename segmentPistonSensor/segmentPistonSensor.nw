@@ -178,7 +178,7 @@ float field_of_view;
 \item the detector:
 <<parameters>>=
 imaging camera;
-imaging *camera_array;
+//imaging *camera_array;
 @
 \item the Nyquist factor, a value of 1 meaning Nyquist sampling, higher value increases the resolution of the image; sampling is always defined for the shortest wavelength
 <<parameters>>=
@@ -285,7 +285,7 @@ FFT.setup(camera.N_PX_CAMERA-1,N_LENSLET,2,camera.N_PX_CAMERA*2,1,1);
 @
 An array of imaging object [[camera_array]] is used to compute an image at each wavelength.
 The image are co--added in the [[camera]] object.
-<<setup content>>=
+<<setup content (opt-out)>>=
 camera_array = (imaging *) malloc( sizeof(imaging)*N_LAMBDA) ;
 fprintf(stdout,"@(CEO)>segmentPistonSensor: camera array setup!");
 for (k=0;k<N_LAMBDA;k++) {
@@ -329,10 +329,12 @@ void segmentPistonSensor::cleanup(void)
   lenslet.cleanup();
   lenslet_mask.cleanup();
   camera.cleanup();
+  /*
   for (int k=0;k<N_LAMBDA;k++) {
     camera_array[k].cleanupSegmentPistonSensor();
   }
   free( camera_array );
+  */
   FFT.cleanup();
   fft_mask.cleanup();
   HANDLE_ERROR( cudaFree( fft_phase ) );
@@ -373,12 +375,18 @@ lenslet_mask.area = N_GS*lenslet_mask.nnz*
 Second, the piecewise wavefront are propagated through the lenslets and to the focal plane on the detector, one wavelength at a time.
 <<propagation content>>= 
 lenslet_src.magnitude = gs[0].magnitude;
+int N_DFT, DFT_osf;
+imaging camera_array;
+DFT_osf            = (int) rint(2*nyquist_factor);
 for (k=0;k<N_LAMBDA;k++) {
-  camera_array[k].d__frame = camera.d__frame;
+  N_DFT = (int) DFT_osf*N_PX_LENSLET*(1 + k*(spectral_bandwidth/lambda0)/(N_LAMBDA-1));
+  camera_array.setupSegmentPistonSensor(N_PX_LENSLET-1,N_LENSLET,N_DFT,N_PX_IMAGE,2,1);
+  camera_array.d__frame = camera.d__frame;
   d = spectral_bandwidth*( k - 0.5*(N_LAMBDA-1))/(N_LAMBDA-1);
   wavenumber = 2*PI/(gs[0].wavelength() + d);
   d *= (dispersion/pixel_scale);
-  camera_array[k].propagateNoOverlapSPS(&lenslet_src, d, wavenumber);
+  camera_array.propagateNoOverlapSPS(&lenslet_src, d, wavenumber);
+  camera_array.cleanupSegmentPistonSensor();
 }
   camera.N_FRAME++;
 @

@@ -584,7 +584,6 @@ class SHTT7(ShackHartmann):
         self.c7 = np.concatenate((np.dot(c[0,:nvl],self.M)/w,
                                   np.dot(c[0,nvl:],self.M)/w))
 
-<<<<<<< HEAD
 from abc import ABCMeta, abstractmethod
 class Sensor:
     __metaclass__ = ABCMeta
