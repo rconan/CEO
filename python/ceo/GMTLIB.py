@@ -72,13 +72,14 @@ class GMT_MX(GmtMirrors):
     """
     def __init__(self, D=None, D_px=None, M1_radial_order=0, M2_radial_order=0,
                  M1_mirror_modes=u"zernike", M2_mirror_modes=u"zernike",
-                 M1_N_MODE=0):
+                 M1_N_MODE=0 ,M2_N_MODE=0):
         super(GMT_MX,self).__init__(
                             M1_radial_order=M1_radial_order,
                             M2_radial_order=M2_radial_order,
                             M1_mirror_modes=M1_mirror_modes,
                             M2_mirror_modes=M2_mirror_modes,
-                            M1_N_MODE=M1_N_MODE)
+                            M1_N_MODE=M1_N_MODE,
+                            M2_N_MODE=M2_N_MODE)
 
     def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,cl_wfs=None,cl_gs=None,cl_recmat=None, 
 		idealps=None,idealps_rec=None,idealps_ref=None,first_mode=3, closed_loop_calib=False, 
