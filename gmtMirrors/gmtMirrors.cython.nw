@@ -213,9 +213,11 @@ cdef class GmtMirrors:
         double *d__BM
         int BM_N_SAMPLE
         void setup(int, int)
+        void setupKL(int, int)
         void cleanup()
         void load()
         void load_reg()
+        void load_KL()
         void nearest_neighbor(rtd *, rtd *, rtd *,
                               int , rtd , int)
         void bilinear(rtd *, rtd *, rtd *,
@@ -285,6 +287,72 @@ cdef class BendingModes:
                                                    partial_x_BMi._c_gpu.dev_data,
                                                    partial_y_BMi._c_gpu.dev_data,
                                                    NI, di, k_mode)
+        return (BMi,partial_x_BMi,partial_y_BMi)
+
+    def update(self):
+        """
+        Updates the bending modes surface based on the bending modes coefficients
+        """
+        self._c_bending_modes.update(&self.a[0,0])
+
+    def reset(self):
+        """
+        Resets the bending modes coefficients to zero and update the bending modes surface
+        """
+        self.a[:] = 0
+        self._c_bending_modes.update(&self.a[0,0])
+@
+\section{Karhunen--Loeve modes}
+\label{sec:KL-modes}
+
+\index{gmtMirrors!python!KarhunenLoeve}
+
+\subsubsection{Class definition}
+\label{sec:class-definition-6}
+
+<<class definitions>>=
+cdef class KarhunenLoeve:
+    cdef:
+        bending_modes *_c_bending_modes
+        public int n_mode, N_SURF
+        public rtd[:,::1] a
+@
+
+\subsection{PYX file}
+\label{sec:pyx-file-6}
+
+<<gmtMirrors.pyx>>=
+cdef class KarhunenLoeve:
+
+    def __cinit__(self, int N_MODE=0, int N_SURF=1):
+        self._c_bending_modes = new bending_modes()
+        self._c_bending_modes.setupKL(N_MODE, N_SURF);
+        self.n_mode = N_MODE
+        self.N_SURF = N_SURF
+        self.a = np.zeros((N_SURF, N_MODE), dtype=np.float64)
+
+    def __dealloc__(self):
+        self._c_bending_modes.cleanup();
+
+    def load(self,grid='irregular'):
+        cdef cuDoubleArray BM
+        self._c_bending_modes.load_KL()
+        BM = cuDoubleArray(shape=(1,self._c_bending_modes.BM_N_SAMPLE*self._c_bending_modes.BM_N_SAMPLE))
+        BM._c_gpu.dev_data = self._c_bending_modes.d__BM
+        return BM
+
+    def interpolate(self,int NI, double di, int k_mode=1,grid='irregular'):
+        cdef:
+            cuDoubleArray BMi
+            cuDoubleArray partial_x_BMi
+            cuDoubleArray partial_y_BMi
+        BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_x_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_y_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        self._c_bending_modes.bilinear(BMi._c_gpu.dev_data,
+                                     partial_x_BMi._c_gpu.dev_data,
+                                     partial_y_BMi._c_gpu.dev_data,
+                                     NI, di, k_mode)
         return (BMi,partial_x_BMi,partial_y_BMi)
 
     def update(self):
