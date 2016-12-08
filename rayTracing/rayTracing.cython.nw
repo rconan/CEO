@@ -20,6 +20,17 @@ cdef extern from "rayTracing.h":
 \label{sec:pxd-file-1}
 
 <<rayTracing.pxd contents>>=
+    cdef extern from "utilities.h":
+        cdef cppclass gpu_t[T]:
+            T *dev_data
+            T *host_data
+            int N
+            void setup()
+            void dev_malloc()
+            void free_dev()
+            void dev2host()
+            void host2dev()
+            void reset()
     cdef cppclass coordinate_system:
         vector *origin
         vector *euler_angles
@@ -37,8 +48,10 @@ cdef class Quaternion:
         public np.ndarray qw, qx, qy, qz
 cdef class Coordinates:
     cdef:
+        gpu_t[vector] *_c_gpu
         double[:,:] data
         vector *v
+    cdef void init(Coordinates,vector *)
 cdef class Coordinate_system:
     cdef:
         coordinate_system *_c_coordinate_system
@@ -179,10 +192,16 @@ cdef class Coordinates:
     gmt.M1.motion_CS.origin[:] = 0
     """
     def __cinit__(self,tuple shape):
+        self._c_gpu = new gpu_t[vector]()
         self.data =  np.zeros(shape, dtype=np.float64)
+
+    cdef void init(self,vector *v):
+        self._c_gpu.host_data = self.v
+        self._c_gpu.dev_data = v        
 
     def __getitem__(self,index):
         cdef int k
+        self._c_gpu.dev2host()
         for k in range(self.data.shape[0]):
             self.data[k,0] = self.v[k].x
             self.data[k,1] = self.v[k].y
@@ -196,6 +215,7 @@ cdef class Coordinates:
             self.v[k].x = self.data[k,0]
             self.v[k].y = self.data[k,1]
             self.v[k].z = self.data[k,2]
+        self._c_gpu.host2dev()
 
     def __repr__(self):
         data = np.array(self[:])
@@ -360,6 +380,7 @@ cdef class Quaternion:
     cdef cppclass conic:
         rtd refractive_index, c, k
         vector origin
+        vector *d__origin
         coordinate_system ref_frame
         void setup(rtd , rtd , vector , vector , vector, rtd)
         void setup(rtd , rtd , vector , vector , vector, rtd, int, rtd *)
@@ -453,6 +474,7 @@ cdef class Conic:
         self.ref_frame.init( &(self._c_conic.ref_frame) )
         self.origin = Coordinates((1,3))
         self.origin.v = &(self._c_conic.origin)
+        self.origin.init(self._c_conic.d__origin)
         self.coord_break = coord_break
         self.material = {'name': material, 'formula': 15, 'c': []}
 
@@ -608,6 +630,7 @@ cdef class ZernikeS:
         zernikeS *_c_zernikeS
         public int max_n, n_mode, N_SURF
         public ndarray a
+        public ndarray invZmat, projZmat
         double [:,::1] _a_
         <<log variables>>
 @
@@ -831,6 +854,81 @@ cdef class ZernikeS:
                                     r._c_gpu.dev_data, o._c_gpu.dev_data, r.size)
         self._a_ = <double[:self.N_SURF,:self.n_mode]>self._c_zernikeS.a
         self.a   = np.asarray(self._a_)
+
+    def fitting_init(self, Source gs, int alphaId=0):
+        P = np.rollaxis( np.array(gs.rays.piston_mask ),0,3)
+
+        ## Find center coordinates (in pixels) of each segment mask
+        u = np.arange(gs.n)
+        v = np.arange(gs.m)
+        x,y = np.meshgrid(u,v)
+        x = x.reshape(1,-1,1)
+        y = y.reshape(1,-1,1)
+        xc = np.sum(x*P,axis=1)/P.sum(axis=1)
+        yc = np.sum(y*P,axis=1)/P.sum(axis=1)
+
+        ## Preliminary estimation of radius (in pixels) of each segment mask (assuming that there is no central obscuration)
+        Rs = np.sqrt(P.sum(axis=1)/np.pi)
+
+        ## Polar coordinates
+        rho   = np.hypot(   x - xc[:,np.newaxis,:], y - yc[:,np.newaxis,:])   #temporal rho vector
+        theta = np.arctan2( y - yc[:,np.newaxis,:], x - xc[:,np.newaxis,:]) * P
+
+        ## Estimate central obscuration area of each segment mask
+        ObsArea = np.sum(rho < 0.9*Rs[:,np.newaxis,:] * ~P.astype('bool'), axis=1)
+
+        ## Improve estimation of radius of each segment mask
+        Rs = np.sqrt( (P.sum(axis=1)+ObsArea) / np.pi)
+
+        ## Normalize rho vector (unitary radius)
+        rho = rho / Rs[:,np.newaxis,:] * P #final rho vector
+
+        # Build a Zernike Influence-function Matrix for all segments
+        #alphaId = 0   # only on-axis direction supported...
+
+        Zmat = np.zeros((gs.n*gs.m,self.n_mode,7))
+        for segId in range(1,8):
+            self.reset()
+            cutheta = cuDoubleArray(host_data=theta[segId-1,:,alphaId].reshape(gs.m,gs.n))
+            curho   = cuDoubleArray(host_data=  rho[segId-1,:,alphaId].reshape(gs.m,gs.n))
+            for k in range(self.n_mode):
+                self.a[0,k] = 1
+                self.update()
+                S = self.surface(curho,cutheta).host(shape=(gs.m*gs.n,1))*P[segId-1,:,alphaId].reshape(-1,1)
+                Zmat[:,k,segId-1] = S.flatten()
+                self.a[0,k] = 0
+
+        print 'Zernike Inflence Function Matrix:'
+        print Zmat.shape
+
+        #Pseudo-inverse of Zmat
+        self.invZmat = np.zeros((self.n_mode,gs.m*gs.n,7))
+        for segId in range(1,8):
+            self.invZmat[:,:,segId-1] = np.linalg.pinv(Zmat[:,:,segId-1])
+        #print 'inverse of Zernike Influence Function Matrix:'
+        #print self.invZmat.shape
+
+        #Projection matrix
+        self.projZmat = np.zeros((self.n_mode,gs.m*gs.n,7))
+        for segId in range(1,8):
+            self.projZmat[:,:,segId-1] = Zmat[:,:,segId-1].T / np.sum(P[segId-1,:,alphaId])
+
+    def projectionS(self, phase):
+        cdef:
+            int segId
+        a = np.zeros((self.n_mode,7))
+        for segId in range(1,8):
+            a[:,segId-1] = np.dot(self.projZmat[:,:,segId-1], phase.reshape(-1))
+        return a
+
+    def fitting(self, phase):
+        #Project final residual WF onto segment Zernike modes
+        cdef:
+            int segId
+        arec = np.zeros((self.n_mode, 7))
+        for segId in range(1,8):
+            arec[:,segId-1] = np.dot(self.invZmat[:,:,segId-1], phase.reshape(-1))
+        return arec
 
     <<log properties (ZernikeS)>>
 

@@ -41,21 +41,21 @@ cdef class GmtMirrors:
 
     Parameters
     ----------
-    D : float
-        The size of the pupil plane in meter
-    D_px : int
-        The size of the pupil plane in pixel
     M1_radial_order : int, optionnal
         The largest radial order of the Zernike polynomials on M1 segments, default to 0
     M2_radial_order : int, optionnal
         The largest radial order of the Zernike polynomials on M2 segments, default to 0
+    M1_mirror_modes : unicode, optional
+        The modal basis on the M1 segments either ""zernike"" or ""bending modes"", default: ""zernike""
+    M1_N_MODE : int, optional
+        The number of modes, default: 0
+    M2_mirror_modes : unicode, optional
+        The modal basis on the M2 segments either ""zernike"" or "Karhunen-Loeve" (https://s3-us-west-1.amazonaws.com/gmto.rconan/KarhunenLoeveModes.bin), default: ""zernike""
+    M2_N_MODE : int, optional
+        The number of modes, default: 0
 
     Attributes
     ----------
-    D : float
-        The size of the pupil plane in meter
-    D_px : int
-        The size of the pupil plane in pixel
     M1 : GMT_M1
         The GMT M1 CEO class
     M2 : GMT_M2
@@ -101,11 +101,13 @@ cdef class GmtMirrors:
     """
     def __init__(self, int M1_radial_order=0, int M2_radial_order=0,
                  unicode M1_mirror_modes=u"zernike", unicode M2_mirror_modes=u"zernike",
-                 int M1_N_MODE=0):
+                 int M1_N_MODE=0, int M2_N_MODE=0):
         self.M1 = GMT_M1(radial_order=M1_radial_order,
                          mirror_modes=M1_mirror_modes,
                          N_MODE=M1_N_MODE)
-        self.M2 = GMT_M2(radial_order=M2_radial_order, mirror_modes=M2_mirror_modes)
+        self.M2 = GMT_M2(radial_order=M2_radial_order, 
+                         mirror_modes=M2_mirror_modes,
+                         N_MODE=M2_N_MODE)
         self.focal_plane_distance = -5.830
         self.focal_plane_radius   =  2.197173
 
@@ -213,9 +215,11 @@ cdef class GmtMirrors:
         double *d__BM
         int BM_N_SAMPLE
         void setup(int, int)
+        void setupKL(int, int)
         void cleanup()
         void load()
         void load_reg()
+        void load_KL()
         void nearest_neighbor(rtd *, rtd *, rtd *,
                               int , rtd , int)
         void bilinear(rtd *, rtd *, rtd *,
@@ -299,6 +303,72 @@ cdef class BendingModes:
         """
         self.a[:] = 0
         self._c_bending_modes.update(&self.a[0,0])
+@
+\section{Karhunen--Loeve modes}
+\label{sec:KL-modes}
+
+\index{gmtMirrors!python!KarhunenLoeve}
+
+\subsubsection{Class definition}
+\label{sec:class-definition-6}
+
+<<class definitions>>=
+cdef class KarhunenLoeve:
+    cdef:
+        bending_modes *_c_bending_modes
+        public int n_mode, N_SURF
+        public rtd[:,::1] a
+@
+
+\subsection{PYX file}
+\label{sec:pyx-file-6}
+
+<<gmtMirrors.pyx>>=
+cdef class KarhunenLoeve:
+
+    def __cinit__(self, int N_MODE=0, int N_SURF=1):
+        self._c_bending_modes = new bending_modes()
+        self._c_bending_modes.setupKL(N_MODE, N_SURF);
+        self.n_mode = N_MODE
+        self.N_SURF = N_SURF
+        self.a = np.zeros((N_SURF, N_MODE), dtype=np.float64)
+
+    def __dealloc__(self):
+        self._c_bending_modes.cleanup();
+
+    def load(self,grid='irregular'):
+        cdef cuDoubleArray BM
+        self._c_bending_modes.load_KL()
+        BM = cuDoubleArray(shape=(1,self._c_bending_modes.BM_N_SAMPLE*self._c_bending_modes.BM_N_SAMPLE))
+        BM._c_gpu.dev_data = self._c_bending_modes.d__BM
+        return BM
+
+    def interpolate(self,int NI, double di, int k_mode=1,grid='irregular'):
+        cdef:
+            cuDoubleArray BMi
+            cuDoubleArray partial_x_BMi
+            cuDoubleArray partial_y_BMi
+        BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_x_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_y_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        self._c_bending_modes.bilinear(BMi._c_gpu.dev_data,
+                                     partial_x_BMi._c_gpu.dev_data,
+                                     partial_y_BMi._c_gpu.dev_data,
+                                     NI, di, k_mode)
+        return (BMi,partial_x_BMi,partial_y_BMi)
+
+    def update(self):
+        """
+        Updates the bending modes surface based on the bending modes coefficients
+        """
+        self._c_bending_modes.update(&self.a[0,0])
+
+    def reset(self):
+        """
+        Resets the bending modes coefficients to zero and update the bending modes surface
+        """
+        self.a[:] = 0
+        self._c_bending_modes.update(&self.a[0,0])
 @ 
 \section{GMT M1}
 \label{sec:gmt-m1-1}
@@ -353,6 +423,7 @@ cdef class GMT_M1:
 cdef:
     public ZernikeS zernike
     public BendingModes BM
+    public KarhunenLoeve KL
     public Coordinate_system aperture_CS
     public Coordinate_system conic_CS
     public Coordinate_system rigid_body_CS
@@ -399,6 +470,9 @@ if mirror_modes==u"zernike":
 elif mirror_modes==u"bending modes":
     self.BM = BendingModes(N_MODE,N_SURF=7)
     self._c_gmt_m12.setup( <bending_modes *> self.BM._c_bending_modes)
+elif mirror_modes==u"Karhunen-Loeve":
+    self.KL = KarhunenLoeve(N_MODE,N_SURF=7)
+    self._c_gmt_m12.setup( <bending_modes *> self.KL._c_bending_modes)
 else:
     self._c_gmt_m12.setup()
 
@@ -533,6 +607,8 @@ property modes:
             return self.zernike
         elif self.mirror_modes_type==u"bending modes":
             return self.BM
+        elif self.mirror_modes_type==u"Karhunen-Loeve":
+            return self.KL
 
 property M_ID:
     def __get__(self):
@@ -544,12 +620,12 @@ A class to represent GMT M1 or M2 segmented mirror
 
 Parameters
 ----------
-D : float
-    The size in meter of the pupil plane (must be equal or larger than the telescope diameter)
-D_px : float
-    The size in pxixel of the pupil plane
 radial_order : int, optional
     The radial order of the last Zernike polynomials, default to 0
+mirror_modes : unicode, optional
+    The modal basis on the segment either ""zernike"" or ""bending modes"" for M1 or "Karhunen-Loeve" (https://s3-us-west-1.amazonaws.com/gmto.rconan/KarhunenLoeveModes.bin) for M2, default: ""zernike""
+N_MODE : int, optional
+    The number of modes, default: 0
 
 Attributes
 ----------
@@ -583,11 +659,11 @@ TT_CS : Coordinate_system
 Examples
 --------
 >>> import ceo
->>> M1 = ceo.GMT_M1(25.5,101)
+>>> M1 = ceo.GMT_M1()
 
 With multiple sources:
 
->>> M2 = ceo.GMT_M2(25.5,101,N_SRC=4)
+>>> M2 = ceo.GMT_M2()
 
 With Zernike modes
 
@@ -642,7 +718,7 @@ cdef class GMT_M2:
 cdef class GMT_M2:
     <<GMT M12 docstring>>
 
-    def __cinit__(self, unicode mirror_modes=u"zernike", radial_order=0, N_MODE=0):
+    def __cinit__(self, unicode mirror_modes=u"zernike", int radial_order=0, int N_MODE=0):
         self._c_gmt_m12 = new gmt_m2()
         <<GMT M12 constructor>>
 
