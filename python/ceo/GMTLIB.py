@@ -97,8 +97,8 @@ class GMT_MX(GmtMirrors):
             The mirror label: eiher "M1" or "M2"
         mode : string
             The degrees of freedom label
-            for M1: "global tip-tilt", "zernike", "Txyz", "Rxyz", "Rz", "segment tip-tilt"
-            for M2: "global tip-tilt", "pointing neutral", "coma neutral", "zernike", "Txyz", "Rxyz", "Rz", "segment tip-tilt", "TT7 segment tip-tilt"
+            for M1: "global tip-tilt", "zernike", "bending modes", "Txyz", "Rxyz", "Rz", "segment tip-tilt"
+            for M2: "global tip-tilt", "pointing neutral", "coma neutral", "zernike", "Karhunen-Loeve", "Txyz", "Rxyz", "Rz", "segment tip-tilt", "TT7 segment tip-tilt"
         stroke : float
             The amplitude of the motion
 	segment : string
@@ -238,8 +238,8 @@ class GMT_MX(GmtMirrors):
             self.M1.modes.update()
 
         def M2_zernike_update(_stroke_):
-            self.M2.zernike.a[kSeg,kMode] = _stroke_
-            self.M2.zernike.update()
+            self.M2.modes.a[kSeg,kMode] = _stroke_
+            self.M2.modes.update()
 
         #if minus_M2_TT:
         #    pushpull = pushpull_minus_M2TT
@@ -319,7 +319,7 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                     sys.stdout.write("\n")
             if mode=="bending modes":
-                n_mode = self.M1.BM.n_mode
+                n_mode = self.M1.modes.n_mode
                 D = np.zeros((wfs.n_valid_slopes,n_mode*7))
                 idx = 0;
                 for kSeg in range(7):
@@ -465,6 +465,17 @@ class GMT_MX(GmtMirrors):
                         D[:,idx] = np.ravel( pushpull( M2_zernike_update ) )
                         idx += 1
                     sys.stdout.write("\n")
+            if mode=="Karhunen-Loeve":
+                n_mode = self.M2.modes.n_mode
+                D = np.zeros((wfs.n_valid_slopes,n_mode*7))
+                idx = 0;
+                for kSeg in range(7):
+                    sys.stdout.write("Segment #%d: "%kSeg)
+                    for kMode in range(n_mode):
+                        sys.stdout.write("%d "%(kMode+1))
+                        D[:,idx] = np.ravel( pushpull( M2_zernike_update ) )
+                        idx += 1
+                    sys.stdout.write("\n")
             if mode=="TT7 segment tip-tilt":
                 D = np.zeros((14,14))
                 idx = 0
@@ -516,8 +527,8 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
         sys.stdout.write("------------\n")
-        self[mirror].D.update({mode:D})
-        #return D
+        #self[mirror].D.update({mode:D})
+        return D
 
 # JGMT_MX
 from utilities import JSONAbstract
