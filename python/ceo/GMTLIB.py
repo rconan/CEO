@@ -529,7 +529,7 @@ class GMT_MX(GmtMirrors):
                 sys.stdout.write("\n")
         sys.stdout.write("------------\n")
         self[mirror].D.update({mode:D})
-        #return D
+        return D
 
 # JGMT_MX
 from utilities import JSONAbstract
