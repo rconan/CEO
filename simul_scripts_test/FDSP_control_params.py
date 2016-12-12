@@ -15,9 +15,9 @@ simul_PS_control   = True
 simul_FDSP_control = False
 
 eval_perf_onaxis    = True
-eval_perf_field     = True
+eval_perf_field     = False
 eval_perf_modal     = False   # project Residual phase
-eval_perf_sps       = False
+eval_perf_sps       = True
 
 if simul_onaxis_AO==True or simul_FDSP_control==True:
     simul_SH = True
