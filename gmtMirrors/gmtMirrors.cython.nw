@@ -391,7 +391,7 @@ cdef class KarhunenLoeve:
 @  where
 <<python GMT M12 functions>>=
 int M_ID
-rtd D_assembly, D_full, D_clear, L, conic_c, conic_k
+rtd D_assembly, D_full, D_clear, L, height, conic_c, conic_k
 coordinate_system aperture_CS
 coordinate_system conic_CS
 coordinate_system rigid_body_CS
@@ -555,7 +555,7 @@ def global_tiptilt(self, float tip, float tilt):
     """
     self._c_gmt_m12.global_tiptilt(tip, tilt);
 
-def remove(self, int[:] seg_ID):
+def remove(self, list seg_ID):
     """
     Remove some segments and keep the others
 
@@ -564,9 +564,11 @@ def remove(self, int[:] seg_ID):
     seg_ID : int
         The ID numbers of the segment to remove 
     """
-    self._c_gmt_m12.remove(&seg_ID[0], seg_ID.size)
+    cdef int[:] _seg_ID_
+    _seg_ID_ = np.array(seg_ID,dtype=np.int32,ndmin=1)
+    self._c_gmt_m12.remove(&_seg_ID_[0], _seg_ID_.size)
 
-def keep(self, int[:] seg_ID):
+def keep(self, list seg_ID):
     """
     Keep some segments and remove the others
 
@@ -575,7 +577,9 @@ def keep(self, int[:] seg_ID):
     seg_ID : int
         The ID numbers of the segment to keep 
     """
-    self._c_gmt_m12.keep(&seg_ID[0], seg_ID.size)
+    cdef int[:] _seg_ID_
+    _seg_ID_ = np.array(seg_ID,dtype=np.int32,ndmin=1)
+    self._c_gmt_m12.keep(&_seg_ID_[0], _seg_ID_.size)
 
 property D_assembly:
     def __get__(self):
@@ -592,6 +596,10 @@ property D_clear:
 property L:
     def __get__(self):
         return self._c_gmt_m12.L
+
+property height:
+    def __get__(self):
+        return self._c_gmt_m12.height
 
 property conic_c:
     def __get__(self):
