@@ -359,7 +359,7 @@ if simul_onaxis_AO == True:
         D_AO_PS = np.concatenate((D_M2_TT_PSideal, D_M2_PSideal), axis=1)
         print 'Merged (seg TT & Pist) - Ideal SPS IM:'
         print D_AO_PS.shape
-    elif onaxis_AO_modes='zernikes':
+    elif onaxis_AO_modes=='zernikes':
         D_AO_SH = np.concatenate((D_M2_Z, D_M2_PS_sh), axis=1)
         print 'Merged (seg Z & Pist) - SH IM:'
         print D_AO_SH.shape
