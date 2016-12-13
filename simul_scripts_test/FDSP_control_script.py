@@ -621,6 +621,9 @@ if simul_SPS==True:
     if eval_perf_sps==True:
         seg_pist_sps_iter = np.zeros((N_GS_PS,7,totSimulIter))
 
+    SPSmeas_iter = np.zeros((N_GS_PS*12,sps_sampl_iter+1))
+    SPSfft_images = np.zeros((ps.camera.N_PX_IMAGE,ps.camera.N_PX_IMAGE,N_GS_PS*12,sps_sampl_iter+1))
+
 timeVec = np.arange(totSimulIter)*Tsim
 
 M1TrVec  = M1TrVecInit  #np.zeros((7,3))
@@ -799,6 +802,8 @@ for jj in range(totSimulIter):
             if sps_sampl_count == sps_sampl_count_max-1:
                 ps.process()
                 SPSmeas = ps.measurement - SPSmeas_ref
+                SPSfft_images[:,:,:,kk] = ps.get_data_cube(data_type='fftlet')
+                SPSmeas_iter[:,kk] = SPSmeas
                 
                 #--- segment piston AND FDSP control:
                 if simul_PS_control==True and simul_FDSP_control==True:
@@ -1072,7 +1077,7 @@ if simul_SPS == True:
         sps_mask_size=sps_mask_size,RONval=RONval, sps_seed=sps_seed, simul_phot=simul_phot, simul_bkgd=simul_bkgd,
         SPSmeas_ref=SPSmeas_ref, exposureTime=exposureTime, samplingTime=samplingTime, N_GS_PS=N_GS_PS,
         alpha_ps=alpha_ps, throughput=throughput, lobe_detection=lobe_detection, nyquist_factor=nyquist_factor,
-        CL_calib_modes=CL_calib_modes, sps_sampl_iter=sps_sampl_iter))
+        CL_calib_modes=CL_calib_modes, sps_sampl_iter=sps_sampl_iter, SPSmeas_iter=SPSmeas_iter, SPSfft_images=SPSfft_images))
     if eval_perf_sps == True: tosave['seg_pist_sps_iter']=seg_pist_sps_iter
 
 if simul_SH == True:
