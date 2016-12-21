@@ -81,9 +81,10 @@ class GMT_MX(GmtMirrors):
                             M1_N_MODE=M1_N_MODE,
                             M2_N_MODE=M2_N_MODE)
 
-    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,cl_wfs=None,cl_gs=None,cl_recmat=None, 
-		idealps=None,idealps_rec=None,idealps_ref=None,first_mode=3, closed_loop_calib=False, 
-                remove_on_pist=False, CL_calib_modes=None):
+    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,
+                  minus_M2_TT=False,cl_wfs=None,cl_gs=None,cl_recmat=None, 
+                  idealps=None,idealps_rec=None,idealps_ref=None,first_mode=3, closed_loop_calib=False, 
+                  remove_on_pist=False, CL_calib_modes=None):
         """
         Calibrate the different degrees of freedom of the  mirrors
 
@@ -240,8 +241,8 @@ class GMT_MX(GmtMirrors):
             self.M2.modes.a[kSeg,kMode] = _stroke_
             self.M2.modes.update()
 
-        #if minus_M2_TT:
-        #    pushpull = pushpull_minus_M2TT
+        if minus_M2_TT:
+            pushpull = pushpull_minus_M2TT
 
         sys.stdout.write("___ %s ___ (%s)\n"%(mirror,mode))
         if mirror=="M1":
@@ -605,7 +606,7 @@ class Sensor:
     def reset(self):
         pass
     @abstractmethod
-    def analyze(self):
+    def analyze(self, **kwargs):
         pass
     @abstractmethod
     def propagate(self):
@@ -627,7 +628,7 @@ class TT7(Sensor):
     def reset(self):
         pass
 
-    def analyze(self, src):
+    def analyze(self, src, **kwargs):
         data = src.segmentsWavefrontGradient()
 	self.valid_slopes = cuFloatArray(host_data = data.host() - self.reference_slopes)
 
@@ -638,7 +639,7 @@ class TT7(Sensor):
     def process(self):
         pass
     def get_measurement(self):
-        return self.c7
+        return self.valid_slopes.host().ravel()
 
 class DispersedFringeSensor(SegmentPistonSensor):
     """
