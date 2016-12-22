@@ -1402,6 +1402,7 @@ y   = L*(j - (N_L-1)*0.5)/(N_L-1);
 @ \end{itemize}
 
 The zenith and azimuth angle are updated with:
+\index{source!source!update\_directions}
 <<zenith and azimuth update>>=
 void source::update_directions(float *zenith, float *azimuth, int N_DIR)
 {
@@ -1805,20 +1806,20 @@ void complex_amplitude::finite_difference(float *sx, float *sy, int NL,
                                           float d, mask *valid_lenslet)
 {
   <<wavefront differentiation (common)>>
-  //stopwatch tid;
-  //tid.tic();
+  stopwatch tid;
+  tid.tic();
   wavefront_finite_difference(sx, sy, NL, 
                               phase, n, d,
                               valid_lenslet, N);
-  //tid.toc("Finite difference (lenslet edge method)");
+  tid.toc("Finite difference (lenslet edge method)");
   if (M!=NULL) 
   {
-    //tid.tic();
+    tid.tic();
     <<wavefront differentiation (partial illumination identification)>>
-    //tid.toc("Finite difference (partial illumination identification)");
-    //tid.tic();
+    tid.toc("Finite difference (partial illumination identification)");
+    tid.tic();
     <<wavefront differentiation (slope estimates)>>
-    //tid.toc("Finite difference (gradient average method)");
+    tid.toc("Finite difference (gradient average method)");
   }
 }
 @
@@ -1935,7 +1936,10 @@ __global__ void partial_illumination_slopes(float *sx, float *sy,
            sx[kL] += P*dphi/h;
           }
         }
-        sx[kL] /= S;
+       if (S>0)
+	 sx[kL] /= S;
+       else
+	 sx[kL] = 0;
 
        S = 0;
        for (i=0;i<=n;i++) {
@@ -1960,7 +1964,10 @@ __global__ void partial_illumination_slopes(float *sx, float *sy,
            sy[kL] += P*dphi/h;
          }
        }
-       sy[kL] /= S;
+       if (S>0)
+	 sy[kL] /= S;
+       else
+	 sy[kL] = 0;
     }
 }
 @ 

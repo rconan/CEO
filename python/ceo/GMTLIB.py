@@ -526,6 +526,20 @@ class GMT_MX(GmtMirrors):
                     D[:,idx] = pushpull( Ry )
                     idx += 1
                 sys.stdout.write("\n")
+            
+        if mirror=="MOUNT":
+            if mode=="pointing":
+                D = np.zeros((wfs.n_valid_slopes,2))
+
+                def depoint(r,o):
+                    self.pointing_error_zenith  = r
+                    self.pointing_error_azimuth = o
+
+                D[:,0] = pushpull( lambda x : depoint(x,0.0 ) )
+                D[:,1] = pushpull( lambda x : depoint(x,np.pi*0.5 ) )
+
+                depoint(0.0,0.0)
+
         sys.stdout.write("------------\n")
         #self[mirror].D.update({mode:D})
         return D
