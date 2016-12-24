@@ -52,6 +52,7 @@ struct imaging {
   void propagateThroughModulatedPyramid(source *src, float modulation);
 
   void readout(float exposureTime, float readOutNoiseRms);
+  void noiseless_readout(float exposureTime);
   void readout(float exposureTime, float readOutNoiseRms, float nBackgroundPhoton);
 
   float strehl_ratio(imaging *ref);
@@ -1110,7 +1111,30 @@ __global__ void noisify(curandState *state, float *frame, const int n_frame,
 	 state[id] = localState;
        }
      }
+__global__ void flux_integral(float *frame, const int n_frame,
+                        float exposureTime,
+                        const float photoelectron_gain)
+{
+  int i, j, id;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  id = j * gridDim.x * blockDim.x + i;
+  //int id = threadIdx.x + blockIdx.x*blockDim.x;
+  if ( id < n_frame )
+    {
+      frame[id] *= photoelectron_gain;
+      frame[id] *= exposureTime;
+    }
+}
 @
+<<read-out>>=
+  void imaging::noiseless_readout(float exposureTime) {
+       <<read-out content>>
+       flux_integral LLL gridDim, blockDim RRR (d__frame, N,
+					  unit_exposureTime,
+					  photoelectron_gain);
+   }
+@ 
 In CUDA, there are as many random generator states as the number of threads.
 These states are initialized providing the seed number [[LOCAL_RAND_SEED]];
 [[LOCAL_RAND_SEED]] is set to the global variable [[RAND_SEED]].
