@@ -6,16 +6,16 @@ nPx = 365               # pixels across pupil
 #---- Simulation parameters
 VISU = False       # show graphic displays
 Tsim = 2e-3        # Simulation time step [seconds]
-totSimulTime = 60. # Total simulated time [seconds]
+totSimulTime = 0.5 # Total simulated time [seconds]
 
 #----- System configurations:
 simul_turb         = True
 simul_onaxis_AO    = True
-simul_PS_control   = True
-simul_FDSP_control = False
+simul_PS_control   = False
+simul_FDSP_control = True
 
 eval_perf_onaxis    = True
-eval_perf_field     = False
+eval_perf_field     = True
 eval_perf_modal     = False   # project Residual phase
 eval_perf_sps       = True
 
@@ -57,21 +57,14 @@ if simul_SPS==True:
     simul_bkgd = True
     sps_seed = 1928
     
-    # IM calib options:
-    remove_on_pist = True   # Remove on-axis residual piston in the calibration of FDSP IM
-    PS_CL_calib    = False   # Perform Segment Piston IM calibration in closed-loop (using 'zernikes').
-    CL_calib_modes = 'TT'    # Choose between 'zernikes' or 'TT' (TT only implemented in FDSP IM calib)
     gPS   = 0.8
     gFDSP = 0.8
 
-    if PS_CL_calib==True:
-        simul_SH = True
-
     exposureTime = 10e-3 # DFS camera integration time [seconds]
-    samplingTime = 7.0  # DFS sampling time [seconds]
+    samplingTime = 7.0   # DFS sampling time [seconds]
     sps_exp_delay_count_max = 2  # number of cycles to delay exposure after FDSP correction
     # (to avoid M1-M2 transient)
-    sps_sampl_iter = 10
+    sps_sampl_iter = 17
     totSimulTime = sps_sampl_iter*samplingTime + exposureTime
 
 #---- ON-AXIS AO system parameters:
@@ -92,7 +85,7 @@ if simul_onaxis_AO == True:
     gAO = 0.8
 
 #---- Initial scramble parameters:
-scramble_tt = False
+scramble_tt = True
 scramble_pist = False
 tt_scramble_rms = 1500e-3   #arcsec
 pist_scramble_rms = 1e-6  #m SURF

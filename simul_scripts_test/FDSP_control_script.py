@@ -118,6 +118,11 @@ if simul_SPS==True:
     gmt.propagate(gsps)
     ph_fda = gsps.phase.host(units='micron').T
     SPSmeas_ref = ps.piston(gsps, segment='edge').ravel()
+    """ps.propagate(gsps)
+    ps.camera.noiselessReadOut(samplingTime)
+    ps.fft()
+    ps.process()
+    SPSmeas_ref = ps.get_measurement()""" 
 
     if eval_perf_sps==True:
         seg_pist_sps_ref = gsps.piston(where='segments', units_exponent=-9)
@@ -380,12 +385,8 @@ if simul_onaxis_AO == True:
 if simul_PS_control==True:
     PSstroke = 200e-9 #m
 
-    if PS_CL_calib==False:
-        D_M1_PS = gmt.calibrate(ps, gsps, mirror="M1", mode="segment piston", 
+    D_M1_PS = gmt.calibrate(ps, gsps, mirror="M1", mode="segment piston", 
                             stroke=PSstroke, segment='edge')
-    else:
-        D_M1_PS = gmt.calibrate(ps, gsps, mirror="M1", mode="segment piston", stroke=PSstroke,
-                segment='edge', cl_wfs=wfs, cl_gs=gs, cl_recmat=R_M2_Z, closed_loop_calib=True)
 
     R_M1_PS = np.linalg.pinv(D_M1_PS)
     print 'SPS - M1 Segment Piston Rec:'
@@ -412,48 +413,12 @@ if simul_PS_control==True:
 # Calibrate FDSP Interaction Matrix and Reconstructor
 if simul_FDSP_control==True:
     
-    # Initialize and Calibrate Ideal on-axis Segment Piston Sensor
-    if remove_on_pist==True:
-        PSstroke = 200e-9 #m
-        onps = ceo.IdealSegmentPistonSensor(gs, D, nPx)
-        D_M1_PSideal = gmt.calibrate(onps, gs, mirror="M1", mode="segment piston",
-                                     stroke=PSstroke, segment='full')
-            
-        R_M1_PSideal = np.linalg.pinv(D_M1_PSideal)
-        print 'SPS - M1 Ideal Segment Piston Rec:'
-        print R_M1_PSideal.shape
-                                         
-        gs.reset()
-        gmt.reset()
-        gmt.propagate(gs)
-        onps_signal_ref6 = onps.piston(gs, segment='full').ravel()[0:6] # reference signal
-                                         
-        if VISU == True:
-            fig, ax = plt.subplots()
-            fig.set_size_inches(6,4)
-            imm = ax.pcolor(D_M1_PSideal)
-            ax.grid()
-            ax.set_xticklabels(['S1 $T_z$','S2 $T_z$','S3 $T_z$','S4 $T_z$','S5 $T_z$','S6 $T_z$'],
-                                ha='left', fontsize=15, rotation=45, color='b')
-            fig.colorbar(imm)
-
     # Calibrate FDSP Interaction Matrix and Reconstructor
     TTstroke = 50e-3 #arcsec
 
-    if CL_calib_modes=='TT':
-        R_4calib = R_M2_TT
-    elif CL_calib_modes=='zernikes':
-        R_4calib = R_M2_Z
-
-    if remove_on_pist == True:
-        D_FDSP = gmt.calibrate(ps, gsps, mirror="M1", mode="FDSP", stroke=TTstroke*math.pi/180/3600,
-			   segment='edge', cl_wfs=wfs, cl_gs=gs, cl_recmat=R_4calib,
-			   idealps=onps, idealps_rec=R_M1_PSideal, idealps_ref=onps_signal_ref6,
-			   remove_on_pist=remove_on_pist, CL_calib_modes=CL_calib_modes)
-    else: 
-        D_FDSP = gmt.calibrate(ps, gsps, mirror="M1", mode="FDSP", stroke=TTstroke*math.pi/180/3600,
-			   segment='edge', cl_wfs=wfs, cl_gs=gs, cl_recmat=R_4calib,
-			   remove_on_pist=remove_on_pist, CL_calib_modes=CL_calib_modes)
+    D_FDSP = gmt.calibrate(ps, gsps, mirror="M1", mode="FDSP", stroke=TTstroke*math.pi/180/3600,
+                        segment='edge', cl_wfs=wfs, cl_gs=gs, cl_recmat=R_AO,
+                        idealps=onps, idealps_ref=onps_signal_ref)
 
     R_FDSP = np.linalg.pinv(D_FDSP)
     print 'SPS - FDSP Rec:'
@@ -556,9 +521,13 @@ M2TrVecInit = np.array([  # meters surf
 
 # Initial Segment TT Scramble
 if scramble_tt==True:
-    TTscramble = np.float32(np.random.normal(loc=0.0, scale=1, size=12))
-    TTscramble *= tt_scramble_rms*(math.pi/180/3600)/np.std(TTscramble)
-    TTscramble -= np.mean(TTscramble)
+    #TTscramble = np.float32(np.random.normal(loc=0.0, scale=1, size=12))
+    #TTscramble *= tt_scramble_rms*(math.pi/180/3600)/np.std(TTscramble)
+    #TTscramble -= np.mean(TTscramble)
+    TTscramble = np.array([ -1.26236118e-05,  -8.71601696e-06,   1.03404554e-05,
+            -7.36265883e-06,   8.89494913e-06,   6.71501175e-06,
+            -1.40584075e-06,   1.25584484e-06,   5.25245332e-06,
+            -7.25066275e-06,  -5.69112842e-07,   5.46918909e-06], dtype='float32')
     M1RotVecInit[0:6,0:2] += TTscramble.reshape((6,2))
     print "Initial M1 segment TT scramble RMS [mas]: %0.2f"%(np.std(TTscramble)*ceo.constants.RAD2MAS)
     print "Initial M1 segment TT scramble mean value [mas]: %0.2f"%(np.mean(TTscramble)*ceo.constants.RAD2MAS)
@@ -1077,7 +1046,7 @@ if simul_SPS == True:
         sps_mask_size=sps_mask_size,RONval=RONval, sps_seed=sps_seed, simul_phot=simul_phot, simul_bkgd=simul_bkgd,
         SPSmeas_ref=SPSmeas_ref, exposureTime=exposureTime, samplingTime=samplingTime, N_GS_PS=N_GS_PS,
         alpha_ps=alpha_ps, throughput=throughput, lobe_detection=lobe_detection, nyquist_factor=nyquist_factor,
-        CL_calib_modes=CL_calib_modes, sps_sampl_iter=sps_sampl_iter, SPSmeas_iter=SPSmeas_iter, SPSfft_images=SPSfft_images))
+        sps_sampl_iter=sps_sampl_iter, SPSmeas_iter=SPSmeas_iter, SPSfft_images=SPSfft_images))
     if eval_perf_sps == True: tosave['seg_pist_sps_iter']=seg_pist_sps_iter
 
 if simul_SH == True:
@@ -1093,10 +1062,10 @@ if simul_onaxis_AO == True:
         #tosave['M2gTTresiter']=M2gTTresiter
 
 if simul_PS_control == True:
-    tosave.update(dict(gPS=gPS, PS_CL_calib=PS_CL_calib, M1PSresiter=M1PSresiter))
+    tosave.update(dict(gPS=gPS, M1PSresiter=M1PSresiter))
 
 if simul_FDSP_control == True:
-    tosave.update(dict(gFDSP=gFDSP, remove_on_pist=remove_on_pist, M1TTresiter=M1TTresiter))
+    tosave.update(dict(gFDSP=gFDSP, M1TTresiter=M1TTresiter))
 
 if eval_perf_onaxis == True:
     tosave.update(dict(wfe_gs_iter=wfe_gs_iter, seg_pist_onaxis_iter=seg_pist_onaxis_iter))
