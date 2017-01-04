@@ -81,10 +81,8 @@ class GMT_MX(GmtMirrors):
                             M1_N_MODE=M1_N_MODE,
                             M2_N_MODE=M2_N_MODE)
 
-    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,
-                  minus_M2_TT=False,cl_wfs=None,cl_gs=None,cl_recmat=None, 
-                  idealps=None,idealps_rec=None,idealps_ref=None,first_mode=3, closed_loop_calib=False, 
-                  remove_on_pist=False, CL_calib_modes=None):
+    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,cl_wfs=None,cl_gs=None,cl_recmat=None, 
+		idealps=None,idealps_ref=None,first_mode=3, closed_loop_calib=False, minus_M2_TT=False):
         """
         Calibrate the different degrees of freedom of the  mirrors
 
@@ -144,25 +142,9 @@ class GMT_MX(GmtMirrors):
 
 
         def SPS_pushpull(action):
-	    def close_M2_zern_loop():
-		niter = 7
-                self.M2.zernike.reset()
-		for ii in range(niter):
-		    cl_gs.reset()
-		    self.propagate(cl_gs)
-		    cl_wfs.reset()
-		    cl_wfs.analyze(cl_gs)
-		    slopevec = cl_wfs.get_measurement()
-		    if ii == 0:
-			myZest1 = np.dot(cl_recmat, slopevec)
-		    else:
-			myZest1 += np.dot(cl_recmat, slopevec)
-            	    self.M2.zernike.a[:,1:] = -myZest1.reshape((7,-1))
-            	    self.M2.zernike.update()
             def get_slopes(stroke_sign):
                 self.reset()
                 action(stroke_sign*stroke)
-                if closed_loop_calib==True: close_M2_zern_loop()
                 gs.reset()
                 self.propagate(gs)
 		wfs.reset()
@@ -174,57 +156,26 @@ class GMT_MX(GmtMirrors):
 
 
         def FDSP_pushpull(action):
-	    def close_M2_segTT_loop():
-		niter = 7
-                self.M2.motion_CS.euler_angles[:] = 0
-                self.M2.motion_CS.update()
-		myTTest1 = np.zeros(14)
-		for ii in range(niter):
-        	    cl_gs.reset()
-		    self.propagate(cl_gs)
-        	    cl_wfs.reset()
-        	    cl_wfs.analyze(cl_gs)
-        	    slopevec = cl_wfs.get_measurement()
-        	    myTTest1 += np.dot(cl_recmat, slopevec)
-        	    myTTest = myTTest1.reshape((7,2))
-        	    for idx in range(7): self.M2.update(euler_angles=
-				[-myTTest[idx,0],-myTTest[idx,1],0], idx=idx+1)
-	    def close_M2_zern_loop():
-		niter = 7
+            def close_NGAO_loop():
+                niter = 7
                 self.M2.zernike.reset()
-		for ii in range(niter):
-		    cl_gs.reset()
-		    self.propagate(cl_gs)
-		    cl_wfs.reset()
-		    cl_wfs.analyze(cl_gs)
-		    slopevec = cl_wfs.get_measurement()
-		    if ii == 0:
-			myZest1 = np.dot(cl_recmat, slopevec)
-		    else:
-			myZest1 += np.dot(cl_recmat, slopevec)
-            	    self.M2.zernike.a[:,1:] = -myZest1.reshape((7,-1))
-            	    self.M2.zernike.update()
-	    def get_onaxis_piston():
-		cl_gs.reset()
-		self.propagate(cl_gs)
-		idealps_signal = idealps.piston(cl_gs, segment='full').ravel()[0:6] - idealps_ref
-		return np.dot(idealps_rec, idealps_signal)
+                for ii in range(niter):
+                    cl_gs.reset()
+                    self.propagate(cl_gs)
+                    cl_wfs.reset()
+                    cl_wfs.analyze(cl_gs)
+                    slopevec = cl_wfs.get_measurement()
+                    onpsvec =  idealps.piston(cl_gs, segment='full').ravel() - idealps_ref
+                    AOmeasvec = np.concatenate((slopevec, onpsvec))
+                    myAOest1 = np.dot(cl_recmat, AOmeasvec)            
+                    self.M2.zernike.a[:,1:] -= myAOest1[0:nzernall].reshape((7,-1))
+                    self.M2.motion_CS.origin[:,2] -= myAOest1[nzernall:]
+                    self.M2.motion_CS.update()
+                    self.M2.zernike.update()
             def get_slopes(stroke_sign):
 		self.reset()
                 action(stroke_sign*stroke)
-                if remove_on_pist==True:
-		    niter = 2 
-                    idealps_est = np.zeros(6)
-                else: niter=1
-                for ii in range(niter):
-                    if CL_calib_modes=='TT':
-                        close_M2_segTT_loop()
-                    elif CL_calib_modes=='zernikes':
-                        close_M2_zern_loop()
-                    if remove_on_pist == True:
-                        idealps_est += get_onaxis_piston()
-                        self.M1.motion_CS.origin[0:6,2] = -idealps_est
-                        self.M1.motion_CS.update()
+                close_NGAO_loop()
 		gs.reset()
                 self.propagate(gs)
 		wfs.reset()
@@ -247,10 +198,12 @@ class GMT_MX(GmtMirrors):
         sys.stdout.write("___ %s ___ (%s)\n"%(mirror,mode))
         if mirror=="M1":
             if mode=="global tip-tilt":
+                #D = np.zeros((wfs.get_measurement_size(),2))
                 D = np.zeros((wfs.n_valid_slopes,2))
                 D[:,0] = pushpull( lambda x : self.M1.global_tiptilt(x,0) )
                 D[:,1] = pushpull( lambda x : self.M1.global_tiptilt(0,x) )
             if mode=="Txyz":
+                #D = np.zeros((wfs.get_measurement_size(),3*7-1))
                 D = np.zeros((wfs.n_valid_slopes,3*7-1))
                 idx = 0
                 Tx = lambda x : self.M1.update(origin=[x,0,0],euler_angles=[0,0,0],idx=kSeg)
@@ -268,6 +221,7 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                 sys.stdout.write("\n")
             if mode=="Rxyz":
+                #D = np.zeros((wfs.get_measurement_size(),3*7-1))
                 D = np.zeros((wfs.n_valid_slopes,3*7-1))
                 idx = 0
                 Rx = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
@@ -285,6 +239,7 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                 sys.stdout.write("\n")
             if mode=="Rz":
+                #D = np.zeros((wfs.get_measurement_size(),7))
                 D = np.zeros((wfs.n_valid_slopes,7))
                 idx = 0
                 Rz = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,0,x],idx=kSeg)
@@ -295,6 +250,7 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="segment tip-tilt":
+                #D = np.zeros((wfs.get_measurement_size(),2*7))
                 D = np.zeros((wfs.n_valid_slopes,2*7))
                 idx = 0
                 Rx = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
@@ -309,6 +265,7 @@ class GMT_MX(GmtMirrors):
                 sys.stdout.write("\n")
             if mode=="zernike":
                 n_mode = self.M1.zernike.n_mode
+                #D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
                 D = np.zeros((wfs.n_valid_slopes,(n_mode-first_mode)*7))
                 idx = 0;
                 for kSeg in range(7):
@@ -349,14 +306,14 @@ class GMT_MX(GmtMirrors):
 		    D = D[0:6,:]
 		sys.stdout.write("\n")
 	    if mode=="FDSP":
-                assert CL_calib_modes == 'TT' or CL_calib_modes == 'zernikes', "CL_calib_modes should be either 'TT', or 'zernikes'"
 		if segment=="edge":
 		    n_meas = 12
 		elif segment=="full":
 		    n_meas = 7
 		else :
 		    sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
-		D = np.zeros((n_meas*gs.N_SRC,2*6))
+		nzernall = (self.M2.zernike.n_mode-1)*7
+                D = np.zeros((n_meas*gs.N_SRC,2*6))
                 idx = 0
                 Rx = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
                 Ry = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
@@ -373,18 +330,22 @@ class GMT_MX(GmtMirrors):
 
         if mirror=="M2":
             if mode=="global tip-tilt":
+                #D = np.zeros((wfs.get_measurement_size(),2))
                 D = np.zeros((wfs.n_valid_slopes,2))
                 D[:,0] = pushpull( lambda x : self.M2.global_tiptilt(x,0) )
                 D[:,1] = pushpull( lambda x : self.M2.global_tiptilt(0,x) )
             if mode=="pointing neutral":
+                #D = np.zeros((wfs.get_measurement_size(),2))
                 D = np.zeros((wfs.n_valid_slopes,2))
                 D[:,0] = pushpull( lambda x : self.M2.pointing_neutral(x,0) )
                 D[:,1] = pushpull( lambda x : self.M2.pointing_neutral(0,x) )
             if mode=="coma neutral":
+                #D = np.zeros((wfs.get_measurement_size(),2))
                 D = np.zeros((wfs.n_valid_slopes,2))
                 D[:,0] = pushpull( lambda x : self.M2.coma_neutral(x,0) )
                 D[:,1] = pushpull( lambda x : self.M2.coma_neutral(0,x) )
             if mode=="Txyz":
+                #D = np.zeros((wfs.get_measurement_size(),3*7))
                 D = np.zeros((wfs.n_valid_slopes,3*7))
                 idx = 0
                 Tx = lambda x : self.M2.update(origin=[x,0,0],euler_angles=[0,0,0],idx=kSeg)
@@ -401,6 +362,7 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="Rxyz":
+                #D = np.zeros((wfs.get_measurement_size(),3*7-1))
                 D = np.zeros((wfs.n_valid_slopes,3*7-1))
                 idx = 0
                 Rx = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
@@ -418,6 +380,7 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                 sys.stdout.write("\n")
             if mode=="Rz":
+                #D = np.zeros((wfs.get_measurement_size(),7))
                 D = np.zeros((wfs.n_valid_slopes,7))
                 idx = 0
                 Rz = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,0,x],idx=kSeg)
