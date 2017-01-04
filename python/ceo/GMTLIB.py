@@ -81,9 +81,10 @@ class GMT_MX(GmtMirrors):
                             M1_N_MODE=M1_N_MODE,
                             M2_N_MODE=M2_N_MODE)
 
-    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,cl_wfs=None,cl_gs=None,cl_recmat=None, 
-		idealps=None,idealps_rec=None,idealps_ref=None,first_mode=3, closed_loop_calib=False, 
-                remove_on_pist=False, CL_calib_modes=None):
+    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,
+                  minus_M2_TT=False,cl_wfs=None,cl_gs=None,cl_recmat=None, 
+                  idealps=None,idealps_rec=None,idealps_ref=None,first_mode=3, closed_loop_calib=False, 
+                  remove_on_pist=False, CL_calib_modes=None):
         """
         Calibrate the different degrees of freedom of the  mirrors
 
@@ -113,7 +114,6 @@ class GMT_MX(GmtMirrors):
                 wfs.reset()
                 wfs.analyze(gs, segment=segment)
                 return wfs.get_measurement()
-
             s_push = get_slopes(+1)
             s_pull = get_slopes(-1)
             return 0.5*(s_push-s_pull)/stroke
@@ -241,8 +241,8 @@ class GMT_MX(GmtMirrors):
             self.M2.modes.a[kSeg,kMode] = _stroke_
             self.M2.modes.update()
 
-        #if minus_M2_TT:
-        #    pushpull = pushpull_minus_M2TT
+        if minus_M2_TT:
+            pushpull = pushpull_minus_M2TT
 
         sys.stdout.write("___ %s ___ (%s)\n"%(mirror,mode))
         if mirror=="M1":
@@ -428,9 +428,8 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="segment tip-tilt":
-
-                if isinstance(wfs, (ShackHartmann,GeometricShackHartmann)):
-                    n_meas = wfs.valid_lenslet.nnz*2 
+                if isinstance(wfs, (ShackHartmann,GeometricShackHartmann,TT7)):
+                    n_meas = wfs.n_valid_slopes
                 elif isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
                     if segment=="edge":
                         n_meas = 12*gs.N_SRC
@@ -438,6 +437,7 @@ class GMT_MX(GmtMirrors):
                         n_meas = 7*gs.N_SRC
                     else :
                         sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
+                else: raise("WFS type not recognized...") 
 
                 D = np.zeros((n_meas,2*7))
                 idx = 0
@@ -526,6 +526,20 @@ class GMT_MX(GmtMirrors):
                     D[:,idx] = pushpull( Ry )
                     idx += 1
                 sys.stdout.write("\n")
+            
+        if mirror=="MOUNT":
+            if mode=="pointing":
+                D = np.zeros((wfs.n_valid_slopes,2))
+
+                def depoint(r,o):
+                    self.pointing_error_zenith  = r
+                    self.pointing_error_azimuth = o
+
+                D[:,0] = pushpull( lambda x : depoint(x,0.0 ) )
+                D[:,1] = pushpull( lambda x : depoint(x,np.pi*0.5 ) )
+
+                depoint(0.0,0.0)
+
         sys.stdout.write("------------\n")
         #self[mirror].D.update({mode:D})
         return D
@@ -606,7 +620,7 @@ class Sensor:
     def reset(self):
         pass
     @abstractmethod
-    def analyze(self):
+    def analyze(self, **kwargs):
         pass
     @abstractmethod
     def propagate(self):
@@ -628,7 +642,7 @@ class TT7(Sensor):
     def reset(self):
         pass
 
-    def analyze(self, src):
+    def analyze(self, src, **kwargs):
         data = src.segmentsWavefrontGradient()
 	self.valid_slopes = cuFloatArray(host_data = data.host() - self.reference_slopes)
 
@@ -639,7 +653,7 @@ class TT7(Sensor):
     def process(self):
         pass
     def get_measurement(self):
-        return self.c7
+        return self.valid_slopes.host().ravel()
 
 class DispersedFringeSensor(SegmentPistonSensor):
     """

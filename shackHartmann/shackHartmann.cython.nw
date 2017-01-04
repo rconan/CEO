@@ -16,6 +16,7 @@ cdef extern from "shackHartmann.h":
         void propagate(source *)
         void process()
 	float* get_frame_dev_ptr()
+        void update_lenslet(float *)
     cdef cppclass geometricShackHartmann:
         <<common extern declaration>>
         void setup(int , float , int)
@@ -195,6 +196,15 @@ cdef class ShackHartmann:
         self.data_proc = Centroiding(N_SIDE_LENSLET,wfs=self)
         <<shackHartmann cython init>>
 
+    def update_lenslet(self, filt):
+        cdef cuFloatArray F
+        F = cuFloatArray(host_data=filt)
+        self._c_shackHartmann.update_lenslet(F._c_gpu.dev_data)
+        self._valid_slopes_ = cuFloatArray(shape=(1,self._c_shackHartmann.valid_lenslet.nnz*2),
+                                           dev_malloc=True)
+        self._valid_reference_slopes_ = cuFloatArray(shape=(1,self._c_shackHartmann.valid_lenslet.nnz*2),
+                                           dev_malloc=True)
+
 <<shackHartmann cython methods>>
 
     def reset(self):
@@ -237,7 +247,7 @@ cdef class ShackHartmann:
         """
         self._c_shackHartmann.camera.readout(exposureTime,readOutNoiseRms)
 
-    def pointing(self,float zen, float azim):
+    def pointing(self,float[:] zen, float[:] azim):
         """
         Sets the pointing of the WFS relative to the guide star
 
@@ -248,7 +258,8 @@ cdef class ShackHartmann:
         azim : float
             The azimuth angle [rd]
         """
-        self._c_shackHartmann.camera.set_pointing_direction(zen, azim)
+        self._c_shackHartmann.camera.absolute_pointing = 1
+        self._c_shackHartmann.camera.set_pointing_direction(&zen[0], &azim[0])
 
 <<shackHartmann cython properties>>
 

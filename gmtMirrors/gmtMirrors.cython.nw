@@ -30,6 +30,7 @@ cdef class GmtMirrors:
         readonly float focal_plane_distance, focal_plane_radius
         public GMT_M1 M1
         public GMT_M2 M2
+        public float pointing_error_zenith, pointing_error_azimuth
 @
 \subsection{PYX file}
 \label{sec:pyx-file}
@@ -110,6 +111,8 @@ cdef class GmtMirrors:
                          N_MODE=M2_N_MODE)
         self.focal_plane_distance = -5.830
         self.focal_plane_radius   =  2.197173
+        self.pointing_error_zenith  = 0.0
+        self.pointing_error_azimuth = 0.0
 
     def __getitem__(self,key):
         if key=="M1":
@@ -127,7 +130,7 @@ cdef class GmtMirrors:
         else:
             raise KeyError("Available keys are: M1 or M2")
 
-    def propagate(self,Source src,where_to="exit pupil",M2_is_a_stop=True):
+    def propagate(self,Source src,str where_to="exit pupil",bint M2_is_a_stop=True):
         """
         Propagate the Source object to the pupil plane conjugated to M1
 
@@ -140,6 +143,18 @@ cdef class GmtMirrors:
         M2_is_a_stop: boolean, optional
             Set if M2 acts also a stop; default: True
         """
+
+        cdef float [:] __zenith__, __azimuth__, theta_x, theta_y, offset_zenith, offset_azimuth
+        __zenith__ = src._zenith_
+        __azimuth__= src._azimuth_
+        theta_x = src.theta_x - self.pointing_error_zenith*np.cos(self.pointing_error_azimuth)
+        theta_y = src.theta_y - self.pointing_error_zenith*np.sin(self.pointing_error_azimuth)
+        offset_zenith  = np.hypot(theta_x,theta_y);
+        offset_azimuth = np.arctan2(theta_y,theta_x);
+        
+        src.updateDirections(offset_zenith, offset_azimuth)
+        src._c_source.reset_rays()
+
         #src.reset()
         if M2_is_a_stop:
             self.M2.blocking(src.rays)
@@ -150,6 +165,7 @@ cdef class GmtMirrors:
         if where_to=="exit pupil":
             src.rays.to_sphere(focal_plane_distance=self.focal_plane_distance,
                                focal_plane_radius=self.focal_plane_radius)
+            src.updateDirections(__zenith__, __azimuth__)
             src.opd2phase()
         if where_to=="focal plane":
             src.rays.to_z_plane(self.focal_plane_distance)
@@ -234,7 +250,7 @@ cdef class BendingModes:
     cdef:
         bending_modes *_c_bending_modes
         public int n_mode, N_SURF
-        public rtd[:,::1] a
+        public rtd[:,:] a
 @
 
 \subsection{PYX file}
@@ -391,7 +407,7 @@ cdef class KarhunenLoeve:
 @  where
 <<python GMT M12 functions>>=
 int M_ID
-rtd D_assembly, D_full, D_clear, L, conic_c, conic_k
+rtd D_assembly, D_full, D_clear, L, height, conic_c, conic_k
 coordinate_system aperture_CS
 coordinate_system conic_CS
 coordinate_system rigid_body_CS
@@ -555,7 +571,7 @@ def global_tiptilt(self, float tip, float tilt):
     """
     self._c_gmt_m12.global_tiptilt(tip, tilt);
 
-def remove(self, int[:] seg_ID):
+def remove(self, list seg_ID):
     """
     Remove some segments and keep the others
 
@@ -564,9 +580,11 @@ def remove(self, int[:] seg_ID):
     seg_ID : int
         The ID numbers of the segment to remove 
     """
-    self._c_gmt_m12.remove(&seg_ID[0], seg_ID.size)
+    cdef int[:] _seg_ID_
+    _seg_ID_ = np.array(seg_ID,dtype=np.int32,ndmin=1)
+    self._c_gmt_m12.remove(&_seg_ID_[0], _seg_ID_.size)
 
-def keep(self, int[:] seg_ID):
+def keep(self, list seg_ID):
     """
     Keep some segments and remove the others
 
@@ -575,7 +593,9 @@ def keep(self, int[:] seg_ID):
     seg_ID : int
         The ID numbers of the segment to keep 
     """
-    self._c_gmt_m12.keep(&seg_ID[0], seg_ID.size)
+    cdef int[:] _seg_ID_
+    _seg_ID_ = np.array(seg_ID,dtype=np.int32,ndmin=1)
+    self._c_gmt_m12.keep(&_seg_ID_[0], _seg_ID_.size)
 
 property D_assembly:
     def __get__(self):
@@ -592,6 +612,10 @@ property D_clear:
 property L:
     def __get__(self):
         return self._c_gmt_m12.L
+
+property height:
+    def __get__(self):
+        return self._c_gmt_m12.height
 
 property conic_c:
     def __get__(self):
