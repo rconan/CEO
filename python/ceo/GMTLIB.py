@@ -1,10 +1,56 @@
 import sys
 import math
 import numpy as np
+import numpy.linalg as LA
 from scipy.optimize import brenth, leastsq
 from skimage.feature import blob_log
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann, GmtMirrors, SegmentPistonSensor, \
     constants, Telescope, cuFloatArray, Aperture, Transform_to_S, Intersect, Reflect, Refract, Transform_to_R
+
+class CalibrationVault(object):
+
+    def __init__(self,D,nThreshold=None,valid=None,insertZeros = None):
+        self.D = D
+        if nThreshold is None:
+            self._nThreshold_ = [0]*len(D)
+        else:
+            self._nThreshold_ = nThreshold
+        if valid is None:
+            self.valid = [ np.ones(X.shape[0],dtype=np.bool) for X in self.D]
+        else:
+            self.valid = valid
+        if insertZeros is None:
+            self.zeroIdx = [None]*len(self.D)
+        else:
+            self.zeroIdx = insertZeros
+        self.UsVT = [LA.svd(X,full_matrices=False) for X in self.D]
+        self.M = [ self.__recon__(X,Y,Z) for X,Y,Z in zip(self.UsVT,self._nThreshold_,self.zeroIdx) ]
+            
+    def __recon__(self,_UsVT_,_nThreshold_,zeroIdx):
+        iS = 1./_UsVT_[1]
+        if _nThreshold_>0:
+            iS[-_nThreshold_:] = 0
+        _M_ = np.dot(_UsVT_[2].T,np.dot(np.diag(iS),_UsVT_[0].T))
+        if zeroIdx is not None:
+            _M_ =  np.insert(_M_,zeroIdx,0,axis=0)
+        return _M_
+
+    @property
+    def nThreshold(self):
+        "# of discarded eigen values"
+        return self._nThreshold_
+    @nThreshold.setter
+    def nThreshold(self, value):
+        print "@(CalibrationMatrix)> Updating the pseudo-inverse..."
+        self._nThreshold_ = value
+        self.M = [ self.__recon__(X,Y,Z) for X,Y,Z in zip(self.UsVT,self._nThreshold_,self.zeroIdx) ]
+
+    @property
+    def eigenValues(self):
+        return [ X[1] for X in self.UsVT ]
+
+    def dot( self, s ):
+        return np.concatenate([ np.dot(X,s[Y.ravel()]) for X,Y in zip(self.M,self.valid) ])
 
 class GMT_MX(GmtMirrors):
     """
@@ -506,6 +552,74 @@ class GMT_MX(GmtMirrors):
         sys.stdout.write("------------\n")
         #self[mirror].D.update({mode:D})
         return D
+
+    def AGWS_calibrate(self,wfs,gs,coupled=False,decoupled=False, 
+                       fluxThreshold=0.0, filterMirrorRotation=True,
+                       calibrationVaultKwargs=None):
+        gs.reset()
+        self.reset()
+        self.propagate(gs)
+        if coupled:
+            wfs.calibrate(gs,fluxThreshold)
+            flux = wfs.valid_lenslet.f.host()
+            D = []
+            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=1e-6) )
+            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=1e-6) )
+            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=1e-6) )
+            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=1e-6) )
+            D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=1e-6/4) )
+            D  = np.concatenate(D,axis=1)
+            return CalibrationVault([D],**calibrationVaultKwargs)
+        elif decoupled:
+            wfs.calibrate(gs,0.0)
+            flux = wfs.valid_lenslet.f.host()
+            D = []
+            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=1e-6) )
+            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=1e-6) )
+            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=1e-6) )
+            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=1e-6) )
+            D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=1e-6/4) )
+            D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                        D[2][:,k*3:k*3+3],
+                        D[1][:,k*3:k*3+3],
+                        D[3][:,k*3:k*3+3],
+                        D[4][:,k*self.M1.modes.n_mode:(k+1)*self.M1.modes.n_mode]],axis=1) 
+                    for k in range(7)]
+
+            max_flux = flux.max()
+            flux_filter = flux>fluxThreshold*max_flux
+            flux_filter2 = np.tile(flux_filter,(2,1))
+
+            Qxy = [ np.reshape( np.sum(np.abs(D_s[k])>1e-2*np.max(np.abs(D_s[k])),axis=1)!=0 ,flux_filter2.shape ) for k in range(7) ]
+ 
+
+            Q = [ np.logical_and(X,flux_filter2) for X in Qxy ]
+
+            Q3 = np.dstack(Q).reshape(flux_filter2.shape + (7,))
+            Q3clps = np.sum(Q3,axis=2)
+            Q3clps = Q3clps>1
+            
+            VLs = [ np.logical_and(X,~Q3clps) for X in Q]
+            calibrationVaultKwargs['valid'] = VLs
+            D_sr = [ D_s[k][VLs[k].ravel(),:] for k in range(7) ]
+
+            if filterMirrorRotation:
+                for k in range(6):
+
+                    U,s,VT = LA.svd(D_sr[k][:,:6],full_matrices=False)
+                    U[:,-1] = 0
+                    s[-1]   = 0
+                    D_sr[k][:,:6] = np.dot(U,np.dot(np.diag(s),VT))
+
+                    U,s,VT = LA.svd(D_sr[k][:,6:12],full_matrices=False)
+                    U[:,-1] = 0
+                    s[-1]   = 0
+                    D_sr[k][:,6:12] = np.dot(U,np.dot(np.diag(s),VT))
+    
+            return CalibrationVault(D_sr,**calibrationVaultKwargs)
+
+        else:
+            raise ValueError('"coupled" or "decoupled" must be set to True!')
 
 # JGMT_MX
 from utilities import JSONAbstract
