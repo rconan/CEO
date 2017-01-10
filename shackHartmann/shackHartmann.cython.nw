@@ -13,13 +13,12 @@ cdef extern from "shackHartmann.h":
         <<common extern declaration>>
         imaging camera
         void setup(int , int, float , int , int , int, int)
-        void propagate(source *)
-        void process()
 	float* get_frame_dev_ptr()
         void update_lenslet(float *)
     cdef cppclass geometricShackHartmann:
         <<common extern declaration>>
         void setup(int , float , int)
+        void reset()
 <<class definitions>>
 @ where
 <<common extern declaration>>=
@@ -33,6 +32,8 @@ void cleanup()
 void identify_valid_lenslet(source *, float);
 void set_reference_slopes(source *);
 void calibrate(source *, float )
+void propagate(source *)
+void process()
 void analyze(source *)
 void get_valid_slopes(float *)
 void get_valid_reference_slopes(float *)
@@ -213,27 +214,6 @@ cdef class ShackHartmann:
         """
         self._c_shackHartmann.camera.reset()
 
-    def propagate(self, Source gs):
-        """
-        Propagates the guide star to the WFS detector (noiseless)
-
-        Parameters
-        ----------
-        gs : Source
-            The WFS guide star
-
-        See also
-        --------
-        Source : a class for astronomical sources
-        """
-        self._c_shackHartmann.propagate(gs._c_source)
-
-    def process(self):
-        """
-        Processes the WFS detector frame
-        """
-        self._c_shackHartmann.process()
-
     def readOut(self,float exposureTime, float readOutNoiseRms):
         """
         Reads-out the WFS detector frame adding photon and read-out noises
@@ -323,6 +303,28 @@ self.c0 = cuFloatArray(shape=(self.N_GS,(self.N_SIDE_LENSLET**2)*2))
 self.c0._c_gpu.dev_data = self._c_shackHartmann.d__c0
 @ and
 <<shackHartmann cython methods>>=
+
+    def propagate(self, Source gs):
+        """
+        Propagates the guide star to the WFS detector (noiseless)
+
+        Parameters
+        ----------
+        gs : Source
+            The WFS guide star
+
+        See also
+        --------
+        Source : a class for astronomical sources
+        """
+        self._c_shackHartmann.propagate(gs._c_source)
+
+    def process(self):
+        """
+        Processes the WFS detector frame
+        """
+        self._c_shackHartmann.process()
+
     def __dealloc__(self):
         self._c_shackHartmann.cleanup()
 
@@ -457,19 +459,13 @@ cdef class GeometricShackHartmann:
         self.data_proc = Centroiding(N_SIDE_LENSLET,gwfs=self)
         <<shackHartmann cython init>>
         
-    def propagate(self, Source gs):
-        self._c_shackHartmann.analyze(gs._c_source)
-
-    def process(self):
-        pass
-
     def readOut(self, float T, float ron):
         pass
 
 <<shackHartmann cython methods>>
 
     def reset(self):
-        pass
+        self._c_shackHartmann.reset()
 
 <<shackHartmann cython properties>>
 @

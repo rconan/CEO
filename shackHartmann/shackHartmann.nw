@@ -32,35 +32,33 @@ struct shackHartmann {
   <<parameters>>
   void setup(int N_SIDE_LENSLET, int N_PX_LENSLET, float d,
 	     int DFT_osf_, int N_PX_IMAGE, int BIN_IMAGE, int N_GS);
-  void cleanup(void);
-  void identify_valid_lenslet(source *src, float threshold);
-  void set_reference_slopes(source *src);
-  void calibrate(source *src, float threshold);
-  void propagate(source *gs);
-  void process(void);
-  void analyze(source *gs);
+  <<shackHartmann common methods>>
   float* get_frame_dev_ptr(void);
-  void get_valid_reference_slopes(float *d__valid_slopes);
-  void get_valid_slopes(float *d__valid_slopes);
-  void get_valid_slopes_norm(float *d__valid_slopes_norm);
   void update_lenslet(float *filter);
 };
-
+ 
 struct geometricShackHartmann {
 
   <<parameters>>
+  <<geometric parameters>>
   void setup(int N_SIDE_LENSLET, float d, int N_GS);
-  void cleanup(void);
-  void identify_valid_lenslet(source *src, float threshold);
-  void set_reference_slopes(source *src);
-  void calibrate(source *src, float threshold);
-  void analyze(source *gs);
-  void get_valid_reference_slopes(float *d__valid_slopes);
-  void get_valid_slopes(float *d__valid_slopes);
-  void get_valid_slopes_norm(float *d__valid_slopes_norm);
+  <<shackHartmann common methods>>
+  void reset(void);
 };
 
 #endif // __SHACKHARTMANN__
+@ with
+<<shackHartmann common methods>>=
+void cleanup(void);
+void identify_valid_lenslet(source *src, float threshold);
+void set_reference_slopes(source *src);
+void calibrate(source *src, float threshold);
+void propagate(source *gs);
+void process(void);
+void analyze(source *gs);
+void get_valid_reference_slopes(float *d__valid_slopes);
+void get_valid_slopes(float *d__valid_slopes);
+void get_valid_slopes_norm(float *d__valid_slopes_norm);
 
 @
 \subsection{Source}
@@ -84,6 +82,7 @@ struct geometricShackHartmann {
 <<valid lenslet slopes>>
 <<valid lenslet slopes norm>>
 <<update valid lenslet>>
+<<geometric reset>>
 @
 
 \section{Parameters}
@@ -107,6 +106,9 @@ int N_SLOPE;
 @ \item the reference slopes:
 <<parameters>>=
 float *d__c0, *d__cx0, *d__cy0;
+@ \item the instantaneous geometric centroids:
+<<geometric parameters>>=
+float *_d__c_, *_d__cx_, *_d__cy_;
 @ \item the valid lenslet mask:
 <<parameters>>=
 mask valid_lenslet;
@@ -134,6 +136,9 @@ float intensity_threshold;
 @ \item the slopes gain:
 <<parameters>>=
 float slopes_gain;
+@ \item CUBLAS handle:
+<<geometric parameters>>=
+cublasHandle_t handle;
 @ \end{itemize}
 
 \section{Functions}
@@ -198,10 +203,15 @@ void geometricShackHartmann::setup(int N_SIDE_LENSLET_, float d, int N_GS)
   HANDLE_ERROR( cudaMemset( d__c0, 0, sizeof(float)*N_SLOPE ) );
   d__cx0 = d__c0;
   d__cy0 = d__c0 + N_LENSLET;
+  HANDLE_ERROR( cudaMalloc( (void**)&_d__c_ , sizeof(float) *N_SLOPE ) );
+  HANDLE_ERROR( cudaMemset( _d__c_, 0, sizeof(float)*N_SLOPE ) );
+  _d__cx_ = _d__c_;
+  _d__cy_ = _d__c_ + N_LENSLET;
   valid_lenslet.setup(N_LENSLET*N_WFS);//,(N_SIDE_LENSLET-1)*d);
   valid_actuator.setup(N_ACTUATOR*N_WFS);//,N_SIDE_LENSLET*d);
   data_proc.setup(N_SIDE_LENSLET, N_GS);
   <<lenslet mask pointer>>
+  cublasCreate(&handle);
 }
 
 @
@@ -221,6 +231,8 @@ or with
 void geometricShackHartmann::cleanup(void)
 {
   <<cleanup common>>
+  HANDLE_ERROR( cudaFree( _d__c_) );
+  cublasDestroy(handle);
 }
 @ where
 <<cleanup common>>=
@@ -453,6 +465,12 @@ __global__ void  set_geometric_valid_lenslet(float *valid_lenslet_f,
        }
     }
 }
+@ 
+\index{shackHartmann!shackHartmann!reset}
+<<geometric reset>>=
+void geometricShackHartmann::reset() {
+  HANDLE_ERROR( cudaMemset( data_proc.d__c, 0, sizeof(float)*N_SLOPE ) );
+}
 @
 \subsection{Wavefront processing}
 \label{sec:wavefront-processing}
@@ -484,19 +502,30 @@ void shackHartmann::analyze(source *gs) {
   process();
 }
 @ 
-\index{shackHartmann!geometricShackHartmann!analyze}
+\index{shackHartmann!geometricShackHartmann!propagate}
 <<wavefront processing>>=
-void geometricShackHartmann::analyze(source *gs) {
-  gs->wavefront.finite_difference(data_proc.d__cx,
-				  data_proc.d__cy,
+void geometricShackHartmann::propagate(source *gs) {
+  gs->wavefront.finite_difference(_d__cx_,
+				  _d__cy_,
 				  N_SIDE_LENSLET,
 				  lenslet_pitch,
 				  &valid_lenslet);
-  cublasHandle_t handle;
+  float alpha = 1.0;
+  CUBLAS_ERROR( cublasSaxpy(handle, N_SLOPE, &alpha, _d__c_, 1, data_proc.d__c, 1) );
+}
+@ 
+\index{shackHartmann!geometricShackHartmann!process}
+<<wavefront processing>>=
+void geometricShackHartmann::process() {
   float alpha = -1.0;
-  cublasCreate(&handle);
   CUBLAS_ERROR( cublasSaxpy(handle, N_SLOPE, &alpha, d__c0, 1, data_proc.d__c, 1) );
-  cublasDestroy(handle);
+}
+@ 
+\index{shackHartmann!geometricShackHartmann!analyze}
+<<wavefront processing>>=
+void geometricShackHartmann::analyze(source *gs) {
+  propagate(gs);
+  process();
 }
 @
 A pointer to the detector frame is obtained with
