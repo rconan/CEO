@@ -53,8 +53,8 @@ struct imaging {
 
   void readout(float exposureTime, float readOutNoiseRms);
   void noiseless_readout(float exposureTime);
-  void readout(float exposureTime, float readOutNoiseRms, float nBackgroundPhoton);
-
+  void readout(float exposureTime, float readOutNoiseRms, 
+	       float nBackgroundPhoton, float noiseFactor);
   float strehl_ratio(imaging *ref);
 
   void info(void);
@@ -1097,13 +1097,13 @@ void imaging::readout(float exposureTime, float readOutNoiseRms) {
 <<read-out content>>
 noisify LLL gridDim, blockDim RRR (devStates, d__frame, N,
 				   readOutNoiseRms, unit_exposureTime, 
-				   0.0, photoelectron_gain);
+				   0.0, 1.0, photoelectron_gain);
 }
 @ with
 <<read-out content>>=
 int N, Nb;
 float unit_exposureTime;
-unit_exposureTime = exposureTime/N_FRAME;
+unit_exposureTime = (N_FRAME>0) ? exposureTime/N_FRAME : exposureTime;
 N_PHOTON_PER_FRAME *= unit_exposureTime;
 N = N_PX_CAMERA * N_PX_CAMERA * N_LENSLET*N_SOURCE;
 Nb = (int) ceilf( sqrtf(N)/16.0 );
@@ -1112,11 +1112,15 @@ dim3 gridDim(Nb,Nb);
 @
 The background noise is added to the image with
 <<read-out with background>>=
-void imaging::readout(float exposureTime, float readOutNoiseRms, float nBackgroundPhoton) {
+void imaging::readout(float exposureTime, float readOutNoiseRms, 
+		      float nBackgroundPhoton,  float noiseFactor) {
 <<read-out content>>
+float nbgp, nf2;
+nbgp = (N_FRAME>0) ? nBackgroundPhoton*N_FRAME : nBackgroundPhoton;
+nf2 = noiseFactor*noiseFactor;
 noisify LLL gridDim, blockDim RRR (devStates, d__frame, N,
 				   readOutNoiseRms, unit_exposureTime,
-				   nBackgroundPhoton*N_FRAME,
+				   nbgp, nf2,
 				   photoelectron_gain);
 }
 @  with the kernels defined in the following
@@ -1125,6 +1129,7 @@ noisify LLL gridDim, blockDim RRR (devStates, d__frame, N,
 __global__ void noisify(curandState *state, float *frame, const int n_frame,
 			const float readOutNoiseRms, float exposureTime,
 			const float nBackgroundPhoton,
+			const float noiseFactor2,
 			const float photoelectron_gain)
    {
      int i, j, id;
@@ -1139,6 +1144,7 @@ __global__ void noisify(curandState *state, float *frame, const int n_frame,
          localState = state[id];
          frame[id] += nBackgroundPhoton;
 	 frame[id] *= photoelectron_gain;
+	 frame[id] *= noiseFactor2;
          frame[id] *= exposureTime;
          lambda = frame[id];
          //       frame[id] = (float) curand_poisson(&localState, (double) lambda);
@@ -1154,9 +1160,11 @@ __global__ void noisify(curandState *state, float *frame, const int n_frame,
 	   (lambda<4000) ?
 	   (float) curand_poisson_gammainc( &localState, lambda) :
 	   curand_normal(&localState)*sqrt(lambda) + lambda;
+	 frame[id] += (1-noiseFactor2)*lambda/noiseFactor2;
+	 frame[id] = (frame[id]<0) ? 0 : frame[id]; 
 	 frame[id] += (readOutNoiseRms>0) ?
 	   curand_normal(&localState)*readOutNoiseRms : 0;
-	 frame[id] -= nBackgroundPhoton*exposureTime*photoelectron_gain;
+	   //frame[id] -= nBackgroundPhoton*exposureTime*photoelectron_gain;
 	 //frame[id] = (frame[id]>0) ? floorf(frame[id]) : ceilf(frame[id]);
 	 state[id] = localState;
        }

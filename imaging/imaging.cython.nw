@@ -24,6 +24,7 @@ cdef extern from "imaging.h":
         void propagateThroughPyramid(source *)
         void propagateThroughModulatedPyramid(source *, float)
         void readout(float, float)
+        void readout(float, float, float, float)
         void noiseless_readout(float)
         void reset()
         void reset_rng(int)
@@ -196,7 +197,8 @@ cdef class Imaging:
         else:
             self._c_imaging.propagateThroughPyramid(src._c_source)
 
-    def readOut(self,float exposureTime, float readOutNoiseRms):
+    def readOut(self,float exposureTime, float readOutNoiseRms, 
+                float nBackgroundPhoton=0.0, float noiseFactor=1.0):
         """
         Reads-out the detector
 
@@ -206,8 +208,13 @@ cdef class Imaging:
             The exposure time of the camera
         readOutNoiseRms : float
             The read-out moise rms of the camera
+        nBackgroundPhoton : float (optional)
+            The number of background photon per second; default: 0
+        noiseFactor : float (optional)
+            The excess noise factor for EMCCD ($\sqrt{2}$); default: 1
         """
-        self._c_imaging.readout(exposureTime,readOutNoiseRms)
+        self._c_imaging.readout(exposureTime,readOutNoiseRms,
+                                nBackgroundPhoton, noiseFactor)
 
     def noiselessReadOut(self,float exposureTime):
         """
@@ -231,6 +238,18 @@ cdef class Imaging:
         Resets the random number generator
         """
         self._c_imaging.reset_rng(SEED)
+
+    def pixelScale(self,Source src):
+        """
+        Returns the pixel scale in radian
+        """
+        return (src.wavelength/src.rays.L)*self.N_SIDE_LENSLET*self.BIN_IMAGE/self.DFT_osf
+
+    def pixelScaleArcsec(self,Source src):
+        """
+        Returns the pixel scale in arcsecond
+        """
+        return self.pixelScale(src)*180.0*3600.0/np.pi
 
     def ee80(self,double units=1.0):
         """
