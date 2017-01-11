@@ -11,6 +11,6 @@ from aaStats import AaStats, PaStats
 from LMMSE import Lmmse, LmmseSH, BilinearInterpolation
 from atmosphere import AtmosphereAbstract, Atmosphere, GmtAtmosphere, Layer, JGmtAtmosphere
 from gmtMirrors import BendingModes, KarhunenLoeve, GmtMirrors, GMT_M1, GMT_M2, StereoscopicEdgeSensors, LateralEdgeSensors, DistanceEdgeSensors
-from GMTLIB import GMT_MX, JGMT_MX, TT7, IdealSegmentPistonSensor, SegmentTipTiltSensor, EdgeSensors, DispersedFringeSensor, Trace
+from GMTLIB import CalibrationVault, GMT_MX, JGMT_MX, TT7, IdealSegmentPistonSensor, SegmentTipTiltSensor, EdgeSensors, DispersedFringeSensor, Trace
 import phaseStats
                                 
