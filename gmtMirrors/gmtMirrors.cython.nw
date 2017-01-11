@@ -486,7 +486,46 @@ cdef class GMT_M1:
                               gy._c_gpu.dev_data,
                               x.size, segId)
         return gx.host(), gy.host()
+
+    def clocking(self,seg_id,theta):
+        <<clocking part 1>>
+        o = np.pi*(3-2*idx)/6
+        <<clocking part 2>>
 @
+<<clocking part 1>>=
+def backward_transform(u,R,o):
+    return np.dot(R,u) + o
+
+def forward_transform(u,R,o):
+    return np.dot(R.T,u-o)
+a = 0
+b = 0
+c = theta
+Ra = np.array( [[1, 0, 0,],[0,np.cos(a),-np.sin(a)],[0,np.sin(a),np.cos(a)]] )
+Rb = np.array( [[np.cos(b), 0, np.sin(b)],[0,1,0],[-np.sin(b),0,np.cos(b)]] )
+Rc = np.array( [[np.cos(c), -np.sin(c),0],[np.sin(c),np.cos(c),0],[0,0,1]] )
+RTT = np.dot(Rc,np.dot(Rb,Ra))
+
+idx = seg_id-1
+@ 
+<<clocking part 2>>=
+xt = self.L*np.cos(o+c)
+yt = self.L*np.sin(o+c)
+zt = self.rigid_body_CS.origin[idx,2]
+
+ut = np.array([xt,yt,zt])[:,None]
+origin = np.ravel(forward_transform(ut,self.rigid_body_CS.R[idx],
+self.rigid_body_CS.origin[idx,:][:,None]))
+
+RM = np.dot(self.rigid_body_CS.R[idx].T,np.dot(RTT,self.rigid_body_CS.R[idx]))
+
+euler_angles = np.zeros(3)
+euler_angles[0] = np.arctan2(RM[2,1],RM[2,2])
+euler_angles[1] = np.arcsin(-RM[2,0])
+euler_angles[2] = np.arctan2(RM[1,0],RM[0,0])  
+
+return (origin,euler_angles)
+@ 
 <<GMT M12 constructor>>=
 self.mirror_modes_type = mirror_modes
 if mirror_modes==u"zernike":
@@ -782,6 +821,11 @@ cdef class GMT_M2:
             The y axis angle
         """
         self._c_gmt_m12.coma_neutral(tip, tilt);
+
+    def clocking(self,seg_id,theta):
+        <<clocking part 1>>
+        o = np.pi*(3-2*idx)/6 + np.pi
+        <<clocking part 2>>
 @
 \section{Stereoscopic edge sensors}
 \label{sec:ster-edge-sens}
