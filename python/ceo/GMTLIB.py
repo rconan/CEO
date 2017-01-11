@@ -81,7 +81,7 @@ class GMT_MX(GmtMirrors):
                             M1_N_MODE=M1_N_MODE,
                             M2_N_MODE=M2_N_MODE)
 
-    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,segment=None,cl_wfs=None,cl_gs=None,cl_recmat=None, 
+    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,cl_wfs=None,cl_gs=None,cl_recmat=None, 
 		idealps=None,idealps_ref=None,first_mode=3, closed_loop_calib=False, minus_M2_TT=False):
         """
         Calibrate the different degrees of freedom of the  mirrors
@@ -100,17 +100,34 @@ class GMT_MX(GmtMirrors):
             for M2: "global tip-tilt", "pointing neutral", "coma neutral", "zernike", "Karhunen-Loeve", "Txyz", "Rxyz", "Rz", "segment tip-tilt", "TT7 segment tip-tilt"
         stroke : float
             The amplitude of the motion
-	segment : string
-	    Idealized Segment Piston measurement type: "full" or "edge" (see IdealSegmentPistonSensor documentation).
         """
+        def close_NGAO_loop():
+            niter = 7
+            nzernall = (self.M2.zernike.n_mode-1)*7
+            self.M2.zernike.reset()
+            for ii in range(niter):
+                cl_gs.reset()
+                self.propagate(cl_gs)
+                cl_wfs.reset()
+                cl_wfs.analyze(cl_gs)
+                slopevec = cl_wfs.get_measurement()
+                onpsvec =  idealps.piston(cl_gs).ravel() - idealps_ref
+                AOmeasvec = np.concatenate((slopevec, onpsvec))
+                myAOest1 = np.dot(cl_recmat, AOmeasvec)            
+                self.M2.zernike.a[:,1:] -= myAOest1[0:nzernall].reshape((7,-1))
+                self.M2.motion_CS.origin[:,2] -= myAOest1[nzernall:]
+                self.M2.motion_CS.update()
+                self.M2.zernike.update()
+
         def pushpull(action):
             def get_slopes(stroke_sign):
                 self.reset()
                 action(stroke_sign*stroke)
+                if closed_loop_calib==True: close_NGAO_loop()
                 gs.reset()
                 self.propagate(gs)
                 wfs.reset()
-                wfs.analyze(gs, segment=segment)
+                wfs.analyze(gs)
                 return wfs.get_measurement()
             s_push = get_slopes(+1)
             s_pull = get_slopes(-1)
@@ -140,50 +157,6 @@ class GMT_MX(GmtMirrors):
                 wfs.analyze(gs)
                 return wfs.get_measurement()
 
-
-        def SPS_pushpull(action):
-            def get_slopes(stroke_sign):
-                self.reset()
-                action(stroke_sign*stroke)
-                gs.reset()
-                self.propagate(gs)
-		wfs.reset()
-                wfs.analyze(gs, segment=segment)
-                return wfs.get_measurement()
-            s_push = get_slopes(+1)
-            s_pull = get_slopes(-1)
-            return 0.5*(s_push-s_pull)/stroke
-
-
-        def FDSP_pushpull(action):
-            def close_NGAO_loop():
-                niter = 7
-                self.M2.zernike.reset()
-                for ii in range(niter):
-                    cl_gs.reset()
-                    self.propagate(cl_gs)
-                    cl_wfs.reset()
-                    cl_wfs.analyze(cl_gs)
-                    slopevec = cl_wfs.get_measurement()
-                    onpsvec =  idealps.piston(cl_gs, segment='full').ravel() - idealps_ref
-                    AOmeasvec = np.concatenate((slopevec, onpsvec))
-                    myAOest1 = np.dot(cl_recmat, AOmeasvec)            
-                    self.M2.zernike.a[:,1:] -= myAOest1[0:nzernall].reshape((7,-1))
-                    self.M2.motion_CS.origin[:,2] -= myAOest1[nzernall:]
-                    self.M2.motion_CS.update()
-                    self.M2.zernike.update()
-            def get_slopes(stroke_sign):
-		self.reset()
-                action(stroke_sign*stroke)
-                close_NGAO_loop()
-		gs.reset()
-                self.propagate(gs)
-		wfs.reset()
-                return wfs.piston(gs, segment=segment).ravel()
-            s_push = get_slopes(+1)
-            s_pull = get_slopes(-1)
-            return 0.5*(s_push-s_pull)/stroke
-
         def M1_zernike_update(_stroke_):
             self.M1.modes.a[kSeg,kMode] = _stroke_
             self.M1.modes.update()
@@ -198,13 +171,11 @@ class GMT_MX(GmtMirrors):
         sys.stdout.write("___ %s ___ (%s)\n"%(mirror,mode))
         if mirror=="M1":
             if mode=="global tip-tilt":
-                #D = np.zeros((wfs.get_measurement_size(),2))
-                D = np.zeros((wfs.n_valid_slopes,2))
+                D = np.zeros((wfs.get_measurement_size(),2))
                 D[:,0] = pushpull( lambda x : self.M1.global_tiptilt(x,0) )
                 D[:,1] = pushpull( lambda x : self.M1.global_tiptilt(0,x) )
             if mode=="Txyz":
-                #D = np.zeros((wfs.get_measurement_size(),3*7-1))
-                D = np.zeros((wfs.n_valid_slopes,3*7-1))
+                D = np.zeros((wfs.get_measurement_size(),3*7-1))
                 idx = 0
                 Tx = lambda x : self.M1.update(origin=[x,0,0],euler_angles=[0,0,0],idx=kSeg)
                 Ty = lambda x : self.M1.update(origin=[0,x,0],euler_angles=[0,0,0],idx=kSeg)
@@ -221,8 +192,7 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                 sys.stdout.write("\n")
             if mode=="Rxyz":
-                #D = np.zeros((wfs.get_measurement_size(),3*7-1))
-                D = np.zeros((wfs.n_valid_slopes,3*7-1))
+                D = np.zeros((wfs.get_measurement_size(),3*7-1))
                 idx = 0
                 Rx = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
                 Ry = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
@@ -239,8 +209,7 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                 sys.stdout.write("\n")
             if mode=="Rz":
-                #D = np.zeros((wfs.get_measurement_size(),7))
-                D = np.zeros((wfs.n_valid_slopes,7))
+                D = np.zeros((wfs.get_measurement_size(),7))
                 idx = 0
                 Rz = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,0,x],idx=kSeg)
                 sys.stdout.write("Segment #:")
@@ -250,8 +219,7 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="segment tip-tilt":
-                #D = np.zeros((wfs.get_measurement_size(),2*7))
-                D = np.zeros((wfs.n_valid_slopes,2*7))
+                D = np.zeros((wfs.get_measurement_size(),2*7))
                 idx = 0
                 Rx = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
                 Ry = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
@@ -265,8 +233,7 @@ class GMT_MX(GmtMirrors):
                 sys.stdout.write("\n")
             if mode=="zernike":
                 n_mode = self.M1.zernike.n_mode
-                #D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
-                D = np.zeros((wfs.n_valid_slopes,(n_mode-first_mode)*7))
+                D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
                 idx = 0;
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
@@ -277,7 +244,7 @@ class GMT_MX(GmtMirrors):
                     sys.stdout.write("\n")
             if mode=="bending modes":
                 n_mode = self.M1.modes.n_mode
-                D = np.zeros((wfs.n_valid_slopes,n_mode*7))
+                D = np.zeros((wfs.get_measurement_size(),n_mode*7))
                 idx = 0;
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
@@ -287,66 +254,34 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                     sys.stdout.write("\n")
 	    if mode=="segment piston":
-		if segment=="edge":
-		    n_meas = 12
-		elif segment=="full":
-		    n_meas = 7
-		else :
-		    sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
 		n_mode = 6
-		D = np.zeros((n_meas*gs.N_SRC,n_mode))
+		D = np.zeros((wfs.get_measurement_size(),n_mode))
 		idx = 0
                 Tz = lambda x : self.M1.update(origin=[0,0,x],euler_angles=[0,0,0],idx=kSeg)
                 sys.stdout.write("Segment #:")
                 for kSeg in range(1,7):
                     sys.stdout.write("%d "%kSeg)
-                    D[:,idx] = SPS_pushpull( Tz )
+                    D[:,idx] = pushpull( Tz )
                     idx += 1
-                if segment=="full":
-		    D = D[0:6,:]
+                #if segment=="full":
+		#    D = D[0:6,:]
 		sys.stdout.write("\n")
-	    if mode=="FDSP":
-		if segment=="edge":
-		    n_meas = 12
-		elif segment=="full":
-		    n_meas = 7
-		else :
-		    sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
-		nzernall = (self.M2.zernike.n_mode-1)*7
-                D = np.zeros((n_meas*gs.N_SRC,2*6))
-                idx = 0
-                Rx = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
-                Ry = lambda x : self.M1.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
-                sys.stdout.write("Segment #:")
-                for kSeg in range(1,7):
-                    sys.stdout.write("%d "%kSeg)
-                    D[:,idx] = FDSP_pushpull( Rx )
-                    idx += 1
-                    D[:,idx] = FDSP_pushpull( Ry )
-                    idx += 1
-                if segment=="full":
-		    D = D[0:6,:]
-                sys.stdout.write("\n")
 
         if mirror=="M2":
             if mode=="global tip-tilt":
-                #D = np.zeros((wfs.get_measurement_size(),2))
-                D = np.zeros((wfs.n_valid_slopes,2))
+                D = np.zeros((wfs.get_measurement_size(),2))
                 D[:,0] = pushpull( lambda x : self.M2.global_tiptilt(x,0) )
                 D[:,1] = pushpull( lambda x : self.M2.global_tiptilt(0,x) )
             if mode=="pointing neutral":
-                #D = np.zeros((wfs.get_measurement_size(),2))
-                D = np.zeros((wfs.n_valid_slopes,2))
+                D = np.zeros((wfs.get_measurement_size(),2))
                 D[:,0] = pushpull( lambda x : self.M2.pointing_neutral(x,0) )
                 D[:,1] = pushpull( lambda x : self.M2.pointing_neutral(0,x) )
             if mode=="coma neutral":
-                #D = np.zeros((wfs.get_measurement_size(),2))
-                D = np.zeros((wfs.n_valid_slopes,2))
+                D = np.zeros((wfs.get_measurement_size(),2))
                 D[:,0] = pushpull( lambda x : self.M2.coma_neutral(x,0) )
                 D[:,1] = pushpull( lambda x : self.M2.coma_neutral(0,x) )
             if mode=="Txyz":
-                #D = np.zeros((wfs.get_measurement_size(),3*7))
-                D = np.zeros((wfs.n_valid_slopes,3*7))
+                D = np.zeros((wfs.get_measurement_size(),3*7))
                 idx = 0
                 Tx = lambda x : self.M2.update(origin=[x,0,0],euler_angles=[0,0,0],idx=kSeg)
                 Ty = lambda x : self.M2.update(origin=[0,x,0],euler_angles=[0,0,0],idx=kSeg)
@@ -362,8 +297,7 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="Rxyz":
-                #D = np.zeros((wfs.get_measurement_size(),3*7-1))
-                D = np.zeros((wfs.n_valid_slopes,3*7-1))
+                D = np.zeros((wfs.get_measurement_size(),3*7-1))
                 idx = 0
                 Rx = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
                 Ry = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
@@ -380,8 +314,7 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                 sys.stdout.write("\n")
             if mode=="Rz":
-                #D = np.zeros((wfs.get_measurement_size(),7))
-                D = np.zeros((wfs.n_valid_slopes,7))
+                D = np.zeros((wfs.get_measurement_size(),7))
                 idx = 0
                 Rz = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,0,x],idx=kSeg)
                 sys.stdout.write("Segment #:")
@@ -391,18 +324,7 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="segment tip-tilt":
-                if isinstance(wfs, (ShackHartmann,GeometricShackHartmann,TT7)):
-                    n_meas = wfs.n_valid_slopes
-                elif isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
-                    if segment=="edge":
-                        n_meas = 12*gs.N_SRC
-                    elif segment=="full":
-                        n_meas = 7*gs.N_SRC
-                    else :
-                        sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
-                else: raise("WFS type not recognized...") 
-
-                D = np.zeros((n_meas,2*7))
+                D = np.zeros((wfs.get_measurement_size(),2*7))
                 idx = 0
                 Rx = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
                 Ry = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
@@ -413,13 +335,10 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                     D[:,idx] = pushpull( Ry )
                     idx += 1
-                """if isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
-                    if segment=="full":
-                        D = D[0:6,:]"""
                 sys.stdout.write("\n")
             if mode=="zernike":
                 n_mode = self.M2.zernike.n_mode
-                D = np.zeros((wfs.n_valid_slopes,(n_mode-first_mode)*7))
+                D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
                 idx = 0;
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
@@ -430,7 +349,7 @@ class GMT_MX(GmtMirrors):
                     sys.stdout.write("\n")
             if mode=="Karhunen-Loeve":
                 n_mode = self.M2.modes.n_mode
-                D = np.zeros((wfs.n_valid_slopes,n_mode*7))
+                D = np.zeros((wfs.get_measurement_size(),n_mode*7))
                 idx = 0;
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
@@ -453,27 +372,15 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
 	    if mode=="segment piston":
-                if isinstance(wfs, (ShackHartmann, GeometricShackHartmann)) == True:
-                    n_meas = wfs.valid_lenslet.nnz*2 
-                elif isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
-                    if segment=="edge":
-                        n_meas = 12*gs.N_SRC
-                    elif segment=="full":
-                        n_meas = 7*gs.N_SRC
-                    else :
-                        sys.stdout.write("paramenter 'segment' must be set to either 'full' or 'edge'\n")
 		n_mode = 7
-		D = np.zeros((n_meas,n_mode))
+		D = np.zeros((wfs.get_measurement_size(),n_mode))
 		idx = 0
                 Tz = lambda x : self.M2.update(origin=[0,0,x],euler_angles=[0,0,0],idx=kSeg)
                 sys.stdout.write("Segment #:")
                 for kSeg in range(1,8):
                     sys.stdout.write("%d "%kSeg)
-                    D[:,idx] = SPS_pushpull( Tz )
+                    D[:,idx] = pushpull( Tz )
                     idx += 1
-                """if isinstance(wfs, (DispersedFringeSensor,IdealSegmentPistonSensor)) == True:
-                    if segment=="full":
-                        D = D[0:6,:]"""
 		sys.stdout.write("\n")
 	    if mode=="geometric segment tip-tilt":
                 n_meas = 14
@@ -492,7 +399,7 @@ class GMT_MX(GmtMirrors):
             
         if mirror=="MOUNT":
             if mode=="pointing":
-                D = np.zeros((wfs.n_valid_slopes,2))
+                D = np.zeros((wfs.get_measurement_size(),2))
 
                 def depoint(r,o):
                     self.pointing_error_zenith  = r
@@ -565,7 +472,7 @@ class SHTT7(ShackHartmann):
         gmt.reset()
         ShackHartmann.reset(self)
 
-    def analyze(self, gs, **kwargs):
+    def analyze(self, gs):
         ShackHartmann.analyze(self,gs)
         nvl = self.n_valid_lenslet
         c = self.valid_slopes.host()
@@ -583,13 +490,19 @@ class Sensor:
     def reset(self):
         pass
     @abstractmethod
-    def analyze(self, **kwargs):
+    def analyze(self):
         pass
     @abstractmethod
     def propagate(self):
         pass
     @abstractmethod
     def process(self):
+        pass
+    @abstractmethod
+    def get_measurement(self):
+        pass
+    @abstractmethod
+    def get_measurement_size(self):
         pass
 
 class TT7(Sensor):
@@ -605,7 +518,7 @@ class TT7(Sensor):
     def reset(self):
         pass
 
-    def analyze(self, src, **kwargs):
+    def analyze(self, src):
         data = src.segmentsWavefrontGradient()
 	self.valid_slopes = cuFloatArray(host_data = data.host() - self.reference_slopes)
 
@@ -615,8 +528,12 @@ class TT7(Sensor):
 
     def process(self):
         pass
+
     def get_measurement(self):
         return self.valid_slopes.host().ravel()
+
+    def get_measurement_size(self):
+        return self.n_valid_slopes
 
 class DispersedFringeSensor(SegmentPistonSensor):
     """
@@ -911,7 +828,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
 		    fftlet_shape = (self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE)
 		    self.fftlet_fit_images[:,:,k] = self.gaussian_func(*params)(*np.indices(fftlet_shape))
 
-    def analyze(self, src, segment='edge'):
+    def analyze(self, src):
 	"""
 	Propagates the guide star to the SPS detector (noiseless) and processes the frame
 
@@ -920,38 +837,27 @@ class DispersedFringeSensor(SegmentPistonSensor):
         src : Source
             The piston sensing guide star object
 	"""
-        assert segment=="full" or segment=="edge", "segment parameter is either ""full"" or ""edge"""
-        if segment=="full":
-            p = src.piston(where='segments')
-            self.measurement = p.ravel()
-        elif segment=="edge":
-            self.reset()
-            self.propagate(src)
-            self.fft()
-            self.process()
+        self.reset()
+        self.propagate(src)
+        self.fft()
+        self.process()
 
-    def piston(self, src, segment='edge'):
+    def piston(self, src):
         """
-        Return either M1 segment piston or M1 differential piston. This method was created to provide same functionality as the IdealSegmentPistonSensor method.
+        Return M1 differential piston. This method was created to provide compatibility with the IdealSegmentPistonSensor Piston method.
 
         Parameters
         ----------
         src : Source
             The piston sensing guide star object
-        segment : string, optional
-            "full" for piston on the entire segments or "edge" for the differential piston between segment; default: "full"
 
         Return
         ------
         p : numpy ndarray
-            A 6 element piston vector for segment="full" or a 12 element differential piston vector for segment="edge"
+            A 12 element differential piston vector
         """
-        assert segment=="full" or segment=="edge", "segment parameter is either ""full"" or ""edge"""
-        if segment=="full":
-            p = src.piston(where='segments')
-        elif segment=="edge":
-	    self.analyze(src)
-	    p = self.measurement.reshape(-1,12)
+        self.analyze(src)
+        p = self.measurement.reshape(-1,12)
 	return p
 
     def get_measurement(self):
@@ -960,20 +866,30 @@ class DispersedFringeSensor(SegmentPistonSensor):
         """
         return self.measurement.ravel()
 
+    def get_measurement_size(self):
+        """
+        Returns the size of the measurement vector
+        """
+        return self._N_SRC*12
+
 class IdealSegmentPistonSensor:
     """
     A class for the GMT segment piston sensor
 
     Parameters
     ----------
-    gmt : GMT_MX
-        The GMT object
     src : Source
         The Source object used for piston sensing
+    D :  float
+        Telescope diameter (m)
+    nPx : integer
+        Pupil linear sampling (pixels)
     W : float, optional
         The width of the lenslet; default: 1.5m
     L : float, optional
         The length of the lenslet; default: 1.5m
+    segment : string
+        "full" for piston on the entire segments or "edge" for the differential piston between segment.
 
     Attributes
     ----------
@@ -989,6 +905,8 @@ class IdealSegmentPistonSensor:
         The length of the lenslet
     M : numpy ndarray
         The mask corresponding to the 12 lenslet array as a 12 columns array
+    segment : string
+        "full" for piston on the entire segments or "edge" for the differential piston between segment.
 
     See also
     --------
@@ -1002,20 +920,22 @@ class IdealSegmentPistonSensor:
     >>> D = 25.5
     >>> src = ceo.Source("R",rays_box_size=D,rays_box_sampling=nPx,rays_origin=[0.0,0.0,25])
     >>> gmt = ceo.GMT_MX(D,nPx)
-    >>> SPS = ceo.IdealSegmentPistonSensor(gmt,src)
     >>> src.reset()
     >>> gmt.propagate(src)
 
     The piston per M1 segment is obtained with
-
-    >>> SPS.piston(src,segment='full')
+    >>> SPS = ceo.IdealSegmentPistonSensor(src,D,nPx,segment='full')
+    >>> SPS.piston(src)
 
     The 12 differential pistons are given by
-
-    >>> SPS.piston(src,segment='edge')
+    >>> SPS = ceo.IdealSegmentPistonSensor(src,D,nPx,segment='edge')
+    >>> SPS.piston(src)
     """
 
-    def __init__(self, src, D, D_px, W=1.5, L=1.5):
+    def __init__(self, src, D, D_px, W=1.5, L=1.5, segment=None):
+        assert segment=="full" or segment=="edge", "segment parameter is either ""full"" or ""edge"""
+        self.segment = segment
+        self._N_SRC = src.N_SRC
         def ROT(o):
             return np.array([ [ math.cos(o), math.sin(o)], [-math.sin(o),math.cos(o)] ])
         n = D_px
@@ -1052,7 +972,7 @@ class IdealSegmentPistonSensor:
     def reset(self):
 	pass
 
-    def piston(self,src, segment="full"):
+    def piston(self,src):
         """
         Return either M1 segment piston or M1 differential piston
 
@@ -1060,19 +980,16 @@ class IdealSegmentPistonSensor:
         ----------
         src : Source
             The piston sensing guide star object
-        segment : string, optionnal
-            "full" for piston on the entire segments or "edge" for the differential piston between segment; default: "full"
 
         Return
         ------
         p : numpy ndarray
-            A 6 element piston vector for segment="full" or a 12 element differential piston vector for segment="edge"
+            A 7 element piston vector for segment="full" or a 12 element differential piston vector for segment="edge"
         """
 
-        assert segment=="full" or segment=="edge", "segment parameter is either ""full"" or ""edge"""
-        if segment=="full":
+        if self.segment=="full":
             p = src.piston(where='segments')
-        elif segment=="edge":
+        elif self.segment=="edge":
             W = src.wavefront.phase.host()
             p = np.zeros((src.N_SRC,12))
             for k_SRC in range(src.N_SRC):
@@ -1086,11 +1003,11 @@ class IdealSegmentPistonSensor:
                                np.sum( W[k_SRC,:]*_P_[(k+1)%6,:]*_M_[k+6,:] )/np.sum( _P_[(k+1)%6,:]*_M_[k+6,:] )
         return p
 
-    def analyze(self, src, **kwargs):
+    def analyze(self, src):
         """
         Computes either M1 segment piston or M1 differential piston (calling the "piston" method), and stores the result in the "measurement" property.
         """
-        p = self.piston(src, **kwargs)
+        p = self.piston(src)
         self.measurement = p.ravel()
 
     def get_measurement(self):
@@ -1098,6 +1015,16 @@ class IdealSegmentPistonSensor:
         Returns the measurement vector
         """
         return self.measurement
+
+    def get_measurement_size(self):
+        """
+        Returns the size of the measurement vector
+        """
+        if self.segment=="edge":
+            n_meas = 12
+        elif self.segment=="full":
+            n_meas = 7
+        return n_meas*self._N_SRC
 
 class SegmentTipTiltSensor:
     """
@@ -1140,7 +1067,7 @@ class SegmentTipTiltSensor:
         a23[7:,:] = np.sum(W*Z3,axis=1)/np.sum(Z3*Z3,axis=1)
         return a23
 
-    def analyze(self, gs, **kwargs):
+    def analyze(self, gs):
         self.measurement = self.tiptilt(gs)
 
     def get_measurement(self):
