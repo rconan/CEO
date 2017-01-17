@@ -48,7 +48,10 @@ struct source {
   void setup(const char *_photometric_band,
 	     float *_zenith, float *_azimuth, float _height,
 	     int _N_SRC, rtd _L_, int _N_L_, vector origin);
-  void cleanup(void);
+  void setup(const char *_photometric_band, float *magnitude,
+	     float *_zenith, float *_azimuth, float _height,
+	     int _N_SRC, rtd _L_, int _N_L_, vector origin);
+   void cleanup(void);
 
   void reset_rays(void);
 
@@ -62,9 +65,11 @@ struct source {
   float wavelength_micron(void);
   float spectral_bandwidth(void);
   float n_photon(void);
+  float n_photon(float _magnitude_);
   float n_background_photon(float backgroundMagnitude);
   float wavenumber(void);
   void update_directions(float *zenith, float *azimuth, int N_DIR);
+  void update_magnitude(float *magnitude, int N_MAG);
 };
 #endif // __SOURCE_H__
 @
@@ -74,6 +79,7 @@ struct source {
 #include "source.h"
 
 <<zenith and azimuth update kernel>>
+<<magnitude update kernel>>
 
 <<to z plane kernel>>
 <<to sphere kernel>>
@@ -122,6 +128,7 @@ struct source {
 <<ray tracing>>
 
 <<zenith and azimuth update>>
+<<magnitude update>>
 
 <<info>>
 
@@ -182,10 +189,10 @@ float *amplitude, *phase;
 @ The physical extent of the amplitude is set by the pupil mask:
 <<complex amplitude parameters>>=
 mask *M;
-@ The magnitude at a given photometric band are set with:
+@ The magnitude and associated number of photon at a given photometric band are set with:
 <<source parameters>>=
 const char *photometric_band;
-float magnitude;
+float magnitude, N_PHOTON;
 @ If the source is resolved by the  optical system, the irradiance is assumed to have a Gaussian shape of full width a half maximum [[fwhm]] in detector pixel unit (before binning)
 <<source parameters>>=
 float fwhm;
@@ -1319,6 +1326,45 @@ void source::setup(const char *_photometric_band,
   reset_rays();
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
 }
+@  \item for multiple sources with wavefront resolution and with ray bundle (different magnitudes):
+<<setup for multiple sources with wavefront resolution and ray bundle>>=
+void source::setup(const char *_photometric_band, float *_magnitude,
+		   float *_zenith, float *_azimuth, float _height,
+		   int _N_SRC, rtd L, int N_L, vector origin) {
+  N_SRC = _N_SRC;
+  height = _height;
+  photometric_band = _photometric_band;
+  magnitude = 0.0;
+  fwhm = 0.0;
+  source __src;
+  HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
+  strcpy(tag,"sources");
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
+    __src.zenith  = _zenith[i_SRC];
+    __src.azimuth = _azimuth[i_SRC];
+    __src.height  = _height;
+    __src.photometric_band = _photometric_band;
+    __src.magnitude        = _magnitude[i_SRC];
+    __src.N_PHOTON         = __src.n_photon();
+    __src.theta_x = tanf(_zenith[i_SRC])*cosf(_azimuth[i_SRC]);
+    __src.theta_y = tanf(_zenith[i_SRC])*sinf(_azimuth[i_SRC]);
+    HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
+			      sizeof(source) ,
+			      cudaMemcpyHostToDevice ) );
+    fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
+	    _zenith[i_SRC]*RADIAN2ARCSEC,
+	    _azimuth[i_SRC]*180/PI,_height,
+	    wavelength_micron(),magnitude);
+  }
+  wavefront.setup(N_L*N_L,N_SRC);
+  fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
+  rays_exist = 1;
+  rays.setup(L, N_L, origin, N_SRC);
+  reset_rays();
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+}
 @ with \index{source!source!reset\_rays}
 <<reset rays>>=
 void source::reset_rays(void)
@@ -1431,6 +1477,29 @@ __global__ void update_directions_kernel(float *d__zenith, float *d__azimuth,
   d__src[i].theta_x = tanf(d__zenith[i])*cosf(d__azimuth[i]);
   d__src[i].theta_y = tanf(d__zenith[i])*sinf(d__azimuth[i]);
 }
+@
+The magnitude is update with
+\index{source!source!update\_magnitude}
+<<magnitude update>>=
+void source::update_magnitude(float *magnitude, int N_MAG)
+{
+  int n_byte = sizeof(float)*N_MAG;
+  float *d__magnitude;
+  HANDLE_ERROR( cudaMalloc((void**)&d__magnitude, n_byte ) );
+  HANDLE_ERROR( cudaMemcpy( d__magnitude, magnitude,
+			    n_byte, cudaMemcpyHostToDevice ) );
+  update_magnitude_kernel LLL N_SRC,1 RRR ( d__magnitude, N_MAG, dev_ptr);
+  HANDLE_ERROR( cudaFree( d__magnitude ));
+}
+@ with
+<<magnitude update kernel>>=
+__global__ void update_magnitude_kernel(float *d__magnitude,
+                                         const int N_MAG, source *d__src)
+{
+  int i;
+  i = blockIdx.x;
+  d__src[i].magnitude  = d__magnitude[i];
+}
 @ 
 \subsubsection{Photometry}
 \label{sec:photometry}
@@ -1467,42 +1536,35 @@ float source::wavelength_micron(void) {
 \index{source!source!n\_photon}
 <<number of photons>>=
 float source::n_photon(void) {
-  float zero_point;
-  if (strcmp(photometric_band,"V")==0)
-    zero_point = 8.97e9;
-  if (strcmp(photometric_band,"R")==0)
-    zero_point = 10.87e9 ;
-  if (strcmp(photometric_band,"I")==0)
-    zero_point = 7.34e9;
-  if (strcmp(photometric_band,"J")==0)
-    zero_point = 5.16e9;
-  if (strcmp(photometric_band,"H")==0)
-    zero_point = 2.99e9;
-  if (strcmp(photometric_band,"K")==0)
-    zero_point = 1.90e9;
-  if (strcmp(photometric_band,"Ks")==0)
-    zero_point = 1.49e9;
-  return N_SRC*zero_point*powf(10 , -0.4*magnitude );
+  <<photometry zero point>>
+  return zero_point*powf(10 , -0.4*magnitude );
 }
+float source::n_photon(float _magnitude_) {
+  <<photometry zero point>>
+  return zero_point*powf(10 , -0.4*_magnitude_ );
+}
+@ with 
+<<photometry zero point>>=
+ float zero_point;
+ if (strcmp(photometric_band,"V")==0)
+    zero_point = 8.97e9;
+ if (strcmp(photometric_band,"R")==0)
+    zero_point = 10.87e9 ;
+ if (strcmp(photometric_band,"I")==0)
+    zero_point = 7.34e9;
+ if (strcmp(photometric_band,"J")==0)
+    zero_point = 5.16e9;
+ if (strcmp(photometric_band,"H")==0)
+    zero_point = 2.99e9;
+ if (strcmp(photometric_band,"K")==0)
+    zero_point = 1.90e9;
+ if (strcmp(photometric_band,"Ks")==0)
+    zero_point = 1.49e9;
 @ The number of background photon in $s^{-1}.arcsec^{-2}$ for a given magnitude per arcsecond square is derived with
 \index{source!source!n\_background\_photon}
 <<number of background photons>>=
 float source::n_background_photon(float backgroundMagnitude) {
-  float zero_point;
-  if (strcmp(photometric_band,"V")==0)
-    zero_point = 8.97e9;
-  if (strcmp(photometric_band,"R")==0)
-    zero_point = 10.87e9 ;
-  if (strcmp(photometric_band,"I")==0)
-    zero_point = 7.34e9;
-  if (strcmp(photometric_band,"J")==0)
-    zero_point = 5.16e9;
-  if (strcmp(photometric_band,"H")==0)
-    zero_point = 2.99e9;
-  if (strcmp(photometric_band,"K")==0)
-    zero_point = 1.90e9;
-  if (strcmp(photometric_band,"Ks")==0)
-    zero_point = 1.49e9;
+  <<photometry zero point>>
   return rays.V.area*zero_point*powf(10 , -0.4*backgroundMagnitude );
 }
 @ The spectral bandwidth is derived with
