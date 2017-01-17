@@ -1485,20 +1485,22 @@ void source::update_magnitude(float *magnitude, int N_MAG)
 {
   int n_byte = sizeof(float)*N_MAG;
   float *d__magnitude;
+  <<photometry zero point>>
   HANDLE_ERROR( cudaMalloc((void**)&d__magnitude, n_byte ) );
   HANDLE_ERROR( cudaMemcpy( d__magnitude, magnitude,
 			    n_byte, cudaMemcpyHostToDevice ) );
-  update_magnitude_kernel LLL N_SRC,1 RRR ( d__magnitude, N_MAG, dev_ptr);
+  update_magnitude_kernel LLL N_SRC,1 RRR ( d__magnitude, zero_point, N_MAG, dev_ptr);
   HANDLE_ERROR( cudaFree( d__magnitude ));
 }
 @ with
 <<magnitude update kernel>>=
-__global__ void update_magnitude_kernel(float *d__magnitude,
+__global__ void update_magnitude_kernel(float *d__magnitude, const float zero_point,
                                          const int N_MAG, source *d__src)
 {
   int i;
   i = blockIdx.x;
   d__src[i].magnitude  = d__magnitude[i];
+  d__src[i].N_PHOTON   = zero_point*powf(10 , -0.4*d__magnitude[i] );
 }
 @ 
 \subsubsection{Photometry}
