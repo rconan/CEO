@@ -488,19 +488,40 @@ cdef class GMT_M1:
         return gx.host(), gy.host()
 
     def clocking(self,seg_id,theta):
-        <<clocking part 1>>
+        """
+        Decomposes mirror clocking into segment Txyx and Rxyz
+
+        Parameters
+        ----------
+        seg_id : any
+            The segment number ID (1 base)
+        theta : any
+            The mirror clocking angle in radian
+
+        Returns
+        -------
+        (ndarray,ndarray)
+            (Txyz,Rxyz)
+        """
+        <<backward and forward transform>>
+        a = 0
+        b = 0
+        c = theta
+        <<transform part 1>>
         o = np.pi*(3-2*idx)/6
-        <<clocking part 2>>
+        xt = self.L*np.cos(o+c)
+        yt = self.L*np.sin(o+c)
+        zt = self.rigid_body_CS.origin[idx,2]
+        <<transform part 2>>
 @
-<<clocking part 1>>=
+<<backward and forward transform>>=
 def backward_transform(u,R,o):
     return np.dot(R,u) + o
 
 def forward_transform(u,R,o):
     return np.dot(R.T,u-o)
-a = 0
-b = 0
-c = theta
+@
+<<transform part 1>>=
 Ra = np.array( [[1, 0, 0,],[0,np.cos(a),-np.sin(a)],[0,np.sin(a),np.cos(a)]] )
 Rb = np.array( [[np.cos(b), 0, np.sin(b)],[0,1,0],[-np.sin(b),0,np.cos(b)]] )
 Rc = np.array( [[np.cos(c), -np.sin(c),0],[np.sin(c),np.cos(c),0],[0,0,1]] )
@@ -508,14 +529,10 @@ RTT = np.dot(Rc,np.dot(Rb,Ra))
 
 idx = seg_id-1
 @ 
-<<clocking part 2>>=
-xt = self.L*np.cos(o+c)
-yt = self.L*np.sin(o+c)
-zt = self.rigid_body_CS.origin[idx,2]
-
+<<transform part 2>>=
 ut = np.array([xt,yt,zt])[:,None]
 origin = np.ravel(forward_transform(ut,self.rigid_body_CS.R[idx],
-self.rigid_body_CS.origin[idx,:][:,None]))
+                                    self.rigid_body_CS.origin[idx,:][:,None]))
 
 RM = np.dot(self.rigid_body_CS.R[idx].T,np.dot(RTT,self.rigid_body_CS.R[idx]))
 
@@ -644,6 +661,34 @@ def keep(self, list seg_ID):
     cdef int[:] _seg_ID_
     _seg_ID_ = np.array(seg_ID,dtype=np.int32,ndmin=1)
     self._c_gmt_m12.keep(&_seg_ID_[0], _seg_ID_.size)
+
+def transform(self,seg_id, xyz, abc):
+    """
+    Decomposes GCS Txyz and Rxyz into segment Txyx and Rxyz
+
+    Parameters
+    ----------
+    seg_id : any
+        The segment number ID (1 base)
+    xyz : any
+        The GCS translations
+    abc : any
+        The GCS rotations
+
+    Returns
+    -------
+    (ndarray,ndarray)
+        (Txyz,Rxyz)
+    """
+    <<backward and forward transform>>
+    a = abc[0]
+    b = abc[1]
+    c = abc[2]        
+    <<transform part 1>>
+    xt = xyz[0]
+    yt = xyz[1]
+    zt = xyz[2]
+    <<transform part 2>>
 
 property D_assembly:
     def __get__(self):
@@ -823,9 +868,32 @@ cdef class GMT_M2:
         self._c_gmt_m12.coma_neutral(tip, tilt);
 
     def clocking(self,seg_id,theta):
-        <<clocking part 1>>
+        """
+        Decomposes mirror clocking into segment Txyx and Rxyz
+
+        Parameters
+        ----------
+        seg_id : any
+            The segment number ID (1 base)
+        theta : any
+            The mirror clocking angle in radian
+
+        Returns
+        -------
+        (ndarray,ndarray)
+            (Txyz,Rxyz)
+        """
+        <<backward and forward transform>>
+        a = 0
+        b = 0
+        c = theta
+        <<transform part 1>>
         o = np.pi*(3-2*idx)/6 + np.pi
-        <<clocking part 2>>
+        xt = self.L*np.cos(o+c)
+        yt = self.L*np.sin(o+c)
+        zt = self.rigid_body_CS.origin[idx,2]
+        <<transform part 2>>
+
 @
 \section{Stereoscopic edge sensors}
 \label{sec:ster-edge-sens}
