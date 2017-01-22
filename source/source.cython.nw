@@ -543,6 +543,7 @@ cdef class Complex_amplitude:
 \label{sec:class-definition-2}
 
 <<class definitions>>=
+from cpython.object cimport Py_GT
 cdef class Source:
     cdef:
         source *_c_source
@@ -554,6 +555,7 @@ cdef class Source:
         readonly Bundle rays
         readonly Complex_amplitude wavefront
         readonly sphere_distance
+        readonly tuple OPTICALPATH
 @
 \subsection{PYX file}
 \label{sec:pyx-file-2}
@@ -618,6 +620,8 @@ cdef class Source:
         the wavefront complex amplitude
     sphere_distance : float
         the distance to the reference sphere used to compute the OPD
+    OPTICALPATH : tuple (readonly)
+        the source optical path
 
     Examples
     --------
@@ -705,6 +709,50 @@ cdef class Source:
 
     def __dealloc__(self):
         self._c_source.cleanup()
+
+    def __rshift__(Source x, tuple y):
+        """
+        Set the optical path
+
+        Parameters
+        ----------
+        x : Source
+            The Source object
+        y : tuple
+            A list of CEO object the source is propagating through
+        """
+        x.OPTICALPATH = y
+        print "OPTICAL PATH: "+str(map(lambda z: z.__class__.__name__,x.OPTICALPATH))
+
+    def __richcmp__(Source x, tuple y, int op):
+        """
+        Append to the optical path
+
+        Parameters
+        ----------
+        x : Source
+            The Source object
+        y : tuple
+            A list of CEO object the source is propagating through
+        """
+        if op==Py_GT:
+            x.OPTICALPATH = x.OPTICALPATH + y
+            print "OPTICAL PATH: "+str(map(lambda z: z.__class__.__name__,x.OPTICALPATH))
+        else:
+            assert False
+
+    def __invert__(self):
+        """
+        Reset the source
+        """
+        self.reset()
+
+    def __pos__(self):
+        """
+        Reset the source and propagate the source through the optical path
+        """
+        self.reset()
+        map(lambda x: x.propagate(self), self.OPTICALPATH)
 
     def opd2phase(self):
         """
