@@ -556,6 +556,7 @@ cdef class Source:
         readonly Complex_amplitude wavefront
         readonly sphere_distance
         readonly tuple OPTICALPATH
+        public float samplingTime, timeStamp
 @
 \subsection{PYX file}
 \label{sec:pyx-file-2}
@@ -706,6 +707,8 @@ cdef class Source:
         self.rays = Bundle(self)
         self.N_SRC = self._c_source.N_SRC
         self.sphere_distance = None
+        self.samplingTime = 1.0
+        self.timeStamp = 0.0
 
     def __dealloc__(self):
         self._c_source.cleanup()
@@ -753,6 +756,13 @@ cdef class Source:
         """
         self.reset()
         map(lambda x: x.propagate(self), self.OPTICALPATH)
+        self.timeStamp += self.samplingTime
+
+    def __iadd__(self, int x):
+        cdef int k
+        for k in range(x):
+            self.__pos__()
+        return self
 
     def opd2phase(self):
         """
