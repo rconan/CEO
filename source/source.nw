@@ -70,6 +70,7 @@ struct source {
   float wavenumber(void);
   void update_directions(float *zenith, float *azimuth, int N_DIR);
   void update_magnitude(float *magnitude, int N_MAG);
+  void copy_magnitude(source *other_src);
 };
 #endif // __SOURCE_H__
 @
@@ -80,6 +81,7 @@ struct source {
 
 <<zenith and azimuth update kernel>>
 <<magnitude update kernel>>
+<<magnitude copy kernel>>
 
 <<to z plane kernel>>
 <<to sphere kernel>>
@@ -129,6 +131,7 @@ struct source {
 
 <<zenith and azimuth update>>
 <<magnitude update>>
+<<magnitude copy>>
 
 <<info>>
 
@@ -1216,6 +1219,9 @@ source __src;
 __src.zenith  = zenith;
 __src.azimuth = azimuth;
 __src.height  = height;
+__src.photometric_band = photometric_band;
+__src.magnitude        = magnitude;
+__src.N_PHOTON         = 1.0;//__src.n_photon();
 __src.theta_x = theta_x;
 __src.theta_y = theta_y;
 HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source) ) );
@@ -1501,6 +1507,24 @@ __global__ void update_magnitude_kernel(float *d__magnitude, const float zero_po
   i = blockIdx.x;
   d__src[i].magnitude  = d__magnitude[i];
   d__src[i].N_PHOTON   = zero_point*powf(10 , -0.4*d__magnitude[i] );
+}
+@ 
+The magnitude and number of photon from another source can be copied with
+\index{source!source!copy\_magnitude}
+<<magnitude copy>>=
+void source::copy_magnitude(source *other_src)
+{
+  copy_magnitude_kernel LLL N_SRC,1 RRR ( dev_ptr , other_src->dev_ptr );
+  
+}
+@ with
+<<magnitude copy kernel>>=
+__global__ void copy_magnitude_kernel(source *this_src, source *other_src)
+{
+  int i;
+  i = blockIdx.x;
+  this_src[i].magnitude = other_src[i].magnitude;
+  this_src[i].N_PHOTON  = other_src[i].N_PHOTON;
 }
 @ 
 \subsubsection{Photometry}
