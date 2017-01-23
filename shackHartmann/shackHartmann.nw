@@ -109,6 +109,9 @@ float *d__c0, *d__cx0, *d__cy0;
 @ \item the instantaneous geometric centroids:
 <<geometric parameters>>=
 float *_d__c_, *_d__cx_, *_d__cy_;
+@ \item the geometric centroids accumulation factor:
+<<geometric parameters>>=
+int N_FRAME;
 @ \item the valid lenslet mask:
 <<parameters>>=
 mask valid_lenslet;
@@ -212,6 +215,7 @@ void geometricShackHartmann::setup(int N_SIDE_LENSLET_, float d, int N_GS)
   data_proc.setup(N_SIDE_LENSLET, N_GS);
   <<lenslet mask pointer>>
   cublasCreate(&handle);
+  N_FRAME = 0;
 }
 
 @
@@ -469,6 +473,7 @@ __global__ void  set_geometric_valid_lenslet(float *valid_lenslet_f,
 \index{shackHartmann!shackHartmann!reset}
 <<geometric reset>>=
 void geometricShackHartmann::reset() {
+  N_FRAME = 0;
   HANDLE_ERROR( cudaMemset( data_proc.d__c, 0, sizeof(float)*N_SLOPE ) );
 }
 @
@@ -482,7 +487,7 @@ void shackHartmann::propagate(source *gs) {
     /* printf("slopes gain:%.2E\n",slopes_gain); */
   camera.pixel_scale = gs->wavelength()/(lenslet_pitch*DFT_osf);
   /* printf("pixel scale:%.2E\n",pixel_scale); */
-  pixel_scale = camera.pixel_scale*camera.BIN_IMAGE*slopes_gain;
+  pixel_scale = camera.pixel_scale*camera.BIN_IMAGE;
   camera.propagate(gs);
 }
 @ and the resulting frame is processed to extract the centroids
@@ -490,7 +495,7 @@ void shackHartmann::propagate(source *gs) {
 <<wavefront centroiding>>=
 void shackHartmann::process(void) {
   data_proc.get_data(camera.d__frame,camera.N_PX_CAMERA,
-		     d__cx0,d__cy0,pixel_scale,
+		     d__cx0,d__cy0,pixel_scale*slopes_gain,
 		     valid_lenslet.m);
 }
 @
@@ -512,12 +517,16 @@ void geometricShackHartmann::propagate(source *gs) {
 				  &valid_lenslet);
   float alpha = 1.0;
   CUBLAS_ERROR( cublasSaxpy(handle, N_SLOPE, &alpha, _d__c_, 1, data_proc.d__c, 1) );
+  ++N_FRAME;
 }
 @ 
 \index{shackHartmann!geometricShackHartmann!process}
 <<wavefront processing>>=
 void geometricShackHartmann::process() {
-  float alpha = -1.0;
+  float alpha;
+  alpha= 1.0/N_FRAME;
+  CUBLAS_ERROR( cublasSscal(handle, N_SLOPE, &alpha, data_proc.d__c, 1) );
+  alpha = -1.0;
   CUBLAS_ERROR( cublasSaxpy(handle, N_SLOPE, &alpha, d__c0, 1, data_proc.d__c, 1) );
 }
 @ 
