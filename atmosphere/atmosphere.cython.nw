@@ -356,6 +356,38 @@ cdef class GmtAtmosphere(AtmosphereAbstract):
 from utilities import JSONAbstract
 from constants import ARCMIN2RAD
 class JGmtAtmosphere(JSONAbstract,GmtAtmosphere):
+    """
+    Creates an atmosphere with the GMT default Cn2 and wind vector profiles
+
+    Parameters
+    ----------
+    jsonfile : the JSON file that describes the atmosphere model
+    zipdata : the zip file containing the atmosphere mode
+    cache : the directory where to unzip the atmosphere data
+
+    Examples
+    --------
+    >>> import ceo
+    >>> atm = ceo.JGmtAtmosphere(jsonfile='/mnt/bins/gmtAtmosphereL030.json',
+                                 zipdata='s3://gmto.rconan/gmtAtmosphereL030.zip',
+                                 cache='/mnt/bins/')
+    >>> import json
+    >>> json.loads(open('/mnt/bins/gmtAtmosphereL030.json').read())
+
+    {u'L0': 30,
+    u'duration': 15,
+    u'field-of-view [arcmin]': 20,
+    u'filename': u'/mnt/bins/gmtAtmosphereL030.bin',
+    u'pupil sampling': 346,
+    u'pupil size': 26.0,
+    u'r0': 0.15,
+    u'time sampling': 20}
+    
+    See also
+    --------
+    JSONAbstract : the JSON file interface class
+    GmtAtmosphere : the atmosphere class with the default GMT atmosphere model
+    """
     def __init__(self, *args, **kwargs):
         print "@(ceo.JGmtAtmosphere)>"
         JSONAbstract.__init__(self,  *args, **kwargs)
@@ -479,6 +511,16 @@ def ray_tracing(self, Source src,
     self._c_atmosphere.rayTracing(src._c_source,
 				  delta_x, N_X, delta_y, N_Y,
                                   tau)
+
+def propagate(self, Source src):
+    cdef:
+        float delta
+        int N
+    N = src.rays.N_L
+    delta = src.rays.L/(N-1)
+    self._c_atmosphere.rayTracing(src._c_source,
+				  delta, N, delta, N,
+                                  src.timeStamp)
 
 def get_phase_screen_gradient(self, Centroiding cog, int NL, float d,
 			      Source src, float time):
