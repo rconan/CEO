@@ -526,14 +526,18 @@ cdef class Complex_amplitude:
 	void setup(const char *,float , float , float , int )
         void setup(const char *,float *, float *, float , int , int )
         void setup(const char *,float *, float *, float , int , rtd, int, vector)
+        void setup(const char *,float *,float *, float *, float , int , rtd, int, vector)
         void cleanup()
         void reset_rays()
         void opd2phase()
         void info()
         float n_photon()
+        float n_photon(float)
+        float n_background_photon(float)
         float wavelength()
         float spectral_bandwidth()
         void update_directions(float *, float *, int)
+        void update_magnitude(float *, int)
 @
 \subsubsection{Class definition}
 \label{sec:class-definition-2}
@@ -545,7 +549,7 @@ cdef class Source:
         readonly int N_SRC
         readonly int n, m
         readonly int size
-        float[:] _zenith_, _azimuth_
+        float[:] _zenith_, _azimuth_, _magnitude_
         readonly float height
         readonly Bundle rays
         readonly Complex_amplitude wavefront
@@ -666,6 +670,10 @@ cdef class Source:
         self.m = resolution[1]
         self._zenith_  = np.array( zenith,  dtype=np.float32, ndmin=1)
         self._azimuth_ = np.array( azimuth, dtype=np.float32, ndmin=1)
+        if magnitude is None:
+            self._magnitude_ = np.zeros_like( self._zenith_ )
+        else:
+            self._magnitude_ = np.array( magnitude, dtype=np.float32, ndmin=1)
         self.height  = float(height);
         self.size = self._zenith_.size
         cdef vector _origin_
@@ -679,14 +687,15 @@ cdef class Source:
             _origin_.y = <float>rays_origin[1]
             _origin_.z = <float>rays_origin[2]
             self._c_source.setup(photometric_band,
+                                 &self._magnitude_[0],
                                  &self._zenith_[0],
                                  &self._azimuth_[0], height,
                                  self.size,
                                  rays_box_size,
 				 rays_box_sampling,
 				 _origin_)
-        if magnitude is not None:
-            self._c_source.magnitude = magnitude
+        #if magnitude is not None:
+        #    self._c_source.magnitude = magnitude
         if fwhm is not None:
             self._c_source.fwhm = fwhm
         self.wavefront = Complex_amplitude(self)
@@ -717,6 +726,9 @@ cdef class Source:
         self._zenith_ = zenith
         self._azimuth_ = azimuth
         self._c_source.update_directions(&zenith[0],&azimuth[0],zenith.size)
+        
+    def nBackgroundPhoton(self, float backgroundMagnitude):
+        return self._c_source.n_background_photon(backgroundMagnitude)
 
     property phase:
         def __get__(self):
@@ -742,11 +754,11 @@ cdef class Source:
 
     property nPhoton:
         def __get__(self):
-            return self._c_source.n_photon()
-
-    property magnitude:
-        def __set__(self,value):
-            self._c_source.magnitude = value
+            cdef int k
+            NPH = np.zeros(self._magnitude_.size)
+            for k in range(self._magnitude_.size):
+                NPH[k] = self._c_source.n_photon(self._magnitude_[k])
+            return NPH
     
     property zenith:
         def __get__(self):
@@ -756,6 +768,13 @@ cdef class Source:
         def __get__(self):
             return np.asarray(self._azimuth_)     
     
+    property magnitude:
+        def __get__(self):
+            return np.asarray(self._magnitude_)     
+        def __set__(self, float[:] magnitude):
+            self._magnitude_ = magnitude
+            self._c_source.update_magnitude(&magnitude[0], magnitude.size)
+
     property theta_x:
         def __get__(self):
             return np.tan(self._zenith_)*np.cos(self._azimuth_)
