@@ -1135,3 +1135,91 @@ cdef class DistanceEdgeSensors(LateralEdgeSensors):
             self.data()
             return self._d_.host()-self.d0
 
+@ 
+
+\subsection{TT7}
+\label{sec:tt7}
+
+\index{gmtMirrors!python!TT7}
+<<class definitions>>=
+from shackHartmann cimport ShackHartmann
+cimport numpy as np
+cdef class TT7(ShackHartmann):
+    cdef:
+        list segID
+        GmtMirrors _gmt_
+        readonly double[:,:] _c0_, _c_
+        readonly np.ndarray frames
+
+<<gmtMirrors.pyx>>=
+import numpy as np
+cdef class TT7(ShackHartmann):
+    def __init__(self, GmtMirrors gmt, *args, **kwargs):
+        ShackHartmann.__init__(self,1, *args, **kwargs)
+        self._gmt_ = gmt
+        self._c0_ = np.zeros((7,2))
+        self._c_  = np.zeros((7,2))
+        self.frames = np.zeros((self.N_PX_FRAME,self.N_PX_FRAME,7),dtype=np.float32)
+        self.segID = range(1,8)        
+
+    def calibrate(self, Source gs):
+        cdef int k
+        cdef float[:] buf
+        for k in self.segID:
+            self.reset()
+            self._gmt_.M1.keep([k])
+            gs.reset()
+            self._gmt_.propagate(gs)
+            self._c_shackHartmann.analyze(gs._c_source)
+            self.frames[:,:,k-1] = self.frame.host()
+            buf = self.c.host().ravel()
+            self._c0_[k-1,0] = buf[0]
+            self._c0_[k-1,1] = buf[1]
+        self._gmt_.M1.keep(self.segID)
+
+    def propagate(self, Source gs):
+        cdef int k
+        cdef float[:] buf
+        for k in self.segID:
+            self.reset()
+            self._gmt_.M1.keep([k])
+            gs.reset()
+            self._gmt_.propagate(gs)
+            self._c_shackHartmann.propagate(gs._c_source)
+            self.frames[:,:,k-1] = self.frame.host()
+            self._c_shackHartmann.camera.readout(self.camera.exposureTime,
+                                                 self.camera.readOutNoiseRms,
+                                                 self.camera.nBackgroundPhoton,
+                                                 self.camera.noiseFactor)
+            self._c_shackHartmann.process()
+            buf = self.c.host().ravel()
+            self._c_[k-1,0] = buf[0] - self._c0_[k-1,0]
+            self._c_[k-1,1] = buf[1] - self._c0_[k-1,1]
+        self._gmt_.M1.keep(self.segID)
+
+
+    def analyze(self, Source gs, **kwargs):
+        cdef int k
+        cdef float[:] buf
+        for k in self.segID:
+            self.reset()
+            self._gmt_.M1.keep([k])
+            gs.reset()
+            self._gmt_.propagate(gs)
+            self._c_shackHartmann.analyze(gs._c_source)
+            self.frames[:,:,k-1] = self.frame.host()
+            buf = self.c.host().ravel()
+            self._c_[k-1,0] = buf[0] - self._c0_[k-1,0]
+            self._c_[k-1,1] = buf[1] - self._c0_[k-1,1]
+        self._gmt_.M1.keep(self.segID)
+    
+    def process(self):
+        pass
+
+    def get_measurement(self):
+        return np.ravel(np.array(self._c_))
+
+    def get_measurement_size(self):
+        return 14
+
+

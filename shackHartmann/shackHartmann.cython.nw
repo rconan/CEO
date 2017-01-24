@@ -56,6 +56,7 @@ cdef class ShackHartmann:
         readonly Imaging camera
         readonly Centroiding data_proc
 	cuFloatArray _valid_slopes_, _valid_reference_slopes_
+        public float[:,:] ghost_frame
 @
 \index{shackHartmann!python!GeometricShackHartmann}
 <<class definitions>>=
@@ -206,17 +207,19 @@ cdef class ShackHartmann:
         """
         Reset the sensor
         """
-        self.reset()
+        self._c_shackHartmann.camera.reset()
 
     def __pos__(self):
         """
-        Read-out the detector and process the frame
+        Read-out and reset the detector and process the frame
         """
         self._c_shackHartmann.camera.readout(self.camera.exposureTime,
                                              self.camera.readOutNoiseRms,
                                              self.camera.nBackgroundPhoton,
                                              self.camera.noiseFactor)
         self.process()
+        self.ghost_frame = self.camera.frame.host()
+        self._c_shackHartmann.camera.reset()
 
     def update_lenslet(self, filt):
         cdef cuFloatArray F
@@ -495,6 +498,7 @@ cdef class GeometricShackHartmann:
 \subsection{JShackHartmann}
 \label{sec:jshackhartmann}
 
+\index{shackHartmann!python!JShackHartmann}
 <<shackHartmann.pyx>>=
 from utilities import JSONAbstract
 class JShackHartmann(JSONAbstract,ShackHartmann):
