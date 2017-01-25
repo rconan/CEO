@@ -1153,6 +1153,7 @@ cdef class TT7(ShackHartmann):
 
 <<gmtMirrors.pyx>>=
 import numpy as np
+from atmosphere cimport AtmosphereAbstract
 cdef class TT7(ShackHartmann):
     def __init__(self, GmtMirrors gmt, *args, **kwargs):
         ShackHartmann.__init__(self,1, *args, **kwargs)
@@ -1161,57 +1162,6 @@ cdef class TT7(ShackHartmann):
         self._c_  = np.zeros((7,2))
         self.frames = np.zeros((self.N_PX_FRAME,self.N_PX_FRAME,7),dtype=np.float32)
         self.segID = range(1,8)        
-
-    def calibrate(self, Source gs):
-        cdef int k
-        cdef float[:] buf
-        for k in self.segID:
-            self.reset()
-            self._gmt_.M1.keep([k])
-            gs.reset()
-            self._gmt_.propagate(gs)
-            self._c_shackHartmann.analyze(gs._c_source)
-            self.frames[:,:,k-1] = self.frame.host()
-            buf = self.c.host().ravel()
-            self._c0_[k-1,0] = buf[0]
-            self._c0_[k-1,1] = buf[1]
-        self._gmt_.M1.keep(self.segID)
-
-    def propagate(self, Source gs):
-        cdef int k
-        cdef float[:] buf
-        for k in self.segID:
-            self.reset()
-            self._gmt_.M1.keep([k])
-            gs.reset()
-            self._gmt_.propagate(gs)
-            self._c_shackHartmann.propagate(gs._c_source)
-            self.frames[:,:,k-1] = self.frame.host()
-            self._c_shackHartmann.camera.readout(self.camera.exposureTime,
-                                                 self.camera.readOutNoiseRms,
-                                                 self.camera.nBackgroundPhoton,
-                                                 self.camera.noiseFactor)
-            self._c_shackHartmann.process()
-            buf = self.c.host().ravel()
-            self._c_[k-1,0] = buf[0] - self._c0_[k-1,0]
-            self._c_[k-1,1] = buf[1] - self._c0_[k-1,1]
-        self._gmt_.M1.keep(self.segID)
-
-
-    def analyze(self, Source gs, **kwargs):
-        cdef int k
-        cdef float[:] buf
-        for k in self.segID:
-            self.reset()
-            self._gmt_.M1.keep([k])
-            gs.reset()
-            self._gmt_.propagate(gs)
-            self._c_shackHartmann.analyze(gs._c_source)
-            self.frames[:,:,k-1] = self.frame.host()
-            buf = self.c.host().ravel()
-            self._c_[k-1,0] = buf[0] - self._c0_[k-1,0]
-            self._c_[k-1,1] = buf[1] - self._c0_[k-1,1]
-        self._gmt_.M1.keep(self.segID)
     
     def process(self):
         pass
@@ -1221,5 +1171,84 @@ cdef class TT7(ShackHartmann):
 
     def get_measurement_size(self):
         return 14
+
+    def calibrate(self, Source gs):
+        cdef int k
+        cdef float[:] buf
+        for k in self.segID:
+            <<TT7 propagate part I>>
+            self._c_shackHartmann.analyze(gs._c_source)
+            self.frames[:,:,k-1] = self.frame.host()
+            buf = self.c.host().ravel()
+            self._c0_[k-1,0] = buf[0]
+            self._c0_[k-1,1] = buf[1]
+        self._gmt_.M1.keep(self.segID)
+
+    def propagate(self, Source gs, AtmosphereAbstract atm=None):
+        cdef int k, n7
+        cdef float[:] buf
+        cdef float d7
+        if atm is None:
+            for k in self.segID:
+                <<TT7 propagate part I>>
+                self._c_shackHartmann.propagate(gs._c_source)
+                self.frames[:,:,k-1] = self.frame.host()
+                self._c_shackHartmann.camera.readout(self.camera.exposureTime,
+                                                     self.camera.readOutNoiseRms,
+                                                     self.camera.nBackgroundPhoton,
+                                                     self.camera.noiseFactor)
+                self._c_shackHartmann.process()
+                buf = self.c.host().ravel()
+                self._c_[k-1,0] = buf[0] - self._c0_[k-1,0]
+                self._c_[k-1,1] = buf[1] - self._c0_[k-1,1]
+        else:
+            n7 = gs.rays.N_L
+            d7 = gs.rays.L/(n7-1)
+            for k in self.segID:
+                <<TT7 propagate part I>>
+                atm.ray_tracing(gs,d7,n7,d7,n7,gs.timeStamp)
+                self._c_shackHartmann.propagate(gs._c_source)
+                self.frames[:,:,k-1] = self.frame.host()
+                self._c_shackHartmann.camera.readout(self.camera.exposureTime,
+                                                     self.camera.readOutNoiseRms,
+                                                     self.camera.nBackgroundPhoton,
+                                                     self.camera.noiseFactor)
+                self._c_shackHartmann.process()
+                buf = self.c.host().ravel()
+                self._c_[k-1,0] = buf[0] - self._c0_[k-1,0]
+                self._c_[k-1,1] = buf[1] - self._c0_[k-1,1]
+        self._gmt_.M1.keep(self.segID)
+
+    def analyze(self, Source gs, AtmosphereAbstract atm=None, **kwargs):
+        cdef int k, n7
+        cdef float[:] buf
+        cdef float d7
+        if atm is None:
+            for k in self.segID:
+                <<TT7 propagate part I>>
+                self._c_shackHartmann.analyze(gs._c_source)
+                self.frames[:,:,k-1] = self.frame.host()
+                buf = self.c.host().ravel()
+                self._c_[k-1,0] = buf[0] - self._c0_[k-1,0]
+                self._c_[k-1,1] = buf[1] - self._c0_[k-1,1]
+        else:
+            n7 = gs.rays.N_L
+            d7 = gs.rays.L/(n7-1)
+            for k in self.segID:
+                <<TT7 propagate part I>>
+                atm.ray_tracing(gs,d7,n7,d7,n7,gs.timeStamp)
+                self._c_shackHartmann.analyze(gs._c_source)
+                self.frames[:,:,k-1] = self.frame.host()
+                buf = self.c.host().ravel()
+                self._c_[k-1,0] = buf[0] - self._c0_[k-1,0]
+                self._c_[k-1,1] = buf[1] - self._c0_[k-1,1]
+        self._gmt_.M1.keep(self.segID)
+
+@  with
+<<TT7 propagate part I>>=
+self.reset()
+self._gmt_.M1.keep([k])
+gs.reset()
+self._gmt_.propagate(gs)
 
 

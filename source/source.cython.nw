@@ -623,6 +623,10 @@ cdef class Source:
         the distance to the reference sphere used to compute the OPD
     OPTICALPATH : tuple (readonly)
         the source optical path
+    samplingTime : double
+        the source propagation sampling time; default: 1s
+    timeStamp : double
+        the time associated with the current propagation, the "samplingTime" is added to "timeStamp" after each call to the unary + operator
 
     Examples
     --------
@@ -841,6 +845,12 @@ cdef class Source:
         def __get__(self):
             return np.tan(self._zenith_)*np.sin(self._azimuth_)
 
+    property fwhm:
+        def __get__(self):
+            return self._c_source.fwhm
+        def __set__(self,float value):
+            self._c_source.fwhm = value
+
     def masked(self, MaskAbstract tel):
         """
         Apply the binary mask of the telescope pupil to the source wavefront
@@ -863,6 +873,12 @@ cdef class Source:
         Reset the wavefront amplitude to 1 and phase to 0 and re--initialize the ray bundle
         """
         self._c_source.wavefront.reset()
+        self._c_source.reset_rays()
+
+    def resetRays(self):
+        """
+        Re--initialize the ray bundle
+        """
         self._c_source.reset_rays()
 
     def piston(self, where='pupil',int units_exponent=0):
@@ -969,6 +985,11 @@ cdef class Source:
                                                           self._c_source.rays.d__piston_mask)
         return sxy
 @
+
+\subsubsection{JSource}
+\label{sec:jsource}
+
+
 \index{source!python!JSource}
 <<source.pyx>>=
 from utilities import JSONAbstract
