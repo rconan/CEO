@@ -12,6 +12,7 @@ cdef extern from "atmosphere.h":
         float WIDTH_LAYER, LENGTH_LAYER
     cdef cppclass atmosphere:
         int N_LAYER
+        float r0
         unsigned long N_PHASE_LAYER
         float *d__phase_screen_LAYER
         layer *layers
@@ -69,7 +70,7 @@ cdef class AtmosphereAbstract:
     cdef:
         atmosphere *_c_atmosphere
         readonly list layers
-        readonly float r0, L0
+        readonly float L0
         readonly int N_LAYER
         readonly ndarray altitude, xi0, wind_speed, wind_direction
 @
@@ -138,7 +139,6 @@ cdef class AtmosphereAbstract:
                   N_LAYER=1,
                   altitude=0.0, xi0=1.0,
                   wind_speed=0.0, wind_direction=0.0):
-        self.r0 = r0
         self.L0 = L0
         self.N_LAYER        = N_LAYER
         self.altitude       = np.array( altitude, dtype=np.float32)
@@ -578,3 +578,9 @@ def get_phase_screen_circ_uplink_centroids(self, Centroiding cog, float R,
 
 def __dealloc__(self):
     self._c_atmosphere.cleanup()
+
+property r0:
+    def __get__(self):
+        return self._c_atmosphere.r0
+    def __set__(self,float value):
+        self._c_atmosphere.r0 = value
