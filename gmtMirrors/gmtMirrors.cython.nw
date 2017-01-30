@@ -244,6 +244,7 @@ cdef class GmtMirrors:
         double *d__x_BM
         double *d__y_BM
         double *d__BM
+        double *d__BMS
         int BM_N_SAMPLE
         void setup(int, int)
         void setupKL(int, int)
@@ -349,6 +350,7 @@ cdef class KarhunenLoeve:
         bending_modes *_c_bending_modes
         public int n_mode, N_SURF
         public rtd[:,::1] a
+        readonly cuDoubleArray S
 @
 
 \subsection{PYX file}
@@ -363,6 +365,9 @@ cdef class KarhunenLoeve:
         self.n_mode = N_MODE
         self.N_SURF = N_SURF
         self.a = np.zeros((N_SURF, N_MODE), dtype=np.float64)
+        self.S = cuDoubleArray(shape=(self._c_bending_modes.BM_N_SAMPLE,
+                                      self._c_bending_modes.BM_N_SAMPLE))
+        self.S._c_gpu.dev_data = self._c_bending_modes.d__BMS
 
     def __dealloc__(self):
         self._c_bending_modes.cleanup();
@@ -370,7 +375,9 @@ cdef class KarhunenLoeve:
     def load(self,grid='irregular'):
         cdef cuDoubleArray BM
         self._c_bending_modes.load_KL()
-        BM = cuDoubleArray(shape=(1,self._c_bending_modes.BM_N_SAMPLE*self._c_bending_modes.BM_N_SAMPLE))
+        BM = cuDoubleArray(shape=(1,
+              self._c_bending_modes.BM_N_SAMPLE*\
+              self._c_bending_modes.BM_N_SAMPLE))
         BM._c_gpu.dev_data = self._c_bending_modes.d__BM
         return BM
 
