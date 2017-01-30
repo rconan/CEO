@@ -130,7 +130,7 @@ rtd L;
 @
 \item the mirror total area as seen by an on--axis source in square meter and number of pixel
 <<GMT M12 parameters>>=
-rtd area0;
+rtd area0, area_fraction;
 float area0_px;
 @
 \item the mirror total area as seen by the star propagating through the telescope
@@ -268,6 +268,7 @@ idx_offset = 0;
 V = NULL;
 @ and
 <<GMT setup common>>=
+area_fraction = 1.0;
 vector __v0(0.0,0.0,0.0),
        __v(D_full*0.5,0.0,0.0),
        origin[12],
@@ -611,7 +612,7 @@ The rays propagation through M1 is computed with
 <<GMT M1 functions>>=
 void gmt_m1::trace(bundle *rays)
 {
-  rays->V.area = area0*rays->N_BUNDLE;
+  rays->V.area = area0*rays->N_BUNDLE*area_fraction;
   <<GMT trace common>>
 }
 @ where
@@ -664,6 +665,8 @@ if (ZS!=NULL)
 					    d__valid_segments);
 
 if (BS!=NULL)
+  {
+  fprintf(stdout,"BM_N_SAMPLE=%d\n",BS->BM_N_SAMPLE);
   m1_bm_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY,
 					    Rri2, R2,
 					    aperture_CS.d__R,
@@ -682,7 +685,7 @@ if (BS!=NULL)
 					    rays->d__chief_ray,
 					    rays->d__piston_mask,
 					    d__valid_segments);
-
+  }
 intersection LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY);
 float previous_nnz = rays->V.nnz;
 //fprintf(stdout,"M%d previous nnz rays: %f\n",M_ID,previous_nnz);
@@ -1366,6 +1369,7 @@ and
 <<GMT remove segments>>=
 int k;
 char valid[7];
+area_fraction = (7-N_ID)/7.0;
 memset(valid, 1, sizeof(char)*7);
 for (k=0;k<N_ID;k++)
   valid[seg_ID[k]-1] = 0;
@@ -1384,6 +1388,7 @@ and
 <<GMT keep segments>>=
 int k;
 char valid[7];
+area_fraction = N_ID/7.0;
 memset(valid, 0, sizeof(char)*7);
 for (k=0;k<N_ID;k++)
   valid[seg_ID[k]-1] = 1;
@@ -1933,7 +1938,7 @@ void bending_modes::load_KL(void)
   if (result != lSize) {fputs ("Reading error",stderr); exit (3);}
 
   /* the whole file is now loaded in the memory buffer. */
-  BM_radius = 0.5*1.0425*1.005;//4.25;
+  BM_radius = 0.5*1.0425*1.1;//4.25;
   BM_N_SAMPLE = 256;
   HANDLE_ERROR( cudaMalloc((void**)&d__BM_buffer, lSize*sizeof(double)) );
   HANDLE_ERROR( cudaMemcpy( d__BM_buffer  , buffer, lSize*sizeof(double),

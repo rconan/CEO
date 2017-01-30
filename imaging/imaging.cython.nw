@@ -7,9 +7,6 @@
 <<imaging.pxd>>=
 from source cimport source, Source
 from utilities cimport cuFloatArray
-from shackHartmann cimport ShackHartmann
-from pyramid cimport Pyramid
-from segmentPistonSensor cimport SegmentPistonSensor
 cdef extern from "imaging.h":
     cdef cppclass imaging:
         int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_PX_CAMERA, N_SOURCE, N_FRAME
@@ -42,6 +39,8 @@ cdef class Imaging:
         readonly cuFloatArray frame
         char isPtr
         public float exposureTime, readOutNoiseRms, nBackgroundPhoton, noiseFactor
+    cdef void set_ptr(Imaging, imaging *)
+
 @
 \section{PYX file}
 \label{sec:pyx-file}
@@ -104,9 +103,8 @@ cdef class Imaging:
                  int BIN_IMAGE=1, int N_SOURCE=1,
                  float exposureTime=1.0, float readOutNoiseRms=0.0, 
                  float nBackgroundPhoton=0.0, float noiseFactor=1.0,
-		 ShackHartmann wfs=None,
-		 SegmentPistonSensor sps=None,
-		 Pyramid pym=None):
+                 float photoElectronGain=1.0,
+		 char isPtr=0):
         if N_PX_IMAGE==0:
             N_PX_IMAGE = N_PX_PUPIL;
         self.N_SIDE_LENSLET = N_SIDE_LENSLET
@@ -116,6 +114,7 @@ cdef class Imaging:
         self.BIN_IMAGE      = BIN_IMAGE
         self.N_PX_FRAME     = self.N_PX_IMAGE*self.N_SIDE_LENSLET/self.BIN_IMAGE
         self.N_SOURCE       = N_SOURCE
+        """
         if wfs is not None:
             self.isPtr = 1
             self._c_imaging = &(wfs._c_shackHartmann.camera)
@@ -132,14 +131,28 @@ cdef class Imaging:
             self._c_imaging.setup(N_PX_PUPIL, N_SIDE_LENSLET,
                                   DFT_osf, N_PX_IMAGE,
                                   BIN_IMAGE, N_SOURCE)
+        """
+        self.isPtr = isPtr
         self.frame = cuFloatArray(shape=(self.N_SOURCE*self.N_PX_FRAME,
 				         self.N_PX_FRAME))
-        self.frame._c_gpu.dev_data = self._c_imaging.d__frame
+        if not self.isPtr:
+            if N_PX_IMAGE is None:
+                N_PX_IMAGE = N_PX_PUPIL
+            self._c_imaging.setup(N_PX_PUPIL, N_SIDE_LENSLET,
+                                  DFT_osf, N_PX_IMAGE,
+                                  BIN_IMAGE, N_SOURCE)
+            self.frame._c_gpu.dev_data = self._c_imaging.d__frame
+            self._c_imaging.photoelectron_gain = photoElectronGain
+
         self.exposureTime      = exposureTime
         self.readOutNoiseRms   = readOutNoiseRms
         self.nBackgroundPhoton = nBackgroundPhoton
         self.noiseFactor       = noiseFactor
 
+    cdef void set_ptr(self, imaging *camera_ptr):
+        self._c_imaging = camera_ptr
+        self.frame._c_gpu.dev_data = self._c_imaging.d__frame
+        
     def __dealloc__(self):
         if not self.isPtr:
             self._c_imaging.cleanup()

@@ -295,6 +295,8 @@ int N_WIDTH_LAYER, N_LENGTH_LAYER;
 @ \item layers phase screen
 <<atmosphere parameters>>=
 float *d__phase_screen_LAYER;
+cublasHandle_t handle;
+float r0_native;
 @ \item the size in memory of all the phase screnn in the layers
 <<atmosphere parameters>>=
 unsigned long N_PHASE_LAYER;
@@ -866,6 +868,10 @@ HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
                           phase_screen_LAYER,
                           sizeof(float)*N_PHASE_LAYER,
                           cudaMemcpyHostToDevice ) );
+r0_native = powf(0.15,5.0/6.0);
+cublasCreate(&handle);
+CUBLAS_ERROR( cublasSscal(handle, N_PHASE_LAYER, &r0_native, d__phase_screen_LAYER, 1) );
+cublasDestroy(handle);
 tid.toc();
 fclose(layers_fid);
 @
@@ -2021,6 +2027,7 @@ const float delta_x, const int N_X,
 const float delta_y, const int N_Y,
 float* phase_screen_PUPIL,
 const source* src, const int N_SOURCE,
+const float r0,
 const layer* layers,
 float* d__phase_screen_LAYER,
 const int N_LAYER, const float tau)
@@ -2039,7 +2046,7 @@ const int N_LAYER, const float tau)
 
       <<bilinear interpolation>>
 
-	phase_screen_PUPIL[ij+k_SOURCE*NXY_PUPIL] += zi;
+	phase_screen_PUPIL[ij+k_SOURCE*NXY_PUPIL] += r0*zi;
     }
   }
 }
@@ -2048,6 +2055,7 @@ const float delta_x, const int N_X,
 const float delta_y, const int N_Y,
 float* phase_screen_PUPIL, char *mask,
 const source* src, const int N_SOURCE,
+const float r0,
 const layer* layers,
 float* d__phase_screen_LAYER,
 const int N_LAYER, const float tau)
@@ -2066,7 +2074,7 @@ const int N_LAYER, const float tau)
 
       <<bilinear interpolation>>
 
-	phase_screen_PUPIL[ij+k_SOURCE*NXY_PUPIL] += zi;
+	phase_screen_PUPIL[ij+k_SOURCE*NXY_PUPIL] += r0*zi;
     }
   }
 }
@@ -2124,6 +2132,9 @@ void atmosphere::rayTracing(source *src,
 				phase_screen_LAYER + k_DURATION*N_PHASE_LAYER,
 				sizeof(float)*N_PHASE_LAYER,
 				cudaMemcpyHostToDevice ) );
+      cublasCreate(&handle);
+      CUBLAS_ERROR( cublasSscal(handle, N_PHASE_LAYER, &r0_native, d__phase_screen_LAYER, 1) );
+      cublasDestroy(handle);
       tid.toc();
     } else {
       <<layer to device (ray tracing)>>
@@ -2138,6 +2149,7 @@ void atmosphere::rayTracing(source *src,
 						delta_y, N_Y,
 						src->wavefront.phase,
 						src->dev_ptr, src->N_SRC,
+						powf(r0,-5.0/6.0),
 						d__layers,
 						d__phase_screen_LAYER,
 						N_LAYER, new_tau);
@@ -2147,6 +2159,7 @@ void atmosphere::rayTracing(source *src,
 						       src->wavefront.phase,
 						       src->wavefront.M->m,
 						       src->dev_ptr, src->N_SRC,
+						       powf(r0,-5.0/6.0),
 						       d__layers,
 						       d__phase_screen_LAYER,
 						       N_LAYER, new_tau);
