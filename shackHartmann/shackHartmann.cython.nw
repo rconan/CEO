@@ -56,6 +56,7 @@ cdef class ShackHartmann:
         readonly Imaging camera
         readonly Centroiding data_proc
 	cuFloatArray _valid_slopes_, _valid_reference_slopes_
+        public float[:,:] ghost_frame
 @
 \index{shackHartmann!python!GeometricShackHartmann}
 <<class definitions>>=
@@ -184,8 +185,11 @@ cdef class ShackHartmann:
         self._c_shackHartmann = new shackHartmann()
 
     def __init__(self, int N_SIDE_LENSLET=0, int N_PX_LENSLET=0, float d=0.0,
-	          DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, N_GS=1):
-        if N_PX_IMAGE is None:
+                 int DFT_osf=2, int N_PX_IMAGE=0, int BIN_IMAGE=1, int N_GS=1,
+                 float exposureTime=1.0, float readOutNoiseRms=0.0, 
+                 float nBackgroundPhoton=0.0, float noiseFactor=1.0,
+                 float photoElectronGain=1.0):
+        if N_PX_IMAGE==0:
             N_PX_IMAGE = N_PX_LENSLET;
         self.N_GS           = N_GS
         self._c_shackHartmann.setup(N_SIDE_LENSLET, N_PX_LENSLET, d,
@@ -193,9 +197,33 @@ cdef class ShackHartmann:
 
         self.camera = Imaging(N_SIDE_LENSLET, N_PX_LENSLET,
                               DFT_osf=DFT_osf,N_PX_IMAGE=N_PX_IMAGE,
-                              BIN_IMAGE=BIN_IMAGE,N_SOURCE=N_GS,wfs=self)
+                              BIN_IMAGE=BIN_IMAGE,N_SOURCE=N_GS,
+                              exposureTime=exposureTime, readOutNoiseRms=readOutNoiseRms,
+                              nBackgroundPhoton=nBackgroundPhoton, noiseFactor=noiseFactor,
+                              photoElectronGain=photoElectronGain, isPtr=1)
+        self.camera.set_ptr( &(self._c_shackHartmann.camera) )
+        self.camera.photoelectron_gain = photoElectronGain
+
         self.data_proc = Centroiding(N_SIDE_LENSLET,wfs=self)
         <<shackHartmann cython init>>
+
+    def __invert__(self):
+        """
+        Reset the sensor
+        """
+        self._c_shackHartmann.camera.reset()
+
+    def __pos__(self):
+        """
+        Read-out and reset the detector and process the frame
+        """
+        self._c_shackHartmann.camera.readout(self.camera.exposureTime,
+                                             self.camera.readOutNoiseRms,
+                                             self.camera.nBackgroundPhoton,
+                                             self.camera.noiseFactor)
+        self.process()
+        self.ghost_frame = self.camera.frame.host()
+        self._c_shackHartmann.camera.reset()
 
     def update_lenslet(self, filt):
         cdef cuFloatArray F
@@ -214,7 +242,8 @@ cdef class ShackHartmann:
         """
         self._c_shackHartmann.camera.reset()
 
-    def readOut(self,float exposureTime, float readOutNoiseRms):
+    def readOut(self,float exposureTime, float readOutNoiseRms, 
+                float nBackgroundPhoton=0.0, float noiseFactor=1.0):
         """
         Reads-out the WFS detector frame adding photon and read-out noises
 
@@ -225,7 +254,8 @@ cdef class ShackHartmann:
         readoutNoiseRms : float
             The rms of the detector read-out noise
         """
-        self._c_shackHartmann.camera.readout(exposureTime,readOutNoiseRms)
+        self._c_shackHartmann.camera.readout(exposureTime,readOutNoiseRms,
+                                             nBackgroundPhoton, noiseFactor)
 
     def pointing(self,float[:] zen, float[:] azim):
         """
@@ -472,6 +502,7 @@ cdef class GeometricShackHartmann:
 \subsection{JShackHartmann}
 \label{sec:jshackhartmann}
 
+\index{shackHartmann!python!JShackHartmann}
 <<shackHartmann.pyx>>=
 from utilities import JSONAbstract
 class JShackHartmann(JSONAbstract,ShackHartmann):

@@ -543,6 +543,7 @@ cdef class Complex_amplitude:
 \label{sec:class-definition-2}
 
 <<class definitions>>=
+from cpython.object cimport Py_GT
 cdef class Source:
     cdef:
         source *_c_source
@@ -554,6 +555,8 @@ cdef class Source:
         readonly Bundle rays
         readonly Complex_amplitude wavefront
         readonly sphere_distance
+        readonly tuple OPTICALPATH
+        public double samplingTime, timeStamp
 @
 \subsection{PYX file}
 \label{sec:pyx-file-2}
@@ -618,6 +621,12 @@ cdef class Source:
         the wavefront complex amplitude
     sphere_distance : float
         the distance to the reference sphere used to compute the OPD
+    OPTICALPATH : tuple (readonly)
+        the source optical path
+    samplingTime : double
+        the source propagation sampling time; default: 1s
+    timeStamp : double
+        the time associated with the current propagation, the "samplingTime" is added to "timeStamp" after each call to the unary + operator
 
     Examples
     --------
@@ -702,9 +711,62 @@ cdef class Source:
         self.rays = Bundle(self)
         self.N_SRC = self._c_source.N_SRC
         self.sphere_distance = None
+        self.samplingTime = 1.0
+        self.timeStamp = 0.0
 
     def __dealloc__(self):
         self._c_source.cleanup()
+
+    def __rshift__(Source x, tuple y):
+        """
+        Set the optical path
+
+        Parameters
+        ----------
+        x : Source
+            The Source object
+        y : tuple
+            A list of CEO object the source is propagating through
+        """
+        x.OPTICALPATH = y
+        print "OPTICAL PATH: "+str(map(lambda z: z.__class__.__name__,x.OPTICALPATH))
+
+    def __richcmp__(Source x, tuple y, int op):
+        """
+        Append to the optical path
+
+        Parameters
+        ----------
+        x : Source
+            The Source object
+        y : tuple
+            A list of CEO object the source is propagating through
+        """
+        if op==Py_GT:
+            x.OPTICALPATH = x.OPTICALPATH + y
+            print "OPTICAL PATH: "+str(map(lambda z: z.__class__.__name__,x.OPTICALPATH))
+        else:
+            assert False
+
+    def __invert__(self):
+        """
+        Reset the source
+        """
+        self.reset()
+
+    def __pos__(self):
+        """
+        Reset the source and propagate the source through the optical path
+        """
+        self.reset()
+        map(lambda x: x.propagate(self), self.OPTICALPATH)
+        self.timeStamp += self.samplingTime
+
+    def __iadd__(self, int x):
+        cdef int k
+        for k in range(x):
+            self.__pos__()
+        return self
 
     def opd2phase(self):
         """
@@ -771,9 +833,9 @@ cdef class Source:
     property magnitude:
         def __get__(self):
             return np.asarray(self._magnitude_)     
-        def __set__(self, float[:] magnitude):
-            self._magnitude_ = magnitude
-            self._c_source.update_magnitude(&magnitude[0], magnitude.size)
+        def __set__(self, list magnitude):
+            self._magnitude_ = np.array(magnitude,dtype=np.float32,ndmin=1)
+            self._c_source.update_magnitude(&(self._magnitude_[0]), self._magnitude_.size)
 
     property theta_x:
         def __get__(self):
@@ -782,6 +844,12 @@ cdef class Source:
     property theta_y:
         def __get__(self):
             return np.tan(self._zenith_)*np.sin(self._azimuth_)
+
+    property fwhm:
+        def __get__(self):
+            return self._c_source.fwhm
+        def __set__(self,float value):
+            self._c_source.fwhm = value
 
     def masked(self, MaskAbstract tel):
         """
@@ -805,6 +873,12 @@ cdef class Source:
         Reset the wavefront amplitude to 1 and phase to 0 and re--initialize the ray bundle
         """
         self._c_source.wavefront.reset()
+        self._c_source.reset_rays()
+
+    def resetRays(self):
+        """
+        Re--initialize the ray bundle
+        """
         self._c_source.reset_rays()
 
     def piston(self, where='pupil',int units_exponent=0):
@@ -911,6 +985,11 @@ cdef class Source:
                                                           self._c_source.rays.d__piston_mask)
         return sxy
 @
+
+\subsubsection{JSource}
+\label{sec:jsource}
+
+
 \index{source!python!JSource}
 <<source.pyx>>=
 from utilities import JSONAbstract

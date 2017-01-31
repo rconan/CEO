@@ -4,8 +4,11 @@ import numpy as np
 import numpy.linalg as LA
 from scipy.optimize import brenth, leastsq
 from skimage.feature import blob_log
-from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann, GmtMirrors, SegmentPistonSensor, \
-    constants, Telescope, cuFloatArray, Aperture, Transform_to_S, Intersect, Reflect, Refract, Transform_to_R
+from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
+    TT7,\
+    GmtMirrors, SegmentPistonSensor, \
+    constants, Telescope, cuFloatArray, Aperture,\
+    Transform_to_S, Intersect, Reflect, Refract, Transform_to_R
 
 class CalibrationVault(object):
 
@@ -395,7 +398,7 @@ class GMT_MX(GmtMirrors):
                     sys.stdout.write("\n")
             if mode=="Karhunen-Loeve":
                 n_mode = self.M2.modes.n_mode
-                D = np.zeros((wfs.get_measurement_size(),n_mode*7))
+                D = np.zeros((wfs.get_measurement_size(),(n_mode*7))
                 idx = 0;
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
@@ -619,7 +622,7 @@ class Sensor:
     def get_measurement_size(self):
         pass
 
-class TT7(Sensor):
+class GeometricTT7(Sensor):
 
     def __init__(self,**kwargs):
         self.n_valid_slopes   = 14
@@ -645,6 +648,8 @@ class TT7(Sensor):
 
     def get_measurement(self):
         return self.valid_slopes.host().ravel()
+    def get_measurement_size(self):
+        return 14
 
     def get_measurement_size(self):
         return self.n_valid_slopes

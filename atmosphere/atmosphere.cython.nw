@@ -12,6 +12,7 @@ cdef extern from "atmosphere.h":
         float WIDTH_LAYER, LENGTH_LAYER
     cdef cppclass atmosphere:
         int N_LAYER
+        float r0
         unsigned long N_PHASE_LAYER
         float *d__phase_screen_LAYER
         layer *layers
@@ -69,7 +70,7 @@ cdef class AtmosphereAbstract:
     cdef:
         atmosphere *_c_atmosphere
         readonly list layers
-        readonly float r0, L0
+        readonly float L0
         readonly int N_LAYER
         readonly ndarray altitude, xi0, wind_speed, wind_direction
 @
@@ -138,7 +139,6 @@ cdef class AtmosphereAbstract:
                   N_LAYER=1,
                   altitude=0.0, xi0=1.0,
                   wind_speed=0.0, wind_direction=0.0):
-        self.r0 = r0
         self.L0 = L0
         self.N_LAYER        = N_LAYER
         self.altitude       = np.array( altitude, dtype=np.float32)
@@ -356,6 +356,38 @@ cdef class GmtAtmosphere(AtmosphereAbstract):
 from utilities import JSONAbstract
 from constants import ARCMIN2RAD
 class JGmtAtmosphere(JSONAbstract,GmtAtmosphere):
+    """
+    Creates an atmosphere with the GMT default Cn2 and wind vector profiles
+
+    Parameters
+    ----------
+    jsonfile : the JSON file that describes the atmosphere model
+    zipdata : the zip file containing the atmosphere mode
+    cache : the directory where to unzip the atmosphere data
+
+    Examples
+    --------
+    >>> import ceo
+    >>> atm = ceo.JGmtAtmosphere(jsonfile='/mnt/bins/gmtAtmosphereL030.json',
+                                 zipdata='s3://gmto.rconan/gmtAtmosphereL030.zip',
+                                 cache='/mnt/bins/')
+    >>> import json
+    >>> json.loads(open('/mnt/bins/gmtAtmosphereL030.json').read())
+
+    {u'L0': 30,
+    u'duration': 15,
+    u'field-of-view [arcmin]': 20,
+    u'filename': u'/mnt/bins/gmtAtmosphereL030.bin',
+    u'pupil sampling': 346,
+    u'pupil size': 26.0,
+    u'r0': 0.15,
+    u'time sampling': 20}
+    
+    See also
+    --------
+    JSONAbstract : the JSON file interface class
+    GmtAtmosphere : the atmosphere class with the default GMT atmosphere model
+    """
     def __init__(self, *args, **kwargs):
         print "@(ceo.JGmtAtmosphere)>"
         JSONAbstract.__init__(self,  *args, **kwargs)
@@ -480,6 +512,16 @@ def ray_tracing(self, Source src,
 				  delta_x, N_X, delta_y, N_Y,
                                   tau)
 
+def propagate(self, Source src):
+    cdef:
+        float delta
+        int N
+    N = src.rays.N_L
+    delta = src.rays.L/(N-1)
+    self._c_atmosphere.rayTracing(src._c_source,
+				  delta, N, delta, N,
+                                  src.timeStamp)
+
 def get_phase_screen_gradient(self, Centroiding cog, int NL, float d,
 			      Source src, float time):
     """
@@ -536,3 +578,9 @@ def get_phase_screen_circ_uplink_centroids(self, Centroiding cog, float R,
 
 def __dealloc__(self):
     self._c_atmosphere.cleanup()
+
+property r0:
+    def __get__(self):
+        return self._c_atmosphere.r0
+    def __set__(self,float value):
+        self._c_atmosphere.r0 = value
