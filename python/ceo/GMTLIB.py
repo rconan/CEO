@@ -283,7 +283,7 @@ class GMT_MX(GmtMirrors):
             if mode=="zernike":
                 n_mode = self.M1.zernike.n_mode
                 D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
-                idx = 0;
+                idx = 0
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
                     for kMode in range(first_mode, n_mode):
@@ -294,7 +294,7 @@ class GMT_MX(GmtMirrors):
             if mode=="bending modes":
                 n_mode = self.M1.modes.n_mode
                 D = np.zeros((wfs.get_measurement_size(),n_mode*7))
-                idx = 0;
+                idx = 0
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
                     for kMode in range(n_mode):
@@ -388,7 +388,7 @@ class GMT_MX(GmtMirrors):
             if mode=="zernike":
                 n_mode = self.M2.zernike.n_mode
                 D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
-                idx = 0;
+                idx = 0
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
                     for kMode in range(first_mode,n_mode):
@@ -398,8 +398,8 @@ class GMT_MX(GmtMirrors):
                     sys.stdout.write("\n")
             if mode=="Karhunen-Loeve":
                 n_mode = self.M2.modes.n_mode
-                D = np.zeros((wfs.get_measurement_size(),(n_mode*7))
-                idx = 0;
+                D = np.zeros((wfs.get_measurement_size(),n_mode*7))
+                idx = 0
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
                     for kMode in range(n_mode):
