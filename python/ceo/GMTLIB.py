@@ -398,11 +398,11 @@ class GMT_MX(GmtMirrors):
                     sys.stdout.write("\n")
             if mode=="Karhunen-Loeve":
                 n_mode = self.M2.modes.n_mode
-                D = np.zeros((wfs.get_measurement_size(),(n_mode*7))
+                D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
                 idx = 0;
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
-                    for kMode in range(n_mode):
+                    for kMode in range(first_mode,n_mode):
                         sys.stdout.write("%d "%(kMode+1))
                         D[:,idx] = np.ravel( pushpull( M2_zernike_update ) )
                         idx += 1
