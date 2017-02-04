@@ -521,12 +521,14 @@ cdef class GMT_M1:
         b = 0
         c = theta
         <<transform part 1>>
+        idx = seg_id-1
         o = np.pi*(3-2*idx)/6
         xt = self.L*np.cos(o+c)
         yt = self.L*np.sin(o+c)
         zt = self.rigid_body_CS.origin[idx,2]
         ut = np.array([xt,yt,zt])[:,None]
         <<transform part 2>>
+        return (origin,euler_angles)
 @
 <<backward and forward transform>>=
 def backward_transform(u,R,o):
@@ -540,8 +542,6 @@ Ra = np.array( [[1, 0, 0,],[0,np.cos(a),-np.sin(a)],[0,np.sin(a),np.cos(a)]] )
 Rb = np.array( [[np.cos(b), 0, np.sin(b)],[0,1,0],[-np.sin(b),0,np.cos(b)]] )
 Rc = np.array( [[np.cos(c), -np.sin(c),0],[np.sin(c),np.cos(c),0],[0,0,1]] )
 RTT = np.dot(Rc,np.dot(Rb,Ra))
-
-idx = seg_id-1
 @ 
 <<transform part 2>>=
 origin = np.ravel(forward_transform(ut,self.rigid_body_CS.R[idx],
@@ -554,7 +554,6 @@ euler_angles[0] = np.arctan2(RM[2,1],RM[2,2])
 euler_angles[1] = np.arcsin(-RM[2,0])
 euler_angles[2] = np.arctan2(RM[1,0],RM[0,0])  
 
-return (origin,euler_angles)
 @ 
 <<GMT M12 constructor>>=
 self.mirror_modes_type = mirror_modes
@@ -675,17 +674,17 @@ def keep(self, list seg_ID):
     _seg_ID_ = np.array(seg_ID,dtype=np.int32,ndmin=1)
     self._c_gmt_m12.keep(&_seg_ID_[0], _seg_ID_.size)
 
-def transform(self,seg_id, xyz, abc):
+def transform(self,list xyz, list abc, list segId=None):
     """
     Decomposes GCS Txyz and Rxyz into segment Txyx and Rxyz
 
     Parameters
     ----------
-    seg_id : any
+    seg_id : list
         The segment number ID (1 base)
-    xyz : any
+    xyz : list
         The GCS translations
-    abc : any
+    abc : list
         The GCS rotations
 
     Returns
@@ -693,13 +692,22 @@ def transform(self,seg_id, xyz, abc):
     (ndarray,ndarray)
         (Txyz,Rxyz)
     """
+
     <<backward and forward transform>>
+    if segId is None:
+        segId = range(7)
+    else:
+        segId = [x-1 for x in segId]
     a = abc[0]
     b = abc[1]
     c = abc[2]        
     <<transform part 1>>
-    ut = backward_transform(self.rigid_body_CS.origin[idx,:][:,None],RTT,np.transpose(np.array(xyz,ndmin=2)))
-    <<transform part 2>>
+    for idx in segId:
+        ut = backward_transform(self.rigid_body_CS.origin[idx,:][:,None],RTT,np.transpose(np.array(xyz,ndmin=2)))
+        <<transform part 2>>
+        self.motion_CS.origin[idx,:] = origin
+        self.motion_CS.euler_angles[idx,:] = euler_angles
+    self.motion_CS.update()
 
 property D_assembly:
     def __get__(self):
@@ -899,13 +907,14 @@ cdef class GMT_M2:
         b = 0
         c = theta
         <<transform part 1>>
+        idx = seg_id-1
         o = np.pi*(3-2*idx)/6 + np.pi
         xt = self.L*np.cos(o+c)
         yt = self.L*np.sin(o+c)
         zt = self.rigid_body_CS.origin[idx,2]
         ut = np.array([xt,yt,zt])[:,None]
         <<transform part 2>>
-
+        return (origin,euler_angles)
 @
 \section{Stereoscopic edge sensors}
 \label{sec:ster-edge-sens}
