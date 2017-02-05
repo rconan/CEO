@@ -1120,7 +1120,11 @@ void imaging::readout(float exposureTime, float readOutNoiseRms,
 		      float nBackgroundPhoton,  float noiseFactor) {
 <<read-out content>>
 float nbgp, nf2;
+int n;
 nbgp = (N_FRAME>0) ? nBackgroundPhoton*N_FRAME : nBackgroundPhoton;
+n = N_SIDE_LENSLET*N_PX_CAMERA;
+n *= n;
+nbgp /= n;
 nf2 = noiseFactor*noiseFactor;
 noisify LLL gridDim, blockDim RRR (devStates, d__frame, N,
 				   readOutNoiseRms, unit_exposureTime,
@@ -1168,7 +1172,7 @@ __global__ void noisify(curandState *state, float *frame, const int n_frame,
 	 frame[id] = (frame[id]<0) ? 0 : frame[id]; 
 	 frame[id] += (readOutNoiseRms>0) ?
 	   curand_normal(&localState)*readOutNoiseRms : 0;
-	   frame[id] -= nBackgroundPhoton*exposureTime*photoelectron_gain;
+	 //frame[id] -= nBackgroundPhoton*exposureTime*photoelectron_gain;
 	 //frame[id] = (frame[id]>0) ? floorf(frame[id]) : ceilf(frame[id]);
 	 state[id] = localState;
        }
