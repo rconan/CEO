@@ -463,37 +463,48 @@ class GMT_MX(GmtMirrors):
         #self[mirror].D.update({mode:D})
         return D
 
-    def AGWS_calibrate(self,wfs,gs,coupled=False,decoupled=False, 
+    def AGWS_calibrate(self,wfs,gs,stroke=None,coupled=False,decoupled=False, 
                        fluxThreshold=0.0, filterMirrorRotation=True,
+                       includeBM=True,
                        calibrationVaultKwargs=None):
         gs.reset()
         self.reset()
         self.propagate(gs)
+        if stroke is None:
+            stroke = [1e-6]*5
         if coupled:
             wfs.calibrate(gs,fluxThreshold)
             flux = wfs.valid_lenslet.f.host()
             D = []
-            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=1e-6) )
-            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=1e-6) )
-            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=1e-6) )
-            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=1e-6) )
-            D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=1e-6/4) )
+            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
+            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
+            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
+            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
+            if includeBM:
+                D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=stroke[4]) )
             D  = np.concatenate(D,axis=1)
             return CalibrationVault([D],**calibrationVaultKwargs)
         elif decoupled:
             wfs.calibrate(gs,0.0)
             flux = wfs.valid_lenslet.f.host()
             D = []
-            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=1e-6) )
-            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=1e-6) )
-            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=1e-6) )
-            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=1e-6) )
-            D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=1e-6/4) )
-            D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
+            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
+            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
+            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
+            if includeBM:
+                D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=stroke[4]) )
+                D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
                         D[2][:,k*3:k*3+3],
                         D[1][:,k*3:k*3+3],
                         D[3][:,k*3:k*3+3],
                         D[4][:,k*self.M1.modes.n_mode:(k+1)*self.M1.modes.n_mode]],axis=1) 
+                    for k in range(7)]
+            else:
+                D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                        D[2][:,k*3:k*3+3],
+                        D[1][:,k*3:k*3+3],
+                        D[3][:,k*3:k*3+3]],axis=1) 
                     for k in range(7)]
 
             max_flux = flux.max()

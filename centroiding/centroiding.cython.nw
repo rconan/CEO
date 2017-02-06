@@ -5,8 +5,6 @@
 
 <<centroiding.pxd>>=
 from utilities cimport cuFloatArray, mask, MaskAbstract
-from shackHartmann cimport ShackHartmann, GeometricShackHartmann
-from pyramid cimport Pyramid
 cdef extern from "centroiding.h":
     cdef cppclass centroiding:
         float *d__c
@@ -28,6 +26,7 @@ cdef class Centroiding:
         readonly int N_SIDE_LENSLET, N_SOURCE
         readonly cuFloatArray flux, c
         char isPtr
+    cdef void set_ptr(Centroiding, centroiding *)
 @ 
 
 \section{PYX file}
@@ -62,12 +61,10 @@ cdef class Centroiding:
     cuFloatArray: class acting as the interface between GPU host and device
     """
 
-    def __cinit__(self, int N_SIDE_LENSLET, int N_SOURCE=1, 
-                  ShackHartmann wfs=None,
-                  GeometricShackHartmann gwfs=None,
-		  Pyramid pym=None):
+    def __cinit__(self, int N_SIDE_LENSLET, int N_SOURCE=1, char isPtr=0):
 	self._c_centroiding = new centroiding()
         self.N_SIDE_LENSLET = N_SIDE_LENSLET
+        """
         if wfs is not None:
             self.isPtr = 1
             self.N_SOURCE = wfs.N_GS
@@ -84,10 +81,20 @@ cdef class Centroiding:
             self.isPtr = 0
             self.N_SOURCE = N_SOURCE
             self._c_centroiding.setup(self.N_SIDE_LENSLET,self.N_SOURCE)    
+        """
+        self.isPtr = isPtr
+        self.N_SOURCE = N_SOURCE
         self.flux = cuFloatArray(shape=(self.N_SOURCE*self.N_SIDE_LENSLET,
                                         self.N_SIDE_LENSLET))
-        self.flux._c_gpu.dev_data = self._c_centroiding.d__mass
         self.c = cuFloatArray(shape=(self.N_SOURCE,(self.N_SIDE_LENSLET**2)*2))
+        if not self.isPtr:
+            self._c_centroiding.setup(self.N_SIDE_LENSLET,self.N_SOURCE)    
+            self.flux._c_gpu.dev_data = self._c_centroiding.d__mass
+            self.c._c_gpu.dev_data = self._c_centroiding.d__c
+
+    cdef void set_ptr(self, centroiding *data_proc_ptr):
+        self._c_centroiding = data_proc_ptr
+        self.flux._c_gpu.dev_data = self._c_centroiding.d__mass
         self.c._c_gpu.dev_data = self._c_centroiding.d__c
 
     def __dealloc__(self):
