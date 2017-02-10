@@ -15,6 +15,12 @@ cdef extern from "shackHartmann.h":
         void setup(int , int, float , int , int , int, int)
 	float* get_frame_dev_ptr()
         void update_lenslet(float *)
+    cdef cppclass tt7:
+        <<common extern declaration>>
+        imaging camera
+        void setup(int , int, float , int , int , int, int)
+	float* get_frame_dev_ptr()
+        void update_lenslet(float *)
     cdef cppclass geometricShackHartmann:
         <<common extern declaration>>
         void setup(int , float , int)
@@ -50,13 +56,23 @@ from centroiding cimport Centroiding
 cdef class ShackHartmann:
     cdef:
         shackHartmann *_c_shackHartmann
-        readonly int N_GS
-        readonly MaskAbstract valid_lenslet, valid_actuator
-        readonly cuFloatArray c0
-        readonly Imaging camera
-        readonly Centroiding data_proc
-	cuFloatArray _valid_slopes_, _valid_reference_slopes_
-        public float[:,:] ghost_frame
+        <<shackHartmann class definitions>>
+@ with
+<<shackHartmann class definitions>>=
+readonly int N_GS
+readonly MaskAbstract valid_lenslet, valid_actuator
+readonly cuFloatArray c0
+readonly Imaging camera
+readonly Centroiding data_proc
+cuFloatArray _valid_slopes_, _valid_reference_slopes_
+public float[:,:] ghost_frame
+@
+\index{shackHartmann!python!TT7}
+<<class definitions>>=
+cdef class TT7Sensor:
+    cdef:
+        tt7 *_c_shackHartmann
+        <<shackHartmann class definitions>>
 @
 \index{shackHartmann!python!GeometricShackHartmann}
 <<class definitions>>=
@@ -184,6 +200,9 @@ cdef class ShackHartmann:
     def __cinit__(self, *args, **kwargs):
         self._c_shackHartmann = new shackHartmann()
 
+<<shackHartmann contents>>
+@ 
+<<shackHartmann contents>>=
     def __init__(self, int N_SIDE_LENSLET=0, int N_PX_LENSLET=0, float d=0.0,
                  int DFT_osf=2, int N_PX_IMAGE=0, int BIN_IMAGE=1, int N_GS=1,
                  float exposureTime=1.0, float readOutNoiseRms=0.0, 
@@ -204,7 +223,9 @@ cdef class ShackHartmann:
         self.camera.set_ptr( &(self._c_shackHartmann.camera) )
         self.camera.photoelectron_gain = photoElectronGain
 
-        self.data_proc = Centroiding(N_SIDE_LENSLET,wfs=self)
+        self.data_proc = Centroiding(N_SIDE_LENSLET, N_SOURCE=self.N_GS, isPtr=1)
+        self.data_proc.set_ptr( &(self._c_shackHartmann.data_proc) )
+
         <<shackHartmann cython init>>
 
     def __invert__(self):
@@ -221,6 +242,14 @@ cdef class ShackHartmann:
                                              self.camera.readOutNoiseRms,
                                              self.camera.nBackgroundPhoton,
                                              self.camera.noiseFactor)
+        self.process()
+        self.ghost_frame = self.camera.frame.host()
+        self._c_shackHartmann.camera.reset()
+
+    def __neg__(self):
+        """
+        Read-out and reset the detector and process the frame
+        """
         self.process()
         self.ghost_frame = self.camera.frame.host()
         self._c_shackHartmann.camera.reset()
@@ -472,6 +501,22 @@ self.c0._c_gpu.dev_data = self._c_shackHartmann.d__c0
         def __get__(self):
             return self.data_proc.c
 @
+
+\subsection{TT7}
+\label{sec:tt7}
+
+<<shackHartmann.pyx>>=
+cdef class TT7Sensor:
+    def __cinit__(self, *args, **kwargs):
+        self._c_shackHartmann = new tt7()
+
+<<shackHartmann contents>>
+
+cdef class TT7(TT7Sensor):
+    def __init__(self, **kwargs):
+        super(TT7,self).__init__(N_SIDE_LENSLET=1,N_GS=7,**kwargs)
+@
+
 \subsection{GeometricShackHartmann}
 \label{sec:geom}
 
@@ -486,7 +531,8 @@ cdef class GeometricShackHartmann:
         self.N_GS           = N_GS
         self._c_shackHartmann.setup(N_SIDE_LENSLET, d, N_GS)
 
-        self.data_proc = Centroiding(N_SIDE_LENSLET,gwfs=self)
+        self.data_proc = Centroiding(N_SIDE_LENSLET, N_SOURCE=self.N_GS, isPtr=1)
+        self.data_proc.set_ptr( &(self._c_shackHartmann.data_proc) )
         <<shackHartmann cython init>>
         
     def readOut(self, float T, float ron):
