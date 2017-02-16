@@ -50,10 +50,10 @@ void get_valid_slopes_norm(float *)
 
 \index{shackHartmann!python!ShackHartmann}
 <<class definitions>>=
-from utilities cimport cuFloatArray, MaskAbstract
+from utilities cimport Sensor, cuFloatArray, MaskAbstract
 from imaging cimport Imaging
 from centroiding cimport Centroiding
-cdef class ShackHartmann:
+cdef class ShackHartmann(Sensor):
     cdef:
         shackHartmann *_c_shackHartmann
         <<shackHartmann class definitions>>
@@ -69,14 +69,14 @@ public float[:,:] ghost_frame
 @
 \index{shackHartmann!python!TT7}
 <<class definitions>>=
-cdef class TT7Sensor:
+cdef class TT7Sensor(Sensor):
     cdef:
         tt7 *_c_shackHartmann
         <<shackHartmann class definitions>>
 @
 \index{shackHartmann!python!GeometricShackHartmann}
 <<class definitions>>=
-cdef class GeometricShackHartmann:
+cdef class GeometricShackHartmann(Sensor):
     cdef:
         geometricShackHartmann *_c_shackHartmann
         readonly int N_SIDE_LENSLET
@@ -500,13 +500,17 @@ self.c0._c_gpu.dev_data = self._c_shackHartmann.d__c0
     property c:
         def __get__(self):
             return self.data_proc.c
+
+    property data:
+        def __get__(self):
+            return self.valid_slopes.host().ravel()
 @
 
 \subsection{TT7}
 \label{sec:tt7}
 
 <<shackHartmann.pyx>>=
-cdef class TT7Sensor:
+cdef class TT7Sensor(Sensor):
     def __cinit__(self, *args, **kwargs):
         self._c_shackHartmann = new tt7()
 
@@ -521,7 +525,7 @@ cdef class TT7(TT7Sensor):
 \label{sec:geom}
 
 <<shackHartmann.pyx>>=
-cdef class GeometricShackHartmann:
+cdef class GeometricShackHartmann(Sensor):
 
     def __cinit__(self, *args, **kwargs):
         self._c_shackHartmann = new geometricShackHartmann()
