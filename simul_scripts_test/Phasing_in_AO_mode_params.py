@@ -10,7 +10,7 @@ Tsim = 2e-3        # Simulation time step [seconds]
 totSimulTime = 0.5 # Total simulated time [seconds]
 
 #----- System configurations:
-simul_turb         = False
+simul_turb         = True
 simul_onaxis_AO    = False
 simul_PS_control   = True
 simul_FDSP_control = False  #Note: If FDSP in ON, on-axis AO needs to be ON too
@@ -36,11 +36,11 @@ if simul_turb == True:
 #----- SPS guide stars and sensors:
 if simul_SPS==True:
     SPStype = 'DFS'         # Choose between "ideal" or "DFS"
-    asterism_type = 'Dummy' #Choose between 'Besancon_GP' and 'Dummy'
-    N_GS_PS = 4
+    asterism_type = 'Besancon_GP' #Choose between 'Besancon_GP' and 'Dummy'
+    N_GS_PS = 3
     alpha_ps = 6.0*60.      # radius of circle where GSs are located [in arcsec]
     band = "J"
-    mag = [12.,13.,14.,15.]
+    mag = 12.0
     bkgd_mag = 16.2         # J-band sky bkgd (mag/arcsec^2); Tech Note GMT-02274, rev 2.4
     e0 = 1.88e12             # ph/s in J band
     throughput = 0.65*0.75   # Table 3, GMT-DOC-01404
@@ -55,7 +55,7 @@ if simul_SPS==True:
     simul_bkgd = True
     sps_seed = 1928
     
-    gPS   = 1.0
+    gPS   = 0.8
     gFDSP = 0.8
 
     exposureTime = 30e-3 # DFS camera integration time [seconds]
@@ -87,7 +87,7 @@ if simul_onaxis_AO == True:
 
 #---- Initial scramble parameters:
 scramble_tt = False
-scramble_pist = True
+scramble_pist = False
 tt_scramble_rms = 1500e-3   #arcsec
 pist_scramble_rms = 1e-6  #m SURF
 
