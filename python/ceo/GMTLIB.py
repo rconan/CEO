@@ -13,7 +13,7 @@ from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
 
 class CalibrationVault(object):
 
-    def __init__(self,D,nThreshold=None,valid=None,insertZeros = None):
+    def __init__(self,D,valid=None,nThreshold=None,insertZeros = None):
         self.D = D
         if nThreshold is None:
             self._nThreshold_ = [0]*len(D)
@@ -132,7 +132,8 @@ class GMT_MX(GmtMirrors):
                             M2_N_MODE=M2_N_MODE)
 
     def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None, first_mode=3, 
-		closed_loop_calib=False, minus_M2_TT=False):
+                  closed_loop_calib=False, minus_M2_TT=False,
+                  calibrationVaultKwargs=None):
         """
         Calibrate the different degrees of freedom of the  mirrors
 
@@ -151,6 +152,7 @@ class GMT_MX(GmtMirrors):
         stroke : float
             The amplitude of the motion
         """
+
         def close_NGAOish_loop():
             niter = 7
             nzernall = (self.M2.modes.n_mode-1)*7
@@ -481,7 +483,12 @@ class GMT_MX(GmtMirrors):
 
         sys.stdout.write("------------\n")
         #self[mirror].D.update({mode:D})
-        return D
+        if calibrationVaultKwargs is None:
+            return D
+        else:
+            return CalibrationVault([D],**calibrationVaultKwargs)
+
+## AGWS_CALIBRATE
 
     def AGWS_calibrate(self,wfs,gs,stroke=None,coupled=False,decoupled=False, 
                        fluxThreshold=0.0, filterMirrorRotation=True,
@@ -541,7 +548,6 @@ class GMT_MX(GmtMirrors):
             Q3clps = Q3clps>1
             
             VLs = [ np.logical_and(X,~Q3clps) for X in Q]
-            calibrationVaultKwargs['valid'] = VLs
             D_sr = [ D_s[k][VLs[k].ravel(),:] for k in range(7) ]
 
             if filterMirrorRotation:
@@ -557,7 +563,7 @@ class GMT_MX(GmtMirrors):
                     s[-1]   = 0
                     D_sr[k][:,6:12] = np.dot(U,np.dot(np.diag(s),VT))
     
-            return CalibrationVault(D_sr,**calibrationVaultKwargs)
+            return CalibrationVault(D_sr, valid=VLs,**calibrationVaultKwargs)
 
         else:
             raise ValueError('"coupled" or "decoupled" must be set to True!')
@@ -738,6 +744,9 @@ class Sensor:
     def get_measurement_size(self):
         pass
 
+    def __pos__(self):
+        pass
+
 class GeometricTT7(Sensor):
 
     def __init__(self,**kwargs):
@@ -767,8 +776,13 @@ class GeometricTT7(Sensor):
     def get_measurement_size(self):
         return 14
 
-    def get_measurement_size(self):
-        return self.n_valid_slopes
+    @property 
+    def data(self):
+        return self.valid_slopes.host().ravel()
+
+    @property 
+    def Data(self):
+        return self.valid_slopes.host(shape=(14,1))
 
 class DispersedFringeSensor(SegmentPistonSensor):
     """

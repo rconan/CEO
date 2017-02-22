@@ -65,7 +65,6 @@ readonly cuFloatArray c0
 readonly Imaging camera
 readonly Centroiding data_proc
 cuFloatArray _valid_slopes_, _valid_reference_slopes_
-public float[:,:] ghost_frame
 @
 \index{shackHartmann!python!TT7}
 <<class definitions>>=
@@ -217,7 +216,7 @@ cdef class ShackHartmann:
                  int DFT_osf=2, int N_PX_IMAGE=0, int BIN_IMAGE=1, int N_GS=1,
                  float exposureTime=1.0, float readOutNoiseRms=0.0, 
                  float nBackgroundPhoton=0.0, float noiseFactor=1.0,
-                 float photoElectronGain=1.0):
+                 float photoElectronGain=1.0, **kwargs):
         if N_PX_IMAGE==0:
             N_PX_IMAGE = N_PX_LENSLET;
         self.N_GS           = N_GS
@@ -253,16 +252,14 @@ cdef class ShackHartmann:
                                              self.camera.nBackgroundPhoton,
                                              self.camera.noiseFactor)
         self.process()
-        self.ghost_frame = self.camera.frame.host()
-        self._c_shackHartmann.camera.reset()
+        self.reset()
 
     def __neg__(self):
         """
         Read-out and reset the detector and process the frame
         """
         self.process()
-        self.ghost_frame = self.camera.frame.host()
-        self._c_shackHartmann.camera.reset()
+        self.reset()
 
     def update_lenslet(self, filt):
         cdef cuFloatArray F
@@ -279,7 +276,7 @@ cdef class ShackHartmann:
         """
         Resets the WFS detector frame to 0
         """
-        self._c_shackHartmann.camera.reset()
+        self.camera.reset()
 
     def readOut(self,float exposureTime, float readOutNoiseRms, 
                 float nBackgroundPhoton=0.0, float noiseFactor=1.0):
@@ -514,6 +511,10 @@ self.c0._c_gpu.dev_data = self._c_shackHartmann.d__c0
     property data:
         def __get__(self):
             return self.valid_slopes.host().ravel()
+
+    property Data:
+        def __get__(self):
+            return self.valid_slopes.host(shape=(self.n_valid_slopes,1))
 @
 
 \subsection{TT7}
@@ -540,7 +541,7 @@ cdef class GeometricShackHartmann(Sensor):
     def __cinit__(self, *args, **kwargs):
         self._c_shackHartmann = new geometricShackHartmann()
 
-    def __init__(self, int N_SIDE_LENSLET, float d, N_GS=1):
+    def __init__(self, int N_SIDE_LENSLET, float d, N_GS=1, **kwargs):
         self.N_SIDE_LENSLET = N_SIDE_LENSLET
         self.N_GS           = N_GS
         self._c_shackHartmann.setup(N_SIDE_LENSLET, d, N_GS)
@@ -551,6 +552,13 @@ cdef class GeometricShackHartmann(Sensor):
         
     def readOut(self, float T, float ron):
         pass
+
+    def __pos__(self):
+        """
+        Reset the detector and process the frame
+        """
+        self.process()
+        self.reset()
 
 <<shackHartmann cython methods>>
 

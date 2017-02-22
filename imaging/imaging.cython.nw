@@ -10,7 +10,7 @@ from utilities cimport Sensor, cuFloatArray
 cdef extern from "imaging.h":
     cdef cppclass imaging:
         int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_PX_CAMERA, N_SOURCE, N_FRAME
-        float photoelectron_gain, N_PHOTON_PER_FRAME
+        float photoelectron_gain, N_PHOTON_PER_FRAME, N_PHOTON_TOTAL
         float *d__frame
         char absolute_pointing
         void setup(int , int , int , int , int, int)
@@ -35,10 +35,12 @@ cdef class Imaging(Sensor):
     cdef:
         imaging *_c_imaging
         readonly int N_SIDE_LENSLET, N_PX_PUPIL, DFT_osf, \
-                     N_PX_IMAGE, BIN_IMAGE, N_SOURCE, N_PX_FRAME
+                     N_PX_IMAGE, BIN_IMAGE, N_SOURCE, \
+                     N_PX_FRAME, ghost_N_FRAME
         readonly cuFloatArray frame
         char isPtr
         public float exposureTime, readOutNoiseRms, nBackgroundPhoton, noiseFactor
+        public float[:,:] ghost_frame
     cdef void set_ptr(Imaging, imaging *)
 
 @
@@ -122,7 +124,7 @@ cdef class Imaging(Sensor):
                  float exposureTime=1.0, float readOutNoiseRms=0.0, 
                  float nBackgroundPhoton=0.0, float noiseFactor=1.0,
                  float photoElectronGain=1.0,
-		 char isPtr=0):
+		 char isPtr=0, **kwargs):
         if N_PX_IMAGE==0:
             N_PX_IMAGE = N_PX_PUPIL;
         self.N_SIDE_LENSLET = N_SIDE_LENSLET
@@ -179,6 +181,16 @@ cdef class Imaging(Sensor):
         """
         Reset the sensor
         """
+        self.reset()
+
+    def __pos__(self):
+        """
+        Read-out and reset the detector
+        """
+        self._c_imaging.readout(self.exposureTime,
+                                self.readOutNoiseRms,
+                                self.nBackgroundPhoton,
+                                self.noiseFactor)
         self.reset()
 
     def calibrate(self, Source src, args=None):
@@ -275,6 +287,8 @@ cdef class Imaging(Sensor):
         """
         Resets the frame of the camera to 0
         """
+        self.ghost_frame = self.frame.host()
+        self.ghost_N_FRAME = self._c_imaging.N_FRAME
         self._c_imaging.reset()
 
     def reset_rng(self, int SEED):
@@ -295,7 +309,7 @@ cdef class Imaging(Sensor):
         """
         return self.pixelScale(src)*180.0*3600.0/np.pi
 
-    def ee80(self,double units=1.0):
+    def ee80(self,double units=1.0, bint from_ghost=0):
         """
         Computes the 80% ensquared energy patch size
         
@@ -310,11 +324,16 @@ cdef class Imaging(Sensor):
             The 80% ensquared energy patch size in pixel (default) or units if given
         """
         cdef:
-            int k, n, m
+            int k, n, m, N_FRAME
             double[::1] q 
             double[:,::1] x, y, gate
             double[:] u, v
-        psf   = self.frame.host()
+        if from_ghost:
+            psf = np.asarray( self.ghost_frame )
+            N_FRAME = self.ghost_N_FRAME
+        else:
+            psf = self.frame.host()  
+            N_FRAME = self._c_imaging.N_FRAME
         n,m   = psf.shape
         n /= self.N_SOURCE
         #u     = np.linspace(-1.0,1.0,n)*(n/2.0)
@@ -328,8 +347,7 @@ cdef class Imaging(Sensor):
             #gate = np.logical_and(np.abs(x)<=_ee_Delta_,np.abs(y)<=_ee_Delta_)
             gate = np.hypot(x,y)<=_ee_Delta_
             return np.sum(_psf_*gate)/(self._c_imaging.N_PHOTON_PER_FRAME*\
-                                       self._c_imaging.N_FRAME/\
-                                       self.N_SOURCE) - 0.8
+                                       N_FRAME/self.N_SOURCE) - 0.8
         q = np.zeros(self.N_SOURCE)
         for k in range(self.N_SOURCE):
             try:
