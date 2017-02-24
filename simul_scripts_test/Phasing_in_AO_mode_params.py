@@ -11,9 +11,9 @@ totSimulTime = 0.5 # Total simulated time [seconds]
 
 #----- System configurations:
 simul_turb         = True
-simul_onaxis_AO    = False
+simul_onaxis_AO    = True
 simul_PS_control   = True
-simul_FDSP_control = False  #Note: If FDSP in ON, on-axis AO needs to be ON too
+simul_FDSP_control = True  #Note: If FDSP in ON, on-axis AO needs to be ON too
 
 eval_perf_onaxis    = True
 eval_perf_field     = False
@@ -79,7 +79,7 @@ if simul_SH == True:
     
 #---- M2 control
 if simul_onaxis_AO == True:
-    AOtype = 'LTAOish'  #iChoose 'NGAOish' or 'LTAOish'
+    AOtype = 'NGAOish'  #iChoose 'NGAOish' or 'LTAOish'
     onaxis_AO_modes = u'Karhunen-Loeve'    #Choose 'zernikes' or 'Karhunen-Loeve'
     M2_n_modes = 300     #in case of 'Karhunen-Loeve'
     M2_radial_order = 4  #in case of 'zernikes'
@@ -89,6 +89,6 @@ if simul_onaxis_AO == True:
 scramble_tt = False
 scramble_pist = False
 tt_scramble_rms = 1500e-3   #arcsec
-pist_scramble_rms = 1e-6  #m SURF
+pist_scramble_rms = 5e-6  #m SURF
 
 
