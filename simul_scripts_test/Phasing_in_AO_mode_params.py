@@ -36,7 +36,7 @@ if simul_turb == True:
 #----- SPS guide stars and sensors:
 if simul_SPS==True:
     SPStype = 'DFS'         # Choose between "ideal" or "DFS"
-    asterism_type = 'Besancon_GP' #Choose between 'Besancon_GP' and 'Dummy'
+    asterism_type = 'Besancon_GP_AB' #Choose between 'Besancon_GP' and 'Dummy'
     N_GS_PS = 3
     alpha_ps = 6.0*60.      # radius of circle where GSs are located [in arcsec]
     band = "J"
@@ -55,11 +55,11 @@ if simul_SPS==True:
     simul_bkgd = True
     sps_seed = 1928
     
-    gPS   = 0.8
-    gFDSP = 0.8
+    gPS   = 0.6
+    gFDSP = 0.6
 
     exposureTime = 30e-3 # DFS camera integration time [seconds]
-    samplingTime = 30.0   # DFS sampling time [seconds]
+    samplingTime = 30.0  # DFS sampling time [seconds]
     sps_sampl_delay = 3  # number of exposures to neglect after FDSP correction
     # (to avoid M1-M2 transient)
     sps_sampl_iter = 9
@@ -84,6 +84,7 @@ if simul_onaxis_AO == True:
     M2_n_modes = 300     #in case of 'Karhunen-Loeve'
     M2_radial_order = 4  #in case of 'zernikes'
     gAO = 0.5
+    gAO_PS = 0.1
 
 #---- Initial scramble parameters:
 scramble_tt = False
