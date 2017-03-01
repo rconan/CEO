@@ -55,7 +55,7 @@ if simul_SPS==True:
     simul_bkgd = True
     sps_seed = 1928
     
-    gPS   = 0.6
+    gPS   = 0.0
     gFDSP = 0.6
 
     exposureTime = 30e-3 # DFS camera integration time [seconds]
