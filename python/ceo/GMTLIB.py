@@ -19,6 +19,7 @@ class CalibrationVault(object):
             self._nThreshold_ = [0]*len(D)
         else:
             self._nThreshold_ = nThreshold
+        self._threshold_ = None
         if valid is None:
             self.valid = [ np.ones(X.shape[0],dtype=np.bool) for X in self.D]
         else:
@@ -48,6 +49,14 @@ class CalibrationVault(object):
         print "@(CalibrationMatrix)> Updating the pseudo-inverse..."
         self._nThreshold_ = value
         self.M = [ self.__recon__(X,Y,Z) for X,Y,Z in zip(self.UsVT,self._nThreshold_,self.zeroIdx) ]
+
+    @property
+    def threshold(self):
+        return self._threshold_
+    @threshold.setter
+    def threshold(self,value):
+        self._threshold_ = value
+        self.nThreshold = [ np.sum(X[1]<X[1][0]*value) for X in  self.UsVT ]
 
     @property
     def eigenValues(self):
@@ -755,34 +764,34 @@ class GeometricTT7(Sensor):
 
     def calibrate(self, src, threshold=None):
         data = src.segmentsWavefrontGradient()
-        self.reference_slopes = data.host()
+        self.reference_slopes = data
 
     def reset(self):
         pass
 
     def analyze(self, src):
         data = src.segmentsWavefrontGradient()
-	self.valid_slopes = cuFloatArray(host_data = data.host() - self.reference_slopes)
+	self.valid_slopes = data - self.reference_slopes
 
     def propagate(self, src):
         data = src.segmentsWavefrontGradient()
-	self.valid_slopes = cuFloatArray(host_data = data.host() - self.reference_slopes)
+	self.valid_slopes = data - self.reference_slopes
 
     def process(self):
         pass
 
     def get_measurement(self):
-        return self.valid_slopes.host().ravel()
+        return self.valid_slopes.ravel()
     def get_measurement_size(self):
         return 14
 
     @property 
     def data(self):
-        return self.valid_slopes.host().ravel()
+        return self.valid_slopes.ravel()
 
     @property 
     def Data(self):
-        return self.valid_slopes.host(shape=(14,1))
+        return self.valid_slopes.reshape(14,1)
 
 class DispersedFringeSensor(SegmentPistonSensor):
     """
