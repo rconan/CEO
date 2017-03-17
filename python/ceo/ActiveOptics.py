@@ -1,3 +1,5 @@
+import os
+import shelve
 import sys
 import numpy as np
 import numpy.linalg as LA
@@ -6,7 +8,7 @@ import ceo
 
 class LSQ(object):
 
-    def __init__(self, gmt_prms, gs_tt7_prms, gs_wfs_prms, wfs_prms, includeBM=True):
+    def __init__(self, gmt_prms, gs_tt7_prms, gs_wfs_prms, wfs_prms, includeBM=True,filename=None):
         self.gmt    = ceo.GMT_MX(**gmt_prms)
         self.tt7_gs = ceo.Source(**gs_tt7_prms)
         self.tt7    = ceo.GeometricTT7()
@@ -15,21 +17,43 @@ class LSQ(object):
         self.wfs    = ceo.GeometricShackHartmann(**wfs_prms)
         self.includeBM = includeBM
 
+        file_already_exists = False
+        if filename is not None:
+            if os.path.isfile(filename+".dir"):
+                file_already_exists = True
+            db = shelve.open(filename)            
+
         print "@(AcO.LSQ)> WFS CALIBRATION ..."
         self.wfs_gs.reset()
         self.gmt.reset()
         self.gmt.propagate(self.wfs_gs)
         self.wfs.calibrate(self.wfs_gs,0.)
-        self.C = self.gmt.AGWS_calibrate(self.wfs,self.wfs_gs,decoupled=True,fluxThreshold=0.5,includeBM=self.includeBM,
-                               filterMirrorRotation=True,
-                               calibrationVaultKwargs={'nThreshold':[2]*6+[0],
-                                                       'insertZeros':[None]*6 + [[2,4,6]]})
+        if file_already_exists:
+            print " >> Loaded from %s"%filename
+            self.C = db['C']
+        else:
+            self.C = self.gmt.AGWS_calibrate(self.wfs,self.wfs_gs,decoupled=True,
+                                             fluxThreshold=0.5,includeBM=self.includeBM,
+                                             filterMirrorRotation=True,
+                                             calibrationVaultKwargs={'nThreshold':[2]*6+[0],
+                                                                     'insertZeros':[None]*6 + [[2,4,6]]})
+            if filename is not None:
+                print " >> Saved to %s"%filename
+                db['C'] = self.C
 
         print "@(AcO.LSQ)> TT7 CALIBRATION ..."        
         self.gmt.reset()
         self.gmt.propagate(self.tt7_gs)
         self.tt7.calibrate(self.tt7_gs)        
-        self.Dtt7 = self.gmt.calibrate(self.tt7,self.tt7_gs,mirror = 'M2',mode='segment tip-tilt',stroke=1e-6)
+        if file_already_exists:
+            print " >> Loaded from %s"%filename
+            self.Dtt7 = db['Dtt7']
+        else:
+            self.Dtt7 = self.gmt.calibrate(self.tt7,self.tt7_gs,
+                                           mirror = 'M2',mode='segment tip-tilt',stroke=1e-6)
+            if filename is not None:
+                print " >> Saved to %s"%filename
+                db['Dtt7'] = self.Dtt7
         self.Mtt7 = LA.inv(self.Dtt7)
 
         print "@(AcO.LSQ)> Generation of observables ..."                
@@ -93,29 +117,36 @@ class LSQ(object):
 
 
         print "@(AcO.LSQ)> TT7 calibration of observables ..."                
-        stroke = [1e-6]*4
-        D = []
-        D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
-        D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
-        D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
-        D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
-        if includeBM:
-            D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M1',mode='bending modes',stroke=1e-6) )
-
-        if includeBM:
-            D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
-                                    D[2][:,k*3:k*3+3],
-                                    D[1][:,k*3:k*3+3],
-                                    D[3][:,k*3:k*3+3],
-                                    D[4][:,k*self.N_MODE:(k+1)*self.N_MODE]],axis=1) 
-                    for k in range(7)]
+        if file_already_exists:
+            print " >> Loaded from %s"%filename
+            D_s = db['D_s']
         else:
-            D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
-                                    D[2][:,k*3:k*3+3],
-                                    D[1][:,k*3:k*3+3],
-                                    D[3][:,k*3:k*3+3]],axis=1) 
-                    for k in range(7)]
-        D_s[-1] = np.insert(D_s[-1],[2,4,6],0,axis=1)
+            stroke = [1e-6]*4
+            D = []
+            D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
+            D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
+            D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
+            D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
+            if includeBM:
+                D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M1',mode='bending modes',stroke=1e-6) )
+
+            if includeBM:
+                D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                        D[2][:,k*3:k*3+3],
+                                        D[1][:,k*3:k*3+3],
+                                        D[3][:,k*3:k*3+3],
+                                        D[4][:,k*self.N_MODE:(k+1)*self.N_MODE]],axis=1) 
+                        for k in range(7)]
+            else:
+                D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                        D[2][:,k*3:k*3+3],
+                                        D[1][:,k*3:k*3+3],
+                                        D[3][:,k*3:k*3+3]],axis=1) 
+                        for k in range(7)]
+            D_s[-1] = np.insert(D_s[-1],[2,4,6],0,axis=1)
+            if filename is not None:
+                print " >> Saved to %s"%filename
+                db['D_s'] = D_s
 
         P2 = np.zeros((12+self.N_MODE,2))
         P2[6,0] = 1
@@ -152,6 +183,9 @@ class LSQ(object):
         CCtt7 = np.array( [ np.trace(np.dot(X,np.dot(Y,X.T))) for X,Y in zip(self.Osp,self.L) ] )
         self.initWFE_TT7 = np.sqrt(CCtt7.sum()/self.Os[0].shape[0])*1e6
         print " >> Initial WFE RMS after TT7 correction: %.2fmicron"%self.initWFE_TT7
+
+        if filename is not None:
+            db.close()
 
         self._piston_removed_ = False
         self._Osp_ = None            
