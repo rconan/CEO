@@ -201,15 +201,14 @@ class LSQ(object):
         Q[-1] = np.dot(self.C.M[-1],D)
         Qb = [np.eye(12+self.N_MODE) - X for X in Q]
 
-        Qb2 = [np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Qb,self.L)]
+        self.Qb2 = [np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Qb,self.L)]
 
         n = self.Os[0].shape[0]
-        wfe_rms = lambda x : np.sqrt(x.sum()/n)*1e9
+        wfe_rms = lambda x : np.sqrt(sum([ np.trace(y) for y in x ])/n)*1e9
         Osp = self.Osp
 
-        CC = np.array( [ np.trace(np.dot(X,np.dot(Y,X.T))) for X,Y in zip(Osp,Qb2) ] )
-
-        self.noise_free_wfe = wfe_rms(CC)
+        self.Cov_wo_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.Qb2) ]
+        self.noise_free_wfe = wfe_rms(self.Cov_wo_noise)
 
         if gs_wfs_mag is not None:
 
@@ -220,14 +219,14 @@ class LSQ(object):
                                    self.wfs_prms['N_PX_IMAGE']/self.wfs_prms['BIN_IMAGE'],
                                    nPhBackground=nPhBackground,controller=controller)
 
-            N2 = [sigma_noise*np.dot(X,X.T) for X in self.C.M]
-            Qb2p = [X+Y for X,Y in zip(Qb2,N2)]
+            self.N2 = [sigma_noise*np.dot(X,X.T) for X in self.C.M]
+            Qb2p = [X+Y for X,Y in zip(self.Qb2,self.N2)]
 
-            CN = np.array( [ np.trace(np.dot(X,np.dot(Y,X.T))) for X,Y in zip(Osp,N2) ] )
-            CC = np.array( [ np.trace(np.dot(X,np.dot(Y,X.T))) for X,Y in zip(Osp,Qb2p) ] )
+            self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
+            self.wfe_noise_rms = wfe_rms(self.Cov_noise)
 
-            self.wfe_rms = wfe_rms(CC)
-            self.wfe_noise_rms = wfe_rms(CN)
+            self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
+            self.wfe_rms = wfe_rms(self.Cov_w_noise)
 
     @property
     def piston_removed(self):
