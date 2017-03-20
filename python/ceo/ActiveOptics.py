@@ -36,7 +36,7 @@ class LSQ(object):
                                              fluxThreshold=0.5,includeBM=self.includeBM,
                                              filterMirrorRotation=True,
                                              calibrationVaultKwargs={'nThreshold':[2]*6+[0],
-                                                                     'insertZeros':[None]*6 + [[2,4,6]]})
+                                                                     'insertZeros':[None]*6 + [[2,7]]})
             if filename is not None:
                 print " >> Saved to %s"%filename
                 db['C'] = self.C
@@ -143,7 +143,7 @@ class LSQ(object):
                                         D[1][:,k*3:k*3+3],
                                         D[3][:,k*3:k*3+3]],axis=1) 
                         for k in range(7)]
-            D_s[-1] = np.insert(D_s[-1],[2,4,6],0,axis=1)
+            D_s[-1] = np.insert(D_s[-1],[2,7],0,axis=1)
             if filename is not None:
                 print " >> Saved to %s"%filename
                 db['D_s'] = D_s
@@ -197,7 +197,7 @@ class LSQ(object):
         self.C.threshold = SVD_threshold
 
         Q = [np.dot(X,Y) for X,Y in zip(self.C.M,self.C.D)]
-        D = np.insert(self.C.D[-1],[2,4,6],0,axis=1)
+        D = np.insert(self.C.D[-1],[2,7],0,axis=1)
         Q[-1] = np.dot(self.C.M[-1],D)
         Qb = [np.eye(12+self.N_MODE) - X for X in Q]
 
