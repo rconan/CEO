@@ -126,6 +126,7 @@ __global__ void wavefront_finite_difference_sparse_matrix_kernel(
 __global__ void set_gmt_piston_kernel(float *phase, float *p, 
 				      char *m, int *piston_mask,
 				      const int N);
+ __global__ void double2float_kern(float *d__single_data, double *d__double_data, const int N);
 
 char fried_geometry_setup(char *lenslet_mask, char *actuator_mask, 
                           int NL, int n, float threshold);
@@ -187,6 +188,8 @@ int round_up_to_nhp2(int n) {
 <<cublas error>>
 
 <<vector functions>>
+
+<<double2float kernel>>
 
 <<fill ones>>
 <<fill ones (char)>>
@@ -1712,7 +1715,21 @@ struct gpu_t {
   void reset(void) {
     HANDLE_ERROR( cudaMemset( dev_data, 0, N*nb) );
   }
+  void double2float(gpu_t<float> *cuFloatArray ) {
+    dim3 blockDim(256);
+    dim3 gridDim(N/256+1);
+    double2float_kern LLL gridDim,blockDim RRR (cuFloatArray->dev_data, dev_data, N);
+  }
 };
+@ with
+<<double2float kernel>>=
+__global__ void double2float_kern(float *d__single_data, double *d__double_data, const int N)
+{
+  int i;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i<N)
+    d__single_data[i] =  __double2float_rn ( d__double_data[i] ) ;
+}
 @ 
 
 \subsection{Atmospheric dispersion}

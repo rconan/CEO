@@ -772,7 +772,17 @@ cdef class ZernikeS:
         self.a = np.zeros((self.N_SURF,self.n_mode))
         self._c_zernikeS.update(<rtd *>self.a.data)
 
-    def surface(self, cuDoubleArray r, cuDoubleArray o, int surf_id=0):
+    def __invert__(self):
+        self.reset()
+
+    def __ixor__(self, tuple t):
+        self.a[t[0],t[1]] = t[2]
+        self.update()
+        return self
+
+    def surface(self, cuDoubleArray r, cuDoubleArray o, 
+                int surf_id=0, int[:] surf_ids=None,
+                cuDoubleArray out=None):
         """
         Computes the Zernike surface in polar coordinates
 
@@ -784,18 +794,33 @@ cdef class ZernikeS:
             The azimuth
         surf_id : int, optional
             The surface index; default: 0
+        surf_ids : int[:], optional
+            The surface index vector; default: None
+        out : cuDoubleArray, optional
+            The Zernike surface boutput array; default: None
 
         Returns
         -------
         S : cuDoubleArray
             The Zernike surface
         """
+        cdef int k
         cdef cuDoubleArray S
-        S = cuDoubleArray(shape=r.shape, dev_malloc = True)
-        self._c_zernikeS.surface(S._c_gpu.dev_data,
-                                 r._c_gpu.dev_data, o._c_gpu.dev_data,
-                                 r._c_gpu.N, surf_id)
-        return S
+        if out is None:
+            S = cuDoubleArray(shape=r.shape, dev_malloc = True)
+            self._c_zernikeS.surface(S._c_gpu.dev_data,
+                                     r._c_gpu.dev_data, o._c_gpu.dev_data,
+                                     r._c_gpu.N, surf_id)
+            return S
+        else:
+            if surf_ids is None:
+                surf_ids = np.arange(self.N_SURF,dtype=np.int32)
+            assert out.size>=surf_ids.size*r.size, "out array is too small!"
+            for k in range(surf_ids.size):
+                self._c_zernikeS.surface(out._c_gpu.dev_data + r.size*k,
+                                         r._c_gpu.dev_data, o._c_gpu.dev_data,
+                                         r._c_gpu.N, surf_ids[k])
+                
 
     def surface_derivatives(self, cuDoubleArray r, cuDoubleArray o):
         """

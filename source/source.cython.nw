@@ -456,6 +456,28 @@ cdef class Complex_amplitude:
     def addPhase(self, cuFloatArray phase):
         self._c_complex_amplitude.add_phase(1,phase._c_gpu.dev_data)        
 
+    def __iadd__(self, x):
+        cdef cuFloatArray data
+        if isinstance(x,(np.ndarray,list,tuple,float)):
+            data  = cuFloatArray(host_data=x)
+        if isinstance(x,cuDoubleArray):
+            data = x.__single__()
+        if isinstance(x,cuFloatArray):
+            data = x
+        self._c_complex_amplitude.add_phase(1,data._c_gpu.dev_data)        
+        return self
+
+    def __isub__(self, x):
+        cdef cuFloatArray data
+        if isinstance(x,(np.ndarray,list,tuple,float)):
+            data  = cuFloatArray(host_data=x)
+        if isinstance(x,cuDoubleArray):
+            data = x.__single__()
+        if isinstance(x,cuFloatArray):
+            data = x
+        self._c_complex_amplitude.add_phase(-1,data._c_gpu.dev_data)        
+        return self
+
     def finiteDifference(self, int NL, float d, MaskAbstract M=None):
         """
         Computes the average finite difference of the wavefront
@@ -790,6 +812,7 @@ cdef class Source:
         """
         Reset the source and propagate the source through the optical path
         """
+        assert self.OPTICALPATH is not None, "OPTICALPATH is not set!"
         self.reset()
         map(lambda x: x.propagate(self), self.OPTICALPATH)
         self.timeStamp += self.samplingTime
