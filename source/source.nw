@@ -90,6 +90,7 @@ struct source {
 <<bundle reset kernel>>
 <<wavefront differentiation kernel (partial illumination identification)>>
 <<wavefront differentiation kernel (slope estimates)>>
+<<wavefront differentiation kernel (gradient)>>
 <<wavefront differentiation kernel (gradient average)>>
 <<wavefront differentiation kernel (segments gradient average)>>
 
@@ -179,7 +180,9 @@ struct complex_amplitude {
   void finite_difference(float *sx, float *sy, int NL, float d);
   void finite_difference(float *sx, float *sy, int NL, float d, mask *valid_lenslet);
   void gradient_average(float *sx, float *sy, int NL, float d);
+  void gradient_average(float *sx, float *sy, float d);
   void segments_gradient_average(float *sx, float *sy, float D, int *segment_markers);
+  void segments_gradient_averageFast(float *sx, float *sy, float D, int *segment_markers);
   void show_phase(char *filename);
   void show_phase(char *filename, int N_SRC);
   void show_amplitude(char *filename);
@@ -212,7 +215,12 @@ char tag[8];
 <<source parameters>>=
 char rays_exist;
 bundle rays;
+@ Other parameters of the [[complex_amplitude]] structure are:
+<<complex amplitude parameters>>=
+cublasHandle_t handle;
+float *buffer;
 @
+
 \section{Functions}
 \label{sec:functions}
 
@@ -1734,6 +1742,8 @@ void complex_amplitude::setup(int n_pixel, int n_src) {
 <<complex amplitude setup common>>=
 N_PX = n_pixel*N;
 M = NULL;
+buffer = NULL;
+cublasCreate(&handle);
 if (N_PX>0) {
   HANDLE_ERROR( cudaMalloc( (void**)&amplitude,  sizeof(float)*N_PX ) );
   HANDLE_ERROR( cudaMalloc( (void**)&phase,      sizeof(float)*N_PX ) );
@@ -1742,7 +1752,6 @@ if (N_PX>0) {
   amplitude  = NULL;
   phase      = NULL;
 }
-
 @ and memory is de--allocated with:
 \index{source!complex\_amplitude!cleanup}
 <<complex amplitude cleanup>>=
@@ -1751,6 +1760,9 @@ void complex_amplitude::cleanup(void) {
     HANDLE_ERROR( cudaFree( amplitude ) );
   if (phase!=NULL)
     HANDLE_ERROR( cudaFree( phase ) );
+  if (buffer!=NULL)
+    HANDLE_ERROR( cudaFree( buffer ) );
+  cublasDestroy(handle);
 }
 @ Allocated variable are freed with the [[cleanup]] routine
 \index{source!source!cleanup}
@@ -1838,10 +1850,9 @@ The following adds a phase aberration to the wavefront phase $$\varphi = \varphi
 <<adding wavefront phase>>=
 void complex_amplitude::add_phase(float alpha, float *phase_prime)
 {
-  cublasHandle_t handle;
-  cublasCreate(&handle);
   CUBLAS_ERROR( cublasSaxpy(handle, N_PX, &alpha, phase_prime, 1, phase, 1) );
-  cublasDestroy(handle);
+  if (M!=NULL)
+    masked();
 }
 
 @
@@ -2109,6 +2120,40 @@ void complex_amplitude::gradient_average(float *sx, float *sy, int NL, float d)
                                                     phase, M->f);
 }
 @ 
+<<wavefront differentiation>>=
+void complex_amplitude::gradient_average(float *sx, float *sy, float d)
+{
+  int k, N2, idx, NL = 1;
+  <<wavefront differentiation (common)>>
+  N2 = (n+1)*(n+1);
+
+  float *d__sx, *d__sy, *d__Px, *d__Py;
+  int n_byte = sizeof(float)*N_PX;
+  if (buffer==NULL)
+    HANDLE_ERROR( cudaMalloc((void**)&buffer, 4*n_byte) );
+  d__sx = buffer;
+  d__sy = buffer + N_PX;
+  d__Px = buffer + N_PX*2;
+  d__Py = buffer + N_PX*3;
+
+  dim3 blockDim(16,16);
+  dim3 gridDim((n+1)/16+1,(n+1)/16+1,N);
+  gradient_kernel LLL gridDim,blockDim RRR (d__sx, d__sy, d__Px, d__Py, 
+                                            NL, n, d, phase, M->f);
+
+  float res, nnz;
+  for (k=0; k<N; k++) {
+    idx = k*N2;
+    CUBLAS_ERROR( cublasSdot(handle, N2, d__sx + idx, 1, d__Px + idx, 1, &res) );
+    CUBLAS_ERROR( cublasSasum(handle, N2, d__Px + idx, 1, &nnz) );
+    res /= nnz;
+    sx[k] = res;
+    CUBLAS_ERROR( cublasSdot(handle, N2, d__sy + idx, 1, d__Py + idx, 1, &res) );
+    CUBLAS_ERROR( cublasSasum(handle, N2, d__Py + idx, 1, &nnz) );
+    res/= nnz;
+    sy[k] = res;
+  }
+}
 @ 
 with the kernel
 <<wavefront differentiation kernel (gradient average)>>=
@@ -2194,6 +2239,131 @@ __global__ void gradient_average_kernel(float *sx, float *sy,
     }
 }
 @ 
+<<wavefront differentiation kernel (gradient)>>=
+__global__ void gradient_kernel(float *sx, float *sy, float *Px, float *Py,
+                                        const int NL, const int n,
+                                        float d,
+                                        float *phase,
+                                        float *wavefront_mask_f)
+{
+  int i, j, k, a, b, w0, w, NP, iSource;
+    float p, dphi, h, P;
+    i = blockIdx.x * blockDim.x + threadIdx.x;
+    j = blockIdx.y * blockDim.y + threadIdx.y;
+    iSource = blockIdx.z;
+    if ( (i<(n+1)) && (j<(n+1)) ) {  
+      k = i*(n+1)+j;
+       NP = n*NL + 1;
+       k += iSource*(n+1)*(n+1);
+       w0 = iSource*NP*NP;
+       sx[k] = sy[k] = 0.0;
+       p = d/n;
+
+       a = i + 1;
+       h = 2*p;
+       if (a>=NP) {
+	 a = NP-1;
+	 h = p;
+       }    
+       b = i - 1;
+       if (b<0) {
+	 b = 0;
+	 h = p;
+       }
+       w = w0 + b*NP + j;
+       dphi = phase[w];
+       P    = wavefront_mask_f[w];
+       w = w0 + a*NP + j;
+       dphi -= phase[w];
+       P    *= wavefront_mask_f[w];
+       sx[k] += P*dphi/h;
+       Px[k] = P;
+
+       w = w0 + i*NP;
+       a = j + 1;
+       h = 2*p;
+       if (a>=NP) {
+	 a = NP-1;
+	 h = p;
+       }    
+       b = j - 1;
+       if (b<0) {
+	 b = 0;
+	 h = p;
+       }
+       dphi = phase[w+b];
+       P    = wavefront_mask_f[w+a];
+       dphi -= phase[w+a];
+       P    *= wavefront_mask_f[w+b];
+       sy[k] += P*dphi/h;
+       Py[k] = P;
+    }
+}
+@ 
+<<wavefront differentiation kernel (gradient)>>=
+__global__ void segments_gradient_kernel(float *sx, float *sy, float *Px, float *Py,
+					 const int NL, const int n,
+					 float d,
+					 float *phase,
+					 float *wavefront_mask_f,
+					 int *segment_mask,
+					 int iSegment)
+{
+  int i, j, k, a, b, w0, w, NP, iSource;
+    float p, dphi, h, P;
+    i = blockIdx.x * blockDim.x + threadIdx.x;
+    j = blockIdx.y * blockDim.y + threadIdx.y;
+    iSource = blockIdx.z;
+    NP = n*NL + 1;
+    k = i*NP+j;
+    k += iSource*NP*NP;
+    if ( ( (i<NP) && (j<NP) ) && (segment_mask[k]==iSegment) ) {  
+       w0 = iSource*NP*NP;
+       sx[k] = sy[k] = 0.0;
+       p = d/n;
+
+       a = i + 1;
+       h = 2*p;
+       if (a>=NP) {
+	 a = NP-1;
+	 h = p;
+       }    
+       b = i - 1;
+       if (b<0) {
+	 b = 0;
+	 h = p;
+       }
+       w = w0 + b*NP + j;
+       dphi = phase[w];
+       P    = wavefront_mask_f[w];
+       w = w0 + a*NP + j;
+       dphi -= phase[w];
+       P    *= wavefront_mask_f[w];
+       sx[k] += P*dphi/h;
+       Px[k] = P;
+
+       w = w0 + i*NP;
+       a = j + 1;
+       h = 2*p;
+       if (a>=NP) {
+	 a = NP-1;
+	 h = p;
+       }    
+       b = j - 1;
+       if (b<0) {
+	 b = 0;
+	 h = p;
+       }
+       dphi = phase[w+b];
+       P    = wavefront_mask_f[w+a];
+       dphi -= phase[w+a];
+       P    *= wavefront_mask_f[w+b];
+       sy[k] += P*dphi/h;
+       Py[k] = P;
+
+    }
+}
+@ 
 \index{source!complex\_amplitude!segments\_gradient\_average}
 The gradient of the wavefront phase on each GMT segments is computed with:
 <<wavefront differentiation>>=
@@ -2209,15 +2379,58 @@ void complex_amplitude::segments_gradient_average(float *sx, float *sy,
                                                              segment_markers);
 }
 @ 
+<<wavefront differentiation>>=
+void complex_amplitude::segments_gradient_averageFast(float *sx, float *sy, 
+                                                  float D, int *segment_markers)
+{
+  int k, N2, idx, segment_id, NL = 1;
+  <<wavefront differentiation (common)>>
+  N2 = (n+1)*(n+1);
+
+  float *d__sx, *d__sy, *d__Px, *d__Py;
+  int n_byte = sizeof(float)*N_PX*4;
+  if (buffer==NULL)
+    HANDLE_ERROR( cudaMalloc((void**)&buffer, n_byte) );
+  d__sx = buffer;
+  d__sy = buffer + N_PX;
+  d__Px = buffer + N_PX*2;
+  d__Py = buffer + N_PX*3;
+
+  dim3 blockDim(16,16);
+  dim3 gridDim((n+1)/16+1,(n+1)/16+1,N);
+  float res, nnz;
+
+  for (segment_id=1; segment_id<8; segment_id++) {
+
+    HANDLE_ERROR( cudaMemset( buffer, 0, n_byte) );
+    segments_gradient_kernel LLL gridDim,blockDim RRR (d__sx, d__sy,
+						       d__Px, d__Py, 
+						       NL, n, D, phase, M->f,
+						       segment_markers,
+						       segment_id);
+    for (k=0; k<N; k++) {
+      idx = k*N2;
+
+      CUBLAS_ERROR( cublasSdot(handle, N2, d__sx + idx, 1, d__Px + idx, 1, &res) );
+      CUBLAS_ERROR( cublasSasum(handle, N2, d__Px + idx, 1, &nnz) );
+      res /= nnz;
+      sx[segment_id-1 + k*7] = res;
+      CUBLAS_ERROR( cublasSdot(handle, N2, d__sy + idx, 1, d__Py + idx, 1, &res) );
+      CUBLAS_ERROR( cublasSasum(handle, N2, d__Py + idx, 1, &nnz) );
+      res/= nnz;
+      sy[segment_id-1 + k*7] = res;
+    }
+  }
+}
 @ 
 with the kernel
 <<wavefront differentiation kernel (segments gradient average)>>=
 __global__ void segments_gradient_average_kernel(float *sx, float *sy,
-                                        const int n,
-                                        float d,
-                                        float *phase,
-                                        float *wavefront_mask_f,
-                                        int *segment_mask)
+						 const int n,
+						 float d,
+						 float *phase,
+						 float *wavefront_mask_f,
+						 int *segment_mask)
 {
     int i, j, kL0, kL, a, b, w0, w, NP, iSource;
     float p, dphi, h, P, S;

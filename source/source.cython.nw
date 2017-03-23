@@ -349,7 +349,9 @@ property L:
 	void finite_difference(float *, float *, int, float);
         void finite_difference(float *, float *, int, float, mask *);
         void gradient_average(float *, float *, int , float)
+        void gradient_average(float *, float *, float)
         void segments_gradient_average(float *, float * , float, int *)
+        void segments_gradient_averageFast(float *, float * , float, int *)
 @
 \subsubsection{Class definition}
 \label{sec:class-definition-1}
@@ -454,6 +456,28 @@ cdef class Complex_amplitude:
     def addPhase(self, cuFloatArray phase):
         self._c_complex_amplitude.add_phase(1,phase._c_gpu.dev_data)        
 
+    def __iadd__(self, x):
+        cdef cuFloatArray data
+        if isinstance(x,(np.ndarray,list,tuple,float)):
+            data  = cuFloatArray(host_data=x)
+        if isinstance(x,cuDoubleArray):
+            data = x.__single__()
+        if isinstance(x,cuFloatArray):
+            data = x
+        self._c_complex_amplitude.add_phase(1,data._c_gpu.dev_data)        
+        return self
+
+    def __isub__(self, x):
+        cdef cuFloatArray data
+        if isinstance(x,(np.ndarray,list,tuple,float)):
+            data  = cuFloatArray(host_data=x)
+        if isinstance(x,cuDoubleArray):
+            data = x.__single__()
+        if isinstance(x,cuFloatArray):
+            data = x
+        self._c_complex_amplitude.add_phase(-1,data._c_gpu.dev_data)        
+        return self
+
     def finiteDifference(self, int NL, float d, MaskAbstract M=None):
         """
         Computes the average finite difference of the wavefront
@@ -484,7 +508,7 @@ cdef class Complex_amplitude:
                                                         NL, d, M._c_mask)        
         return sxy
 
-    def gradientAverage(self, int NL, float d):
+    def gradientAverage(self, int NL=1, float d=1.0):
         """
         Computes the average finite difference of the wavefront
 
@@ -500,12 +524,39 @@ cdef class Complex_amplitude:
         cuFloatArray
             The wavefront gradient average in an array of size [N_SRCxNLx2,NL]
         """
-        cdef cuFloatArray sxy
-        sxy = cuFloatArray(shape=(self._c_complex_amplitude.N*NL*2,NL), dev_malloc=True)
-        self._c_complex_amplitude.gradient_average(sxy._c_gpu.dev_data, 
-                                                   sxy._c_gpu.dev_data + NL*NL, 
-                                                   NL, d)
-        return sxy
+
+        cdef cuFloatArray gsxy
+        cdef float[:] sxy
+        if NL>1:
+            gsxy = cuFloatArray(shape=(self._c_complex_amplitude.N*NL*2,NL), dev_malloc=True)
+            self._c_complex_amplitude.gradient_average(gsxy._c_gpu.dev_data, 
+                                                       gsxy._c_gpu.dev_data + NL*NL, 
+                                                       NL, d)
+            return gsxy
+        else:
+            sxy = np.zeros(2*self._c_complex_amplitude.N,dtype=np.single)
+            self._c_complex_amplitude.gradient_average(&sxy[0], &sxy[self._c_complex_amplitude.N],  d)
+            return np.asarray(sxy)
+            
+
+    def gradientAverageFast(self, float d):
+        """
+        Computes the average finite difference of the wavefront
+
+        Parameters
+        ----------
+        d : float
+            The lenslet pitch
+
+        Returns
+        -------
+        cuFloatArray
+            The wavefront gradient average in an array of size [N_SRCx2,1]
+        """
+        cdef float[:] sxy
+        sxy = np.zeros(2*self._c_complex_amplitude.N,dtype=np.single)
+        self._c_complex_amplitude.gradient_average(&sxy[0], &sxy[self._c_complex_amplitude.N],  d)
+        return np.asarray(sxy)
 @
 \section{Source}
 \label{sec:source}
@@ -586,6 +637,8 @@ cdef class Source:
         The linear sampling of the ray bundle
     rays_origin : list, optional
          A 3 element list, with the first 2 being the (x,y) origin of the ray bundle and the 3rd the ray bundle starting z coordinates
+    samplingTime : double
+        the source propagation sampling time; default: 1s
 
     Attributes
     ----------
@@ -671,7 +724,8 @@ cdef class Source:
                  fwhm = None,
                  rays_box_size=None,
                  rays_box_sampling=None,
-                 rays_origin=None):
+                 rays_origin=None,
+                 samplingTime = 1.0 ):
 
         if rays_box_sampling is not None:
             resolution = [rays_box_sampling, rays_box_sampling]
@@ -711,7 +765,7 @@ cdef class Source:
         self.rays = Bundle(self)
         self.N_SRC = self._c_source.N_SRC
         self.sphere_distance = None
-        self.samplingTime = 1.0
+        self.samplingTime = samplingTime
         self.timeStamp = 0.0
 
     def __dealloc__(self):
@@ -758,6 +812,7 @@ cdef class Source:
         """
         Reset the source and propagate the source through the optical path
         """
+        assert self.OPTICALPATH is not None, "OPTICALPATH is not set!"
         self.reset()
         map(lambda x: x.propagate(self), self.OPTICALPATH)
         self.timeStamp += self.samplingTime
@@ -968,7 +1023,7 @@ cdef class Source:
                     rms[k,s] = np.std(phase[k,Q[s,:]])
         return np.array(rms)*10**-units_exponent
 
-    def segmentsWavefrontGradient(self):
+    def segmentsWavefrontGradientSlow(self):
         """
         Computes the average angle of arrival (tip and tilt) of each segment
 
@@ -984,6 +1039,22 @@ cdef class Source:
                                                           self._c_source.rays.L,
                                                           self._c_source.rays.d__piston_mask)
         return sxy
+
+    def segmentsWavefrontGradient(self):
+        """
+        Computes the average angle of arrival (tip and tilt) of each segment
+
+        Returns
+        -------
+        cuFloatArray
+            The average angle of arrival of each segment in an array of size [N_SRCx7x2,1] as [cx,cy]
+        """
+        cdef float[:,:] sxy
+        sxy = np.zeros((2*self.N_SRC*7,1),dtype=np.single)
+        self._c_source.wavefront.segments_gradient_averageFast(&sxy[0,0], &sxy[7*self.N_SRC,0],
+                                                               self._c_source.rays.L,
+                                                               self._c_source.rays.d__piston_mask)
+        return np.asarray(sxy)
 @
 
 \subsubsection{JSource}
