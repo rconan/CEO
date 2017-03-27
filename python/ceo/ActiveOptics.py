@@ -4,14 +4,16 @@ import sys
 import numpy as np
 import numpy.linalg as LA
 from scipy.integrate import quad
+import scipy.sparse as sprs
 import ceo
 
 class LSQ(object):
 
     def __init__(self, gmt_prms, gs_tt7_prms, gs_wfs_prms, wfs_prms, includeBM=True,filename=None):
         self.gmt    = ceo.GMT_MX(**gmt_prms)
-        self.tt7_gs = ceo.Source(**gs_tt7_prms)
-        self.tt7    = ceo.GeometricTT7()
+        if gs_tt7_prms is not None:
+            self.tt7_gs = ceo.Source(**gs_tt7_prms)
+            self.tt7    = ceo.GeometricTT7()
         self.wfs_gs = ceo.Source(**gs_wfs_prms)
         self.wfs_prms = wfs_prms
         self.wfs    = ceo.GeometricShackHartmann(**wfs_prms)
@@ -41,20 +43,21 @@ class LSQ(object):
                 print " >> Saved to %s"%filename
                 db['C'] = self.C
 
-        print "@(AcO.LSQ)> TT7 CALIBRATION ..."        
-        self.gmt.reset()
-        self.gmt.propagate(self.tt7_gs)
-        self.tt7.calibrate(self.tt7_gs)        
-        if file_already_exists:
-            print " >> Loaded from %s"%filename
-            self.Dtt7 = db['Dtt7']
-        else:
-            self.Dtt7 = self.gmt.calibrate(self.tt7,self.tt7_gs,
-                                           mirror = 'M2',mode='segment tip-tilt',stroke=1e-6)
-            if filename is not None:
-                print " >> Saved to %s"%filename
-                db['Dtt7'] = self.Dtt7
-        self.Mtt7 = LA.inv(self.Dtt7)
+        if gs_tt7_prms is not None:
+            print "@(AcO.LSQ)> TT7 CALIBRATION ..."        
+            self.gmt.reset()
+            self.gmt.propagate(self.tt7_gs)
+            self.tt7.calibrate(self.tt7_gs)        
+            if file_already_exists:
+                print " >> Loaded from %s"%filename
+                self.Dtt7 = db['Dtt7']
+            else:
+                self.Dtt7 = self.gmt.calibrate(self.tt7,self.tt7_gs,
+                                               mirror = 'M2',mode='segment tip-tilt',stroke=1e-6)
+                if filename is not None:
+                    print " >> Saved to %s"%filename
+                    db['Dtt7'] = self.Dtt7
+            self.Mtt7 = LA.inv(self.Dtt7)
 
         print "@(AcO.LSQ)> Generation of observables ..."                
         on_axis_src = {'photometric_band':"V",'zenith':[0],'azimuth':[0],'height':float('inf'),
@@ -115,46 +118,48 @@ class LSQ(object):
         else:
             self.Os = [np.concatenate((OO['M1'][k],OO['M2'][k]),axis=1) for k in range(7)]
 
-
-        print "@(AcO.LSQ)> TT7 calibration of observables ..."                
-        if file_already_exists:
-            print " >> Loaded from %s"%filename
-            D_s = db['D_s']
-        else:
-            stroke = [1e-6]*4
-            D = []
-            D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
-            D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
-            D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
-            D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
-            if includeBM:
-                D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M1',mode='bending modes',stroke=1e-6) )
-
-            if includeBM:
-                D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
-                                        D[2][:,k*3:k*3+3],
-                                        D[1][:,k*3:k*3+3],
-                                        D[3][:,k*3:k*3+3],
-                                        D[4][:,k*self.N_MODE:(k+1)*self.N_MODE]],axis=1) 
-                        for k in range(7)]
+        if gs_tt7_prms is not None:
+            print "@(AcO.LSQ)> TT7 calibration of observables ..."                
+            if file_already_exists:
+                print " >> Loaded from %s"%filename
+                D_s = db['D_s']
             else:
-                D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
-                                        D[2][:,k*3:k*3+3],
-                                        D[1][:,k*3:k*3+3],
-                                        D[3][:,k*3:k*3+3]],axis=1) 
-                        for k in range(7)]
-            D_s[-1] = np.insert(D_s[-1],[2,7],0,axis=1)
-            if filename is not None:
-                print " >> Saved to %s"%filename
-                db['D_s'] = D_s
+                stroke = [1e-6]*4
+                D = []
+                D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
+                D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
+                D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
+                D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
+                if includeBM:
+                    D.append( self.gmt.calibrate(self.tt7,self.tt7_gs,mirror='M1',mode='bending modes',stroke=1e-6) )
 
-        P2 = np.zeros((12+self.N_MODE,2))
-        P2[6,0] = 1
-        P2[7,1] = 1
+                if includeBM:
+                    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                            D[2][:,k*3:k*3+3],
+                                            D[1][:,k*3:k*3+3],
+                                            D[3][:,k*3:k*3+3],
+                                            D[4][:,k*self.N_MODE:(k+1)*self.N_MODE]],axis=1) 
+                            for k in range(7)]
+                else:
+                    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                            D[2][:,k*3:k*3+3],
+                                            D[1][:,k*3:k*3+3],
+                                            D[3][:,k*3:k*3+3]],axis=1) 
+                            for k in range(7)]
+                D_s[-1] = np.insert(D_s[-1],[2,7],0,axis=1)
+                if filename is not None:
+                    print " >> Saved to %s"%filename
+                    db['D_s'] = D_s
 
-        Qbtt7 =  [np.eye(12+self.N_MODE)-np.dot(P2,np.dot(self.Mtt7[k*2:(k+1)*2,:],D_s[k])) for k in range(7)]
+            P2 = np.zeros((12+self.N_MODE,2))
+            P2[6,0] = 1
+            P2[7,1] = 1
 
-        self.Osp = [np.dot(X,Y) for X,Y in zip(self.Os,Qbtt7)]
+            Qbtt7 =  [np.eye(12+self.N_MODE)-np.dot(P2,np.dot(self.Mtt7[k*2:(k+1)*2,:],D_s[k])) for k in range(7)]
+
+            self.Osp = [np.dot(X,Y) for X,Y in zip(self.Os,Qbtt7)]
+        else:
+            self.Osp = self.Os
 
         print "@(AcO.LSQ)> Setting initial aberrations ..."                
         arcs2rad = ceo.constants.ARCSEC2RAD
@@ -180,9 +185,10 @@ class LSQ(object):
         self.initWFE = np.sqrt(CL.sum()/self.Os[0].shape[0])*1e6
         print " >> Initial WFE RMS: %.2fmicron"%self.initWFE
 
-        CCtt7 = np.array( [ np.trace(np.dot(X,np.dot(Y,X.T))) for X,Y in zip(self.Osp,self.L) ] )
-        self.initWFE_TT7 = np.sqrt(CCtt7.sum()/self.Os[0].shape[0])*1e6
-        print " >> Initial WFE RMS after TT7 correction: %.2fmicron"%self.initWFE_TT7
+        if gs_tt7_prms is not None:
+            CCtt7 = np.array( [ np.trace(np.dot(X,np.dot(Y,X.T))) for X,Y in zip(self.Osp,self.L) ] )
+            self.initWFE_TT7 = np.sqrt(CCtt7.sum()/self.Os[0].shape[0])*1e6
+            print " >> Initial WFE RMS after TT7 correction: %.2fmicron"%self.initWFE_TT7
 
         if filename is not None:
             db.close()
@@ -228,6 +234,52 @@ class LSQ(object):
             self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
             self.wfe_rms = wfe_rms(self.Cov_w_noise)
 
+    def sparse_WFE(self,SVD_threshold, gs_wfs_mag=None, 
+                   spotFWHM_arcsec=None, pixelScale_arcsec=None, 
+                   ron=0.0, nPhBackground=0.0, controller=None,
+                   G_ncpa=None):
+
+        self.C.threshold = SVD_threshold
+
+        M_wfs = sprs.block_diag(self.C.M)
+        D = list(self.C.D)
+        D[-1] = np.insert(D[-1],[2,7],0,axis=1)
+        D_wfs = sprs.block_diag(D)
+        Q = sprs.eye(M_wfs.shape[0]) - M_wfs.dot(D_wfs)
+
+        L = sprs.block_diag(self.L)
+        self.Qb2 = Q.dot(L.dot(Q.T))
+        if G_ncpa is not None:
+            Delta_ncpa = M_wfs.dot(G_ncpa.dot(M_wfs.T))
+            self.Qb2 += Delta_ncpa
+
+        n = self.Os[0].shape[0]
+        wfe_rms = lambda x : np.sqrt(x.diagonal().sum()/n)*1e9
+        Osp = sprs.block_diag(self.Osp)
+
+        self.Cov_wo_noise = Osp.dot(self.Qb2.dot(Osp.T))
+        self.noise_free_wfe = wfe_rms(self.Cov_wo_noise)
+
+        """
+        if gs_wfs_mag is not None:
+
+            self.wfs_gs.magnitude = [gs_wfs_mag]*3
+            nPhLenslet = self.wfs_prms['exposureTime']*self.wfs_prms['photoElectronGain']*\
+                         self.wfs_gs.nPhoton[0]*(self.wfs_prms['d'])**2
+            sigma_noise = wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,
+                                   self.wfs_prms['N_PX_IMAGE']/self.wfs_prms['BIN_IMAGE'],
+                                   nPhBackground=nPhBackground,controller=controller)
+
+            self.N2 = [sigma_noise*np.dot(X,X.T) for X in self.C.M]
+            Qb2p = [X+Y for X,Y in zip(self.Qb2,self.N2)]
+
+            self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
+            self.wfe_noise_rms = wfe_rms(self.Cov_noise)
+
+            self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
+            self.wfe_rms = wfe_rms(self.Cov_w_noise)
+        """
+
     @property
     def piston_removed(self):
         return self._piston_removed_
@@ -269,3 +321,8 @@ def wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,nPxLenslet,ron=0.0,nPh
                         pixelScale_arcsec*ceo.constants.ARCSEC2RAD,
                         nPhLenslet,nPxLenslet) )
     return sigma_noise
+
+def outOfFocus(delta,_wavelength_,_focalLength_,_diameter_):
+    out = ( 2*np.pi*delta/_wavelength_ ) / \
+                ( 16*np.sqrt(3)*( (_focalLength_/_diameter_)**2 + _focalLength_*delta/_diameter_**2 ) )
+    return out*_wavelength_*0.5/np.pi
