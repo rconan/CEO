@@ -198,7 +198,8 @@ class LSQ(object):
 
     def WFE(self,SVD_threshold, gs_wfs_mag=None, 
             spotFWHM_arcsec=None, pixelScale_arcsec=None, 
-            ron=0.0, nPhBackground=0.0, controller=None):
+            ron=0.0, nPhBackground=0.0, controller=None,
+            miscellaneous_noise_rms=None):
 
         self.C.threshold = SVD_threshold
 
@@ -233,6 +234,18 @@ class LSQ(object):
 
             self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
             self.wfe_rms = wfe_rms(self.Cov_w_noise)
+
+        if miscellaneous_noise_rms is not None:
+            
+            self.N2 = [(miscellaneous_noise_rms**2)*np.dot(X,X.T) for X in self.C.M]
+            Qb2p = [X+Y for X,Y in zip(self.Qb2,self.N2)]
+
+            self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
+            self.wfe_noise_rms = wfe_rms(self.Cov_noise)
+
+            self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
+            self.wfe_rms = wfe_rms(self.Cov_w_noise)
+            
 
     def sparse_WFE(self,SVD_threshold, gs_wfs_mag=None, 
                    spotFWHM_arcsec=None, pixelScale_arcsec=None, 
@@ -273,7 +286,7 @@ class LSQ(object):
             self.N2 = [sigma_noise*np.dot(X,X.T) for X in self.C.M]
             Qb2p = [X+Y for X,Y in zip(self.Qb2,self.N2)]
 
-            self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
+b            self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
             self.wfe_noise_rms = wfe_rms(self.Cov_noise)
 
             self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
