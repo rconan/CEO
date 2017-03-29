@@ -14,3 +14,24 @@ from gmtMirrors import BendingModes, KarhunenLoeve, GmtMirrors, GMT_M1, GMT_M2, 
 from GMTLIB import CalibrationVault, GMT_MX, JGMT_MX, GeometricTT7, IdealSegmentPistonSensor, SegmentTipTiltSensor, EdgeSensors, DispersedFringeSensor, Trace
 import phaseStats
                                 
+from IPython.display import Markdown, display
+def sweetcheat():
+    def printmd(string):
+        display(Markdown(string))
+    text = []
+    text += ['| class | sweet | colloquial \n']
+    text += ['|-------|-------|--------|\n']
+    text += ['|GMT_MX | ~object | object.reset()|\n']
+    text += ['|GMT_M1/GMT_M2 | object^={\'Txyz\':(Tr,Tc,Tv)} | object.motion_CS.origin[Tr,Tc]=Tv, object.motion_CS.update()|\n']
+    text += ['||object^={\'Rxyz\':(Rr,Rc,Rv)} | object.motion_CS.euler_angles[Rr,Rc]=Rv, object.motion_CS.update()|\n']
+    text += ['||object^={\'modes\':(Mr,Mc,Mv)} | object.modes.a[Mr,Mc]=Mv, object.modes.update()|\n']
+    text += ['||object^={\'Txyz\':(),\'Rxyz\':(),\'modes\':()} | all 3 above|\n']
+    text += ['|Source | object>>(gmt,...) | object.OPTICAL_PATH=(gmt,...)|\n']
+    text += ['|| ~object | object.reset()\n']
+    text += ['|| +object | object.reset(), [x.propagate(obj) for x in OPTICAL_PATH]\n']
+    text += ['|| object+=n | repeat +object n times|\n']
+    text += ['|GeometricShackHartmann/ShackHartmann | ~object | object.reset()|\n']
+    text += ['|| +object | object.readout(...), object.process(), obj.reset()|\n']
+    text += ['|| -object | object.process()|\n']
+    text += ['|Imaging | ~object | object.reset()|\n']
+    display(Markdown("".join(text)))
