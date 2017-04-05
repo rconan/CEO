@@ -10,7 +10,7 @@ Tsim = 2e-3        # Simulation time step [seconds]
 totSimulTime = 0.5 # Total simulated time [seconds]
 
 #----- System configurations:
-simul_turb         = False
+simul_turb         = True
 simul_onaxis_AO    = False
 simul_PS_control   = True
 simul_FDSP_control = False  #Note: If FDSP in ON, on-axis AO needs to be ON too
