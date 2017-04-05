@@ -38,7 +38,7 @@ if simul_SPS==True:
     SPStype = 'DFS'         # Choose between "ideal" or "DFS"
     asterism_type = 'Dummy' #Choose between 'Besancon_GP', 'Besancon_GP_AB', and 'Dummy'
     N_GS_PS = 1
-    alpha_ps = 0. #6.0*60.      # radius of circle where GSs are located [in arcsec]
+    alpha_ps = 8.0*60.      # radius of circle where GSs are located [in arcsec]
     band = "J"
     mag = 12.0
     bkgd_mag = 16.2         # J-band sky bkgd (mag/arcsec^2); Tech Note GMT-02274, rev 2.4
