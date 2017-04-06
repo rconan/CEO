@@ -563,7 +563,7 @@ class GMT_MX(GmtMirrors):
             raise ValueError('"coupled" or "decoupled" must be set to True!')
 
 
-    def cloop_calib_init(self, D, nPx, onaxis_wfs_nLenslet=60, AOtype=None):
+    def cloop_calib_init(self, D, nPx, onaxis_wfs_nLenslet=60, AOtype=None, svd_thr=1e-9):
 	assert AOtype == 'NGAOish' or AOtype == 'LTAOish', "AOtype should be either 'NGAOish', or 'LTAOish'"
 	self.AOtype = AOtype
 
@@ -644,7 +644,7 @@ class GMT_MX(GmtMirrors):
 	    D_AO = D_M2_Z
 
 	print '\nOn-axis AO merged IM condition number: %f'%np.linalg.cond(D_AO)
-	self.R_AO = np.linalg.pinv(D_AO)
+	self.R_AO = np.linalg.pinv(D_AO, rcond=svd_thr)
 	#return [D_M2_Z,D_M2_PS_sh, D_M2_Z_PSideal, D_M2_PSideal]
 
 # JGMT_MX
