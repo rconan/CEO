@@ -11,7 +11,7 @@ totSimulTime = 0.5 # Total simulated time [seconds]
 
 #----- System configurations:
 simul_turb         = True
-simul_onaxis_AO    = False
+simul_onaxis_AO    = True
 simul_PS_control   = True
 simul_FDSP_control = False  #Note: If FDSP in ON, on-axis AO needs to be ON too
 
@@ -40,7 +40,7 @@ if simul_SPS==True:
     N_GS_PS = 1
     alpha_ps = 8.0*60.      # radius of circle where GSs are located [in arcsec]
     band = "J"
-    mag = 12.0
+    mag = 13.0
     bkgd_mag = 16.2         # J-band sky bkgd (mag/arcsec^2); Tech Note GMT-02274, rev 2.4
     e0 = 1.88e12/368.*PupilArea  # ph/s in J band over the GMT pupil
     throughput = 0.65*0.75   # Table 3, GMT-DOC-01404
