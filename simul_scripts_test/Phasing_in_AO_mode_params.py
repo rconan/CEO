@@ -11,7 +11,7 @@ totSimulTime = 0.5 # Total simulated time [seconds]
 
 #----- System configurations:
 simul_turb         = True
-simul_onaxis_AO    = True
+simul_onaxis_AO    = False
 simul_PS_control   = True
 simul_FDSP_control = False  #Note: If FDSP in ON, on-axis AO needs to be ON too
 
@@ -46,12 +46,12 @@ if simul_SPS==True:
     throughput = 0.65*0.75   # Table 3, GMT-DOC-01404
     sps_fov = 2.8           # arcsec diameter
     sps_dispersion = 5.0
-    RONval = 0.35            # [e- rms]
+    RONval = 0.0 #0.35            # [e- rms]
     sps_mask_size = 1.5     # arcsec
     lobe_detection = 'peak_value'
     nyquist_factor = 1
-    dark_cur = 48.0 # additional background in e-/pix/s (dark current + allocated cryo filter leak) 
-    excess_noise = 1.25
+    dark_cur = 0.0 #48.0 # additional background in e-/pix/s (dark current + allocated cryo filter leak) 
+    excess_noise = 1.0 #1.25
  
     simul_phot = True
     simul_bkgd = True
