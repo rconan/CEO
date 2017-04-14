@@ -4,20 +4,22 @@ import numpy as np
 import numpy.linalg as LA
 from scipy.optimize import brenth, leastsq
 from skimage.feature import blob_log
+from scipy.ndimage.interpolation import rotate
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
     TT7,\
-    GmtMirrors, SegmentPistonSensor, \
+    GmtMirrors, SegmentPistonSensor,\
     constants, Telescope, cuFloatArray, Aperture,\
     Transform_to_S, Intersect, Reflect, Refract, Transform_to_R
 
 class CalibrationVault(object):
 
-    def __init__(self,D,nThreshold=None,valid=None,insertZeros = None):
+    def __init__(self,D,valid=None,nThreshold=None,insertZeros = None):
         self.D = D
         if nThreshold is None:
             self._nThreshold_ = [0]*len(D)
         else:
             self._nThreshold_ = nThreshold
+        self._threshold_ = None
         if valid is None:
             self.valid = [ np.ones(X.shape[0],dtype=np.bool) for X in self.D]
         else:
@@ -47,6 +49,14 @@ class CalibrationVault(object):
         print "@(CalibrationMatrix)> Updating the pseudo-inverse..."
         self._nThreshold_ = value
         self.M = [ self.__recon__(X,Y,Z) for X,Y,Z in zip(self.UsVT,self._nThreshold_,self.zeroIdx) ]
+
+    @property
+    def threshold(self):
+        return self._threshold_
+    @threshold.setter
+    def threshold(self,value):
+        self._threshold_ = value
+        self.nThreshold = [ np.sum(X[1]<X[1][0]*value) for X in  self.UsVT ]
 
     @property
     def eigenValues(self):
@@ -130,8 +140,9 @@ class GMT_MX(GmtMirrors):
                             M1_N_MODE=M1_N_MODE,
                             M2_N_MODE=M2_N_MODE)
 
-    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None,cl_wfs=None,cl_gs=None,cl_recmat=None, 
-		idealps=None,idealps_ref=None,first_mode=3, closed_loop_calib=False, minus_M2_TT=False):
+    def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None, first_mode=3, 
+                  closed_loop_calib=False, minus_M2_TT=False,
+                  calibrationVaultKwargs=None):
         """
         Calibrate the different degrees of freedom of the  mirrors
 
@@ -150,31 +161,50 @@ class GMT_MX(GmtMirrors):
         stroke : float
             The amplitude of the motion
         """
-        def close_NGAO_loop():
+
+        def close_NGAOish_loop():
             niter = 7
-            nzernall = (self.M2.zernike.n_mode-1)*7
-            self.M2.zernike.reset()
+            nzernall = (self.M2.modes.n_mode-1)*7
             for ii in range(niter):
-                cl_gs.reset()
-                self.propagate(cl_gs)
-                cl_wfs.reset()
-                cl_wfs.analyze(cl_gs)
-                slopevec = cl_wfs.get_measurement()
-                onpsvec =  idealps.piston(cl_gs).ravel() - idealps_ref
+                self.cl_gs.reset()
+                self.propagate(self.cl_gs)
+                self.cl_wfs.reset()
+		self.onps.reset()
+                self.cl_wfs.analyze(self.cl_gs)
+                slopevec = self.cl_wfs.get_measurement()
+                onpsvec =  self.onps.piston(self.cl_gs).ravel() - self.onps_signal_ref
                 AOmeasvec = np.concatenate((slopevec, onpsvec))
-                myAOest1 = np.dot(cl_recmat, AOmeasvec)            
-                self.M2.zernike.a[:,1:] -= myAOest1[0:nzernall].reshape((7,-1))
+                myAOest1 = 0.9*np.dot(self.R_AO, AOmeasvec)
+                self.M2.modes.a[:,1:] -= myAOest1[0:nzernall].reshape((7,-1))
                 self.M2.motion_CS.origin[:,2] -= myAOest1[nzernall:]
                 self.M2.motion_CS.update()
-                self.M2.zernike.update()
+                self.M2.modes.update()
+
+        def close_LTAOish_loop():
+            niter = 7
+            for ii in range(niter):
+                self.cl_gs.reset()
+                self.propagate(self.cl_gs)
+                self.cl_wfs.reset()
+                self.cl_wfs.analyze(self.cl_gs)
+                slopevec = self.cl_wfs.get_measurement()
+                myAOest1 = 0.9*np.dot(self.R_AO, slopevec) 
+                self.M2.modes.a[:,1:] -= myAOest1.reshape((7,-1))
+                self.M2.modes.update()
+
+	def close_AO_loop():
+	    if self.AOtype=='NGAOish':
+		close_NGAOish_loop()
+	    elif self.AOtype=='LTAOish':
+		close_LTAOish_loop()
 
         def pushpull(action):
             def get_slopes(stroke_sign):
                 self.reset()
                 action(stroke_sign*stroke)
-                if closed_loop_calib==True: close_NGAO_loop()
+                if closed_loop_calib==True: close_AO_loop()
                 gs.reset()
-                self.propagate(gs)
+		self.propagate(gs)
                 wfs.reset()
                 wfs.analyze(gs)
                 return wfs.get_measurement()
@@ -224,7 +254,7 @@ class GMT_MX(GmtMirrors):
                 D[:,0] = pushpull( lambda x : self.M1.global_tiptilt(x,0) )
                 D[:,1] = pushpull( lambda x : self.M1.global_tiptilt(0,x) )
             if mode=="Txyz":
-                D = np.zeros((wfs.get_measurement_size(),3*7-1))
+                D = np.zeros((wfs.get_measurement_size(),3*7))
                 idx = 0
                 Tx = lambda x : self.M1.update(origin=[x,0,0],euler_angles=[0,0,0],idx=kSeg)
                 Ty = lambda x : self.M1.update(origin=[0,x,0],euler_angles=[0,0,0],idx=kSeg)
@@ -236,9 +266,9 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                     D[:,idx] = pushpull( Ty )
                     idx += 1
-                    if kSeg<7:
-                        D[:,idx] = pushpull( Tz )
-                        idx += 1
+                    #if kSeg<7:
+                    D[:,idx] = pushpull( Tz )
+                    idx += 1
                 sys.stdout.write("\n")
             if mode=="Rxyz":
                 D = np.zeros((wfs.get_measurement_size(),3*7-1))
@@ -398,11 +428,12 @@ class GMT_MX(GmtMirrors):
                     sys.stdout.write("\n")
             if mode=="Karhunen-Loeve":
                 n_mode = self.M2.modes.n_mode
-                D = np.zeros((wfs.get_measurement_size(),n_mode*7))
-                idx = 0
+                D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
+                idx = 0;
+
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
-                    for kMode in range(n_mode):
+                    for kMode in range(first_mode,n_mode):
                         sys.stdout.write("%d "%(kMode+1))
                         D[:,idx] = np.ravel( pushpull( M2_zernike_update ) )
                         idx += 1
@@ -461,7 +492,12 @@ class GMT_MX(GmtMirrors):
 
         sys.stdout.write("------------\n")
         #self[mirror].D.update({mode:D})
-        return D
+        if calibrationVaultKwargs is None:
+            return D
+        else:
+            return CalibrationVault([D],**calibrationVaultKwargs)
+
+## AGWS_CALIBRATE
 
     def AGWS_calibrate(self,wfs,gs,stroke=None,coupled=False,decoupled=False, 
                        fluxThreshold=0.0, filterMirrorRotation=True,
@@ -521,7 +557,6 @@ class GMT_MX(GmtMirrors):
             Q3clps = Q3clps>1
             
             VLs = [ np.logical_and(X,~Q3clps) for X in Q]
-            calibrationVaultKwargs['valid'] = VLs
             D_sr = [ D_s[k][VLs[k].ravel(),:] for k in range(7) ]
 
             if filterMirrorRotation:
@@ -537,10 +572,95 @@ class GMT_MX(GmtMirrors):
                     s[-1]   = 0
                     D_sr[k][:,6:12] = np.dot(U,np.dot(np.diag(s),VT))
     
-            return CalibrationVault(D_sr,**calibrationVaultKwargs)
+            return CalibrationVault(D_sr, valid=VLs,**calibrationVaultKwargs)
 
         else:
             raise ValueError('"coupled" or "decoupled" must be set to True!')
+
+
+    def cloop_calib_init(self, D, nPx, onaxis_wfs_nLenslet=60, AOtype=None):
+	assert AOtype == 'NGAOish' or AOtype == 'LTAOish', "AOtype should be either 'NGAOish', or 'LTAOish'"
+	self.AOtype = AOtype
+
+	#----> ON-AXIS AO SH WFS:
+	d = D/onaxis_wfs_nLenslet
+	self.cl_wfs = GeometricShackHartmann(onaxis_wfs_nLenslet, d, N_GS=1)
+	self.cl_gs = Source("R",zenith=0.,azimuth=0.,
+		rays_box_size=D, rays_box_sampling=nPx, rays_origin=[0.0,0.0,25])
+
+	# Calibrate SH (valid SAs, slope null vector)
+	self.cl_gs.reset()
+	self.reset()
+	self.propagate(self.cl_gs)
+	self.cl_wfs.calibrate(self.cl_gs,0.2)
+
+	#----> ON-AXIS SEGMENT PISTON SENSOR:
+	if AOtype=='NGAOish':
+	    self.onps = IdealSegmentPistonSensor(self.cl_gs, D, nPx, segment='full')
+	    self.cl_gs.reset()
+	    self.reset()
+	    self.propagate(self.cl_gs)
+	    self.onps_signal_ref = self.onps.piston(self.cl_gs).ravel() #[0:6] # reference signal
+
+	#-----> ON-AXIS AO SYSTEM INTERACTION MATRIX CALIBRATIONS
+	# 1. SH  - M2 Zernike modes
+	# 2. SH  - M2 SPP
+	# 3. SPS - M2 Zernike modes  (Zero matrix)
+	# 4. SPS - M2 SPP
+	print("Calibrating on-axis "+AOtype+" AO system for closed-loop IntMat calibration")
+	print("--------------------------------------------------------------------------")
+	print("\n--> on-axis SH:")
+	# 1. SH - M2 segment Zernikes IM
+	Zstroke = 20e-9 #m rms
+	z_first_mode = 1  # to skip piston
+	D_M2_Z = self.calibrate(self.cl_wfs, self.cl_gs, mirror="M2", mode=self.M2.mirror_modes_type, stroke=Zstroke,
+			   first_mode=z_first_mode)
+	nzernall = (D_M2_Z.shape)[1]  ## number of zernike DoFs calibrated
+	#n_zern = self.M2.modes.n_mode
+	# Identify subapertures belonging to two adjacent segments (leading to control leakage)
+	#QQ = D_M2_Z == 0
+	#LL = np.sum(QQ, axis=1)
+	#LI = np.where( LL[0:self.cl_wfs.n_valid_lenslet] < (n_zern-1)*6)
+	#print ("   A total of %d leaking SH WFS SAs identified.\n"%(LI[0].shape))
+	#vlens = self.cl_wfs.valid_lenslet.f.host().ravel()>0
+	#idx = np.where( vlens == 1)
+	#vlens[idx[0][LI]] = 0
+	#leak_slopes_idx = np.array([LI[0], LI[0]+self.cl_wfs.n_valid_lenslet]).ravel()
+	#D_M2_Z[leak_slopes_idx,:] = 0
+
+	if AOtype=='NGAOish':
+	    # 2. SH - M2 segment piston IM
+	    PSstroke = 200e-9 #m
+	    D_M2_PS_sh = self.calibrate(self.cl_wfs, self.cl_gs, mirror="M2", mode="segment piston", stroke=PSstroke)
+	    #D_M2_PS_sh[leak_slopes_idx,:] = 0
+
+	    print("\n--> on-axis SPS:")
+	    # 3. Ideal SPS - M2 segment Zernikes IM
+	    #D_M2_Z_PSideal = np.zeros((7,nzernall))
+	    Zstroke = 20e-9 #m rms
+	    z_first_mode = 1  # to skip some low-order modes
+	    D_M2_Z_PSideal = self.calibrate(self.onps, self.cl_gs, mirror="M2", mode=self.M2.mirror_modes_type, stroke=Zstroke, first_mode=z_first_mode)
+	    
+	    print 'AO SPS - M2 Segment Zernike IM:'
+	    print D_M2_Z_PSideal.shape
+
+	    # 4. Ideal SPS - M2 segment piston IM
+	    PSstroke = 50e-9 #m
+	    D_M2_PSideal = self.calibrate(self.onps, self.cl_gs, mirror="M2", mode="segment piston", stroke=PSstroke)
+
+	    #----> Create super-merger IM for "simplified NGAO control"
+	    # DoFs: segment Zernikes (Z2->Zx), segment Piston
+	    # Sensors: on-axis SH WFS, on-axis idealized Piston Sensor
+	    D_AO_SH = np.concatenate((D_M2_Z, D_M2_PS_sh), axis=1)
+	    D_AO_PS = np.concatenate((D_M2_Z_PSideal, D_M2_PSideal), axis=1)
+ 	    D_AO = np.concatenate((D_AO_SH, D_AO_PS), axis=0)
+
+	elif AOtype=='LTAOish':
+	    D_AO = D_M2_Z
+
+	print '\nOn-axis AO merged IM condition number: %f'%np.linalg.cond(D_AO)
+	self.R_AO = np.linalg.pinv(D_AO)
+	#return [D_M2_Z,D_M2_PS_sh, D_M2_Z_PSideal, D_M2_PSideal]
 
 # JGMT_MX
 from utilities import JSONAbstract
@@ -633,6 +753,9 @@ class Sensor:
     def get_measurement_size(self):
         pass
 
+    def __pos__(self):
+        pass
+
 class GeometricTT7(Sensor):
 
     def __init__(self,**kwargs):
@@ -641,29 +764,34 @@ class GeometricTT7(Sensor):
 
     def calibrate(self, src, threshold=None):
         data = src.segmentsWavefrontGradient()
-        self.reference_slopes = data.host()
+        self.reference_slopes = data
 
     def reset(self):
         pass
 
     def analyze(self, src):
         data = src.segmentsWavefrontGradient()
-	self.valid_slopes = cuFloatArray(host_data = data.host() - self.reference_slopes)
+	self.valid_slopes = data - self.reference_slopes
 
     def propagate(self, src):
         data = src.segmentsWavefrontGradient()
-	self.valid_slopes = cuFloatArray(host_data = data.host() - self.reference_slopes)
+	self.valid_slopes = data - self.reference_slopes
 
     def process(self):
         pass
 
     def get_measurement(self):
-        return self.valid_slopes.host().ravel()
+        return self.valid_slopes.ravel()
     def get_measurement_size(self):
         return 14
 
-    def get_measurement_size(self):
-        return self.n_valid_slopes
+    @property 
+    def data(self):
+        return self.valid_slopes.ravel()
+
+    @property 
+    def Data(self):
+        return self.valid_slopes.reshape(14,1)
 
 class DispersedFringeSensor(SegmentPistonSensor):
     """
@@ -940,15 +1068,20 @@ class DispersedFringeSensor(SegmentPistonSensor):
 		params = self.fitgaussian(mylobe)
         	(height, y, x, width_y, width_x, rot) = params
     	    elif self.lobe_detection == 'peak_value':
+		mylobe  = rotate(mylobe,self.fftlet_rotation[k]*180/np.pi, reshape=False)
         	height = np.max(mylobe)
         	height_pos = np.argmax(mylobe)
 		y, x = np.unravel_index(height_pos, mylobe.shape)
 		if y < (mylobe.shape[0]-1) and x < (mylobe.shape[1]-1):
-		    x += 0.5*(mylobe[y,x-1] - mylobe[y,x+1]) / (mylobe[y,x-1]+mylobe[y,x+1]-2*height+1e-6)
-		    y += 0.5*(mylobe[y-1,x] - mylobe[y+1,x]) / (mylobe[y-1,x]+mylobe[y+1,x]-2*height+1e-6)
+		    dx = 0.5*(mylobe[y,x-1] - mylobe[y,x+1]) / (mylobe[y,x-1]+mylobe[y,x+1]-2*height+1e-6)
+		    dy = 0.5*(mylobe[y-1,x] - mylobe[y+1,x]) / (mylobe[y-1,x]+mylobe[y+1,x]-2*height+1e-6)
+		    x += dx
+		    y += dy
         	width_x, width_y, rot = 0,0,0
-	    x1 = x * np.cos(-self.fftlet_rotation[k]) - y * np.sin(-self.fftlet_rotation[k])
-	    y1 = x * np.sin(-self.fftlet_rotation[k]) + y * np.cos(-self.fftlet_rotation[k])
+	    #x1 = x * np.cos(-self.fftlet_rotation[k]) - y * np.sin(-self.fftlet_rotation[k])
+	    #y1 = x * np.sin(-self.fftlet_rotation[k]) + y * np.cos(-self.fftlet_rotation[k])
+	    y1 = y
+	    x1 = x
 	    self.measurement[k] = y1
 
 	    if self.INIT_ALL_ATTRIBUTES == True:

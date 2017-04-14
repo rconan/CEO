@@ -59,6 +59,39 @@ class JSONAbstract:
     def __getitem__(self, key):
         return self.jprms[key]
 @
+
+\section{Sensor}
+\label{sec:sensor}
+
+This is an abstract class for all CEO sensors
+<<class definitions>>=
+cdef class Sensor:
+    pass
+<<utilities.pyx>>=
+cdef class Sensor:
+    def calibrate(self,*args,**kwargs):
+        pass
+    def reset(self,**kwargs):
+        pass
+    def analyze(self,*args,**kwargs):
+        pass
+    def propagate(self,*args,**kwargs):
+        pass
+    def process(self,**kwargs):
+        pass
+    def get_measurement(self,**kwargs):
+        pass
+    def __pos__(self):
+        pass
+    def __invert__(self):
+        pass
+    property data:
+        def __get__(self):
+            return np.zeros(1)
+    property Data:
+        def __get__(self):
+            return np.zeros((1,1))
+@
 \section{Stopwatch}
 \label{sec:stopwatch-1}
 
@@ -409,6 +442,7 @@ cdef extern from "utilities.h":
         void dev2host()
         void host2dev()
         void reset()
+        void double2float(gpu_t[float] * )        
 @
 \subsection{cuFloatArray}
 \label{sec:cufloatarray}
@@ -602,6 +636,12 @@ cdef class cuDoubleArray:
 
     def assign_ptr(self):
         self._c_gpu.host_data = <double *>self.host_data.data;
+
+    def __single__(self):
+        cdef cuFloatArray data
+        data = cuFloatArray(shape=self.shape, dev_malloc=True)
+        self._c_gpu.double2float(data._c_gpu)
+        return data
 @
 
 \section{Atmospheric dispersion}
