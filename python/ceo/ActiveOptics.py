@@ -20,6 +20,7 @@ class LSQ(object):
         self.includeBM = includeBM
 
         file_already_exists = False
+        db = None
         if filename is not None:
             if os.path.isfile(filename+".dir"):
                 file_already_exists = True
@@ -59,6 +60,23 @@ class LSQ(object):
                     db['Dtt7'] = self.Dtt7
             self.Mtt7 = LA.inv(self.Dtt7)
 
+        self.gs_tt7_prms = gs_tt7_prms
+        self.observables(includeBM,file_already_exists,filename,db)
+
+        if filename is not None:
+            db.close()
+
+        self._piston_removed_ = False
+        self._Osp_ = None            
+        self.D_orig      = self.C.D
+        self.N_MODE_orig = self.N_MODE
+        self.Osp_orig    = self.Osp
+        self.Os_orig    = self.Os
+
+        self.set_aberrations(includeBM)
+
+    def observables(self,includeBM,file_already_exists=False,filename=None,db=None):
+
         print "@(AcO.LSQ)> Generation of observables ..."                
         on_axis_src = {'photometric_band':"V",'zenith':[0],'azimuth':[0],'height':float('inf'),
                        'fwhm':0,'magnitude':0,'rays_box_size':25.5,
@@ -82,7 +100,9 @@ class LSQ(object):
                 for mode in ('Rxyz','Txyz'):
                     for axis in range(3):
                         self.gmt.reset()
-                        self.gmt[mirror].motion_CS.update(**{mode:(segId,axis,1e-6)})
+                        _Q_ = np.zeros((7,3))
+                        _Q_[segId,axis] = 1e-6
+                        self.gmt[mirror].motion_CS.update(**{mode:_Q_})
 
                         +src
                         _ps_ = src.wavefront.phase.host() - ps0
@@ -118,7 +138,7 @@ class LSQ(object):
         else:
             self.Os = [np.concatenate((OO['M1'][k],OO['M2'][k]),axis=1) for k in range(7)]
 
-        if gs_tt7_prms is not None:
+        if self.gs_tt7_prms is not None:
             print "@(AcO.LSQ)> TT7 calibration of observables ..."                
             if file_already_exists:
                 print " >> Loaded from %s"%filename
@@ -161,6 +181,8 @@ class LSQ(object):
         else:
             self.Osp = self.Os
 
+    def set_aberrations(self,includeBM=True):
+        
         print "@(AcO.LSQ)> Setting initial aberrations ..."                
         arcs2rad = ceo.constants.ARCSEC2RAD
         M1_pvar_16 = [0.38*arcs2rad]*2 +[40*arcs2rad] +[75e-6]*2 + [160e-6]
@@ -176,25 +198,43 @@ class LSQ(object):
         if includeBM:
             radialOrders = np.concatenate( [np.ones((1,x+1))*x for x in range(9)] , axis=1 )
             scale = 1.0/radialOrders[0,3:]
-            M1_avar = (1e-6*scale[:self.N_MODE]/scale[0])**2
+            M1_avar = (1e-6*scale[:self.N_MODE_orig]/scale[0])**2
             L16 = np.append(L16,M1_avar)
             L7  = np.append(L7,M1_avar)
 
         self.L = [np.diag(L16)]*6 + [np.diag(L7)]
-        CL = np.array( [ np.trace( np.dot(X,np.dot(Y,X.T))) for X,Y in zip(self.Os,self.L) ] )
-        self.initWFE = np.sqrt(CL.sum()/self.Os[0].shape[0])*1e6
+        CL = np.array( [ np.trace( np.dot(X,np.dot(Y,X.T))) for X,Y in zip(self.Os_orig,self.L) ] )
+        self.initWFE = np.sqrt(CL.sum()/self.Os_orig[0].shape[0])*1e6
         print " >> Initial WFE RMS: %.2fmicron"%self.initWFE
 
-        if gs_tt7_prms is not None:
-            CCtt7 = np.array( [ np.trace(np.dot(X,np.dot(Y,X.T))) for X,Y in zip(self.Osp,self.L) ] )
-            self.initWFE_TT7 = np.sqrt(CCtt7.sum()/self.Os[0].shape[0])*1e6
+        if self.gs_tt7_prms is not None:
+            CCtt7 = np.array( [ np.trace(np.dot(X,np.dot(Y,X.T))) for X,Y in zip(self.Osp_orig,self.L) ] )
+            self.initWFE_TT7 = np.sqrt(CCtt7.sum()/self.Os_orig[0].shape[0])*1e6
             print " >> Initial WFE RMS after TT7 correction: %.2fmicron"%self.initWFE_TT7
 
-        if filename is not None:
-            db.close()
-
-        self._piston_removed_ = False
-        self._Osp_ = None            
+    def set_N_MODE(self,value):
+        assert value<=self.N_MODE_orig, "The number of mode cannot be greater than %d!"%self.N_MODE_orig
+        self.N_MODE = value
+        D = []
+        Os = []
+        Osp = []
+        for X,Y,Z in zip(self.D_orig,self.Os_orig,self.Osp_orig):
+            n_cut =  self.N_MODE - self.N_MODE_orig
+            if n_cut==0:
+                D   += [X]
+                Os  += [Y]
+                Osp += [Z]
+            else:
+                D   += [X[:,:n_cut]]
+                Os  += [Y[:,:n_cut]]
+                Osp += [Z[:,:n_cut]]
+        self.C = ceo.CalibrationVault(D,valid=self.C.valid,
+                                      nThreshold=[2]*6+[0],
+                                      insertZeros=[None]*6 + [[2,7]])
+        self.Os = Os
+        self.Osp = Osp
+        self.set_aberrations()
+        #self.observables(True)
 
     def WFE(self,SVD_threshold, gs_wfs_mag=None, 
             spotFWHM_arcsec=None, pixelScale_arcsec=None, 
@@ -206,12 +246,21 @@ class LSQ(object):
         Q = [np.dot(X,Y) for X,Y in zip(self.C.M,self.C.D)]
         D = np.insert(self.C.D[-1],[2,7],0,axis=1)
         Q[-1] = np.dot(self.C.M[-1],D)
-        Qb = [np.eye(12+self.N_MODE) - X for X in Q]
+        n_Qb = 12+self.N_MODE
+        Qb = [np.eye(n_Qb) - X for X in Q]
 
-        self.Qb2 = [np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Qb,self.L)]
+        self.Qb2 = [np.dot(X,np.dot(Y[:n_Qb,:n_Qb],X.T)) for X,Y in zip(Qb,self.L)]
+        fitting_var = 0.0
+        if self.N_MODE<self.N_MODE_orig:
+            if self.gs_tt7_prms is None:
+                CL = np.array( [ np.trace( np.dot(X[:,n_Qb:],np.dot(Y[n_Qb:,n_Qb:],X[:,n_Qb:].T))) for X,Y in zip(self.Os_orig,self.L) ] )
+            else:
+                CL = np.array( [ np.trace( np.dot(X[:,n_Qb:],np.dot(Y[n_Qb:,n_Qb:],X[:,n_Qb:].T))) for X,Y in zip(self.Osp_orig,self.L) ] )
+            fitting_var = CL.sum()/self.Os_orig[0].shape[0]
+        print "Fitting variance: %g\n"%fitting_var
 
         n = self.Os[0].shape[0]
-        wfe_rms = lambda x : np.sqrt(sum([ np.trace(y) for y in x ])/n)*1e9
+        wfe_rms = lambda x : np.sqrt(fitting_var + sum([ np.trace(y) for y in x ])/n)*1e9
         Osp = self.Osp
 
         self.Cov_wo_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.Qb2) ]
