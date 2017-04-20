@@ -3,7 +3,7 @@ include common.mk
 #ls -d */ | sed -e 's,//$,,' -e 's,doc,,' -e 's,lib,,'  -e 's,include,,' | xargs
 SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE plotly rayTracing gmtMirrors segmentPistonSensor pyramid
 TUTORIAL	= ngsao lgsao ltao ltaoVsAst geaos
-CYTHON_DIR	= utilities source imaging centroiding shackHartmann atmosphere iterativeSolvers LMMSE aaStats rayTracing gmtMirrors segmentPistonSensor pyramid
+CYTHON_DIR	= utilities source imaging centroiding shackHartmann atmosphere BTBT iterativeSolvers LMMSE aaStats rayTracing gmtMirrors segmentPistonSensor pyramid
 
 all: makefile jsmnlib
 ifeq ($(wildcard include/plotly.credentials), )

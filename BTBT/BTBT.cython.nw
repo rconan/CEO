@@ -1,0 +1,36 @@
+% -*- mode: Noweb; noweb-code-mode: python-mode -*-
+
+\section{PXD file}
+\label{sec:pxd-file}
+
+<<BTBT.pxd>>=
+from utilities cimport cuFloatArray
+cdef extern from "BTBT.h":
+    cdef cppclass BTBT:
+        #float2 *d__cov
+        #float2 *d__b
+        #float2 *d__c
+        void setup(int, int, int, int, float *_)
+        void cleanup()
+        void MVM(float *, float *)
+<<class definitions>>
+@ 
+\subsection{Class definitions}
+\label{sec:class-definitions}
+
+<<class definitions>>=
+cdef class BT2:
+    cdef:
+        BTBT *_c_BTBT
+@
+\section{PYX file}
+\label{sec:pyx-file}
+
+\index{BTBT!python!BT2}
+<<BTBT.pyx>>=
+cdef class BT2:
+    def __cinit__(self,int M, int N, int MT, int NT, cuFloatArray cov):
+        self._c_BTBT = new BTBT()
+        self._c_BTBT.setup(M,N,MT,NT,cov._c_gpu.dev_data)
+    def __dealloc__(self):
+        self._c_BTBT.cleanup()
