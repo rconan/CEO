@@ -10,12 +10,17 @@ from source cimport source, Source, Complex_amplitude
 from centroiding cimport centroiding, Centroiding
 from shackHartmann cimport shackHartmann, ShackHartmann
 from iterativeSolvers cimport iterativeSolvers, IterativeSolvers
+from aaStats cimport aaStats, paStats, AaStats
+from BTBT cimport BTBT, BT2
 cdef extern from "LMMSE.h":
     cdef cppclass LMMSE:
         int NP
         float *d__phase_est
         float *d__x
         iterativeSolvers iSolve
+        aaStats aa
+        BTBT aaCov
+        paStats pa
         void setup(atmosphere *, source *, source *, 
                    float , int , mask *, char *, int)
         void setup(atmosphere *, source *, source *, 
@@ -36,6 +41,8 @@ cdef class Lmmse:
     cdef LMMSE *_c_LMMSE
     cdef int N_phase
     cdef public IterativeSolvers iSolve
+    cdef public AaStats aa
+    cdef public BT2 aaCov
 cdef class LmmseSH:
     cdef LMMSE *_c_LMMSE
     cdef int N_phase
@@ -90,6 +97,10 @@ cdef class Lmmse:
                             sampling, N, pupil._c_mask, solver_id,osf)
         self.iSolve = IterativeSolvers()
         self.iSolve._c_iterativeSolvers = &(self._c_LMMSE.iSolve)
+        self.aa = AaStats()
+        self.aa.init(&(self._c_LMMSE.aa))
+        self.aaCov = BT2()
+        self.aaCov.init(&(self._c_LMMSE.aaCov))
         self.N_phase = self._c_LMMSE.NP
 
     def __dealloc__(self):

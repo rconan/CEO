@@ -32,6 +32,7 @@ cdef extern from "aaStats.h":
 cdef class AaStats:
     cdef aaStats *_c_aaStats
     cdef public cuFloatArray cov
+    cdef init(AaStats, aaStats *)
 cdef class PaStats:
     cdef paStats *_c_paStats
     cdef public cuFloatArray cov
@@ -61,14 +62,13 @@ cdef class AaStats:
         The guide stars
     """
 
-    def __cinit__(self, int N_SIDE_LENSLET, AtmosphereAbstract atm, float lenslet_pitch, Source src):
+    def __cinit__(self):
         self._c_aaStats = new aaStats()
-        self._c_aaStats.setup(N_SIDE_LENSLET, atm._c_atmosphere, lenslet_pitch, 
-                              src._c_source, src._c_source.N_SRC)
+
+    cdef init(self, aaStats *aa):
+        self._c_aaStats = aa
         self.cov = cuFloatArray(shape=(self._c_aaStats.N_SRC2*4*self._c_aaStats.NU,self._c_aaStats.NU))
-        self.cov._c_gpu.dev_data = self._c_aaStats.d__cov
-    def __dealloc__(self):
-        self._c_aaStats.cleanup()
+        self.cov._c_gpu.dev_data = aa.d__cov
 @
 \subsection{PaStats}
 \label{sec:aastats-1}
