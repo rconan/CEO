@@ -4,12 +4,13 @@
 \label{sec:pxd-file}
 
 <<BTBT.pxd>>=
-from utilities cimport cuFloatArray
+from utilities cimport float2, cuFloatArray,  cuFloatComplexArray
 cdef extern from "BTBT.h":
     cdef cppclass BTBT:
-        #float2 *d__cov
-        #float2 *d__b
-        #float2 *d__c
+        int M, N, MT, MT2, NT, NT2, NU, NU2, NDFT, HALF_NDFT, NU_TOTAL, NF, NF2, ind_size, cov_size
+        float2 *d__cov
+        float2 *d__b
+        float2 *d__c
         void setup(int, int, int, int, float *_)
         void cleanup()
         void MVM(float *, float *)
@@ -22,6 +23,8 @@ cdef extern from "BTBT.h":
 cdef class BT2:
     cdef:
         BTBT *_c_BTBT
+        int M, N, MT, NT
+        cuFloatComplexArray cov, b, c
 @
 \section{PYX file}
 \label{sec:pyx-file}
@@ -32,5 +35,16 @@ cdef class BT2:
     def __cinit__(self,int M, int N, int MT, int NT, cuFloatArray cov):
         self._c_BTBT = new BTBT()
         self._c_BTBT.setup(M,N,MT,NT,cov._c_gpu.dev_data)
+        self.M    = M
+        self.MT   = MT
+        self.N    = N
+        self.NT   = NT
+        self.NDFT = self._c_BTBT.NDFT
+        self.cov = cuFloatComplexArray(shape=(1,M*N*self.NDFT))
+        self.b   = cuFloatComplexArray(shape=(1,N*self.NDFT))
+        self.c   = cuFloatComplexArray(shape=(1,M*self.NDFT))
+        self.cov._c_gpu.dev_data = self._c_BTBT.d__cov
+        self.b._c_gpu.dev_data   = self._c_BTBT.d__b
+        self.c._c_gpu.dev_data   = self._c_BTBT.d__c
     def __dealloc__(self):
         self._c_BTBT.cleanup()
