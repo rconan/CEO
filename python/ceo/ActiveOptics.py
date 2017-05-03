@@ -19,6 +19,10 @@ class LSQ(object):
         self.wfs    = ceo.GeometricShackHartmann(**wfs_prms)
         self.includeBM = includeBM
 
+        self.N_MODE = 0
+        if includeBM:
+            self.N_MODE = self.gmt.M1.modes.n_mode
+            
         file_already_exists = False
         db = None
         if filename is not None:
@@ -44,6 +48,7 @@ class LSQ(object):
                 print " >> Saved to %s"%filename
                 db['C'] = self.C
 
+        self.gs_tt7_prms = gs_tt7_prms
         if gs_tt7_prms is not None:
             print "@(AcO.LSQ)> TT7 CALIBRATION ..."        
             self.gmt.reset()
@@ -59,84 +64,6 @@ class LSQ(object):
                     print " >> Saved to %s"%filename
                     db['Dtt7'] = self.Dtt7
             self.Mtt7 = LA.inv(self.Dtt7)
-
-        self.gs_tt7_prms = gs_tt7_prms
-        self.observables(includeBM,file_already_exists,filename,db)
-
-        if filename is not None:
-            db.close()
-
-        self._piston_removed_ = False
-        self._Osp_ = None            
-        self.D_orig      = self.C.D
-        self.N_MODE_orig = self.N_MODE
-        self.Osp_orig    = self.Osp
-        self.Os_orig    = self.Os
-
-        self.set_aberrations(includeBM)
-
-    def observables(self,includeBM,file_already_exists=False,filename=None,db=None):
-
-        print "@(AcO.LSQ)> Generation of observables ..."                
-        on_axis_src = {'photometric_band':"V",'zenith':[0],'azimuth':[0],'height':float('inf'),
-                       'fwhm':0,'magnitude':0,'rays_box_size':25.5,
-                       'rays_box_sampling':101,'rays_origin':[0,0,25]}
-        src = ceo.Source(**on_axis_src)
-        src>>(self.gmt,)
-        self.gmt.reset()
-        +src
-        ps0 = src.wavefront.phase.host()
-        a0 = src.wavefront.amplitude.host()
-        idx = a0==1
-        k = 0
-        self.N_MODE = 0
-        if includeBM:
-            self.N_MODE = self.gmt.M1.modes.n_mode
-            m = 0
-            B = np.zeros((a0.sum(),7*self.N_MODE))
-        O = np.zeros((a0.sum(),84))
-        for mirror in ['M1','M2']:
-            for segId in range(7):
-                for mode in ('Rxyz','Txyz'):
-                    for axis in range(3):
-                        self.gmt.reset()
-                        _Q_ = np.zeros((7,3))
-                        _Q_[segId,axis] = 1e-6
-                        self.gmt[mirror].motion_CS.update(**{mode:_Q_})
-
-                        +src
-                        _ps_ = src.wavefront.phase.host() - ps0
-                        _a_  = a0*src.wavefront.amplitude.host()
-                        O[:,k] = _ps_[idx] /1e-6
-                        k+=1
-                if mirror=='M1' and includeBM:
-                    for l in range(self.N_MODE):
-                        self.gmt.reset()
-                        self.gmt.M1.modes.a[segId,l] = 1e-6
-                        self.gmt.M1.modes.update()
-                        +src
-                        _ps_ = src.wavefront.phase.host() - ps0
-                        _a_  = a0*src.wavefront.amplitude.host()
-                        B[:,m] = _ps_[idx] /1e-6
-                        m+=1
-                        
-
-        OO = {}
-        OO['M1'] = []
-        OO['M2'] = []
-        OO['BM'] = []
-        a = 6
-        b = 7*a
-        for segId in range(7):
-            OO['M1'] += [O[:,segId*a:a*(segId+1)]]
-            OO['M2'] += [O[:,b+segId*6:b+6*(segId+1)]]
-            if includeBM:
-                OO['BM'] += [B[:,segId*self.N_MODE:self.N_MODE*(segId+1)]]
-
-        if includeBM:
-            self.Os = [np.concatenate((OO['M1'][k],OO['M2'][k],OO['BM'][k]),axis=1) for k in range(7)]
-        else:
-            self.Os = [np.concatenate((OO['M1'][k],OO['M2'][k]),axis=1) for k in range(7)]
 
         if self.gs_tt7_prms is not None:
             print "@(AcO.LSQ)> TT7 calibration of observables ..."                
@@ -175,9 +102,85 @@ class LSQ(object):
             P2[6,0] = 1
             P2[7,1] = 1
 
-            Qbtt7 =  [np.eye(12+self.N_MODE)-np.dot(P2,np.dot(self.Mtt7[k*2:(k+1)*2,:],D_s[k])) for k in range(7)]
+            self.Qbtt7 =  [np.eye(12+self.N_MODE)-np.dot(P2,np.dot(self.Mtt7[k*2:(k+1)*2,:],D_s[k])) for k in range(7)]
 
-            self.Osp = [np.dot(X,Y) for X,Y in zip(self.Os,Qbtt7)]
+        if filename is not None:
+            db.close()
+
+        self.observables(includeBM)
+
+        self._piston_removed_ = False
+        self._Osp_ = None            
+        self.D_orig      = self.C.D
+        self.N_MODE_orig = self.N_MODE
+        self.Osp_orig    = self.Osp
+        self.Os_orig    = self.Os
+
+        self.set_aberrations(includeBM)
+
+    def observables(self,includeBM,zenazi=[0,0]):
+
+        print "@(AcO.LSQ)> Generation of observables ..."                
+        on_axis_src = {'photometric_band':"V",'zenith':zenazi[0],'azimuth':zenazi[1],'height':float('inf'),
+                       'fwhm':0,'magnitude':0,'rays_box_size':25.5,
+                       'rays_box_sampling':101,'rays_origin':[0,0,25]}
+        src = ceo.Source(**on_axis_src)
+        src>>(self.gmt,)
+        self.gmt.reset()
+        +src
+        ps0 = src.wavefront.phase.host()
+        a0 = src.wavefront.amplitude.host()
+        idx = a0==1
+        k = 0
+        if includeBM:
+            m = 0
+            B = np.zeros((a0.sum(),7*self.N_MODE))
+        O = np.zeros((a0.sum(),84))
+        for mirror in ['M1','M2']:
+            for segId in range(7):
+                for mode in ('Rxyz','Txyz'):
+                    for axis in range(3):
+                        self.gmt.reset()
+                        _Q_ = np.zeros((7,3))
+                        _Q_[segId,axis] = 1e-6
+                        self.gmt[mirror].motion_CS.update(**{mode:_Q_})
+
+                        +src
+                        _a_  = a0*src.wavefront.amplitude.host()
+                        _ps_ = _a_*(src.wavefront.phase.host() - ps0)
+                        O[:,k] = _ps_[idx] /1e-6
+                        k+=1
+                if mirror=='M1' and includeBM:
+                    for l in range(self.N_MODE):
+                        self.gmt.reset()
+                        self.gmt.M1.modes.a[segId,l] = 1e-6
+                        self.gmt.M1.modes.update()
+                        +src
+                        _a_  = a0*src.wavefront.amplitude.host()
+                        _ps_ = _a_*(src.wavefront.phase.host() - ps0)
+                        B[:,m] = _ps_[idx] /1e-6
+                        m+=1
+                        
+
+        OO = {}
+        OO['M1'] = []
+        OO['M2'] = []
+        OO['BM'] = []
+        a = 6
+        b = 7*a
+        for segId in range(7):
+            OO['M1'] += [O[:,segId*a:a*(segId+1)]]
+            OO['M2'] += [O[:,b+segId*6:b+6*(segId+1)]]
+            if includeBM:
+                OO['BM'] += [B[:,segId*self.N_MODE:self.N_MODE*(segId+1)]]
+
+        if includeBM:
+            self.Os = [np.concatenate((OO['M1'][k],OO['M2'][k],OO['BM'][k]),axis=1) for k in range(7)]
+        else:
+            self.Os = [np.concatenate((OO['M1'][k],OO['M2'][k]),axis=1) for k in range(7)]
+
+        if self.gs_tt7_prms is not None:
+            self.Osp = [np.dot(X,Y) for X,Y in zip(self.Os,self.Qbtt7)]
         else:
             self.Osp = self.Os
 
@@ -198,11 +201,14 @@ class LSQ(object):
         if includeBM:
             radialOrders = np.concatenate( [np.ones((1,x+1))*x for x in range(9)] , axis=1 )
             scale = 1.0/radialOrders[0,3:]
-            M1_avar = (1e-6*scale[:self.N_MODE_orig]/scale[0])**2
-            L16 = np.append(L16,M1_avar)
-            L7  = np.append(L7,M1_avar)
+            self.M1_avar = (1e-5*scale[:self.N_MODE_orig]/scale[0])**2
+            N = [np.diag(np.dot(X.T,X)) for X in self.Os_orig]
+            L_BM = [self.M1_avar/Y[-self.N_MODE_orig:] for Y in N]
+            self.L  = [np.diag(np.append(L16,x)) for x in L_BM[:-1]]
+            self.L += [np.diag(np.append(L7,L_BM[-1]))]
+        else:
+            self.L = [np.diag(L16)]*6 + [np.diag(L7)]
 
-        self.L = [np.diag(L16)]*6 + [np.diag(L7)]
         CL = np.array( [ np.trace( np.dot(X,np.dot(Y,X.T))) for X,Y in zip(self.Os_orig,self.L) ] )
         self.initWFE = np.sqrt(CL.sum()/self.Os_orig[0].shape[0])*1e6
         print " >> Initial WFE RMS: %.2fmicron"%self.initWFE
@@ -239,7 +245,11 @@ class LSQ(object):
     def WFE(self,SVD_threshold, gs_wfs_mag=None, 
             spotFWHM_arcsec=None, pixelScale_arcsec=None, 
             ron=0.0, nPhBackground=0.0, controller=None,
-            miscellaneous_noise_rms=None):
+            miscellaneous_noise_rms=None,
+            zenazi=None):
+
+        if zenazi is not None:
+            self.observables(self.includeBM,zenazi)
 
         self.C.threshold = SVD_threshold
 
@@ -261,6 +271,7 @@ class LSQ(object):
 
         n = self.Os[0].shape[0]
         wfe_rms = lambda x : np.sqrt(fitting_var + sum([ np.trace(y) for y in x ])/n)*1e9
+        wfe_rms_no_fitting = lambda x : np.sqrt(sum([ np.trace(y) for y in x ])/n)*1e9
         Osp = self.Osp
 
         self.Cov_wo_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.Qb2) ]
@@ -279,7 +290,7 @@ class LSQ(object):
             Qb2p = [X+Y for X,Y in zip(self.Qb2,self.N2)]
 
             self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
-            self.wfe_noise_rms = wfe_rms(self.Cov_noise)
+            self.wfe_noise_rms = wfe_rms_no_fitting(self.Cov_noise)
 
             self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
             self.wfe_rms = wfe_rms(self.Cov_w_noise)
