@@ -49,6 +49,7 @@ struct BTBT {
 <<MVM input ordering kernel>>
 
 <<MVM complex multiplication>>
+<<array of pointer allocation>>
 
 <<MVM output ordering kernel>>
 <<MVM output ordering kernel (masked)>>
@@ -87,6 +88,8 @@ cufftHandle raster_plan, MVM_input_plan, MVM_output_plan;
 float2 *cov;
 unsigned int *mu, *xi;
 #endif
+/* cublasHandle_t handle; */
+/* cuComplex **Aptr, **Bptr, **Cptr; */
 @
  
 \section{Functions}
@@ -187,6 +190,25 @@ HANDLE_ERROR_CUFFT( cufftPlan1d(&MVM_output_plan, NDFT, CUFFT_C2R, BATCH),
 		    "Unable to create plan");
 HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(MVM_output_plan, CUFFT_COMPATIBILITY_NATIVE),
 		    "Unable to set compatibility mode to native");
+//cublasCreate(&handle);
+@ 
+<<allocation (matrix)>>=
+cudaMalloc((void**)&Aptr, M * sizeof(cuComplex *));
+cudaMalloc((void**)&Bptr, M * sizeof(cuComplex *));
+cudaMalloc((void**)&Cptr, M * sizeof(cuComplex *));
+pointer_allocation LLL M,1 RRR (Aptr, Bptr, Cptr,
+				d__c, HALF_NDFT, d__cov, HALF_NDFT*N, d__b, N);
+@
+<<array of pointer allocation>>=
+  __global__ void pointer_allocation(cuComplex **Aptr, cuComplex **Bptr, cuComplex **Cptr,
+				     float2 *c, int n_c, float2 *cov, int n_cov, float2 *b, int n_b)
+{
+  int k;
+  k = blockIdx.x;
+  Aptr[k] = (cuComplex *) (c+k*n_c);
+  Bptr[k] = (cuComplex *) (cov+k*n_cov);
+  Cptr[k] = (cuComplex *) (b+k*n_b);
+}
 @ 
 The multiplication $Cs$ are efficiently performed as follows
 \begin{enumerate}
@@ -274,6 +296,7 @@ void BTBT::cleanup(void)
   free(mu);		
   free(xi);
 #endif		
+  /* cublasDestroy(handle); */
 }
 @
 \subsection{Input/Output}
@@ -319,16 +342,16 @@ The MVM routine computes the matrix--to--vector multiplication $y=C_{\vec\alpha\
 << MVM >>=
 void BTBT::MVM(float *y, float *x)
 {
-  /* stopwatch tid; */
+/* stopwatch tid;  */
   /* tid.tic(); */
   <<MVM STEP 1: input ordering>>
   /* tid.toc("STEP 1"); */
   /* tid.tic(); */
   <<MVM STEP 2: input FT>>
   /* tid.toc("STEP 2"); */
- /* tid.tic(); */
-  <<MVM STEP 3: Fourier domain multiplication>>
-  /* tid.toc("STEP 3"); */
+ /* tid.tic();  */
+     <<MVM STEP 3: Fourier domain multiplication>>
+ /* tid.toc("STEP 3");  */
    /*  HANDLE_ERROR( cudaThreadSynchronize() );  */
    /* float2 *b;  */
    /* b = (float2*)malloc(M*sizeof(float2)*NDFT);  */
@@ -444,6 +467,17 @@ using the kernel:
     }
   }
 }
+@
+<<MVM STEP 3: Fourier domain multiplication (matrix multiplication)>>= 
+cuComplex alpha, beta;
+alpha.x = 1.0;
+alpha.y = 0.0;
+beta.x = 1.0;
+beta.y = 0.0;
+cublasCgemmBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N, 
+		   HALF_NDFT, 1, N,
+		   &alpha, (const cuComplex **)Aptr, HALF_NDFT, (const cuComplex **)Bptr, N, &beta,
+		   (cuComplex **)Cptr, HALF_NDFT, M);
 @ 
 \item the inverse Fourier transform of $\tilde c$ is computed i.e. $c=\mathcal F^{-1} [\tilde c]$,
 <<MVM STEP 4: output FT>>=
