@@ -737,7 +737,7 @@ HANDLE_ERROR( cudaMemcpy( d__turbulence, &turbulence,
 int nel = N_LAYER*turbulence.N_k*turbulence.N_a;
 stopwatch tid;
 tid.tic();
-fprintf(stdout,"\n@(CEO)>atmosphere: initializing %d variates ...",nel);
+fprintf(stdout,"\n@(CEO)>atmosphere: initializing %d variates with SEED=%d ...",nel,LOCAL_RAND_SEED);
 HANDLE_ERROR( cudaMalloc( (void**)&devStates, 4*nel*sizeof(curandState)) );
 HANDLE_ERROR( cudaMalloc( (void**)&zeta1, nel*sizeof(float)) );
 HANDLE_ERROR( cudaMalloc( (void**)&eta1,  nel*sizeof(float)) );
@@ -745,7 +745,7 @@ HANDLE_ERROR( cudaMalloc( (void**)&zeta2, nel*sizeof(float)) );
 HANDLE_ERROR( cudaMalloc( (void**)&eta2,  nel*sizeof(float)) );
 dim3 blockDim(64,1);
 dim3 gridDim( 1+4*nel/64 , 1 );
-setupRandomSequence LLL gridDim,blockDim RRR (devStates, 4*nel);
+setupRandomSequence LLL gridDim,blockDim RRR (devStates, 4*nel, LOCAL_RAND_SEED);
 HANDLE_ERROR( cudaDeviceSynchronize() );
 generateVariates LLL gridDim,blockDim RRR (zeta1, eta1, zeta2, eta2, devStates, nel);
 HANDLE_ERROR( cudaDeviceSynchronize() );
@@ -967,12 +967,12 @@ tid.toc();
 @
 The random generator is initialized within the following kernel:
 <<init random variates>>=
-__global__ void setupRandomSequence(curandState *state, int n_state)
+__global__ void setupRandomSequence(curandState *state, int n_state, int seed)
 {
   int id;
   id = blockIdx.x * blockDim.x + threadIdx.x;
   if (id<n_state)
-    curand_init(RAND_SEED, id, 0, &state[id]);
+    curand_init(seed, id, 0, &state[id]);
 }
 @  and the variates are generated with:
 <<variates>>=
