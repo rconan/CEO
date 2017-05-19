@@ -131,6 +131,7 @@ class LSQ(object):
         ps0 = src.wavefront.phase.host()
         a0 = src.wavefront.amplitude.host()
         idx = a0==1
+        self.pupil_mask = idx
         k = 0
         if includeBM:
             m = 0
@@ -246,7 +247,7 @@ class LSQ(object):
             spotFWHM_arcsec=None, pixelScale_arcsec=None, 
             ron=0.0, nPhBackground=0.0, controller=None,
             miscellaneous_noise_rms=None,
-            zenazi=None):
+            zenazi=None, piston_removed=False):
 
         if zenazi is not None:
             self.observables(self.includeBM,zenazi)
@@ -282,17 +283,23 @@ class LSQ(object):
             self.wfs_gs.magnitude = [gs_wfs_mag]*3
             nPhLenslet = self.wfs_prms['exposureTime']*self.wfs_prms['photoElectronGain']*\
                          self.wfs_gs.nPhoton[0]*(self.wfs_prms['d'])**2
-            sigma_noise = wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,
+            self.sigma_noise = wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,
                                    self.wfs_prms['N_PX_IMAGE']/self.wfs_prms['BIN_IMAGE'],
                                    nPhBackground=nPhBackground,controller=controller)
 
-            self.N2 = [sigma_noise*np.dot(X,X.T) for X in self.C.M]
+            self.N2 = [self.sigma_noise*np.dot(X,X.T) for X in self.C.M]
             Qb2p = [X+Y for X,Y in zip(self.Qb2,self.N2)]
 
             self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
             self.wfe_noise_rms = wfe_rms_no_fitting(self.Cov_noise)
 
             self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
+            if piston_removed:
+                print "PISTON REMOVAL!"
+                n = self.Osp[0].shape[0]
+                Z1 = np.ones((n,1))/np.sqrt(n)
+                Q1 = np.eye(n) - np.dot(Z1,Z1.T)
+                self.Cov_w_noise = [ Q1.dot(Y.dot(Q1.T)) for Y in self.Cov_w_noise ]
             self.wfe_rms = wfe_rms(self.Cov_w_noise)
 
         if miscellaneous_noise_rms is not None:
@@ -353,6 +360,25 @@ b            self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.
             self.wfe_rms = wfe_rms(self.Cov_w_noise)
         """
 
+    def wavefrontSample(self):
+
+        _randn_ = lambda n,x : np.random.randn(n,1)*np.sqrt(x)
+        c = [_randn_(X.shape[0],np.diag(X)[:,None]) for X in self.L]
+
+        Q = [np.dot(X,Y) for X,Y in zip(self.C.M,self.C.D)]
+        D = np.insert(self.C.D[-1],[2,7],0,axis=1)
+        Q[-1] = np.dot(self.C.M[-1],D)
+        n_Qb = 12+self.N_MODE
+        Qb = [np.eye(n_Qb) - X for X in Q]
+
+#        noise = np.random.randn(self.C.M.shape[1],1)*np.sqrt(self.sigma_noise)
+
+        c_res = [X.dot(Z) - Y.dot(_randn_(Y.shape[1],self.sigma_noise)) for X,Y,Z in zip(Qb,self.C.M,c)]
+#        c_res = [X.dot(Z) for X,Z in zip(Qb,c)]
+        W = [X.dot(Y) for X,Y in zip(self.Osp,c_res)]
+
+        return W
+        
     @property
     def piston_removed(self):
         return self._piston_removed_
