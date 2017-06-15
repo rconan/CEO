@@ -2,6 +2,7 @@ digraph {
 overlap=false
 splines=true
 bgcolor = black
+ranksep=2;
 node[style=filled,fillcolor=lightgray,color=white];
 edge[arrowtail=odot,dir=back,color=white];
 
@@ -50,7 +51,7 @@ stopwatch;
 gpu;
 }
 
-centroiding -> {shackHartmann; geometricShackHartmann};
+centroiding -> {shackHartmann; geometricShackHartmann;tt7};
 centroiding -> pyramid;
 bundle -> source;
 
@@ -76,8 +77,8 @@ stopwatch -> iterativeSolvers;
 gpu;
 
 complex_amplitude -> segmentPistonSensor;
-mask -> {shackHartmann;geometricShackHartmann;gmt_m1;gmt_m2;bundle;BTBT;GBTBT;segmentPistonSensor;}
-imaging -> {shackHartmann;pyramid;segmentPistonSensor;}
+mask -> {shackHartmann;geometricShackHartmann;tt7;gmt_m1;gmt_m2;bundle;BTBT;GBTBT;segmentPistonSensor;}
+imaging -> {shackHartmann;tt7;pyramid;segmentPistonSensor;}
 
 edge[style=dotted,color=white]
 mask -> complex_amplitude;
@@ -96,6 +97,7 @@ cuIntArray;
 cuFloatArray;
 cuDoubleArray;
 JSONAbstract;
+Sensor;
 }
 
 {
@@ -112,7 +114,6 @@ node[fontcolor=palegreen3]
 Bundle;
 Complex_amplitude;
 Source;
-JSource;
 }
 
 {
@@ -143,12 +144,19 @@ PaStats;
 {
 node[fontcolor=hotpink2]
 GMT_MX;
-JGMT_MX;
 DispersedFringeSensor;
+GeometricTT7;
 }
 
-aaStats -> AaStats;
+AaStats[color=lightskyblue3];
+BT2[color=lightskyblue3];
+IterativeSolvers[color=lightskyblue3];
+
+aaStats -> AaStats -> Lmmse;
 paStats -> PaStats;
+BTBT -> BT2 -> Lmmse;
+iterativeSolvers -> IterativeSolvers -> Lmmse;
+
 
 centroiding -> Centroiding;
 imaging -> Imaging;
@@ -164,9 +172,12 @@ Complex_amplitude -> Source[label="wavefront"];
 Bundle -> Source[label="rays"];
 
 shackHartmann -> ShackHartmann;
+tt7 -> TT7;
 geometricShackHartmann -> GeometricShackHartmann;
-MaskAbstract -> {ShackHartmann; GeometricShackHartmann}
-Centroiding -> {ShackHartmann; GeometricShackHartmann}
+MaskAbstract -> {ShackHartmann;
+  TT7; GeometricShackHartmann}
+  Centroiding -> {ShackHartmann;
+    TT7; GeometricShackHartmann}
 
 pyramid -> Pyramid;
 Centroiding -> Pyramid;
@@ -209,14 +220,18 @@ layer -> Layer -> AtmosphereAbstract;
 MaskAbstract[color=coral3]
 mask -> MaskAbstract;
 Complex_amplitude -> SegmentPistonSensor;
-Imaging -> {ShackHartmann;Pyramid;SegmentPistonSensor;}
+Imaging -> {ShackHartmann;
+  TT7;Pyramid;SegmentPistonSensor;}
 
 stopwatch -> StopWatch;
 
 gpu -> {cuFloatArray;cuIntArray;cuDoubleArray;}
 LMMSE -> {Lmmse;LmmseSH;}
-cuFloatArray -> {Imaging;Centroiding;Complex_amplitude;ShackHartmann;GeometricShackHartmann;SegmentPistonSensor;Layer;MaskAbstract;Lmmse;LmmseSH;AtmosphereAbstract;AaStats;PaStats;}
+cuFloatArray -> {Imaging;Centroiding;Complex_amplitude;ShackHartmann;
+  TT7;GeometricShackHartmann;SegmentPistonSensor;Layer;MaskAbstract;Lmmse;LmmseSH;AtmosphereAbstract;AaStats;PaStats;}
+cuFloatComplexArray -> BT2;
 
+  
 edge[dir=back,arrowtail=normal];
 
 AtmosphereAbstract -> Atmosphere;
@@ -226,18 +241,15 @@ MaskAbstract -> Mask;
 MaskAbstract -> Telescope;
 MaskAbstract -> GMT;
 
-GmtMirrors -> GMT_MX -> JGMT_MX;
+GmtMirrors -> GMT_MX;
 SegmentPistonSensor -> DispersedFringeSensor;
+Sensor -> GeometricTT7;
 LateralEdgeSensors -> DistanceEdgeSensors;
 
-Source -> JSource;
-
-Imaging -> JImaging;
-
-ShackHartmann -> JShackHartmann;
-
 JSONAbstract[color=coral3];
-JSONAbstract -> {JSource; JImaging; JGmtAtmosphere; JShackHartmann;}
+JSONAbstract -> {JGmtAtmosphere;}
+Sensor[color=coral3];
+Sensor -> {ShackHartmann; GeometricShackHartmann;TT7};
 
 #{rank = source; mask;}
 #{rank = same; gpu; GMT_MX; Atmosphere;}

@@ -368,6 +368,7 @@ cdef class Complex_amplitude:
 
 <<source.pyx>>=
 import numpy as np
+cimport numpy as np
 cimport cython
 
 @cython.boundscheck(False)
@@ -577,7 +578,8 @@ cdef class Complex_amplitude:
 	void setup(const char *,float , float , float , int )
         void setup(const char *,float *, float *, float , int , int )
         void setup(const char *,float *, float *, float , int , rtd, int, vector)
-        void setup(const char *,float *,float *, float *, float , int , rtd, int, vector)
+        #void setup(const char *,float *,float *, float *, float , int , rtd, int, vector)
+        void setup(const char *,float *,double *, double *, float , int , rtd, int, vector)
         void cleanup()
         void reset_rays()
         void opd2phase()
@@ -587,7 +589,7 @@ cdef class Complex_amplitude:
         float n_background_photon(float)
         float wavelength()
         float spectral_bandwidth()
-        void update_directions(float *, float *, int)
+        void update_directions(double *, double *, int)
         void update_magnitude(float *, int)
 @
 \subsubsection{Class definition}
@@ -601,13 +603,15 @@ cdef class Source:
         readonly int N_SRC
         readonly int n, m
         readonly int size
-        float[:] _zenith_, _azimuth_, _magnitude_
+        double[:] _zenith_, _azimuth_
+        float[:] _magnitude_
         readonly float height
         readonly Bundle rays
         readonly Complex_amplitude wavefront
         readonly sphere_distance
         readonly tuple OPTICALPATH
         public double samplingTime, timeStamp
+        public dict parameters
 @
 \subsection{PYX file}
 \label{sec:pyx-file-2}
@@ -680,6 +684,8 @@ cdef class Source:
         the source propagation sampling time; default: 1s
     timeStamp : double
         the time associated with the current propagation, the "samplingTime" is added to "timeStamp" after each call to the unary + operator
+    parameters : dict
+        the object parameters in a dictionary
 
     Examples
     --------
@@ -715,6 +721,7 @@ cdef class Source:
 
     def __cinit__(self, *args, **kwargs):
         self._c_source = new source()
+        self.parameters = {'args':args,'kwargs':kwargs}
 
     def __init__(self,char *photometric_band,
                  zenith=0, azimuth=0,
@@ -727,23 +734,25 @@ cdef class Source:
                  rays_origin=None,
                  samplingTime = 1.0 ):
 
+        cdef float[:] z,a
         if rays_box_sampling is not None:
             resolution = [rays_box_sampling, rays_box_sampling]
         self.n = resolution[0]
         self.m = resolution[1]
-        self._zenith_  = np.array( zenith,  dtype=np.float32, ndmin=1)
-        self._azimuth_ = np.array( azimuth, dtype=np.float32, ndmin=1)
+        self._zenith_  = np.array( zenith,  dtype=np.float64, ndmin=1)
+        self._azimuth_ = np.array( azimuth, dtype=np.float64, ndmin=1)
         if magnitude is None:
-            self._magnitude_ = np.zeros_like( self._zenith_ )
+            self._magnitude_ = np.zeros_like( self._zenith_ , dtype=np.float32)
         else:
             self._magnitude_ = np.array( magnitude, dtype=np.float32, ndmin=1)
         self.height  = float(height);
         self.size = self._zenith_.size
         cdef vector _origin_
         if rays_box_size is None:
+            z = np.array( zenith,  dtype=np.float32, ndmin=1)
+            a = np.array( azimuth, dtype=np.float32, ndmin=1)
             self._c_source.setup(photometric_band,
-                                 &self._zenith_[0],
-                                 &self._azimuth_[0], height,
+                                 &z[0],&a[0], height,
                                  self.size, np.prod(resolution))
         else:
             _origin_.x = <float>rays_origin[0]
@@ -829,20 +838,20 @@ cdef class Source:
         """
         self._c_source.opd2phase()
 
-    def updateDirections(self, float[:] zenith, float[:] azimuth):
+    def updateDirections(self, zenith, azimuth):
         """
         Update the zenith and azimuth direction angles
 
         Parameters
         ----------
-        zenith : float[:]
+        zenith : float, tuple, list or numpy array
             The zenith angle array in radian
-        azimuth : float[:]
+        azimuth : float, tuple, list or numpy array
             The azimuth angle array in radian
         """
-        self._zenith_ = zenith
-        self._azimuth_ = azimuth
-        self._c_source.update_directions(&zenith[0],&azimuth[0],zenith.size)
+        self._zenith_  = np.array(zenith ,dtype=np.float64,ndmin=1)
+        self._azimuth_ = np.array(azimuth,dtype=np.float64,ndmin=1)
+        self._c_source.update_directions(&(self._zenith_[0]),&(self._azimuth_[0]),self.N_SRC)
         
     def nBackgroundPhoton(self, float backgroundMagnitude):
         return self._c_source.n_background_photon(backgroundMagnitude)
