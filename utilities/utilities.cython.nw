@@ -10,6 +10,10 @@ cdef extern from "utilities.h":
         rtd x
         rtd y
         rtd z
+cdef extern from "cuda.h":
+    ctypedef struct float2:
+        float x
+        float y
 @
 \section{JSONAbstract}
 \label{sec:jsonabstract}
@@ -644,6 +648,148 @@ cdef class cuDoubleArray:
         self._c_gpu.double2float(data._c_gpu)
         return data
         
+@
+\subsection{cuFloatComplexArray}
+\label{sec:cufloatarray}
+
+\index{utilities!python!cuFloatComplexArray}
+<<class definitions>>=
+# cuFloatComplexArray
+from cpython.mem cimport PyMem_Malloc, PyMem_Realloc, PyMem_Free
+cdef class cuFloatComplexArray:
+    cdef gpu_t[float2] *_c_gpu
+    <<cu complex array definitions>>
+@ 
+<<cu complex array definitions>>=
+cdef:
+    dtype type
+    public int size
+    public shape
+    dev_malloc
+    float2 *_host_data_
+    public ndarray host_data
+    units
+@ 
+<<utilities.pyx>>=
+cdef class cuFloatComplexArray:
+    """
+    A class to interact with a cuda float complex array
+
+    <<cu complex array class doc>>
+    """
+
+    def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
+        self._c_gpu = new gpu_t[float2]()
+        self.type = dtype(np.complex64)
+        <<cu complex array constructor>>
+
+    <<cu complex array methods>>
+
+    def assign_ptr(self):
+        self._host_data_ = <float2 *>PyMem_Malloc(self.size*sizeof(float2))
+        self._c_gpu.host_data = <float2 *>self._host_data_
+@
+<<cu complex array class doc>>= 
+Parameters
+----------
+shape : tuple of int, optional
+    Number of rows and colums; default: None
+host_data : list or tuple or numpy array, optional
+    Host data to copy to the device; default: None
+dev_malloc : bool, optional
+    Flag to allocate memory on device; default: False
+
+Attributes
+----------
+size : int
+    The total number of element
+shape : tuple
+    The shape of the data array
+size : float
+    The number of elements in the data array
+host_data : ndarray
+    The data on the host
+dev_malloc : bool
+    True is memory has been allocated on the device
+@ 
+<<cu complex array constructor>>=
+cdef int k
+cdef tuple subs
+self._c_gpu.setup();
+self.dev_malloc = dev_malloc
+if shape is not None:
+    self.shape = shape
+    self.size = np.prod(shape)
+    self._c_gpu.N = self.size
+if self.dev_malloc:
+    self._c_gpu.N = self.size
+    self._c_gpu.dev_malloc()           
+    self.assign_ptr()
+if host_data is not None:
+    self.host_data = np.array( host_data , dtype=self.type , order='C')
+    self.shape = host_data.shape
+    self.size = np.prod(self.shape)
+    self._c_gpu.N = self.size
+    if not self.dev_malloc:
+        self._c_gpu.dev_malloc()
+    self.assign_ptr()
+    for k in range(self.size):
+        subs = np.unravel_index(k,self.shape)
+        self._host_data_[k].x = <float>self.host_data.real[subs]
+        self._host_data_[k].y = <float>self.host_data.imag[subs]
+    self._c_gpu.host2dev()
+    self.dev_malloc = True    
+self.units = {'micron': 1e6, 'nm': 1e9, 'arcsec': 180*3600/math.pi,
+              'mas': 1e3*180*3600/math.pi}
+@ 
+<<cu complex array methods>>=
+def __dealloc__(self):
+    if self.dev_malloc:
+        self._c_gpu.free_dev()
+        PyMem_Free(self._host_data_)
+
+def host(self,units=None,zm=False,mask=None,shape=None):
+    <<cu complex array host>>
+
+def reset(self):
+    self._c_gpu.reset()
+@
+<<cu complex array host>>=
+<<cu complex array method doc>>
+cdef int k
+cdef tuple subs
+if self.shape==(0,0) or self.shape is None:
+    raise ValueError("Data must have a size greater than zero!!")
+if shape is not None:
+    prod = lambda x,y : x*y
+    assert reduce(prod,shape,)==reduce(prod,self.shape), "Total size of array must be unchanged!"
+    self.shape = shape
+self.host_data = np.zeros(self.shape,order='c',dtype=self.type)
+self.assign_ptr()
+self._c_gpu.dev2host()
+for k in range(self.size):
+    subs = np.unravel_index(k,self.shape)
+    self.host_data.real[subs] = self._host_data_[k].x
+    self.host_data.imag[subs] = self._host_data_[k].y
+if units is not None:
+    self.host_data = self.host_data*self.units[units]
+return self.host_data
+@
+<<cu complex array method doc>>=
+"""
+Transfers data on the GPU device to the memory of the host
+
+Parameters
+----------
+shape : tuple, optional
+    The shape of the data array, default to None
+units : string, optional
+    The data converstion units: ""micron"", ""nm"", ""arcsec" and ""mas"", default to None
+
+Returns
+-------
+numpy array : a copy of the device data on the host
+"""
 @
 
 \section{Atmospheric dispersion}
