@@ -1998,6 +1998,7 @@ __global__ void rayTracingKern(
 const float* x_PUPIL,const float* y_PUPIL,
 float* phase_screen_PUPIL,const int NXY_PUPIL,
 const source* src, const int N_SOURCE,
+const float r0,
 const layer* layers,
 float* d__phase_screen_LAYER,
 const int N_LAYER, const float tau)
@@ -2016,7 +2017,7 @@ const int N_LAYER, const float tau)
 
       <<bilinear interpolation>>
 
-	phase_screen_PUPIL[ij+k_SOURCE*NXY_PUPIL] += zi;
+	phase_screen_PUPIL[ij+k_SOURCE*NXY_PUPIL] += r0*zi;
     }
   }
 }
@@ -2087,13 +2088,41 @@ const float* x_PUPIL,const float* y_PUPIL,
 float* phase_screen_PUPIL, const int NXY_PUPIL,
 const source *src, const float tau)
 {
-  <<ray tracing (common)>>
+  int k_DURATION;
+  float new_tau = tau - layers_tau0;
+  stopwatch tid;
+
+  //fprintf(stdout," . tau=%f\n . layers_tau=%f\n . layers_duration=%f\n",tau,layers_tau0,layers_duration);
+
+  if ( (fabs(tau-layers_tau0)>layers_duration) || (new_tau<0) ) {
+
+    k_DURATION = (int) (tau/layers_duration);
+    layers_tau0 = k_DURATION*layers_duration;
+    new_tau     = tau - k_DURATION*layers_duration;
+
+    if (N_DURATION>0) {
+      fprintf(stdout,"\n@(CEO)>atmopshere: Loading phase screens (%.0fs) to device...\n",layers_tau0);
+      tid.tic();
+      HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
+				phase_screen_LAYER + k_DURATION*N_PHASE_LAYER,
+				sizeof(float)*N_PHASE_LAYER,
+				cudaMemcpyHostToDevice ) );
+      cublasCreate(&handle);
+      CUBLAS_ERROR( cublasSscal(handle, N_PHASE_LAYER, &r0_native, d__phase_screen_LAYER, 1) );
+      cublasDestroy(handle);
+      tid.toc();
+    } else {
+      <<layer to device (ray tracing)>>
+    }
+
+  }
   dim3 blockDim(16,16);
   dim3 gridDim( ceilf(sqrtf(NXY_PUPIL)/16) , ceilf(sqrtf(NXY_PUPIL)/16), src->N_SRC);
   rayTracingKern LLL gridDim, blockDim RRR(
   x_PUPIL, y_PUPIL,
   phase_screen_PUPIL, NXY_PUPIL,
   src->dev_ptr, src->N_SRC,
+  powf(r0,-5.0/6.0),
   d__layers,
   d__phase_screen_LAYER,
   N_LAYER, tau-layers_tau0);
