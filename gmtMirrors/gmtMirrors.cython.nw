@@ -144,7 +144,7 @@ cdef class GmtMirrors:
             Set if M2 acts also a stop; default: True
         """
 
-        cdef float [:] __zenith__, __azimuth__, theta_x, theta_y, offset_zenith, offset_azimuth
+        cdef double [:] __zenith__, __azimuth__, theta_x, theta_y, offset_zenith, offset_azimuth
         __zenith__ = src._zenith_
         __azimuth__= src._azimuth_
         theta_x = src.theta_x - self.pointing_error_zenith*np.cos(self.pointing_error_azimuth)
@@ -170,14 +170,21 @@ cdef class GmtMirrors:
         if where_to=="focal plane":
             src.rays.to_z_plane(self.focal_plane_distance)
 
-    def reset(self):
+    def reset(self, dict state=None):
         """
         Reset M1 and M2 mirror segments to their original locations and shapes
         """
+        cdef str mirror
+        self.pointing_error_zenith = 0.0
+        self.pointing_error_azimuth = 0.0
         self.M1.motion_CS.reset()
         self.M1.modes.reset()
         self.M2.motion_CS.reset()
         self.M2. modes.reset()
+        if state is not None:
+            for mirror in state:
+                self[mirror].__ixor__(state[mirror])
+            
 
     def __invert__(self):
         """
@@ -185,14 +192,22 @@ cdef class GmtMirrors:
         """
         self.reset()
 
-    def update(self, **kwargs):
+    def update(self, dict state):
         """
         Update M1 and M2 rigid body motions using dictionary input: {'M1':{'Rxyz':val1,...},'M2',{'Txyz':val2,...}}
         """
-        for mirror in kwargs:
-            for RT in kwargs[mirror]:
-                self[mirror].motion_CS[RT] = kwargs[mirror][RT]
-            self[mirror].motion_CS.update()
+        cdef str mirror
+        for mirror in state:
+            self[mirror].__ixor__(state[mirror])
+
+    def __ixor__(self, dict state):
+        """
+        Update M1 and M2 rigid body motions using dictionary input: {'M1':{'Rxyz':val1,...},'M2',{'Txyz':val2,...}}
+        """
+        cdef str mirror
+        for mirror in state:
+            self[mirror].__ixor__(state[mirror])
+        return self
 
     def dump_log(self, bytes filename):
         """
@@ -230,6 +245,14 @@ cdef class GmtMirrors:
                                                           src.rays.L,
                                                           src._c_source.rays.d__piston_mask)
         return sxy
+
+    @property
+    def state(self):
+        cdef dict d
+        d = {'M1': {'Rxyz':self.M1.motion_CS['Rxyz'] , 'Txyz':self.M1.motion_CS['Txyz']},
+             'M2': {'Rxyz':self.M2.motion_CS['Rxyz'] , 'Txyz':self.M2.motion_CS['Txyz']}}
+        return d
+        
 @
 \section{Bending modes}
 \label{sec:bending-modes}
@@ -586,6 +609,14 @@ self.D = {}
 <<GMT M12 methods>>=
 def __dealloc__(self):
     self._c_gmt_m12.cleanup()
+
+def __ixor__(self, dict d):
+    cdef tuple t
+    self.motion_CS.update(**d)
+    if 'modes' in d:
+        t = d['modes']
+        self.modes.a[t[0],t[1]] = t[2]
+    return self
 
 def trace(self, Bundle rays):
     """
