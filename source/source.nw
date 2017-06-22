@@ -51,6 +51,9 @@ struct source {
   void setup(const char *_photometric_band, float *magnitude,
 	     float *_zenith, float *_azimuth, float _height,
 	     int _N_SRC, rtd _L_, int _N_L_, vector origin);
+  void setup(const char *_photometric_band, float *magnitude,
+	     rtd *_zenith, rtd *_azimuth, float _height,
+	     int _N_SRC, rtd _L_, int _N_L_, vector origin);
    void cleanup(void);
 
   void reset_rays(void);
@@ -68,7 +71,7 @@ struct source {
   float n_photon(float _magnitude_);
   float n_background_photon(float backgroundMagnitude);
   float wavenumber(void);
-  void update_directions(float *zenith, float *azimuth, int N_DIR);
+  void update_directions(double *zenith, double *azimuth, int N_DIR);
   void update_magnitude(float *magnitude, int N_MAG);
   void copy_magnitude(source *other_src);
 };
@@ -157,6 +160,10 @@ int N_SRC;
 The source locations are given by their [[zenith]] and [[azimuth]] angles, all the sources share the same height.
 <<source parameters>>=
 float zenith, azimuth, height, theta_x, theta_y;
+@
+A double precision copy of the same parameters is used by the ray tracing engine:
+<<source parameters>>=
+rtd _zenith_64_, _azimuth_64_, _height_64_, _theta_x_64_, _theta_y_64_;
 @ The coordinates of the unit vector pointing towards the sources are given by [[theta_x]] and [[theta_y]].
 The wavefront is the complex amplitude of the light beam.
 It is given by its amplitude and phase, both are arrays of [[N_PX]] values.
@@ -1313,24 +1320,13 @@ void source::setup(const char *_photometric_band,
 void source::setup(const char *_photometric_band,
 		   float *_zenith, float *_azimuth, float _height,
 		   int _N_SRC, rtd L, int N_L, vector origin) {
-  N_SRC = _N_SRC;
-  height = _height;
-  photometric_band = _photometric_band;
-  magnitude = 0.0;
-  fwhm = 0.0;
-  source __src;
-  HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
-  strcpy(tag,"sources");
+  <<setup multiple sources contents: common part (host)>>
   fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
   for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
-    __src.zenith  = _zenith[i_SRC];
-    __src.azimuth = _azimuth[i_SRC];
+    <<setup multiple sources contents: common part (device)>>
     __src.magnitude = magnitude;
     __src.N_PHOTON  = n_photon(magnitude);
-    __src.height  = _height;
-    __src.theta_x = tanf(_zenith[i_SRC])*cosf(_azimuth[i_SRC]);
-    __src.theta_y = tanf(_zenith[i_SRC])*sinf(_azimuth[i_SRC]);
     HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
 			      sizeof(source) ,
 			      cudaMemcpyHostToDevice ) );
@@ -1346,30 +1342,67 @@ void source::setup(const char *_photometric_band,
   reset_rays();
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
 }
+@ with
+<<setup multiple sources contents: common part (host)>>=
+N_SRC = _N_SRC;
+height = _height;
+photometric_band = _photometric_band;
+magnitude = 0.0;
+fwhm = 0.0;
+source __src;
+HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
+strcpy(tag,"sources");
+@ and with
+<<setup multiple sources contents: common part (device)>>=
+__src.zenith  = (float) _zenith[i_SRC];
+__src.azimuth = (float) _azimuth[i_SRC];
+__src.theta_x = tanf(__src.zenith)*cosf(__src.azimuth);
+__src.theta_y = tanf(__src.zenith)*sinf(__src.azimuth);
+__src._zenith_64_  = _zenith[i_SRC];
+__src._azimuth_64_ = _azimuth[i_SRC];
+__src._theta_x_64_ = tan(__src._zenith_64_)*cos(__src._azimuth_64_);
+__src._theta_y_64_ = tan(__src._zenith_64_)*sin(__src._azimuth_64_);
+__src.height  = _height;
+__src.photometric_band = _photometric_band;
 @  \item for multiple sources with wavefront resolution and with ray bundle (different magnitudes):
 <<setup for multiple sources with wavefront resolution and ray bundle>>=
 void source::setup(const char *_photometric_band, float *_magnitude,
 		   float *_zenith, float *_azimuth, float _height,
 		   int _N_SRC, rtd L, int N_L, vector origin) {
-  N_SRC = _N_SRC;
-  height = _height;
-  photometric_band = _photometric_band;
-  magnitude = 0.0;
-  fwhm = 0.0;
-  source __src;
-  HANDLE_ERROR( cudaMalloc( (void**)&dev_ptr, sizeof(source)*N_SRC ) );
-  strcpy(tag,"sources");
+  <<setup multiple sources contents: common part (host)>>
   fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
   for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
-    __src.zenith  = _zenith[i_SRC];
-    __src.azimuth = _azimuth[i_SRC];
-    __src.height  = _height;
-    __src.photometric_band = _photometric_band;
+    <<setup multiple sources contents: common part (device)>>
     __src.magnitude        = _magnitude[i_SRC];
     __src.N_PHOTON         = n_photon(_magnitude[i_SRC]);
-    __src.theta_x = tanf(_zenith[i_SRC])*cosf(_azimuth[i_SRC]);
-    __src.theta_y = tanf(_zenith[i_SRC])*sinf(_azimuth[i_SRC]);
+    HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
+			      sizeof(source) ,
+			      cudaMemcpyHostToDevice ) );
+    fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
+	    _zenith[i_SRC]*RADIAN2ARCSEC,
+	    _azimuth[i_SRC]*180/PI,_height,
+	    wavelength_micron(),_magnitude[i_SRC]);
+  }
+  wavefront.setup(N_L*N_L,N_SRC);
+  fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
+  rays_exist = 1;
+  rays.setup(L, N_L, origin, N_SRC);
+  reset_rays();
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+}
+@  \item for multiple sources with wavefront resolution and with ray bundle (different magnitudes), zenith and azimuth are in double precision for ray tracing:
+<<setup for multiple sources with wavefront resolution and ray bundle>>=
+void source::setup(const char *_photometric_band, float *_magnitude,
+		   rtd *_zenith, rtd *_azimuth, float _height,
+		   int _N_SRC, rtd L, int N_L, vector origin) {
+  <<setup multiple sources contents: common part (host)>>
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
+    <<setup multiple sources contents: common part (device)>>
+    __src.magnitude        = _magnitude[i_SRC];
+    __src.N_PHOTON         = n_photon(_magnitude[i_SRC]);
     HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
 			      sizeof(source) ,
 			      cudaMemcpyHostToDevice ) );
@@ -1435,9 +1468,9 @@ __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
 @ where
 <<bundle coordinates kernel (common)>>=
 d__ray[k].coordinates.z = origin->z;
-d__ray[k].directions.x  = sin(src[iSource].zenith)*cos(src[iSource].azimuth);
-d__ray[k].directions.y  = sin(src[iSource].zenith)*sin(src[iSource].azimuth);
-d__ray[k].directions.z  = -cos(src[iSource].zenith);
+d__ray[k].directions.x  = sin(src[iSource]._zenith_64_)*cos(src[iSource]._azimuth_64_);
+d__ray[k].directions.y  = sin(src[iSource]._zenith_64_)*sin(src[iSource]._azimuth_64_);
+d__ray[k].directions.z  = -cos(src[iSource]._zenith_64_);
 d__ray[k].optical_path_length = 0.0;
 d__ray[k].optical_path_difference = 0.0;
 s = -origin->z/d__ray[k].directions.z;
@@ -1472,10 +1505,10 @@ y   = L*(j - (N_L-1)*0.5)/(N_L-1);
 The zenith and azimuth angle are updated with:
 \index{source!source!update\_directions}
 <<zenith and azimuth update>>=
-void source::update_directions(float *zenith, float *azimuth, int N_DIR)
+void source::update_directions(double *zenith, double *azimuth, int N_DIR)
 {
-  int n_byte = sizeof(float)*N_DIR;
-  float *d__zenith, *d__azimuth;
+  int n_byte = sizeof(double)*N_DIR;
+  double *d__zenith, *d__azimuth;
   HANDLE_ERROR( cudaMalloc((void**)&d__zenith, n_byte ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__azimuth, n_byte ) );
   HANDLE_ERROR( cudaMemcpy( d__zenith, zenith,
@@ -1487,15 +1520,19 @@ void source::update_directions(float *zenith, float *azimuth, int N_DIR)
   HANDLE_ERROR( cudaFree( d__azimuth ));}
 @ with
 <<zenith and azimuth update kernel>>=
-__global__ void update_directions_kernel(float *d__zenith, float *d__azimuth, 
+__global__ void update_directions_kernel(double *d__zenith, double *d__azimuth, 
                                          const int N_DIR, source *d__src)
 {
   int i;
   i = blockIdx.x;
-  d__src[i].zenith  = d__zenith[i];
-  d__src[i].azimuth = d__azimuth[i];
-  d__src[i].theta_x = tanf(d__zenith[i])*cosf(d__azimuth[i]);
-  d__src[i].theta_y = tanf(d__zenith[i])*sinf(d__azimuth[i]);
+  d__src[i].zenith  = (float)d__zenith[i];
+  d__src[i].azimuth = (float)d__azimuth[i];
+  d__src[i].theta_x = tanf(d__src[i].zenith)*cosf(d__src[i].azimuth);
+  d__src[i].theta_y = tanf(d__src[i].zenith)*sinf(d__src[i].azimuth);
+  d__src[i]._zenith_64_  = d__zenith[i];
+  d__src[i]._azimuth_64_ = d__azimuth[i];
+  d__src[i]._theta_x_64_ = tan(d__src[i]._zenith_64_)*cos(d__src[i]._azimuth_64_);
+  d__src[i]._theta_y_64_ = tan(d__src[i]._zenith_64_)*sin(d__src[i]._azimuth_64_);
 }
 @
 The magnitude is update with

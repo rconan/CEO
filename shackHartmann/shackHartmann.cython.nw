@@ -53,6 +53,7 @@ void get_valid_slopes_norm(float *)
 from utilities cimport Sensor, cuFloatArray, MaskAbstract
 from imaging cimport Imaging
 from centroiding cimport Centroiding
+from source cimport Source
 cdef class ShackHartmann(Sensor):
     cdef:
         shackHartmann *_c_shackHartmann
@@ -84,6 +85,7 @@ cdef class GeometricShackHartmann(Sensor):
         readonly cuFloatArray c0
         readonly Centroiding data_proc
 	cuFloatArray _valid_slopes_, _valid_reference_slopes_
+        Source GS
 @
 \section{PYX file}
 \label{sec:pyx-file}
@@ -93,8 +95,6 @@ cdef class GeometricShackHartmann(Sensor):
 
 <<shackHartmann.pyx>>=
 from libc.math cimport M_PI
-from utilities cimport cuFloatArray, MaskAbstract
-from source cimport Source
 cdef class ShackHartmann:
     """
     Creates a shackHartmann object.
@@ -256,10 +256,13 @@ cdef class ShackHartmann:
 
     def __neg__(self):
         """
-        Read-out and reset the detector and process the frame
+        Computes the centroids
         """
         self.process()
-        self.reset()
+
+    def guide_star(self, char *photometric_band="V",tuple zenith=(0,), tuple azimuth=(0,),
+                   tuple magnitude=(0,), float height=float("inf"), float fhwm=0):
+        pass
 
     def update_lenslet(self, filt):
         cdef cuFloatArray F
@@ -369,6 +372,11 @@ self.c0 = cuFloatArray(shape=(self.N_GS,(self.N_SIDE_LENSLET**2)*2))
 self.c0._c_gpu.dev_data = self._c_shackHartmann.d__c0
 @ and
 <<shackHartmann cython methods>>=
+    def __neg__(self):
+        """
+        Computes the centroids
+        """
+        self.process()
 
     def propagate(self, Source gs):
         """
@@ -559,6 +567,12 @@ cdef class GeometricShackHartmann(Sensor):
         """
         self.process()
         self.reset()
+
+    def __invert__(self):
+        """
+        Reset the sensor
+        """
+        self._c_shackHartmann.reset()
 
 <<shackHartmann cython methods>>
 

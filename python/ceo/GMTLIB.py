@@ -513,8 +513,8 @@ class GMT_MX(GmtMirrors):
             flux = wfs.valid_lenslet.f.host()
             D = []
             D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
-            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
             D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
+            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
             D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
             if includeBM:
                 D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=stroke[4]) )
