@@ -12,7 +12,11 @@ import numpy as np
 import numpy.linalg as LA
 from scipy.integrate import quad
 import scipy.sparse as sprs
-import ceo
+#import ceo
+
+ARCSEC2RAD =  np.pi/180/3600#ceo.constants.ARCSEC2RAD
+MAS2RAD  = ARCSEC2RAD*1e-3#ceo.constants.MAS2RAD
+arcs2rad = ARCSEC2RAD
 @ 
 \subsection{Initialization}
 \label{sec:initialization}
@@ -315,6 +319,8 @@ class LinearActiveOptics(object):
         else:
             self.Os = [np.concatenate((OO['M1'][k],OO['M2'][k]),axis=1) for k in range(7)]
 
+
+        self.Os[-1] = np.delete(self.Os[-1],[2,8],axis=1)
         #if self.gs_tt7_prms is not None:
         #    self.Osp = [np.dot(X,Y) for X,Y in zip(self.Os,self.Qbtt7)]
         #else:
@@ -323,7 +329,6 @@ class LinearActiveOptics(object):
     def set_aberrations(self,includeBM=True):
         
         print "@(AcO.LSQ)> Setting initial aberrations ..."                
-        arcs2rad = ceo.constants.ARCSEC2RAD
         M1_pvar_16 = [0.38*arcs2rad]*2 +[40*arcs2rad] +[75e-6]*2 + [160e-6]
         M1_pvar_7 = np.array(M1_pvar_16)
         M1_pvar_7[-1] = 0
@@ -527,50 +532,32 @@ class LinearActiveOptics(object):
                    spotFWHM_arcsec=None, pixelScale_arcsec=None, 
                    ron=0.0, nPhBackground=0.0, controller=None,
                    G_ncpa=None):
+        
+        def wfe_rms(_C_):
+            n = self.Os[0].shape[0]
+            W = np.hstack(self.Os)
+            X = W.dot(_C_.dot(W.T))
+            return np.sqrt(np.sum(X.diagonal())/n)*1e9
 
         self.threshold = SVD_threshold
 
-        X = lsq_aco.L[:-1] + [np.delete(np.delete(lsq_aco.L[-1],[2,8],axis=0),[2,8],axis=1)]
+        X = self.L[:-1] + [np.delete(np.delete(self.L[-1],[2,8],axis=0),[2,8],axis=1)]
         _s_L = sprs.block_diag(X)
 
-        M_wfs = sprs.block_diag(self.C.M)
-        D = list(self.C.D)
-        D[-1] = np.insert(D[-1],[2,7],0,axis=1)
-        D_wfs = sprs.block_diag(D)
-        Q = sprs.eye(M_wfs.shape[0]) - M_wfs.dot(D_wfs)
+        FITTING = self._s_Q.dot(_s_L.dot(self._s_Q.T)) 
+        self.fitting_wfe_rms = wfe_rms(FITTING)
 
-        L = sprs.block_diag(self.L)
-        self.Qb2 = Q.dot(L.dot(Q.T))
-        if G_ncpa is not None:
-            Delta_ncpa = M_wfs.dot(G_ncpa.dot(M_wfs.T))
-            self.Qb2 += Delta_ncpa
-
-        n = self.Os[0].shape[0]
-        wfe_rms = lambda x : np.sqrt(x.diagonal().sum()/n)*1e9
-        Osp = sprs.block_diag(self.Osp)
-
-        self.Cov_wo_noise = Osp.dot(self.Qb2.dot(Osp.T))
-        self.noise_free_wfe = wfe_rms(self.Cov_wo_noise)
-
-        """
         if gs_wfs_mag is not None:
 
-            wfs_gs.magnitude = [gs_wfs_mag]*3
+            #wfs_gs.magnitude = [gs_wfs_mag]*3
+            nPh = self.nPhoton(self.gs_wfs_prms["photometric_band"],gs_wfs_mag)
             nPhLenslet = self.wfs_prms['exposureTime']*self.wfs_prms['photoElectronGain']*\
-                         wfs_gs.nPhoton[0]*(self.wfs_prms['d'])**2
-            sigma_noise = wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,
+                         nPh*(self.wfs_prms['d'])**2
+            self.sigma_noise = wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,
                                    self.wfs_prms['N_PX_IMAGE']/self.wfs_prms['BIN_IMAGE'],
                                    nPhBackground=nPhBackground,controller=controller)
-
-            self.N2 = [sigma_noise*np.dot(X,X.T) for X in self.C.M]
-            Qb2p = [X+Y for X,Y in zip(self.Qb2,self.N2)]
-
-b            self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
-            self.wfe_noise_rms = wfe_rms(self.Cov_noise)
-
-            self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
-            self.wfe_rms = wfe_rms(self.Cov_w_noise)
-        """
+            NOISE_WFS = self.sigma_noise*(self._s_Swfs.dot(self._s_Swfs.T))
+            self.noise_wfs_wfe_rms = wfe_rms(NOISE_WFS)
 
     def wavefrontSample(self):
 
@@ -627,9 +614,9 @@ def wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,nPxLenslet,ron=0.0,nPh
     ron_var = ron**2 + nPhBackground 
 
     sigma_noise = closed_loop_noise_rejection_factor*\
-         ( (1e3*spotFWHM_arcsec/np.sqrt(2*np.log(2)*nPhLenslet)*ceo.constants.MAS2RAD)**2 + \
+         ( (1e3*spotFWHM_arcsec/np.sqrt(2*np.log(2)*nPhLenslet)*MAS2RAD)**2 + \
            readOutNoise(np.sqrt(ron_var),
-                        pixelScale_arcsec*ceo.constants.ARCSEC2RAD,
+                        pixelScale_arcsec*ARCSEC2RAD,
                         nPhLenslet,nPxLenslet) )
     return sigma_noise
 
