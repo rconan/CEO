@@ -200,7 +200,7 @@ self._s_Dtt7  = sprs.block_diag(self.D_s)
 self._s_Qtt7  = sprs.eye(self._s_Mtt7.shape[0]) - self._s_Mtt7.dot(self._s_Dtt7)
 self._s_Dwfs  = sprs.block_diag(self.C.D)
 print self._s_Dwfs.shape
-self.threshold = 1e-6
+self.threshold = 1e-9
 
 print self._s_Qtt7.shape
 
@@ -219,11 +219,14 @@ def threshold(self):
     return self.C.threshold
 @threshold.setter
 def threshold(self,value):
-    self.C.threshold_ = value
+    self.C.threshold = value
+    print self.C.nThreshold
     self._s_Mwfs  = sprs.block_diag(self.C.M)
-    print self._s_Mwfs.shape
+    self._s_Swfs = self._s_Mwfs
+    #print self._s_Mwfs.shape
     self._s_Qwfs  = sprs.eye(self._s_Mwfs.shape[0]) - self._s_Mwfs.dot(self._s_Dwfs)
-    print self._s_Qwfs.shape
+    #print self._s_Qwfs.shape
+    self._s_Q    = self._s_Qwfs.dot(self._s_Qtt7)
 @
 \subsection{The main class}
 \label{sec:main-class}
@@ -358,6 +361,9 @@ class LinearActiveOptics(object):
             CCtt7 = np.array( [ np.trace(np.dot(X,np.dot(Y,X.T))) for X,Y in zip(self.Osp_orig,self.L) ] )
             self.initWFE_TT7 = np.sqrt(CCtt7.sum()/self.Os_orig[0].shape[0])*1e6
             print " >> Initial WFE RMS after TT7 correction: %.2fmicron"%self.initWFE_TT7
+
+        X = self.L[:-1] + [np.delete(np.delete(self.L[-1],[2,8],axis=0),[2,8],axis=1)]
+        self._s_L = sprs.block_diag(X)
 
     def set_N_MODE(self,value):
         assert value<=self.N_MODE_orig, "The number of mode cannot be greater than %d!"%self.N_MODE_orig
@@ -541,11 +547,10 @@ class LinearActiveOptics(object):
 
         self.threshold = SVD_threshold
 
-        X = self.L[:-1] + [np.delete(np.delete(self.L[-1],[2,8],axis=0),[2,8],axis=1)]
-        _s_L = sprs.block_diag(X)
+        self.FITTING = self._s_Q.dot(self._s_L.dot(self._s_Q.T)) 
+        self.fitting_wfe_rms = wfe_rms(self.FITTING)
 
-        FITTING = self._s_Q.dot(_s_L.dot(self._s_Q.T)) 
-        self.fitting_wfe_rms = wfe_rms(FITTING)
+        self.Ceps = self.FITTING
 
         if gs_wfs_mag is not None:
 
@@ -556,8 +561,10 @@ class LinearActiveOptics(object):
             self.sigma_noise = wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,
                                    self.wfs_prms['N_PX_IMAGE']/self.wfs_prms['BIN_IMAGE'],
                                    nPhBackground=nPhBackground,controller=controller)
-            NOISE_WFS = self.sigma_noise*(self._s_Swfs.dot(self._s_Swfs.T))
-            self.noise_wfs_wfe_rms = wfe_rms(NOISE_WFS)
+            self.NOISE_WFS = self.sigma_noise*(self._s_Swfs.dot(self._s_Swfs.T))
+            self.noise_wfs_wfe_rms = wfe_rms(self.NOISE_WFS)
+
+            self.Ceps += self.NOISE_WFS
 
     def wavefrontSample(self):
 
