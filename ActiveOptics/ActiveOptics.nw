@@ -12,7 +12,7 @@ import numpy as np
 import numpy.linalg as LA
 from scipy.integrate import quad
 import scipy.sparse as sprs
-#import ceo
+import ceo
 
 ARCSEC2RAD =  np.pi/180/3600#ceo.constants.ARCSEC2RAD
 MAS2RAD  = ARCSEC2RAD*1e-3#ceo.constants.MAS2RAD
@@ -64,6 +64,7 @@ if self.gs_tt7_prms is not None:
     self.Dtt7 = db['Dtt7']
 self.Os  = db['Os']
 self.Osp = self.Os
+self.pupil_mask = db['pupil_mask']
 @
 If the file does not exist, the interaction matrices are computed by first setting--up the \emph{CEO} objects
 <<CEO objects instanciation>>=
@@ -150,6 +151,7 @@ self.observables(gmt,sampling,includeBM)
 if filename is not None:
     print " >> Saved to %s"%filename
     db['Os'] = self.Os
+    db['pupil_mask'] = self.pupil_mask
 @ 
 The calibration process unfolds as follows
 <<interaction matrices>>=
@@ -353,14 +355,14 @@ class LinearActiveOptics(object):
         else:
             self.L = [np.diag(L16)]*6 + [np.diag(L7)]
 
-        CL = np.array( [ np.trace( np.dot(X,np.dot(Y,X.T))) for X,Y in zip(self.Os_orig,self.L) ] )
-        self.initWFE = np.sqrt(CL.sum()/self.Os_orig[0].shape[0])*1e6
-        print " >> Initial WFE RMS: %.2fmicron"%self.initWFE
+        #CL = np.array( [ np.trace( np.dot(X,np.dot(Y,X.T))) for X,Y in zip(self.Os_orig,self.L) ] )
+        #self.initWFE = np.sqrt(CL.sum()/self.Os_orig[0].shape[0])*1e6
+        #print " >> Initial WFE RMS: %.2fmicron"%self.initWFE
 
-        if self.gs_tt7_prms is not None:
-            CCtt7 = np.array( [ np.trace(np.dot(X,np.dot(Y,X.T))) for X,Y in zip(self.Osp_orig,self.L) ] )
-            self.initWFE_TT7 = np.sqrt(CCtt7.sum()/self.Os_orig[0].shape[0])*1e6
-            print " >> Initial WFE RMS after TT7 correction: %.2fmicron"%self.initWFE_TT7
+        #if self.gs_tt7_prms is not None:
+        #    CCtt7 = np.array( [ np.trace(np.dot(X,np.dot(Y,X.T))) for X,Y in zip(self.Osp_orig,self.L) ] )
+        #    self.initWFE_TT7 = np.sqrt(CCtt7.sum()/self.Os_orig[0].shape[0])*1e6
+        #    print " >> Initial WFE RMS after TT7 correction: %.2fmicron"%self.initWFE_TT7
 
         X = self.L[:-1] + [np.delete(np.delete(self.L[-1],[2,8],axis=0),[2,8],axis=1)]
         self._s_L = sprs.block_diag(X)
@@ -565,6 +567,8 @@ class LinearActiveOptics(object):
             self.noise_wfs_wfe_rms = wfe_rms(self.NOISE_WFS)
 
             self.Ceps += self.NOISE_WFS
+
+        self.residual_wfe_rms = wfe_rms(self.Ceps)
 
     def wavefrontSample(self):
 
