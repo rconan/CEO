@@ -57,6 +57,7 @@ if filename is not None:
 @
 If the file exists the interaction matrices are loaded from the file:
 <<load interaction matrices>>=
+db = shelve.open(filename)            
 print "@(AcO.LSQ)> TT7 calibration of observables ..."                
 print "@(AcO.LSQ)> Interaction matrices loaded from %s"%filename
 self.C    = db['C']
@@ -66,6 +67,7 @@ if self.gs_tt7_prms is not None:
 self.Os  = db['Os']
 self.Osp = self.Os
 self.pupil_mask = db['pupil_mask']
+db.close()
 @
 If the file does not exist, the interaction matrices are computed by first setting--up the \emph{CEO} objects
 <<CEO objects instanciation>>=
@@ -361,9 +363,29 @@ def wavefront(self,segment_sigma=0,wfs_sigma=0,units_exponent=0):
     u = 10**-units_exponent
     return (u*X.reshape(self.sampling,self.sampling),u*np.std(Z))            
 @ 
-\subsection{The main class}
+\subsection{The main classes}
 \label{sec:main-class}
 
+<<LinearActiveOptics.py>>=
+class BuildLinearActiveOptics(object):
+
+    def __init__(self, gmt_prms, gs_tt7_prms, gs_wfs_prms, wfs_prms,
+                 includeBM=True,filename=None, sampling=101):
+        """
+        """
+        
+        db = shelve.open(filename)            
+
+        <<CEO objects instanciation>>
+        <<SH-WFS interaction matrix>>
+        <<TT7 interaction matrix>>
+        <<system wavefronts>>
+
+        db.close()
+
+    <<observables evaluation>>
+
+@ 
 <<LinearActiveOptics.py>>=
 class LinearActiveOptics(object):
 
@@ -375,11 +397,8 @@ class LinearActiveOptics(object):
         <<initialization>>
         <<photometry>>
         
-        <<interaction matrices>>
-        
-        if filename is not None:
-            db.close()
-    
+        <<load interaction matrices>>
+            
         <<system matrices>>
 
         self._piston_removed_ = False
@@ -395,8 +414,6 @@ class LinearActiveOptics(object):
 
     <<number of photon>>
     
-    <<observables evaluation>>
-
     <<WFE>>
 
     <<wavefront>>
