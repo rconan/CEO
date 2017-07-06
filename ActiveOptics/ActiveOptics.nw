@@ -36,11 +36,12 @@ If the file exists, the calibration matrix will be loaded from the file, otherwi
 self.gs_tt7_prms = gs_tt7_prms
 self.gs_wfs_prms = gs_wfs_prms
 self.wfs_prms    = wfs_prms
+self.sampling    = sampling
 self.includeBM   = includeBM
 self.N_MODE = 0
 if includeBM:
     self.N_MODE = gmt_prms["M1_N_MODE"]
-@
+@ %def self.gs_tt7_prms self.gs_wfs_prms self.wfs_prms self.sampling self.includeBM self.N_MODE
 
 \subsection{Interaction matrices}
 \label{sec:interaction-matrices}
@@ -152,6 +153,76 @@ if filename is not None:
     print " >> Saved to %s"%filename
     db['Os'] = self.Os
     db['pupil_mask'] = self.pupil_mask
+@ with the [[observables]] method:
+<<observables evaluation>>=
+def observables(self,gmt,sampling,includeBM,zenazi=[0,0]):
+
+    on_axis_src = {'photometric_band':"V",'zenith':zenazi[0],'azimuth':zenazi[1],'height':float('inf'),
+                   'fwhm':0,'magnitude':0,'rays_box_size':25.5,
+                   'rays_box_sampling':sampling,'rays_origin':[0,0,25]}
+    src = ceo.Source(**on_axis_src)
+    src>>(gmt,)
+    gmt.reset()
+    +src
+    ps0 = src.wavefront.phase.host()
+    a0 = src.wavefront.amplitude.host()
+    idx = a0==1
+    self.pupil_mask = idx
+    k = 0
+    if includeBM:
+        m = 0
+        B = np.zeros((a0.sum(),7*self.N_MODE))
+    O = np.zeros((a0.sum(),84))
+    for mirror in ['M1','M2']:
+        for segId in range(7):
+            for mode in ('Rxyz','Txyz'):
+                for axis in range(3):
+                    gmt.reset()
+                    _Q_ = np.zeros((7,3))
+                    _Q_[segId,axis] = 1e-6
+                    gmt[mirror].motion_CS.update(**{mode:_Q_})
+
+                    +src
+                    _a_  = a0*src.wavefront.amplitude.host()
+                    _ps_ = _a_*(src.wavefront.phase.host() - ps0)
+                    O[:,k] = _ps_[idx] /1e-6
+                    k+=1
+            if mirror=='M1' and includeBM:
+                for l in range(self.N_MODE):
+                    gmt.reset()
+                    gmt.M1.modes.a[segId,l] = 1e-6
+                    gmt.M1.modes.update()
+                    +src
+                    _a_  = a0*src.wavefront.amplitude.host()
+                    _ps_ = _a_*(src.wavefront.phase.host() - ps0)
+                    B[:,m] = _ps_[idx] /1e-6
+                    m+=1
+
+
+    OO = {}
+    OO['M1'] = []
+    OO['M2'] = []
+    OO['BM'] = []
+    a = 6
+    b = 7*a
+    for segId in range(7):
+        OO['M1'] += [O[:,segId*a:a*(segId+1)]]
+        OO['M2'] += [O[:,b+segId*6:b+6*(segId+1)]]
+        if includeBM:
+            OO['BM'] += [B[:,segId*self.N_MODE:self.N_MODE*(segId+1)]]
+
+    if includeBM:
+        self.Os = [np.concatenate((OO['M1'][k],OO['M2'][k],OO['BM'][k]),axis=1) for k in range(7)]
+    else:
+        self.Os = [np.concatenate((OO['M1'][k],OO['M2'][k]),axis=1) for k in range(7)]
+
+
+    self.Os[-1] = np.delete(self.Os[-1],[2,8],axis=1)
+    #if self.gs_tt7_prms is not None:
+    #    self.Osp = [np.dot(X,Y) for X,Y in zip(self.Os,self.Qbtt7)]
+    #else:
+    self.Osp = self.Os
+
 @ 
 The calibration process unfolds as follows
 <<interaction matrices>>=
@@ -230,13 +301,74 @@ def threshold(self,value):
     #print self._s_Qwfs.shape
     self._s_Q    = self._s_Qwfs.dot(self._s_Qtt7)
 @
+
+\subsection{Wavefront error}
+\label{sec:wavefront-error}
+
+The wavefront error RMS is computed with
+<<WFE>>=
+def WFE(self,SVD_threshold, gs_wfs_mag=None, 
+               spotFWHM_arcsec=None, pixelScale_arcsec=None, 
+               ron=0.0, nPhBackground=0.0, controller=None,
+               G_ncpa=None):
+    
+    def wfe_rms(_C_):
+        n = self.Os[0].shape[0]
+        W = np.hstack(self.Os)
+        X = W.dot(_C_.dot(W.T))
+        return np.sqrt(np.sum(X.diagonal())/n)*1e9
+
+    self.threshold = SVD_threshold
+
+    self.FITTING = self._s_Q.dot(self._s_L.dot(self._s_Q.T)) 
+    self.fitting_wfe_rms = wfe_rms(self.FITTING)
+
+    self.Ceps = self.FITTING
+
+    if gs_wfs_mag is not None:
+
+        #wfs_gs.magnitude = [gs_wfs_mag]*3
+        nPh = self.nPhoton(self.gs_wfs_prms["photometric_band"],gs_wfs_mag)
+        nPhLenslet = self.wfs_prms['exposureTime']*self.wfs_prms['photoElectronGain']*\
+                     nPh*(self.wfs_prms['d'])**2
+        self.sigma_noise = wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,
+                               self.wfs_prms['N_PX_IMAGE']/self.wfs_prms['BIN_IMAGE'],
+                               nPhBackground=nPhBackground,controller=controller)
+        self.NOISE_WFS = self.sigma_noise*(self._s_Swfs.dot(self._s_Swfs.T))
+        self.noise_wfs_wfe_rms = wfe_rms(self.NOISE_WFS)
+
+        self.Ceps += self.NOISE_WFS
+
+    self.residual_wfe_rms = wfe_rms(self.Ceps)
+@
+\subsection{Wavefront}
+\label{sec:wavefront}
+
+A wavefront sample is evaluated with
+<<wavefront>>=
+def wavefront(self,segment_sigma=0,wfs_sigma=0,units_exponent=0):
+    W = np.hstack(self.Os)
+    Y = np.zeros((W.shape[1],1))
+    X = np.zeros((self.sampling**2,1))
+    if segment_sigma>0:
+        c = np.random.randn(self._s_Q.shape[1],1)*segment_sigma
+        Y = self._s_Q.dot(c)
+    if wfs_sigma>0:
+        n_wfs = np.random.randn(self._s_Swfs.shape[1],1)*wfs_sigma
+        Y -= self._s_Swfs.dot(n_wfs)
+    Z = W.dot(Y)
+    X[self.pupil_mask.flatten(),:] = Z
+    u = 10**-units_exponent
+    return (u*X.reshape(self.sampling,self.sampling),u*np.std(Z))            
+@ 
 \subsection{The main class}
 \label{sec:main-class}
 
 <<LinearActiveOptics.py>>=
 class LinearActiveOptics(object):
 
-    def __init__(self, gmt_prms, gs_tt7_prms, gs_wfs_prms, wfs_prms, includeBM=True,filename=None, sampling=101):
+    def __init__(self, gmt_prms, gs_tt7_prms, gs_wfs_prms, wfs_prms,
+                 includeBM=True,filename=None, sampling=101):
         """
         """
 
@@ -263,74 +395,12 @@ class LinearActiveOptics(object):
 
     <<number of photon>>
     
-    def observables(self,gmt,sampling,includeBM,zenazi=[0,0]):
+    <<observables evaluation>>
 
-        on_axis_src = {'photometric_band':"V",'zenith':zenazi[0],'azimuth':zenazi[1],'height':float('inf'),
-                       'fwhm':0,'magnitude':0,'rays_box_size':25.5,
-                       'rays_box_sampling':sampling,'rays_origin':[0,0,25]}
-        src = ceo.Source(**on_axis_src)
-        src>>(gmt,)
-        gmt.reset()
-        +src
-        ps0 = src.wavefront.phase.host()
-        a0 = src.wavefront.amplitude.host()
-        idx = a0==1
-        self.pupil_mask = idx
-        k = 0
-        if includeBM:
-            m = 0
-            B = np.zeros((a0.sum(),7*self.N_MODE))
-        O = np.zeros((a0.sum(),84))
-        for mirror in ['M1','M2']:
-            for segId in range(7):
-                for mode in ('Rxyz','Txyz'):
-                    for axis in range(3):
-                        gmt.reset()
-                        _Q_ = np.zeros((7,3))
-                        _Q_[segId,axis] = 1e-6
-                        gmt[mirror].motion_CS.update(**{mode:_Q_})
+    <<WFE>>
 
-                        +src
-                        _a_  = a0*src.wavefront.amplitude.host()
-                        _ps_ = _a_*(src.wavefront.phase.host() - ps0)
-                        O[:,k] = _ps_[idx] /1e-6
-                        k+=1
-                if mirror=='M1' and includeBM:
-                    for l in range(self.N_MODE):
-                        gmt.reset()
-                        gmt.M1.modes.a[segId,l] = 1e-6
-                        gmt.M1.modes.update()
-                        +src
-                        _a_  = a0*src.wavefront.amplitude.host()
-                        _ps_ = _a_*(src.wavefront.phase.host() - ps0)
-                        B[:,m] = _ps_[idx] /1e-6
-                        m+=1
-
-
-        OO = {}
-        OO['M1'] = []
-        OO['M2'] = []
-        OO['BM'] = []
-        a = 6
-        b = 7*a
-        for segId in range(7):
-            OO['M1'] += [O[:,segId*a:a*(segId+1)]]
-            OO['M2'] += [O[:,b+segId*6:b+6*(segId+1)]]
-            if includeBM:
-                OO['BM'] += [B[:,segId*self.N_MODE:self.N_MODE*(segId+1)]]
-
-        if includeBM:
-            self.Os = [np.concatenate((OO['M1'][k],OO['M2'][k],OO['BM'][k]),axis=1) for k in range(7)]
-        else:
-            self.Os = [np.concatenate((OO['M1'][k],OO['M2'][k]),axis=1) for k in range(7)]
-
-
-        self.Os[-1] = np.delete(self.Os[-1],[2,8],axis=1)
-        #if self.gs_tt7_prms is not None:
-        #    self.Osp = [np.dot(X,Y) for X,Y in zip(self.Os,self.Qbtt7)]
-        #else:
-        self.Osp = self.Os
-
+    <<wavefront>>
+    
     def set_aberrations(self,includeBM=True):
         
         print "@(AcO.LSQ)> Setting initial aberrations ..."                
@@ -391,185 +461,8 @@ class LinearActiveOptics(object):
         self.set_aberrations()
         #self.observables(True)
 
-    def WFE(self,SVD_threshold, gs_wfs_mag=None, 
-            spotFWHM_arcsec=None, pixelScale_arcsec=None, 
-            ron=0.0, nPhBackground=0.0, controller=None,
-            miscellaneous_noise_rms=None,
-            zenazi=None, piston_removed=False):
-
-        if zenazi is not None:
-            self.observables(self.includeBM,zenazi)
-
-        self.C.threshold = SVD_threshold
-
-        Q = [np.dot(X,Y) for X,Y in zip(self.C.M,self.C.D)]
-        D = np.insert(self.C.D[-1],[2,7],0,axis=1)
-        Q[-1] = np.dot(self.C.M[-1],D)
-        n_Qb = 12+self.N_MODE
-        Qb = [np.eye(n_Qb) - X for X in Q]
-
-        self.Qb2 = [np.dot(X,np.dot(Y[:n_Qb,:n_Qb],X.T)) for X,Y in zip(Qb,self.L)]
-        fitting_var = 0.0
-        if self.N_MODE<self.N_MODE_orig:
-            if self.gs_tt7_prms is None:
-                CL = np.array( [ np.trace( np.dot(X[:,n_Qb:],np.dot(Y[n_Qb:,n_Qb:],X[:,n_Qb:].T))) for X,Y in zip(self.Os_orig,self.L) ] )
-            else:
-                CL = np.array( [ np.trace( np.dot(X[:,n_Qb:],np.dot(Y[n_Qb:,n_Qb:],X[:,n_Qb:].T))) for X,Y in zip(self.Osp_orig,self.L) ] )
-            fitting_var = CL.sum()/self.Os_orig[0].shape[0]
-        print "Fitting variance: %g\n"%fitting_var
-
-        n = self.Os[0].shape[0]
-        wfe_rms = lambda x : np.sqrt(fitting_var + sum([ np.trace(y) for y in x ])/n)*1e9
-        wfe_rms_no_fitting = lambda x : np.sqrt(sum([ np.trace(y) for y in x ])/n)*1e9
-        Osp = self.Osp
-
-        self.Cov_wo_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.Qb2) ]
-        self.noise_free_wfe = wfe_rms(self.Cov_wo_noise)
-
-        if gs_wfs_mag is not None:
-
-            #wfs_gs.magnitude = [gs_wfs_mag]*3
-            nPh = self.nPhoton(self.gs_wfs_prms["photometric_band"],gs_wfs_mag)
-            nPhLenslet = self.wfs_prms['exposureTime']*self.wfs_prms['photoElectronGain']*\
-                         nPh*(self.wfs_prms['d'])**2
-            self.sigma_noise = wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,
-                                   self.wfs_prms['N_PX_IMAGE']/self.wfs_prms['BIN_IMAGE'],
-                                   nPhBackground=nPhBackground,controller=controller)
-
-            self.N2 = [self.sigma_noise*np.dot(X,X.T) for X in self.C.M]
-            Qb2p = [X+Y for X,Y in zip(self.Qb2,self.N2)]
-
-            self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
-            self.wfe_noise_rms = wfe_rms_no_fitting(self.Cov_noise)
-
-            self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
-            if piston_removed:
-                print "PISTON REMOVAL!"
-                n = self.Osp[0].shape[0]
-                Z1 = np.ones((n,1))/np.sqrt(n)
-                Q1 = np.eye(n) - np.dot(Z1,Z1.T)
-                self.Cov_w_noise = [ Q1.dot(Y.dot(Q1.T)) for Y in self.Cov_w_noise ]
-            self.wfe_rms = wfe_rms(self.Cov_w_noise)
-
-        if miscellaneous_noise_rms is not None:
-            
-            self.N2 = [(miscellaneous_noise_rms**2)*np.dot(X,X.T) for X in self.C.M]
-            Qb2p = [X+Y for X,Y in zip(self.Qb2,self.N2)]
-
-            self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
-            self.wfe_noise_rms = wfe_rms(self.Cov_noise)
-
-            self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
-            self.wfe_rms = wfe_rms(self.Cov_w_noise)
-            
-    def new_WFE(self,SVD_threshold, gs_wfs_mag=None, 
-            spotFWHM_arcsec=None, pixelScale_arcsec=None, 
-            ron=0.0, nPhBackground=0.0, controller=None,
-            miscellaneous_noise_rms=None,
-            zenazi=None, piston_removed=False):
-
-        if zenazi is not None:
-            self.observables(self.includeBM,zenazi)
-
-        self.C.threshold = SVD_threshold
-
-        Q = [np.dot(X,Y) for X,Y in zip(self.C.M,self.C.D)]
-        D = np.insert(self.C.D[-1],[2,7],0,axis=1)
-        M = np.insert(self.C.M[-1],[2,7],0,axis=0)
-        Q[-1] = np.dot(M,D)
-        n_Qb = 12+self.N_MODE
-        Qb = [np.dot(np.eye(n_Qb) - X,Y) for X,Y in zip(Q,self.Qbtt7)]
-
-        self.Qb2 = [np.dot(X,np.dot(Y[:n_Qb,:n_Qb],X.T)) for X,Y in zip(Qb,self.L)]
-        fitting_var = 0.0
-        if self.N_MODE<self.N_MODE_orig:
-            if self.gs_tt7_prms is None:
-                CL = np.array( [ np.trace( np.dot(X[:,n_Qb:],np.dot(Y[n_Qb:,n_Qb:],X[:,n_Qb:].T))) for X,Y in zip(self.Os_orig,self.L) ] )
-            else:
-                CL = np.array( [ np.trace( np.dot(X[:,n_Qb:],np.dot(Y[n_Qb:,n_Qb:],X[:,n_Qb:].T))) for X,Y in zip(self.Osp_orig,self.L) ] )
-            fitting_var = CL.sum()/self.Os_orig[0].shape[0]
-        print "Fitting variance: %g\n"%fitting_var
-
-        n = self.Os[0].shape[0]
-        wfe_rms = lambda x : np.sqrt(fitting_var + sum([ np.trace(y) for y in x ])/n)*1e9
-        wfe_rms_no_fitting = lambda x : np.sqrt(sum([ np.trace(y) for y in x ])/n)*1e9
-        Osp = self.Os
-
-        self.Cov_wo_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.Qb2) ]
-        self.noise_free_wfe = wfe_rms(self.Cov_wo_noise)
-
-        if gs_wfs_mag is not None:
-
-            #wfs_gs.magnitude = [gs_wfs_mag]*3
-            nPh = self.nPhoton(self.gs_wfs_prms["photometric_band"],gs_wfs_mag)
-            nPhLenslet = self.wfs_prms['exposureTime']*self.wfs_prms['photoElectronGain']*\
-                         nPh*(self.wfs_prms['d'])**2
-            self.sigma_noise = wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,
-                                   self.wfs_prms['N_PX_IMAGE']/self.wfs_prms['BIN_IMAGE'],
-                                   nPhBackground=nPhBackground,controller=controller)
-
-            self.N2 = [self.sigma_noise*np.dot(X,X.T) for X in self.C.M]
-            self.N2[-1] = self.sigma_noise*np.dot(M,M.T)
-            Qb2p = [X+Y for X,Y in zip(self.Qb2,self.N2)]
-
-            self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
-            self.wfe_noise_rms = wfe_rms_no_fitting(self.Cov_noise)
-
-            self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
-            if piston_removed:
-                print "PISTON REMOVAL!"
-                n = self.Osp[0].shape[0]
-                Z1 = np.ones((n,1))/np.sqrt(n)
-                Q1 = np.eye(n) - np.dot(Z1,Z1.T)
-                self.Cov_w_noise = [ Q1.dot(Y.dot(Q1.T)) for Y in self.Cov_w_noise ]
-            self.wfe_rms = wfe_rms(self.Cov_w_noise)
-
-        if miscellaneous_noise_rms is not None:
-            
-            self.N2 = [(miscellaneous_noise_rms**2)*np.dot(X,X.T) for X in self.C.M]
-            Qb2p = [X+Y for X,Y in zip(self.Qb2,self.N2)]
-
-            self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
-            self.wfe_noise_rms = wfe_rms(self.Cov_noise)
-
-            self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
-            self.wfe_rms = wfe_rms(self.Cov_w_noise)
 
             
-    def sparse_WFE(self,SVD_threshold, gs_wfs_mag=None, 
-                   spotFWHM_arcsec=None, pixelScale_arcsec=None, 
-                   ron=0.0, nPhBackground=0.0, controller=None,
-                   G_ncpa=None):
-        
-        def wfe_rms(_C_):
-            n = self.Os[0].shape[0]
-            W = np.hstack(self.Os)
-            X = W.dot(_C_.dot(W.T))
-            return np.sqrt(np.sum(X.diagonal())/n)*1e9
-
-        self.threshold = SVD_threshold
-
-        self.FITTING = self._s_Q.dot(self._s_L.dot(self._s_Q.T)) 
-        self.fitting_wfe_rms = wfe_rms(self.FITTING)
-
-        self.Ceps = self.FITTING
-
-        if gs_wfs_mag is not None:
-
-            #wfs_gs.magnitude = [gs_wfs_mag]*3
-            nPh = self.nPhoton(self.gs_wfs_prms["photometric_band"],gs_wfs_mag)
-            nPhLenslet = self.wfs_prms['exposureTime']*self.wfs_prms['photoElectronGain']*\
-                         nPh*(self.wfs_prms['d'])**2
-            self.sigma_noise = wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,
-                                   self.wfs_prms['N_PX_IMAGE']/self.wfs_prms['BIN_IMAGE'],
-                                   nPhBackground=nPhBackground,controller=controller)
-            self.NOISE_WFS = self.sigma_noise*(self._s_Swfs.dot(self._s_Swfs.T))
-            self.noise_wfs_wfe_rms = wfe_rms(self.NOISE_WFS)
-
-            self.Ceps += self.NOISE_WFS
-
-        self.residual_wfe_rms = wfe_rms(self.Ceps)
-
     def wavefrontSample(self):
 
         _randn_ = lambda n,x : np.random.randn(n,1)*np.sqrt(x)
