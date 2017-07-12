@@ -1624,10 +1624,12 @@ struct bending_modes {
   void setup(int n_mode, int N_SET);
   void setupKL(int n_mode);
   void setupKL(int n_mode, int N_SET);
+  void setupPolish(int n_mode, int N_SET);
   void cleanup(void);
   void load(void);
   void load_reg(void);
   void load_KL(void);
+  void load_polish(void);
   void nearest_neighbor(rtd *d__BMi,
 		   rtd *d__partial_x_BMi,
 		   rtd *d__partial_y_BMi,
@@ -1720,6 +1722,16 @@ void bending_modes::setupKL(int _n_mode_, int N_SET)
   N = N_SET;
   <<bending modes setup common>>
   load_KL();
+  <<bending modes setup common (surface)>>
+} 
+@ 
+or for the polishing map 
+<<bending modes functions>>=
+void bending_modes::setupPolish(int _n_mode_, int N_SET)
+{
+  N = N_SET;
+  <<bending modes setup common>>
+  load_polish();
   <<bending modes setup common (surface)>>
 } 
 @
@@ -1885,6 +1897,58 @@ void bending_modes::load_reg(void)
   /* the whole file is now loaded in the memory buffer. */
   BM_radius = 0.5*8.462;//4.181;
   BM_N_SAMPLE = 169;
+  HANDLE_ERROR( cudaMalloc((void**)&d__BM_buffer, lSize*sizeof(double)) );
+  HANDLE_ERROR( cudaMemcpy( d__BM_buffer  , buffer, lSize*sizeof(double),
+			    cudaMemcpyHostToDevice ) );
+  d__BM   = d__BM_buffer;
+
+  // terminate
+  fclose (pFile);
+  free (buffer);
+}
+@
+\paragraph{Polishing map}
+\label{sec:polishing-map}
+
+The polishing map is interpolated on a regular grid are saved in the file \emph{polishingMap.bin}.
+The regular grid is made of $483\times 483$ points.
+The range of the grid is $\pm$4.26m.
+The bending modes are loaded into the \emph{gmt\_m1} structure with:
+\index{gmtMirrors!bending\_modes!load\_bending\_modes\_reg}
+<<bending modes functions>>=
+void bending_modes::load_polish(void)
+{
+  FILE * pFile;
+  long lSize;
+  double * buffer;
+  size_t result;
+
+  char path[256]; 
+  sprintf(path, "%sgmtMirrors/polishingMap.bin",CEOPATH);
+  fprintf(stdout,"@(CEO)>bending_modes: loading bending modes from %s\n",path);
+
+  pFile = fopen ( path , "rb" );
+  if (pFile==NULL) {fputs ("File error",stderr); exit (1);}
+
+  // obtain file size:
+  fseek (pFile , 0 , SEEK_END);
+  lSize = ftell (pFile)/sizeof(double);
+  rewind (pFile);
+
+  //  fprintf(stdout,"lSize=%ld\n",lSize);
+
+  // allocate memory to contain the whole file:
+  buffer = (double*) malloc (lSize*sizeof(double));
+  if (buffer == NULL) {fputs ("Memory error",stderr); exit (2);}
+
+  // copy the file into the buffer:
+  result = fread (buffer,sizeof(double),lSize,pFile);
+  //  fprintf(stdout,"result=%ld\n",result);
+  if (result != lSize) {fputs ("Reading error",stderr); exit (3);}
+
+  /* the whole file is now loaded in the memory buffer. */
+  BM_radius = 0.5*8.52;
+  BM_N_SAMPLE = 483;
   HANDLE_ERROR( cudaMalloc((void**)&d__BM_buffer, lSize*sizeof(double)) );
   HANDLE_ERROR( cudaMemcpy( d__BM_buffer  , buffer, lSize*sizeof(double),
 			    cudaMemcpyHostToDevice ) );
