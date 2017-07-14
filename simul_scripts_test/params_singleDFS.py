@@ -59,14 +59,14 @@ if simul_SPS==True:
     sps_mask_size = 1.5     # arcsec
     lobe_detection = 'peak_value'
     nyquist_factor = 1
-    dark_cur = 10.0 #48.0 # additional background in e-/pix/s (dark current + allocated cryo filter leak) 
+    dark_cur = 48.0 #48.0 # additional background in e-/pix/s (dark current + allocated cryo filter leak) 
     excess_noise = 1.25
  
     simul_phot = True
     simul_bkgd = True
     sps_seed = 1928
     
-    gPS   = 0.6
+    gPS   = 0.
     gFDSP = 0.6
 
 #---- AGWS GS and SH sensors parameters:

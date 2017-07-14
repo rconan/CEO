@@ -11,7 +11,7 @@ totSimulTime = 0.5 # Total simulated time [seconds]
 simul_turb         = True
 simul_onaxis_AO    = True
 simul_PS_control   = True
-simul_FDSP_control = True  #Note: If FDSP in ON, on-axis AO needs to be ON too
+simul_FDSP_control = True    #Note: If FDSP in ON, on-axis AO needs to be ON too
 simul_ActO_control = False   #Note: If ActO in ON, on-axis AO needs to be ON too (we do not simulate seeing-limited case).
 
 eval_perf_onaxis    = True
@@ -39,10 +39,12 @@ if simul_SPS==True or simul_ActO_control==True:
     alpha_ps = 8.0*60.      # radius of circle where GSs are located [in arcsec]
 
     exposureTime = 10e-3 # DFS camera integration time [seconds]
-    samplingTime = 15.0  # DFS sampling time [seconds]
+    samplingTime = 30.0  # DFS sampling time [seconds]
     sps_exp_delay_count_max = int(exposureTime/Tsim)*5  # number of cycles to delay exposure
-    sps_sampl_iter = 12
-    totSimulTime = sps_sampl_iter*samplingTime + exposureTime*4
+    sps_sampl_iter = 10
+    totSimulTime = sps_sampl_iter*samplingTime #+ exposureTime*4
+
+    wait_4_cor=0   #number of AGWS correction iterations to wait before applying some other modes. 
 
 #----- SPS guide stars parameters and sensors:
 if simul_SPS==True:
@@ -59,7 +61,7 @@ if simul_SPS==True:
     sps_mask_size = 1.5     # arcsec
     lobe_detection = 'peak_value'
     nyquist_factor = 1
-    dark_cur = 0.0 #48.0 # additional background in e-/pix/s (dark current + allocated cryo filter leak) 
+    dark_cur = 10.0 #48.0 # additional background in e-/pix/s (dark current + allocated cryo filter leak) 
     excess_noise = 1.25
  
     simul_phot = True
@@ -85,11 +87,10 @@ if simul_ActO_control==True:
     print "pupil sampling: %d pixel"%nPx1
     print "number of SH SAs across pupil: %d"%agws_nLenslet
     print "number of SH pixels per SA: %d"%agws_n
-
-    M1_n_modes=15
-    M1_mirror_modes = u"bending modes"
     gAGWS = 0.6
 
+M1_n_modes=15
+M1_mirror_modes = u"bending modes"
 
 #---- ON-AXIS AO system parameters:
 if simul_SH == True:
@@ -114,12 +115,14 @@ if simul_onaxis_AO == True:
     gAO_PS = 0.93
 
 #---- Initial scramble parameters:
-scramble_tt = True
-scramble_pist = True
+scramble_tt = False
+scramble_pist = False
 scramble_Txy = False
-scramble_BM = False
+scramble_Rz = False
+scramble_BM = True
 tt_scramble_rms = 150e-3   #arcsec
 pist_scramble_rms = 6.3e-6  #m SURF
 Txy_scramble_rms = 500e-9 #m
-BM_scramble_rms = 10e-6
+Rz_scramble_rms = 100e-3  #arcsec
+BM_scramble_rms = 1e-6
 
