@@ -327,19 +327,22 @@ self.wfs    = ModelData(self.model['wfs'],
                         controller=None,
                         noise_variance=0.0,
                         variate=0.0)
+self.tt7    = ModelData(None,variate=0.0)
 self.gs_wfs = ModelData(self.model['gs_wfs'])
 @ %def self.model self.gmt self.wfs self.gs_wfs
 and
 <<wavefronts loading>>=
 self.wavefronts = shelve.open(wavefronts)
 self.N_MODE = self.model['gmt']['M1_N_MODE']
-self.W = np.hstack([X[:,:self.N_MODE-self.wavefronts['N_MODE']] \
-                    for X in self.wavefronts['W']])
+self.W = sprs.csr_matrix( np.hstack([X[:,:self.N_MODE-self.wavefronts['N_MODE']] \
+                                     for X in self.wavefronts['W']]) )
 @ %def self.wavefronts self.W self.N_MODE
 The interaction matrices are loaded from the model:
 <<load interaction matrices>>=
 self.C = self.model['C']
 D_s    = self.model['D_s']
+print D_s[0].shape
+print D_s[-1].shape
 Dtt7   = self.model['Dtt7']
 @ %def self.C
 
@@ -350,10 +353,11 @@ P2 = np.zeros((12+self.N_MODE,2))
 P2[6,0] = 1
 P2[7,1] = 1
 
-X = [P2.dot(Mtt7[k*2:(k+1)*2,:]) for k in range(6)] \
-    + [np.delete(P2,[2,8],axis=0).dot(Mtt7[-2:,:])]
+X = [P2.dot(Mtt7[k*2:(k+1)*2,[k,k+7]]) for k in range(6)] \
+    + [np.delete(P2,[2,8],axis=0).dot(Mtt7[-2:,[6,13]])]
 self._s_Mtt7  = sprs.block_diag(X)
-self._s_Dtt7  = sprs.block_diag(D_s)
+X = [D_s[k][[k,k+7],:]  for k in range(7)]
+self._s_Dtt7  = sprs.block_diag(X)
 self._s_Qtt7  = sprs.eye(self._s_Mtt7.shape[0]) - self._s_Mtt7.dot(self._s_Dtt7)
 self._s_Dwfs  = sprs.block_diag(self.C.D)
 
@@ -362,6 +366,7 @@ self.threshold = 1e-9
 self.NOISE_WFS = 0.0
 self.noise_wfs_wfe_rms = 0.0
 self.gmt.variate = np.random.randn(self._s_Q.shape[1],1)
+self.tt7.variate = np.random.randn(self._s_Stt7.shape[1],1)
 self.wfs.variate = np.random.randn(self._s_Swfs.shape[1],1)
 #self.D_s[-1] = np.insert(self.D_s[-1],[2,7],0,axis=1)
 
@@ -384,7 +389,7 @@ def threshold(self,value):
                    self._s_Mwfs.dot(self._s_Dwfs)
     self._s_Stt7 = self._s_Qwfs.dot(self._s_Mtt7)
     self.FITTING = self._s_Q.dot(self._s_L.dot(self._s_Q.T)) 
-    self.fitting_wfe_rms = self.__wfe_rms__(self.FITTING)
+    #self.fitting_wfe_rms = self.__wfe_rms__(self.FITTING)
 @ %def self._s_Mwfs self._s_Swfs self._s_Qwfs self._s_Q self._s_S self._s_Stt7 self.FITTING self.fitting_wfe_rms
 
 \subsection{WFS mutable properties}
@@ -396,7 +401,7 @@ However, setting them with the following attributes  will trigger the computatio
 <<WFS noise error update>>=
 self.__wfs_noise_variance__()
 self.NOISE_WFS = self.wfs.noise_variance*(self._s_Swfs.dot(self._s_Swfs.T))
-self.noise_wfs_wfe_rms = self.__wfe_rms__(self.NOISE_WFS)
+#self.noise_wfs_wfe_rms = self.__wfe_rms__(self.NOISE_WFS)
 @
 The mutable properties are
 \begin{itemize}
@@ -465,7 +470,7 @@ def residual_wfe_rms(self):
 Wavefront samples are evaluated with the function [[wavefrontSamples]] taking as argument the number of sample [[N_SAMPLE]], the segment errror RMS [[segment_rms]], the WFS error rms [[wfs_rms]] and the exponent of the units conversion factor:
 <<wavefront samples>>=
 def wavefrontSamples(self,N_SAMPLE=1,segment_rms=0,
-                     wfs_rms=0,units_exponent=0):
+                     wfs_rms=0,tt7_rms=0,units_exponent=0):
     """
     """
     Y = np.zeros((self.W.shape[1],N_SAMPLE))
@@ -480,8 +485,12 @@ def wavefrontSamples(self,N_SAMPLE=1,segment_rms=0,
     if self.wfs.variate.shape[1]!=N_SAMPLE:
         self.wfs.variate = np.random.randn(self._s_Swfs.shape[1],
                                            N_SAMPLE)
+    if self.tt7.variate.shape[1]!=N_SAMPLE:
+        self.tt7.variate = np.random.randn(self._s_Mtt7.shape[1],
+                                           N_SAMPLE)
 
     Y = self._s_Q.dot(self.gmt.variate)*segment_rms
+    Y -= self._s_Mtt7.dot(self.tt7.variate)*tt7_rms
     Y -= self._s_Swfs.dot(self.wfs.variate)*wfs_rms
     
     Z = self.W.dot(Y)
@@ -522,6 +531,16 @@ def wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,
                         pixelScale_arcsec*ARCSEC2RAD,
                         nPhLenslet,nPxLenslet) )
     return sigma_noise
+
+def noiseRejectionFactor(controller):
+    s = lambda nu : 2*1j*np.pi*nu
+    G = lambda nu, T, tau, g : -g*np.exp(s(nu)*(tau+0.5*T))*np.sinc(nu*T)/(s(nu)*T)
+    E = lambda nu, T, tau, g : 1.0/(1.0+G(nu,T,tau,g))
+    N = lambda nu, T, tau, g : g*np.exp(s(nu)*tau)/(s(nu)*T)
+    H = lambda nu, T, tau, g : N(nu,T,tau,g)/(1.0+G(nu,T,tau,g))
+    T = controller['T']
+    return quad(lambda x: np.abs( H(x,**controller) )**2,0,0.5/T)[0]*T*2
+
 @
 
 \section{The python module}
