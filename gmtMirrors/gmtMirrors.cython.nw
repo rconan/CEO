@@ -269,6 +269,7 @@ cdef class GmtMirrors:
         double *d__BM
         double *d__BMS
         int BM_N_SAMPLE
+        double BM_radius
         void setup(int, int)
         void setupKL(int, int)
         void setupPolish(int, int)
@@ -290,7 +291,7 @@ cdef class GmtMirrors:
 cdef class BendingModes:
     cdef:
         bending_modes *_c_bending_modes
-        public int n_mode, N_SURF
+        public int n_mode, N_SURF, NPX
         public rtd[:,:] a
 @
 
@@ -315,8 +316,11 @@ cdef class BendingModes:
             cuDoubleArray x_BM, y_BM, BM
         if grid=='regular':
             self._c_bending_modes.load_reg()
-            BM = cuDoubleArray(shape=(1,self._c_bending_modes.BM_N_SAMPLE*self._c_bending_modes.BM_N_SAMPLE))
+            BM = cuDoubleArray(shape=(self.n_mode,
+                                      self._c_bending_modes.BM_N_SAMPLE*\
+                                      self._c_bending_modes.BM_N_SAMPLE))
             BM._c_gpu.dev_data = self._c_bending_modes.d__BM
+            self.NPX = 169
             return BM
         else:
             self._c_bending_modes.load()
@@ -360,6 +364,10 @@ cdef class BendingModes:
         """
         self.a[:] = 0
         self._c_bending_modes.update(&self.a[0,0])
+
+    @property
+    def radius(self):
+        return self._c_bending_modes.BM_radius
 @
 \section{Karhunen--Loeve modes}
 \label{sec:KL-modes}
