@@ -3,9 +3,11 @@ import math
 import numpy as np
 import numpy.linalg as LA
 from scipy.optimize import brenth, leastsq
+from scipy.signal import fftconvolve
 from skimage.feature import blob_log
 from scipy.ndimage.interpolation import rotate
 import os.path
+import phaseStats
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
     TT7,\
     GmtMirrors, SegmentPistonSensor,\
@@ -497,6 +499,51 @@ class GMT_MX(GmtMirrors):
             return D
         else:
             return CalibrationVault([D],**calibrationVaultKwargs)
+
+    def PSSn(self,src,r0=15e-2,L0=25.0,C=None,AW0=None,save=False):
+
+        if C is None:
+            _r0_  = r0*(src.wavelength/0.5e-6)**1.2
+            nPx = src.rays.N_L
+            D = src.rays.L
+            u = np.arange(2*nPx-1,dtype=np.float)*D/(nPx-1)
+            u = u-u[-1]/2
+            x,y = np.meshgrid(u,u)
+            rho = np.hypot(x,y)
+            C = phaseStats.atmOTF(rho,_r0_,L0)
+
+        if AW0 is None:
+            _src_ = Source(src.band,
+                           rays_box_size=src.rays.L,
+                           rays_box_sampling=src.rays.N_L,
+                           rays_origin=[0,0,25])
+            state = self.state
+            self.reset()
+            self.propagate(_src_)
+            A = _src_.amplitude.host()
+            F = _src_.phase.host()
+            k = 2.*np.pi/_src_.wavelength
+            W = A*np.exp(1j*k*F)
+            S1 = np.fliplr(np.flipud(W))
+            S2 = np.conj(W)
+            AW0 = fftconvolve(S1,S2)
+            self^=state
+
+        src.reset()
+        self.propagate(src)
+        A = src.amplitude.host()
+        F = src.phase.host()
+        k = 2.*np.pi/src.wavelength
+        W = A*np.exp(1j*k*F)
+        S1 = np.fliplr(np.flipud(W))
+        S2 = np.conj(W)
+        AW = fftconvolve(S1,S2)
+        out = np.sum(np.abs(AW*C)**2)/np.sum(np.abs(AW0*C)**2)
+
+        if save:
+            return (out,{'C':C,'AW0':AW0})
+        else:
+            return out
 
 ## AGWS_CALIBRATE
 

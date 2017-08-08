@@ -249,8 +249,12 @@ cdef class GmtMirrors:
     @property
     def state(self):
         cdef dict d
-        d = {'M1': {'Rxyz':self.M1.motion_CS['Rxyz'] , 'Txyz':self.M1.motion_CS['Txyz']},
-             'M2': {'Rxyz':self.M2.motion_CS['Rxyz'] , 'Txyz':self.M2.motion_CS['Txyz']}}
+        d = {'M1': {'Rxyz':self.M1.motion_CS['Rxyz'],
+                    'Txyz':self.M1.motion_CS['Txyz'],
+                    'modes':self.M1.modes.a[:]},
+             'M2': {'Rxyz':self.M2.motion_CS['Rxyz'],
+                    'Txyz':self.M2.motion_CS['Txyz'],
+                    'modes':self.M2.modes.a[:]}}
         return d
         
 @
@@ -352,12 +356,8 @@ cdef class BendingModes:
                                                    NI, di, k_mode)
         return (BMi,partial_x_BMi,partial_y_BMi)
 
-    def update(self):
-        """
-        Updates the bending modes surface based on the bending modes coefficients
-        """
-        self._c_bending_modes.update(&self.a[0,0])
-
+    <<modes update>>
+    
     def reset(self):
         """
         Resets the bending modes coefficients to zero and update the bending modes surface
@@ -368,6 +368,20 @@ cdef class BendingModes:
     @property
     def radius(self):
         return self._c_bending_modes.BM_radius
+@ with
+<<modes update>>=        
+def update(self, rtd[:,:] modes=None, **kwargs):
+    """
+    Updates the bending modes surface based on the bending modes coefficients
+    
+    Parameters
+    ----------
+    modes : ndarray
+    The modal coefficients array in the $7\times [[N_MODE]]$ matrix form
+    """
+    if modes is not None:
+        self.a[:] = modes
+    self._c_bending_modes.update(&self.a[0,0])
 @
 \section{Karhunen--Loeve modes}
 \label{sec:KL-modes}
@@ -428,11 +442,7 @@ cdef class KarhunenLoeve:
                                      NI, di, k_mode)
         return (BMi,partial_x_BMi,partial_y_BMi)
 
-    def update(self):
-        """
-        Updates the bending modes surface based on the bending modes coefficients
-        """
-        self._c_bending_modes.update(&self.a[0,0])
+    <<modes update>>
 
     def reset(self):
         """
@@ -500,11 +510,7 @@ cdef class PolishMap:
                                      NI, di, k_mode)
         return (BMi,partial_x_BMi,partial_y_BMi)
 
-    def update(self):
-        """
-        Updates the bending modes surface based on the bending modes coefficients
-        """
-        self._c_bending_modes.update(&self.a[0,0])
+    <<modes update>>
 
     def reset(self):
         """
@@ -698,11 +704,8 @@ def __dealloc__(self):
     self._c_gmt_m12.cleanup()
 
 def __ixor__(self, dict d):
-    cdef tuple t
     self.motion_CS.update(**d)
-    if 'modes' in d:
-        t = d['modes']
-        self.modes.a[t[0],t[1]] = t[2]
+    self.modes.update(**d)
     return self
 
 def trace(self, Bundle rays):
