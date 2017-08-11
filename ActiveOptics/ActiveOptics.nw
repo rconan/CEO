@@ -1,165 +1,291 @@
 % -*- mode: Noweb; noweb-code-mode: python-mode -*-
 
-\section{Implementation}
-\label{sec:implementation}
+\section{Introduction}
+\label{sec:introduction}
 
-First, the necessary modules are loaded:
-<<LinearActiveOptics.py>>=
-import os
-import shelve
-import sys
-import numpy as np
-import numpy.linalg as LA
-from scipy.integrate import quad
-import scipy.sparse as sprs
-#import ceo
+The active optics linear model is divided in three parts.
+A model is build first using the [[BuildLinearActiveOptics]] function.
+This function uses \emph{CEO} to compute the linear relationships between the degrees of freedom (DOF) of  $M_1$ and $M_2$ segments and the sensors.
+The wavefronts in the exit pupil of the telescope corresponding to the DOFs of the segments are computed with the function [[Wavefronts]] and saved separately. 
+Then, the [[LinearActiveOptics]] class uses the model and the exit pupil wavefronts to estimate the performance of the system as a function of a set of properties.
+The [[LinearActiveOptics]] class is designed according to the reactive programming paragdime.
+It means that an object of the class [[LinearActiveOptics]] will re--evaluate the whole system error budget as soon as a system property has been updated.
 
-ARCSEC2RAD =  np.pi/180/3600#ceo.constants.ARCSEC2RAD
-MAS2RAD  = ARCSEC2RAD*1e-3#ceo.constants.MAS2RAD
-arcs2rad = ARCSEC2RAD
-@ 
-\subsection{Initialization}
-\label{sec:initialization}
+\section{[[BuildLinearActiveOptics]]}
+\label{sec:buildl}
 
-The [[LinearActiveOptics]] object is initialized with dictionaries containing the parameters for
-\begin{itemize}
-\item the GMT, [[gmt_prms]],
-\item the TT7 guide star, [[gs_tt7_prms]],
-\item the SH--WFS guide stars, [[gs_wfs_prms]],
-\item the SH--WFS, [[wfs_prms]].
-\end{itemize}
-There are 2 optional keywords: [[includeBM]]|=True| and [[filename]]|=None|.
-[[includeBM]] specify if the bending modes are included in the AcO reconstructor.
-[[filename]] is the name of the file where the calibration matrices are saved.
-If the file exists, the calibration matrix will be loaded from the file, otherwise the matrix will be computed.
-<<initialization>>=
-self.gs_tt7_prms = gs_tt7_prms
-self.gs_wfs_prms = gs_wfs_prms
-self.wfs_prms    = wfs_prms
-self.includeBM   = includeBM
-self.N_MODE = 0
-if includeBM:
-    self.N_MODE = gmt_prms["M1_N_MODE"]
+<<BuildLinearActiveOptics>>=
+def BuildLinearActiveOptics(filename, gmt_prms,
+                            gs_tt7_prms, gs_wfs_prms,
+                            wfs_prms, includeBM=True):
+        """
+        """
+        <<CEO objects instanciation>>
+        <<SH-WFS interaction matrix>>
+        <<TT7 interaction matrix>>
+        <<TT7 system wavefront calibration>>
+        <<saving model>>
 @
+
+The input argments to the [[BuilLinearActiveOptics]] function are [[filename]]: a \emph{shelve} file where the model is saved and a set of dictionaries.
+The dictionnaries contain parameters that correspond to the input arguments of the \emph{CEO} classes representing the components of the active optics model i.e.:
+\begin{itemize}
+\item the GMT, [[gmt_prms]] ([[ceo.GMT_MX]]),
+\item the TT7 guide star, [[gs_tt7_prms]] ([[ceo.Source]]),
+\item the SH--WFS guide stars, [[gs_wfs_prms]] ([[ceo.Source]]),
+\item the SH--WFS, [[wfs_prms]] ([[ceo.GeometricShackHartmann]]).
+\end{itemize}
+The TT7 sensor is a unique sensor which parameters are hard--coded into \emph{CEO}.
+The optional keywords [[includeBM]]=True$|$False specify if the bending modes are included in the AcO reconstructor.
+
+The \emph{CEO} objects are instanciated first:
+<<CEO objects instanciation>>=
+gmt    = ceo.GMT_MX(**gmt_prms)
+wfs_gs = ceo.Source(**gs_wfs_prms)
+wfs    = ceo.GeometricShackHartmann(**wfs_prms)
+tt7_gs = ceo.Source(**gs_tt7_prms)
+tt7    = ceo.GeometricTT7()
+@ 
 
 \subsection{Interaction matrices}
 \label{sec:interaction-matrices}
 
-First, we check if a [[filename]] has been given and if the file already exists:
-<<interaction matrices>>=
-file_already_exists = False
-db = None
-if filename is not None:
-    if os.path.isfile(filename+".dir"):
-        file_already_exists = True
-    db = shelve.open(filename)            
-@
-If the file exists the interaction matrices are loaded from the file:
-<<load interaction matrices>>=
-print "@(AcO.LSQ)> TT7 calibration of observables ..."                
-print "@(AcO.LSQ)> Interaction matrices loaded from %s"%filename
-self.C    = db['C']
-if self.gs_tt7_prms is not None:
-    self.D_s = db['D_s']
-    self.Dtt7 = db['Dtt7']
-self.Os  = db['Os']
-self.Osp = self.Os
-@
-If the file does not exist, the interaction matrices are computed by first setting--up the \emph{CEO} objects
-<<CEO objects instanciation>>=
-gmt    = ceo.GMT_MX(**gmt_prms)
-@ 
-The interaction matrix between the SH--WFSs and the segment DOFs is computed next:
+The interaction matrix between the SH--WFSs and the DOFs of $M_1$ and $M_2$ segments is computed next:
 <<SH-WFS interaction matrix>>=
-print "@(AcO.LSQ)> WFS CALIBRATION ..."
-wfs_gs = ceo.Source(**gs_wfs_prms)
-wfs    = ceo.GeometricShackHartmann(**wfs_prms)
+print "@(BuildLinearActiveOptics)> WFS CALIBRATION ..."
 wfs_gs.reset()
 gmt.reset()
 gmt.propagate(wfs_gs)
 wfs.calibrate(wfs_gs,0.)
-self.C = gmt.AGWS_calibrate(wfs,wfs_gs,decoupled=True,
-                                 fluxThreshold=0.5,includeBM=self.includeBM,
+C = gmt.AGWS_calibrate(wfs,wfs_gs,decoupled=True,
+                                 fluxThreshold=0.5,includeBM=includeBM,
                                  filterMirrorRotation=True,
                                  calibrationVaultKwargs={'nThreshold':[2]*6+[0],
                                                          'insertZeros':[None]*7})
 @
-and is saved into the database if a filename is set:
-<<SH-WFS interaction matrix>>=
-if filename is not None:
-    print " >> Saved to %s"%filename
-    db['C'] = self.C
-@
-The interaction matrix between the TT7 and the segment DOFs is computed last:
+The interaction matrix between the TT7 and the tip and tilt of $M_2$ segments is now computed:
 <<TT7 interaction matrix>>=
-if gs_tt7_prms is not None:
-    print "@(AcO.LSQ)> TT7 CALIBRATION ..."        
-    tt7_gs = ceo.Source(**gs_tt7_prms)
-    tt7    = ceo.GeometricTT7()
-    gmt.reset()
-    gmt.propagate(tt7_gs)
-    tt7.calibrate(tt7_gs)        
-    self.Dtt7 = gmt.calibrate(tt7,tt7_gs,
-                                   mirror = 'M2',mode='segment tip-tilt',stroke=1e-6)
-    if filename is not None:
-        print " >> Saved to %s"%filename
-        db['Dtt7'] = self.Dtt7
-
-    print "@(AcO.LSQ)> TT7 calibration of observables ..."                
-    stroke = [1e-6]*4
-    D = []
-    D.append( gmt.calibrate(tt7,tt7_gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
-    D.append( gmt.calibrate(tt7,tt7_gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
-    D.append( gmt.calibrate(tt7,tt7_gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
-    D.append( gmt.calibrate(tt7,tt7_gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
-    if includeBM:
-        D.append( gmt.calibrate(tt7,tt7_gs,mirror='M1',mode='bending modes',stroke=1e-6) )
-
-    if includeBM:
-        self.D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
-                                D[2][:,k*3:k*3+3],
-                                D[1][:,k*3:k*3+3],
-                                D[3][:,k*3:k*3+3],
-                                D[4][:,k*self.N_MODE:(k+1)*self.N_MODE]],axis=1) 
-                for k in range(7)]
-    else:
-        self.D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
-                                D[2][:,k*3:k*3+3],
-                                D[1][:,k*3:k*3+3],
-                                D[3][:,k*3:k*3+3]],axis=1) 
-                for k in range(7)]
-    #self.D_s[-1] = np.insert(self.D_s[-1],[2,7],0,axis=1)
-
-    #self.Mtt7 = LA.inv(self.Dtt7)
-    #P2 = np.zeros((12+self.N_MODE,2))
-    #P2[6,0] = 1
-    #P2[7,1] = 1
-
-    #self.Qbtt7 =  [np.eye(12+self.N_MODE)-np.dot(P2,np.dot(self.Mtt7[k*2:(k+1)*2,:],self.D_s[k])) for k in range(7)]
-
-    if filename is not None:
-        print " >> Saved to %s"%filename
-        db['D_s'] = self.D_s
+print "@(BuildLinearActiveOptics)> TT7 CALIBRATION ..."        
+gmt.reset()
+gmt.propagate(tt7_gs)
+tt7.calibrate(tt7_gs)        
+Dtt7 = gmt.calibrate(tt7,tt7_gs,
+                          mirror = 'M2',
+                          mode='segment tip-tilt',
+                          stroke=1e-6)
 @
-The system wavefronts are calibrated with:
-<<system wavefronts>>=
-print "@(AcO.LSQ)> Generation of observables ..."                
-self.observables(gmt,sampling,includeBM)
-#if gs_tt7_prms is not None:
-#    self.Osp = [np.dot(X,Y) for X,Y in zip(self.Os,self.Qbtt7)]
-if filename is not None:
-    print " >> Saved to %s"%filename
-    db['Os'] = self.Os
-@ 
-The calibration process unfolds as follows
-<<interaction matrices>>=
-if file_already_exists:
-    <<load interaction matrices>>
+The interaction matrix between the TT7 and the DOFs of $M_1$ and $M_2$ segments is computed last:
+<<TT7 system wavefront calibration>>=
+print "@(BuildLinearActiveOptics)> TT7 calibration of observables ..."                
+stroke = [1e-6]*4
+D = []
+D.append( gmt.calibrate(tt7,tt7_gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
+D.append( gmt.calibrate(tt7,tt7_gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
+D.append( gmt.calibrate(tt7,tt7_gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
+D.append( gmt.calibrate(tt7,tt7_gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
+if includeBM:
+    D.append( gmt.calibrate(tt7,tt7_gs,mirror='M1',mode='bending modes',stroke=1e-6) )
+if includeBM:
+    N_MODE = gmt_prms["M1_N_MODE"]
+    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                            D[2][:,k*3:k*3+3],
+                            D[1][:,k*3:k*3+3],
+                            D[3][:,k*3:k*3+3],
+                            D[4][:,k*N_MODE:(k+1)*N_MODE]],axis=1) 
+            for k in range(7)]
 else:
-    <<CEO objects instanciation>>
-    <<SH-WFS interaction matrix>>
-    <<TT7 interaction matrix>>
-    <<system wavefronts>>
+    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                            D[2][:,k*3:k*3+3],
+                            D[1][:,k*3:k*3+3],
+                            D[3][:,k*3:k*3+3]],axis=1) 
+            for k in range(7)]
+@
+The data that composed a model are saved in a \emph{shelve} file object:
+<<saving model>>=
+print "@(BuildLinearActiveOptics)> Saving model to %s"%filename
+db = shelve.open(filename)
+db['gmt']    = gmt_prms
+db['gs_wfs'] = gs_wfs_prms
+db['wfs']    = wfs_prms
+db['gs_tt7'] = gs_tt7_prms
+db['C']      = C
+db['Dtt7']   = Dtt7
+db['D_s']    = D_s
+db.close()
+@
+\section{[[Wavefronts]]}
+\label{sec:wavefronts}
+
+The [[Wavefronts]] function computes, through ray tracing with \emph{CEO}, the wavefronts in the GMT exit pupil corresponding to all the rigid body motions of the $M_1$ and $M_2$ segments and to the 162 bending modes of each $M_1$ segment.
+The input arguments to the functions are the name of the \emph{shelve} file [[filename]] where the wavefront are saved and the dictionary of parameters of the science object [[science_src_prms]] similar to the input arguments of the constructor of the [[ceo.Source]] class.
+The optional keyword are
+\begin{itemize}
+\item [[includeBM]]=True$|$False specifying if the wavefronts associated with the bending modes need to be computed,
+\item [[stroke]]$=10^{-6}$, the amplitude of each DOF.
+\end{itemize}
+
+<<Wavefronts>>=
+def Wavefronts(filename,science_src_prms,
+               stroke=1e-6,includeBM=True):
+    <<collimated wavefront>>
+    <<ray tracing>>
+    <<wavefront ordering and saving>>
+@
+Lets first computes the wavefront (amplitude [[a0]] and phase [[ps0]]) for an ideally collimated telescope:
+<<collimated wavefront>>=
+gmt = ceo.GMT_MX(M1_N_MODE=162, M1_mirror_modes=u'bending modes')
+src = ceo.Source(**science_src_prms)
+src>>(gmt,)
+gmt.reset()
++src
+ps0 = src.wavefront.phase.host()
+a0 = src.wavefront.amplitude.host()
+idx = a0==1
+pupil_mask = idx
+piston_mask = src.rays.piston_mask[0]
+@
+For each DOF, a ray tracing from the source through the telescope and to the exit pupil is performed.
+The collimated wavefront [[ps0]] is removed from the each DOF wavefront.
+The residual wavefront within the the GMT pupil is extracted and saved as a vector in a column of the matrix [[O]] for the rigid body motion and of the matrix [[B]] for the bending modes. 
+<<ray tracing>>=
+k = 0
+N_MODE = gmt.M1.modes.n_mode
+if includeBM:
+    m = 0
+    B = np.zeros((a0.sum(),7*N_MODE))
+    #B = np.zeros((sampling**2,7*N_MODE))
+O = np.zeros((a0.sum(),84))
+#O = np.zeros((sampling**2,84))
+sys.stdout.write('@(Wavefronts)> ray tracing:\n')
+for mirror in ['M1','M2']:
+    sys.stdout.write(' . %s : '%mirror)
+    for segId in range(7):
+        sys.stdout.write('.')
+        sys.stdout.flush()
+        for mode in ('Rxyz','Txyz'):
+            for axis in range(3):
+                gmt.reset()
+                _Q_ = np.zeros((7,3))
+                _Q_[segId,axis] = stroke
+                gmt[mirror].motion_CS.update(**{mode:_Q_})
+
+                +src
+                _a_  = a0*src.wavefront.amplitude.host()
+                _ps_ = _a_*(src.wavefront.phase.host() - ps0)
+                O[:,k] = _ps_[idx] /stroke
+                #O[:,k] = src.wavefront.phase.host()
+                k+=1
+        if mirror=='M1' and includeBM:
+            for l in range(N_MODE):
+                gmt.reset()
+                gmt.M1.modes.a[segId,l] = stroke
+                gmt.M1.modes.update()
+                +src
+                _a_  = a0*src.wavefront.amplitude.host()
+                _ps_ = _a_*(src.wavefront.phase.host() - ps0)
+                B[:,m] = _ps_[idx] /stroke
+                #B[:,m] = src.wavefront.phase.host()
+                m+=1
+    sys.stdout.write('\n')
+    sys.stdout.flush()
+@
+The wavefronts are ordered segment wise and for each segment in the following order: $[R_{1,xyz},T_{1,xyz},R_{2,xyz},T_{2,xyz},B_1]_k,\forall k=1,\dots,7$.                
+<<wavefront ordering and saving>>=                
+OO = {}
+OO['M1'] = []
+OO['M2'] = []
+OO['BM'] = []
+a = 6
+b = 7*a
+for segId in range(7):
+    OO['M1'] += [O[:,segId*a:a*(segId+1)]]
+    OO['M2'] += [O[:,b+segId*6:b+6*(segId+1)]]
+    if includeBM:
+        OO['BM'] += [B[:,segId*N_MODE:N_MODE*(segId+1)]]
+if includeBM:
+    W = [np.concatenate((OO['M1'][k],OO['M2'][k],OO['BM'][k]),axis=1) for k in range(7)]
+else:
+    W = [np.concatenate((OO['M1'][k],OO['M2'][k]),axis=1) for k in range(7)]
+W[-1] = np.delete(W[-1],[2,8],axis=1)
+print "@(Wavefronts)> Saving wavefronts to %s"%filename
+db = shelve.open(filename)
+db['science_src'] = science_src_prms
+db['pupil_mask']  = pupil_mask
+db['piston_mask'] = piston_mask
+db['N_MODE'] = N_MODE
+db['W'] = W
+db.close()
+@
+\section{[[ModelData]]}
+\label{sec:modeldata}
+
+The [[ModelData]] class encapsulates the dictionnary of parameters of the \emph{CEO} model components.
+The constructor of the class takes as input argument the dictionnary.
+The dictionary properties becomes the class attributes.
+Keywords arguments in the class constructor are also class attributes. 
+<<ModelData>>=
+class ModelData(object):
+
+    def __init__(self,data,**kwargs):
+        self._data_ = data
+        for key in kwargs:
+            self.__dict__[key] = kwargs[key]
+
+    def __getattr__(self,name):
+        if name in self._data_.keys():
+            return self._data_[name]
+        else:
+            return self.__dict__[name]
+@ 
+\section{[[LinearActiveOptics]]}
+\label{sec:linearactiveoptics}
+
+The input arguments of the [[LinearActiveOptics]] class are a model and a wavefront \emph{shelve} files created respectively with the functions [[BuildLinearActiveOptics]] and [[Wavefronts]].
+<<LinearActiveOptics>>=
+class LinearActiveOptics(object):
+
+    def __init__(self, model, wavefronts):
+        """
+        """
+        <<photometry>>
+        <<model loading>>
+        <<wavefronts loading>>
+        <<load interaction matrices>>
+        <<system matrices>>
+        
+    def __del__(self):
+        self.model.close()
+        self.wavefronts.close()
+
+    <<WFE RMS exit pupil>>
+
+    <<WFS noise variance>>
+    
+    <<SVD truncation threshold property>>
+
+    <<WFS mutable properties>>
+
+    <<number of photon>>
+    
+    <<wavefront samples>>
+@
+The function [[__wfe_rms__]] computes the wavefront error rms in the telescope exit pupil:
+<<WFE RMS exit pupil>>=
+def __wfe_rms__(self,_C_):
+    X = self.W.dot(_C_.dot(self.W.T))
+    return np.sqrt(np.sum(X.diagonal())/self.W.shape[0])*1e9
+@
+The function [[__wfs_noise_variance__]] computes the variance of the WFS centroids due to photon, read--out and background noise:
+<<WFS noise variance>>=
+def __wfs_noise_variance__(self):
+    nPh = self.nPhoton(self.gs_wfs.photometric_band,self.gs_wfs.magnitude[0])
+    nPhLenslet = self.wfs.exposureTime*self.wfs.photoElectronGain*\
+                 nPh*(self.wfs.d)**2
+    self.wfs.noise_variance = wfsNoise(nPhLenslet,self.wfs.spotFWHM_arcsec,
+                                       self.wfs.pixel_scale_arcsec,
+                                       self.wfs.N_PX_IMAGE/self.wfs.BIN_IMAGE,
+                                       nPhBackground=self.wfs.nPhBackground,
+                                       controller=self.wfs.controller)
 @
 
 \subsection{Photometry}
@@ -175,44 +301,78 @@ self.photometry = {"V":  {"wavelength":0.550E-6,"zero_point": 8.97E9},
               "K":  {"wavelength":2.179E-6,"zero_point": 1.90E9},
               "Ks": {"wavelength":2.157E-6,"zero_point": 1.49E9},
               "R+I":{"wavelength":0.715E-6,"zero_point":24.46E9}}
-@
+@ %def self.photometry
 From the photometry data and the star magnitude, the number of photon $[m^{-2}.s^{-1}]$ is obtained with
 <<number of photon>>=
 def nPhoton(self,band,magnitude):
-    return self.photometry[band]["zero_point"]*pow(10.0,-0.4*magnitude)
-            
-@    
+    return self.photometry[band]["zero_point"]*pow(10.0,-0.4*magnitude)            
+@ %def nPhoton
 
-\subsection{System matrices}
-\label{sec:system-matrices}
+\subsection{Interaction matrices}
+\label{sec:interaction-matrices}
+
+@
+Data from the model and the wavefronts files are loaded into the class attributes:
+<<model loading>>=
+self.model = shelve.open(model)
+pixel_scale_arcsec = \
+  self.photometry[self.model['gs_wfs']['photometric_band']]['wavelength']*\
+          self.model['wfs']['BIN_IMAGE']/self.model['wfs']['d']*180*3600/np.pi/\
+          self.model['wfs']['DFT_osf']
+self.gmt    = ModelData(self.model['gmt'],variate=0.0)
+self.wfs    = ModelData(self.model['wfs'],
+                        pixel_scale_arcsec = pixel_scale_arcsec,
+                        spotFWHM_arcsec = 2*pixel_scale_arcsec,
+                        ron=0.0, nPhBackground=0.0,
+                        controller=None,
+                        noise_variance=0.0,
+                        variate=0.0)
+self.tt7    = ModelData(None,variate=0.0)
+self.gs_wfs = ModelData(self.model['gs_wfs'])
+@ %def self.model self.gmt self.wfs self.gs_wfs
+and
+<<wavefronts loading>>=
+self.wavefronts = shelve.open(wavefronts)
+self.N_MODE = self.model['gmt']['M1_N_MODE']
+self.W = sprs.csr_matrix( np.hstack([X[:,:self.N_MODE-self.wavefronts['N_MODE']] \
+                                     for X in self.wavefronts['W']]) )
+@ %def self.wavefronts self.W self.N_MODE
+The interaction matrices are loaded from the model:
+<<load interaction matrices>>=
+self.C = self.model['C']
+D_s    = self.model['D_s']
+print D_s[0].shape
+print D_s[-1].shape
+Dtt7   = self.model['Dtt7']
+@ %def self.C
 
 From the interaction matrices, the matrices that describes the linear behavior of the system are computed.
 <<system matrices>>=
-self.Mtt7 = LA.inv(self.Dtt7)
+Mtt7 = LA.inv(Dtt7)
 P2 = np.zeros((12+self.N_MODE,2))
 P2[6,0] = 1
 P2[7,1] = 1
 
-X = [P2.dot(self.Mtt7[k*2:(k+1)*2,:]) for k in range(6)] \
-    + [np.delete(P2,[2,8],axis=0).dot(self.Mtt7[-2:,:])]
+X = [P2.dot(Mtt7[k*2:(k+1)*2,[k,k+7]]) for k in range(6)] \
+    + [np.delete(P2,[2,8],axis=0).dot(Mtt7[-2:,[6,13]])]
 self._s_Mtt7  = sprs.block_diag(X)
-self._s_Dtt7  = sprs.block_diag(self.D_s)
+X = [D_s[k][[k,k+7],:]  for k in range(7)]
+self._s_Dtt7  = sprs.block_diag(X)
 self._s_Qtt7  = sprs.eye(self._s_Mtt7.shape[0]) - self._s_Mtt7.dot(self._s_Dtt7)
 self._s_Dwfs  = sprs.block_diag(self.C.D)
-print self._s_Dwfs.shape
+
+self._s_L = sprs.eye(self._s_Dwfs.shape[1])*1e-9
 self.threshold = 1e-9
+self.NOISE_WFS = 0.0
+self.noise_wfs_wfe_rms = 0.0
+self.gmt.variate = np.random.randn(self._s_Q.shape[1],1)
+self.tt7.variate = np.random.randn(self._s_Stt7.shape[1],1)
+self.wfs.variate = np.random.randn(self._s_Swfs.shape[1],1)
+#self.D_s[-1] = np.insert(self.D_s[-1],[2,7],0,axis=1)
 
-print self._s_Qtt7.shape
+@ %def self._s_Mtt7 self._s_Dtt7 self._s_Qtt7 self._s_Dwfs self._s_L self.threshold self.NOISE_WFS self.noise_wfs_wfe_rms self.gmt.variate self.wfs.variate
 
-self._s_Q    = self._s_Qwfs.dot(self._s_Qtt7)
-self._s_S    = self._s_Qwfs.dot(self._s_Mtt7.dot(self._s_Dtt7)) + self._s_Mwfs.dot(self._s_Dwfs)
-self._s_Stt7 = self._s_Qwfs.dot(self._s_Mtt7)
-self._s_Swfs = self._s_Mwfs
-
-self.D_s[-1] = np.insert(self.D_s[-1],[2,7],0,axis=1)
-self.Qbtt7 =  [np.eye(12+self.N_MODE)-np.dot(P2,np.dot(self.Mtt7[k*2:(k+1)*2,:],self.D_s[k])) for k in range(7)]
-
-@
+The matrix that depends on the threshold of the truncation of the pseudo--inverse of the interaction matrix of the WFSs are re--evaluated at each update of [[self.threshold]]:
 <<SVD truncation threshold property>>=
 @property
 def threshold(self):
@@ -223,386 +383,129 @@ def threshold(self,value):
     print self.C.nThreshold
     self._s_Mwfs  = sprs.block_diag(self.C.M)
     self._s_Swfs = self._s_Mwfs
-    #print self._s_Mwfs.shape
     self._s_Qwfs  = sprs.eye(self._s_Mwfs.shape[0]) - self._s_Mwfs.dot(self._s_Dwfs)
-    #print self._s_Qwfs.shape
     self._s_Q    = self._s_Qwfs.dot(self._s_Qtt7)
+    self._s_S    = self._s_Qwfs.dot(self._s_Mtt7.dot(self._s_Dtt7)) + \
+                   self._s_Mwfs.dot(self._s_Dwfs)
+    self._s_Stt7 = self._s_Qwfs.dot(self._s_Mtt7)
+    self.FITTING = self._s_Q.dot(self._s_L.dot(self._s_Q.T)) 
+    #self.fitting_wfe_rms = self.__wfe_rms__(self.FITTING)
+@ %def self._s_Mwfs self._s_Swfs self._s_Qwfs self._s_Q self._s_S self._s_Stt7 self.FITTING self.fitting_wfe_rms
+
+\subsection{WFS mutable properties}
+\label{sec:wfs-mutable-prop}
+
+The noise of the wavefront centroids depends of the GS magnitude, the spot size, the read--out noise, the background npoise and the property of the temporal controller.
+All these properties can be set with the attributes of [[self.gs]] and [[self.wfs]].
+However, setting them with the following attributes  will trigger the computation of the WFS noise covariance matrix and the associated RMS WFE. 
+<<WFS noise error update>>=
+self.__wfs_noise_variance__()
+self.NOISE_WFS = self.wfs.noise_variance*(self._s_Swfs.dot(self._s_Swfs.T))
+#self.noise_wfs_wfe_rms = self.__wfe_rms__(self.NOISE_WFS)
 @
-\subsection{The main class}
-\label{sec:main-class}
+The mutable properties are
+\begin{itemize}
+\item the GS magnitude,
+<<WFS mutable properties>>=
+@property
+def wfs_gs_mag(self):
+    return self.gs_wfs.magnitude[0]
+@wfs_gs_mag.setter
+def wfs_gs_mag(self,value):
+    self.gs_wfs.magnitude = [value]*3
+    <<WFS noise error update>>
+@
+\item the imagelet size,
+<<WFS mutable properties>>=
+@property
+def wfs_spotFWHM_arcsec(self):
+    return self.wfs.spotFWHM_arcsec
+@wfs_spotFWHM_arcsec.setter
+def wfs_spotFWHM_arcsec(self,value):
+    self.wfs.spotFWHM_arcsec = value
+    <<WFS noise error update>>
+@
+\item the read--out noise,
+<<WFS mutable properties>>=
+@property
+def wfs_ron(self):
+    return self.wfs.ron
+@wfs_ron.setter
+def wfs_ron(self,value):
+    self.wfs.ron = value
+    <<WFS noise error update>>
+@
+\item the background noise,
+<<WFS mutable properties>>=
+@property
+def wfs_nPhBackground(self):
+    return self.wfs.nPhBackground
+@wfs_nPhBackground.setter
+def wfs_nPhBackground(self,value):
+    self.wfs.nPhBackground = value
+    <<WFS noise error update>>
+@
+\item the temporal controller, a simple integrator is used here, it is specified with a dictionnary: [[{'T':exposure_time,'tau':latency,'g':gain}]]
+<<WFS mutable properties>>=
+@property
+def wfs_controller(self):
+    return self.wfs.controller
+@wfs_controller.setter
+def wfs_controller(self,value):
+    self.wfs.controller = value
+    <<WFS noise error update>>
+@
+\end{itemize}
 
-<<LinearActiveOptics.py>>=
-class LinearActiveOptics(object):
+The residual WFE RMS combining all the error sources is given by
+<<WFS mutable properties>>=
+@property
+def residual_wfe_rms(self):
+    return self.__wfe_rms__(self.FITTING+self.NOISE_WFS)
+@
 
-    def __init__(self, gmt_prms, gs_tt7_prms, gs_wfs_prms, wfs_prms, includeBM=True,filename=None, sampling=101):
-        """
-        """
+\subsection{Wavefront samples}
+\label{sec:wavefront}
 
-        <<initialization>>
-        <<photometry>>
-        
-        <<interaction matrices>>
-        
-        if filename is not None:
-            db.close()
+Wavefront samples are evaluated with the function [[wavefrontSamples]] taking as argument the number of sample [[N_SAMPLE]], the segment errror RMS [[segment_rms]], the WFS error rms [[wfs_rms]] and the exponent of the units conversion factor:
+<<wavefront samples>>=
+def wavefrontSamples(self,N_SAMPLE=1,segment_rms=0,
+                     wfs_rms=0,tt7_rms=0,units_exponent=0):
+    """
+    """
+    Y = np.zeros((self.W.shape[1],N_SAMPLE))
+    sampling = self.wavefronts['science_src']['rays_box_sampling']
+    pupil_mask = self.wavefronts['pupil_mask']
     
-        <<system matrices>>
+    X = np.zeros((sampling**2,N_SAMPLE))
 
-        self._piston_removed_ = False
-        self._Osp_ = None            
-        self.D_orig      = self.C.D
-        self.N_MODE_orig = self.N_MODE
-        self.Osp_orig    = self.Osp
-        self.Os_orig    = self.Os
+    if self.gmt.variate.shape[1]!=N_SAMPLE:
+        self.gmt.variate = np.random.randn(self._s_Q.shape[1],
+                                           N_SAMPLE)
+    if self.wfs.variate.shape[1]!=N_SAMPLE:
+        self.wfs.variate = np.random.randn(self._s_Swfs.shape[1],
+                                           N_SAMPLE)
+    if self.tt7.variate.shape[1]!=N_SAMPLE:
+        self.tt7.variate = np.random.randn(self._s_Mtt7.shape[1],
+                                           N_SAMPLE)
 
-        self.set_aberrations(includeBM)
-
-    <<SVD truncation threshold property>>
-
-    <<number of photon>>
+    Y = self._s_Q.dot(self.gmt.variate)*segment_rms
+    Y -= self._s_Mtt7.dot(self.tt7.variate)*tt7_rms
+    Y -= self._s_Swfs.dot(self.wfs.variate)*wfs_rms
     
-    def observables(self,gmt,sampling,includeBM,zenazi=[0,0]):
+    Z = self.W.dot(Y)
+    X[pupil_mask.flatten(),:] = Z
+    X = X.reshape(sampling,sampling,N_SAMPLE)
+    
+    u = 10**-units_exponent
+    return (u*np.squeeze(X),u*np.std(Z,axis=0))            
+@
+\section{Wavefront sensor noise}
+\label{sec:wavefr-sens-noise}
 
-        on_axis_src = {'photometric_band':"V",'zenith':zenazi[0],'azimuth':zenazi[1],'height':float('inf'),
-                       'fwhm':0,'magnitude':0,'rays_box_size':25.5,
-                       'rays_box_sampling':sampling,'rays_origin':[0,0,25]}
-        src = ceo.Source(**on_axis_src)
-        src>>(gmt,)
-        gmt.reset()
-        +src
-        ps0 = src.wavefront.phase.host()
-        a0 = src.wavefront.amplitude.host()
-        idx = a0==1
-        self.pupil_mask = idx
-        k = 0
-        if includeBM:
-            m = 0
-            B = np.zeros((a0.sum(),7*self.N_MODE))
-        O = np.zeros((a0.sum(),84))
-        for mirror in ['M1','M2']:
-            for segId in range(7):
-                for mode in ('Rxyz','Txyz'):
-                    for axis in range(3):
-                        gmt.reset()
-                        _Q_ = np.zeros((7,3))
-                        _Q_[segId,axis] = 1e-6
-                        gmt[mirror].motion_CS.update(**{mode:_Q_})
-
-                        +src
-                        _a_  = a0*src.wavefront.amplitude.host()
-                        _ps_ = _a_*(src.wavefront.phase.host() - ps0)
-                        O[:,k] = _ps_[idx] /1e-6
-                        k+=1
-                if mirror=='M1' and includeBM:
-                    for l in range(self.N_MODE):
-                        gmt.reset()
-                        gmt.M1.modes.a[segId,l] = 1e-6
-                        gmt.M1.modes.update()
-                        +src
-                        _a_  = a0*src.wavefront.amplitude.host()
-                        _ps_ = _a_*(src.wavefront.phase.host() - ps0)
-                        B[:,m] = _ps_[idx] /1e-6
-                        m+=1
-
-
-        OO = {}
-        OO['M1'] = []
-        OO['M2'] = []
-        OO['BM'] = []
-        a = 6
-        b = 7*a
-        for segId in range(7):
-            OO['M1'] += [O[:,segId*a:a*(segId+1)]]
-            OO['M2'] += [O[:,b+segId*6:b+6*(segId+1)]]
-            if includeBM:
-                OO['BM'] += [B[:,segId*self.N_MODE:self.N_MODE*(segId+1)]]
-
-        if includeBM:
-            self.Os = [np.concatenate((OO['M1'][k],OO['M2'][k],OO['BM'][k]),axis=1) for k in range(7)]
-        else:
-            self.Os = [np.concatenate((OO['M1'][k],OO['M2'][k]),axis=1) for k in range(7)]
-
-
-        self.Os[-1] = np.delete(self.Os[-1],[2,8],axis=1)
-        #if self.gs_tt7_prms is not None:
-        #    self.Osp = [np.dot(X,Y) for X,Y in zip(self.Os,self.Qbtt7)]
-        #else:
-        self.Osp = self.Os
-
-    def set_aberrations(self,includeBM=True):
-        
-        print "@(AcO.LSQ)> Setting initial aberrations ..."                
-        M1_pvar_16 = [0.38*arcs2rad]*2 +[40*arcs2rad] +[75e-6]*2 + [160e-6]
-        M1_pvar_7 = np.array(M1_pvar_16)
-        M1_pvar_7[-1] = 0
-        M2_pvar_17 = [3.0*arcs2rad]*2 +[330*arcs2rad] +[75e-6]*2 + [170e-6]
-        M1_pvar_16 = np.array(M1_pvar_16)**2
-        M1_pvar_7 = np.array(M1_pvar_7)**2
-        M2_pvar_17 = np.array(M2_pvar_17)**2
-        L16 = np.concatenate((M1_pvar_16,M2_pvar_17))
-        L7 = np.concatenate((M1_pvar_7,M2_pvar_17))
-
-        if includeBM:
-            radialOrders = np.concatenate( [np.ones((1,x+1))*x for x in range(9)] , axis=1 )
-            scale = 1.0/radialOrders[0,3:]
-            self.M1_avar = (1e-5*scale[:self.N_MODE_orig]/scale[0])**2
-            N = [np.diag(np.dot(X.T,X)) for X in self.Os_orig]
-            L_BM = [self.M1_avar/Y[-self.N_MODE_orig:] for Y in N]
-            self.L  = [np.diag(np.append(L16,x)) for x in L_BM[:-1]]
-            self.L += [np.diag(np.append(L7,L_BM[-1]))]
-        else:
-            self.L = [np.diag(L16)]*6 + [np.diag(L7)]
-
-        CL = np.array( [ np.trace( np.dot(X,np.dot(Y,X.T))) for X,Y in zip(self.Os_orig,self.L) ] )
-        self.initWFE = np.sqrt(CL.sum()/self.Os_orig[0].shape[0])*1e6
-        print " >> Initial WFE RMS: %.2fmicron"%self.initWFE
-
-        if self.gs_tt7_prms is not None:
-            CCtt7 = np.array( [ np.trace(np.dot(X,np.dot(Y,X.T))) for X,Y in zip(self.Osp_orig,self.L) ] )
-            self.initWFE_TT7 = np.sqrt(CCtt7.sum()/self.Os_orig[0].shape[0])*1e6
-            print " >> Initial WFE RMS after TT7 correction: %.2fmicron"%self.initWFE_TT7
-
-        X = self.L[:-1] + [np.delete(np.delete(self.L[-1],[2,8],axis=0),[2,8],axis=1)]
-        self._s_L = sprs.block_diag(X)
-
-    def set_N_MODE(self,value):
-        assert value<=self.N_MODE_orig, "The number of mode cannot be greater than %d!"%self.N_MODE_orig
-        self.N_MODE = value
-        D = []
-        Os = []
-        Osp = []
-        for X,Y,Z in zip(self.D_orig,self.Os_orig,self.Osp_orig):
-            n_cut =  self.N_MODE - self.N_MODE_orig
-            if n_cut==0:
-                D   += [X]
-                Os  += [Y]
-                Osp += [Z]
-            else:
-                D   += [X[:,:n_cut]]
-                Os  += [Y[:,:n_cut]]
-                Osp += [Z[:,:n_cut]]
-        self.C = ceo.CalibrationVault(D,valid=self.C.valid,
-                                      nThreshold=[2]*6+[0],
-                                      insertZeros=[None]*6 + [[2,7]])
-        self.Os = Os
-        self.Osp = Osp
-        self.set_aberrations()
-        #self.observables(True)
-
-    def WFE(self,SVD_threshold, gs_wfs_mag=None, 
-            spotFWHM_arcsec=None, pixelScale_arcsec=None, 
-            ron=0.0, nPhBackground=0.0, controller=None,
-            miscellaneous_noise_rms=None,
-            zenazi=None, piston_removed=False):
-
-        if zenazi is not None:
-            self.observables(self.includeBM,zenazi)
-
-        self.C.threshold = SVD_threshold
-
-        Q = [np.dot(X,Y) for X,Y in zip(self.C.M,self.C.D)]
-        D = np.insert(self.C.D[-1],[2,7],0,axis=1)
-        Q[-1] = np.dot(self.C.M[-1],D)
-        n_Qb = 12+self.N_MODE
-        Qb = [np.eye(n_Qb) - X for X in Q]
-
-        self.Qb2 = [np.dot(X,np.dot(Y[:n_Qb,:n_Qb],X.T)) for X,Y in zip(Qb,self.L)]
-        fitting_var = 0.0
-        if self.N_MODE<self.N_MODE_orig:
-            if self.gs_tt7_prms is None:
-                CL = np.array( [ np.trace( np.dot(X[:,n_Qb:],np.dot(Y[n_Qb:,n_Qb:],X[:,n_Qb:].T))) for X,Y in zip(self.Os_orig,self.L) ] )
-            else:
-                CL = np.array( [ np.trace( np.dot(X[:,n_Qb:],np.dot(Y[n_Qb:,n_Qb:],X[:,n_Qb:].T))) for X,Y in zip(self.Osp_orig,self.L) ] )
-            fitting_var = CL.sum()/self.Os_orig[0].shape[0]
-        print "Fitting variance: %g\n"%fitting_var
-
-        n = self.Os[0].shape[0]
-        wfe_rms = lambda x : np.sqrt(fitting_var + sum([ np.trace(y) for y in x ])/n)*1e9
-        wfe_rms_no_fitting = lambda x : np.sqrt(sum([ np.trace(y) for y in x ])/n)*1e9
-        Osp = self.Osp
-
-        self.Cov_wo_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.Qb2) ]
-        self.noise_free_wfe = wfe_rms(self.Cov_wo_noise)
-
-        if gs_wfs_mag is not None:
-
-            #wfs_gs.magnitude = [gs_wfs_mag]*3
-            nPh = self.nPhoton(self.gs_wfs_prms["photometric_band"],gs_wfs_mag)
-            nPhLenslet = self.wfs_prms['exposureTime']*self.wfs_prms['photoElectronGain']*\
-                         nPh*(self.wfs_prms['d'])**2
-            self.sigma_noise = wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,
-                                   self.wfs_prms['N_PX_IMAGE']/self.wfs_prms['BIN_IMAGE'],
-                                   nPhBackground=nPhBackground,controller=controller)
-
-            self.N2 = [self.sigma_noise*np.dot(X,X.T) for X in self.C.M]
-            Qb2p = [X+Y for X,Y in zip(self.Qb2,self.N2)]
-
-            self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
-            self.wfe_noise_rms = wfe_rms_no_fitting(self.Cov_noise)
-
-            self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
-            if piston_removed:
-                print "PISTON REMOVAL!"
-                n = self.Osp[0].shape[0]
-                Z1 = np.ones((n,1))/np.sqrt(n)
-                Q1 = np.eye(n) - np.dot(Z1,Z1.T)
-                self.Cov_w_noise = [ Q1.dot(Y.dot(Q1.T)) for Y in self.Cov_w_noise ]
-            self.wfe_rms = wfe_rms(self.Cov_w_noise)
-
-        if miscellaneous_noise_rms is not None:
-            
-            self.N2 = [(miscellaneous_noise_rms**2)*np.dot(X,X.T) for X in self.C.M]
-            Qb2p = [X+Y for X,Y in zip(self.Qb2,self.N2)]
-
-            self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
-            self.wfe_noise_rms = wfe_rms(self.Cov_noise)
-
-            self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
-            self.wfe_rms = wfe_rms(self.Cov_w_noise)
-            
-    def new_WFE(self,SVD_threshold, gs_wfs_mag=None, 
-            spotFWHM_arcsec=None, pixelScale_arcsec=None, 
-            ron=0.0, nPhBackground=0.0, controller=None,
-            miscellaneous_noise_rms=None,
-            zenazi=None, piston_removed=False):
-
-        if zenazi is not None:
-            self.observables(self.includeBM,zenazi)
-
-        self.C.threshold = SVD_threshold
-
-        Q = [np.dot(X,Y) for X,Y in zip(self.C.M,self.C.D)]
-        D = np.insert(self.C.D[-1],[2,7],0,axis=1)
-        M = np.insert(self.C.M[-1],[2,7],0,axis=0)
-        Q[-1] = np.dot(M,D)
-        n_Qb = 12+self.N_MODE
-        Qb = [np.dot(np.eye(n_Qb) - X,Y) for X,Y in zip(Q,self.Qbtt7)]
-
-        self.Qb2 = [np.dot(X,np.dot(Y[:n_Qb,:n_Qb],X.T)) for X,Y in zip(Qb,self.L)]
-        fitting_var = 0.0
-        if self.N_MODE<self.N_MODE_orig:
-            if self.gs_tt7_prms is None:
-                CL = np.array( [ np.trace( np.dot(X[:,n_Qb:],np.dot(Y[n_Qb:,n_Qb:],X[:,n_Qb:].T))) for X,Y in zip(self.Os_orig,self.L) ] )
-            else:
-                CL = np.array( [ np.trace( np.dot(X[:,n_Qb:],np.dot(Y[n_Qb:,n_Qb:],X[:,n_Qb:].T))) for X,Y in zip(self.Osp_orig,self.L) ] )
-            fitting_var = CL.sum()/self.Os_orig[0].shape[0]
-        print "Fitting variance: %g\n"%fitting_var
-
-        n = self.Os[0].shape[0]
-        wfe_rms = lambda x : np.sqrt(fitting_var + sum([ np.trace(y) for y in x ])/n)*1e9
-        wfe_rms_no_fitting = lambda x : np.sqrt(sum([ np.trace(y) for y in x ])/n)*1e9
-        Osp = self.Os
-
-        self.Cov_wo_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.Qb2) ]
-        self.noise_free_wfe = wfe_rms(self.Cov_wo_noise)
-
-        if gs_wfs_mag is not None:
-
-            #wfs_gs.magnitude = [gs_wfs_mag]*3
-            nPh = self.nPhoton(self.gs_wfs_prms["photometric_band"],gs_wfs_mag)
-            nPhLenslet = self.wfs_prms['exposureTime']*self.wfs_prms['photoElectronGain']*\
-                         nPh*(self.wfs_prms['d'])**2
-            self.sigma_noise = wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,
-                                   self.wfs_prms['N_PX_IMAGE']/self.wfs_prms['BIN_IMAGE'],
-                                   nPhBackground=nPhBackground,controller=controller)
-
-            self.N2 = [self.sigma_noise*np.dot(X,X.T) for X in self.C.M]
-            self.N2[-1] = self.sigma_noise*np.dot(M,M.T)
-            Qb2p = [X+Y for X,Y in zip(self.Qb2,self.N2)]
-
-            self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
-            self.wfe_noise_rms = wfe_rms_no_fitting(self.Cov_noise)
-
-            self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
-            if piston_removed:
-                print "PISTON REMOVAL!"
-                n = self.Osp[0].shape[0]
-                Z1 = np.ones((n,1))/np.sqrt(n)
-                Q1 = np.eye(n) - np.dot(Z1,Z1.T)
-                self.Cov_w_noise = [ Q1.dot(Y.dot(Q1.T)) for Y in self.Cov_w_noise ]
-            self.wfe_rms = wfe_rms(self.Cov_w_noise)
-
-        if miscellaneous_noise_rms is not None:
-            
-            self.N2 = [(miscellaneous_noise_rms**2)*np.dot(X,X.T) for X in self.C.M]
-            Qb2p = [X+Y for X,Y in zip(self.Qb2,self.N2)]
-
-            self.Cov_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,self.N2) ]
-            self.wfe_noise_rms = wfe_rms(self.Cov_noise)
-
-            self.Cov_w_noise = [ np.dot(X,np.dot(Y,X.T)) for X,Y in zip(Osp,Qb2p) ]
-            self.wfe_rms = wfe_rms(self.Cov_w_noise)
-
-            
-    def sparse_WFE(self,SVD_threshold, gs_wfs_mag=None, 
-                   spotFWHM_arcsec=None, pixelScale_arcsec=None, 
-                   ron=0.0, nPhBackground=0.0, controller=None,
-                   G_ncpa=None):
-        
-        def wfe_rms(_C_):
-            n = self.Os[0].shape[0]
-            W = np.hstack(self.Os)
-            X = W.dot(_C_.dot(W.T))
-            return np.sqrt(np.sum(X.diagonal())/n)*1e9
-
-        self.threshold = SVD_threshold
-
-        self.FITTING = self._s_Q.dot(self._s_L.dot(self._s_Q.T)) 
-        self.fitting_wfe_rms = wfe_rms(self.FITTING)
-
-        self.Ceps = self.FITTING
-
-        if gs_wfs_mag is not None:
-
-            #wfs_gs.magnitude = [gs_wfs_mag]*3
-            nPh = self.nPhoton(self.gs_wfs_prms["photometric_band"],gs_wfs_mag)
-            nPhLenslet = self.wfs_prms['exposureTime']*self.wfs_prms['photoElectronGain']*\
-                         nPh*(self.wfs_prms['d'])**2
-            self.sigma_noise = wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,
-                                   self.wfs_prms['N_PX_IMAGE']/self.wfs_prms['BIN_IMAGE'],
-                                   nPhBackground=nPhBackground,controller=controller)
-            self.NOISE_WFS = self.sigma_noise*(self._s_Swfs.dot(self._s_Swfs.T))
-            self.noise_wfs_wfe_rms = wfe_rms(self.NOISE_WFS)
-
-            self.Ceps += self.NOISE_WFS
-
-    def wavefrontSample(self):
-
-        _randn_ = lambda n,x : np.random.randn(n,1)*np.sqrt(x)
-        c = [_randn_(X.shape[0],np.diag(X)[:,None]) for X in self.L]
-
-        Q = [np.dot(X,Y) for X,Y in zip(self.C.M,self.C.D)]
-        D = np.insert(self.C.D[-1],[2,7],0,axis=1)
-        Q[-1] = np.dot(self.C.M[-1],D)
-        n_Qb = 12+self.N_MODE
-        Qb = [np.eye(n_Qb) - X for X in Q]
-
-#        noise = np.random.randn(self.C.M.shape[1],1)*np.sqrt(self.sigma_noise)
-
-        c_res = [X.dot(Z) - Y.dot(_randn_(Y.shape[1],self.sigma_noise)) for X,Y,Z in zip(Qb,self.C.M,c)]
-#        c_res = [X.dot(Z) for X,Z in zip(Qb,c)]
-        W = [X.dot(Y) for X,Y in zip(self.Osp,c_res)]
-
-        return W
-        
-    @property
-    def piston_removed(self):
-        return self._piston_removed_
-    @piston_removed.setter
-    def piston_removed(self,value):
-        self._piston_removed_ = value
-        if value:
-            n = self.Os[0].shape[0]
-            self._Osp_ = self.Osp
-            Z1 = np.ones((n,1))/np.sqrt(n)
-            Q1 = np.eye(n) - np.dot(Z1,Z1.T)
-            self.Osp = [Q1.dot(X) for X in self._Osp_]
-        elif self._Osp_ is not None:
-            self.Osp = self._Osp_
-            self._Osp_ = None            
-
-
-def wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,nPxLenslet,ron=0.0,nPhBackground=0.0, controller=None):
+<<wavefront sensor noise>>= 
+def wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,
+             nPxLenslet,ron=0.0,nPhBackground=0.0, controller=None):
 
     def readOutNoise(ron,pxScale,nPh,Ns):
         return (pxScale*ron/nPh)**2*Ns**4/12
@@ -615,8 +518,10 @@ def wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,nPxLenslet,ron=0.0,nPh
         N = lambda nu, T, tau, g : g*np.exp(s(nu)*tau)/(s(nu)*T)
         H = lambda nu, T, tau, g : N(nu,T,tau,g)/(1.0+G(nu,T,tau,g))
         T = controller['T']
-        closed_loop_noise_rejection_factor = quad(lambda x: np.abs( H(x,**controller) )**2,0,0.5/T)[0]*T*2
-    print "@(wfsNoise)> Closed-loop noise rejection factor: %.4f"%closed_loop_noise_rejection_factor
+        closed_loop_noise_rejection_factor = \
+               quad(lambda x: np.abs( H(x,**controller) )**2,0,0.5/T)[0]*T*2
+    print "@(wfsNoise)> Closed-loop noise rejection factor: %.4f"%\
+                                           closed_loop_noise_rejection_factor
     
     ron_var = ron**2 + nPhBackground 
 
@@ -627,7 +532,40 @@ def wfsNoise(nPhLenslet,spotFWHM_arcsec,pixelScale_arcsec,nPxLenslet,ron=0.0,nPh
                         nPhLenslet,nPxLenslet) )
     return sigma_noise
 
-def outOfFocus(delta,_wavelength_,_focalLength_,_diameter_):
-    out = ( 2*np.pi*delta/_wavelength_ ) / \
-                ( 16*np.sqrt(3)*( (_focalLength_/_diameter_)**2 + _focalLength_*delta/_diameter_**2 ) )
-    return out*_wavelength_*0.5/np.pi
+def noiseRejectionFactor(controller):
+    s = lambda nu : 2*1j*np.pi*nu
+    G = lambda nu, T, tau, g : -g*np.exp(s(nu)*(tau+0.5*T))*np.sinc(nu*T)/(s(nu)*T)
+    E = lambda nu, T, tau, g : 1.0/(1.0+G(nu,T,tau,g))
+    N = lambda nu, T, tau, g : g*np.exp(s(nu)*tau)/(s(nu)*T)
+    H = lambda nu, T, tau, g : N(nu,T,tau,g)/(1.0+G(nu,T,tau,g))
+    T = controller['T']
+    return quad(lambda x: np.abs( H(x,**controller) )**2,0,0.5/T)[0]*T*2
+
+@
+
+\section{The python module}
+\label{sec:main-class}
+
+<<LinearActiveOptics.py>>=
+import os
+import shelve
+import sys
+import numpy as np
+import numpy.linalg as LA
+from scipy.integrate import quad
+import scipy.sparse as sprs
+import ceo
+
+ARCSEC2RAD =  np.pi/180/3600#ceo.constants.ARCSEC2RAD
+MAS2RAD  = ARCSEC2RAD*1e-3#ceo.constants.MAS2RAD
+arcs2rad = ARCSEC2RAD
+
+<<BuildLinearActiveOptics>>
+
+<<Wavefronts>>
+
+<<ModelData>>
+
+<<LinearActiveOptics>>
+
+<<wavefront sensor noise>>

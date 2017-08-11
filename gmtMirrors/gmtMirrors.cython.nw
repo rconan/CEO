@@ -249,8 +249,12 @@ cdef class GmtMirrors:
     @property
     def state(self):
         cdef dict d
-        d = {'M1': {'Rxyz':self.M1.motion_CS['Rxyz'] , 'Txyz':self.M1.motion_CS['Txyz']},
-             'M2': {'Rxyz':self.M2.motion_CS['Rxyz'] , 'Txyz':self.M2.motion_CS['Txyz']}}
+        d = {'M1': {'Rxyz':self.M1.motion_CS['Rxyz'],
+                    'Txyz':self.M1.motion_CS['Txyz'],
+                    'modes':self.M1.modes.a[:]},
+             'M2': {'Rxyz':self.M2.motion_CS['Rxyz'],
+                    'Txyz':self.M2.motion_CS['Txyz'],
+                    'modes':self.M2.modes.a[:]}}
         return d
         
 @
@@ -269,11 +273,14 @@ cdef class GmtMirrors:
         double *d__BM
         double *d__BMS
         int BM_N_SAMPLE
+        double BM_radius
         void setup(int, int)
         void setupKL(int, int)
+        void setupPolish(int, int)
         void cleanup()
         void load()
         void load_reg()
+        void load_polish()
         void load_KL()
         void nearest_neighbor(rtd *, rtd *, rtd *,
                               int , rtd , int)
@@ -288,7 +295,7 @@ cdef class GmtMirrors:
 cdef class BendingModes:
     cdef:
         bending_modes *_c_bending_modes
-        public int n_mode, N_SURF
+        public int n_mode, N_SURF, NPX
         public rtd[:,:] a
 @
 
@@ -313,8 +320,11 @@ cdef class BendingModes:
             cuDoubleArray x_BM, y_BM, BM
         if grid=='regular':
             self._c_bending_modes.load_reg()
-            BM = cuDoubleArray(shape=(1,self._c_bending_modes.BM_N_SAMPLE*self._c_bending_modes.BM_N_SAMPLE))
+            BM = cuDoubleArray(shape=(self.n_mode,
+                                      self._c_bending_modes.BM_N_SAMPLE*\
+                                      self._c_bending_modes.BM_N_SAMPLE))
             BM._c_gpu.dev_data = self._c_bending_modes.d__BM
+            self.NPX = 169
             return BM
         else:
             self._c_bending_modes.load()
@@ -346,18 +356,32 @@ cdef class BendingModes:
                                                    NI, di, k_mode)
         return (BMi,partial_x_BMi,partial_y_BMi)
 
-    def update(self):
-        """
-        Updates the bending modes surface based on the bending modes coefficients
-        """
-        self._c_bending_modes.update(&self.a[0,0])
-
+    <<modes update>>
+    
     def reset(self):
         """
         Resets the bending modes coefficients to zero and update the bending modes surface
         """
         self.a[:] = 0
         self._c_bending_modes.update(&self.a[0,0])
+
+    @property
+    def radius(self):
+        return self._c_bending_modes.BM_radius
+@ with
+<<modes update>>=        
+def update(self, rtd[:,:] modes=None, **kwargs):
+    """
+    Updates the bending modes surface based on the bending modes coefficients
+    
+    Parameters
+    ----------
+    modes : ndarray
+    The modal coefficients array in the $7\times [[N_MODE]]$ matrix form
+    """
+    if modes is not None:
+        self.a[:] = modes
+    self._c_bending_modes.update(&self.a[0,0])
 @
 \section{Karhunen--Loeve modes}
 \label{sec:KL-modes}
@@ -418,11 +442,75 @@ cdef class KarhunenLoeve:
                                      NI, di, k_mode)
         return (BMi,partial_x_BMi,partial_y_BMi)
 
-    def update(self):
+    <<modes update>>
+
+    def reset(self):
         """
-        Updates the bending modes surface based on the bending modes coefficients
+        Resets the bending modes coefficients to zero and update the bending modes surface
         """
+        self.a[:] = 0
         self._c_bending_modes.update(&self.a[0,0])
+@
+\section{Polishing map}
+\label{sec:polish-map}
+
+\index{gmtMirrors!python!PolishMap}
+
+\subsubsection{Class definition}
+\label{sec:class-definition-6}
+
+<<class definitions>>=
+cdef class PolishMap:
+    cdef:
+        bending_modes *_c_bending_modes
+        public int n_mode, N_SURF
+        public rtd[:,::1] a
+        readonly cuDoubleArray S
+@
+
+\subsection{PYX file}
+\label{sec:pyx-file-6}
+
+<<gmtMirrors.pyx>>=
+cdef class PolishMap:
+
+    def __cinit__(self, int N_MODE=1, int N_SURF=1):
+        self._c_bending_modes = new bending_modes()
+        self._c_bending_modes.setupPolish(N_MODE, N_SURF);
+        self.n_mode = N_MODE
+        self.N_SURF = N_SURF
+        self.a = np.zeros((N_SURF, N_MODE), dtype=np.float64)
+        self.S = cuDoubleArray(shape=(self._c_bending_modes.BM_N_SAMPLE,
+                                      self._c_bending_modes.BM_N_SAMPLE))
+        self.S._c_gpu.dev_data = self._c_bending_modes.d__BMS
+
+    def __dealloc__(self):
+        self._c_bending_modes.cleanup();
+
+    def load(self):
+        cdef cuDoubleArray BM
+        self._c_bending_modes.load_polish()
+        BM = cuDoubleArray(shape=(1,
+              self._c_bending_modes.BM_N_SAMPLE*\
+              self._c_bending_modes.BM_N_SAMPLE))
+        BM._c_gpu.dev_data = self._c_bending_modes.d__BM
+        return BM
+
+    def interpolate(self,int NI, double di, int k_mode=1):
+        cdef:
+            cuDoubleArray BMi
+            cuDoubleArray partial_x_BMi
+            cuDoubleArray partial_y_BMi
+        BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_x_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        partial_y_BMi = cuDoubleArray(shape=(NI,NI), dev_malloc=True)
+        self._c_bending_modes.bilinear(BMi._c_gpu.dev_data,
+                                     partial_x_BMi._c_gpu.dev_data,
+                                     partial_y_BMi._c_gpu.dev_data,
+                                     NI, di, k_mode)
+        return (BMi,partial_x_BMi,partial_y_BMi)
+
+    <<modes update>>
 
     def reset(self):
         """
@@ -485,6 +573,7 @@ cdef:
     public ZernikeS zernike
     public BendingModes BM
     public KarhunenLoeve KL
+    public PolishMap PM
     public Coordinate_system aperture_CS
     public Coordinate_system conic_CS
     public Coordinate_system rigid_body_CS
@@ -589,6 +678,10 @@ elif mirror_modes==u"bending modes":
 elif mirror_modes==u"Karhunen-Loeve":
     self.KL = KarhunenLoeve(N_MODE,N_SURF=7)
     self._c_gmt_m12.setup( <bending_modes *> self.KL._c_bending_modes)
+elif mirror_modes==u"polishing map":
+    print "!!polishing map!!"
+    self.PM = PolishMap(1,N_SURF=7)
+    self._c_gmt_m12.setup( <bending_modes *> self.PM._c_bending_modes)
 else:
     self._c_gmt_m12.setup()
 
@@ -611,11 +704,8 @@ def __dealloc__(self):
     self._c_gmt_m12.cleanup()
 
 def __ixor__(self, dict d):
-    cdef tuple t
     self.motion_CS.update(**d)
-    if 'modes' in d:
-        t = d['modes']
-        self.modes.a[t[0],t[1]] = t[2]
+    self.modes.update(**d)
     return self
 
 def trace(self, Bundle rays):
@@ -776,6 +866,8 @@ property modes:
             return self.BM
         elif self.mirror_modes_type==u"Karhunen-Loeve":
             return self.KL
+        elif self.mirror_modes_type==u"polishing map":
+            return self.PM
 
 property M_ID:
     def __get__(self):
