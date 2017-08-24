@@ -6,6 +6,7 @@
 <<source.pxd>>=
 from numpy cimport ndarray
 from utilities cimport mask, cuFloatArray, cuDoubleArray, cuIntArray, MaskAbstract
+from rayTracing cimport Coordinates
 cdef extern from "utilities.h":
     ctypedef double rtd
     ctypedef struct vector:
@@ -47,6 +48,7 @@ cdef extern from "source.h":
         void to_sphere(rtd , rtd)
         void get_coordinates(double *)
         void get_chief_coordinates(double *)
+        void get_sphere_origins(double *)
         void get_directions(double *)
         void get_chief_directions(double *)
         void get_optical_path_length(double *)
@@ -64,20 +66,21 @@ cdef extern from "source.h":
 <<class definitions>>=
 # Bundle
 cdef class Bundle:
-    cdef bundle *_c_bundle
-    cdef cuDoubleArray _coordinates_
-    cdef cuDoubleArray _chief_coordinates_
-    cdef cuDoubleArray _directions_
-    cdef cuDoubleArray _chief_directions_
-    cdef cuDoubleArray _optical_path_length_
-    cdef cuDoubleArray _chief_optical_path_length_
-    cdef cuDoubleArray _optical_path_difference_
-    cdef cuDoubleArray _vignetting_
-    cdef cuIntArray _n_iteration_
-    cdef public cuDoubleArray sphere_radius
-    cdef public cuDoubleArray sphere_distance
-    cdef double[:,::1] _d__sphere_origin_
-    cdef cuIntArray _piston_mask_
+    cdef:
+        bundle *_c_bundle
+        cuDoubleArray _coordinates_
+        cuDoubleArray _chief_coordinates_
+        cuDoubleArray _directions_
+        cuDoubleArray _chief_directions_
+        cuDoubleArray _optical_path_length_
+        cuDoubleArray _chief_optical_path_length_
+        cuDoubleArray _optical_path_difference_
+        cuDoubleArray _vignetting_
+        cuDoubleArray _sphere_origins_
+        cuIntArray _n_iteration_
+        public cuDoubleArray sphere_radius
+        public cuDoubleArray sphere_distance
+        cuIntArray _piston_mask_
 @
 \subsection{PYX file}
 \label{sec:pyx-file}
@@ -149,6 +152,8 @@ cdef class Bundle:
             shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
         self._vignetting_                = cuDoubleArray(
             shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
+        self._sphere_origins_            = cuDoubleArray(
+            shape=(self._c_bundle.N_BUNDLE,3),dev_malloc=True)
         self._n_iteration_                = cuIntArray(
             shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
 
@@ -301,6 +306,11 @@ property vignetting:
     def __get__(self):
         self._c_bundle.get_vignetting(self._vignetting_._c_gpu.dev_data)
         return self._vignetting_
+
+property sphere_origins:
+    def __get__(self):
+        self._c_bundle.get_sphere_origins(self._sphere_origins_._c_gpu.dev_data)
+        return self._sphere_origins_
 
 property n_iteration:
     def __get__(self):

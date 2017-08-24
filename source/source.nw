@@ -287,6 +287,7 @@ struct bundle {
   void to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane);
   void get_coordinates(double *d__coord);
   void get_chief_coordinates(double *d__coord);
+  void get_sphere_origins(double *d__coord);
   void get_directions(double *d__dir);
   void get_chief_directions(double *d__dir);
   void get_chief_optical_path_length(double *d__opl);
@@ -792,6 +793,7 @@ void bundle::to_sphere(rtd *s, rtd sphere_radius)
 The coordinates, directions, optical path length and vignetting map are copied into arrays with the following functions:
 <<ray bundle functions>>=
 <<gathering ray coordinates>>
+<<gathering sphere origins>>
 <<gathering ray directions>>
 <<gathering ray optical path length>>
 <<gathering ray optical path difference>>
@@ -801,6 +803,7 @@ The coordinates, directions, optical path length and vignetting map are copied i
 @
 <<ray bundle kernels>>=
 <<gathering ray coordinates kernel>>
+<<gathering sphere origins kernel>>
 <<gathering ray directions kernel>>
 <<gathering ray optical path length kernel>>
 <<gathering ray optical path difference kernel>>
@@ -843,6 +846,34 @@ __global__ void get_coordinates_kernel(double *d__coord, ray *d__ray, int N_RAY)
     d__coord[l++] = d__ray[k].coordinates.x;
     d__coord[l++] = d__ray[k].coordinates.y;
     d__coord[l]   = d__ray[k].coordinates.z;
+  }
+}
+@
+\index{source!bundle!get\_sphere\_origin}
+<<gathering sphere origins>>=
+void bundle::get_sphere_origins(double *d__coord)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  get_sphere_origins_kernel LLL gridDim, blockDim RRR (d__coord, d__sphere_origin, 1);
+}
+@
+<<gathering sphere origins kernel>>=
+__global__ void get_sphere_origins_kernel(double *d__coord, vector *d__sphere_origin, int N_RAY)
+{
+  int i, j, k0, k, l, iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
+  k0 = k;
+  k += iSource*N_RAY;
+  if ( k0<N_RAY )
+  {
+    l = k*3;
+    d__coord[l++] = d__sphere_origin[k].x;
+    d__coord[l++] = d__sphere_origin[k].y;
+    d__coord[l]   = d__sphere_origin[k].z;
   }
 }
 @
@@ -1399,7 +1430,7 @@ void source::setup(const char *_photometric_band, float *_magnitude,
   <<setup multiple sources contents: common part (host)>>
   fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
-  for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
+  for (int i_SRC=0;i_SRC<min(N_SRC,10);i_SRC++) {
     <<setup multiple sources contents: common part (device)>>
     __src.magnitude        = _magnitude[i_SRC];
     __src.N_PHOTON         = n_photon(_magnitude[i_SRC]);
@@ -1427,12 +1458,20 @@ void source::reset_rays(void)
   ray_coordinates LLL gridDim , blockDim RRR (rays.d__chief_ray, 1,
                                               dev_ptr,
                                               0.0, 2, 1, rays.d__origin);
-  blockDim = dim3(16,16);
-  gridDim  = dim3(rays.N_L/16+1,rays.N_L/16+1, rays.N_BUNDLE);
-  ray_coordinates_box LLL gridDim , blockDim RRR (rays.d__ray, rays.N_RAY,
-                                                  dev_ptr,
-                                                  rays.L, rays.N_L,
-                                                  rays.d__origin);
+  if (rays.N_RAY>1)
+    {
+      blockDim = dim3(16,16);
+      gridDim  = dim3(rays.N_L/16+1,rays.N_L/16+1, rays.N_BUNDLE);
+      ray_coordinates_box LLL gridDim , blockDim RRR (rays.d__ray, rays.N_RAY,
+						      dev_ptr,
+						      rays.L, rays.N_L,
+						      rays.d__origin);
+    }
+  else
+    ray_coordinates LLL gridDim , blockDim RRR (rays.d__ray, 1,
+						dev_ptr,
+						0.0, 2, 1, rays.d__origin);
+    
   blockDim = dim3(256);
   gridDim  = dim3(rays.V.nel/256+1);
   fill_ones_char LLL gridDim,blockDim RRR (rays.V.m,rays.V.nel);
