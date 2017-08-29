@@ -286,6 +286,7 @@ struct bundle {
   void setup(rtd L, int N_L, vector origin, int N_SRC);
   void cleanup(void);
   void to_z_plane(rtd z_in);
+  void to_focal_plane(rtd z_chief_on_axis, rtd rho_focal_plane);
   void to_sphere(vector sphere_origin);
   void to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane);
   void get_coordinates(double *d__coord);
@@ -497,9 +498,11 @@ The rays are propagated to the plane $z=[[z__plane]]$ with
 <<ray bundle functions>>=
 void bundle::to_z_plane(rtd z_plane)
 {
-  to_z_plane_chief_kernel LLL 1, 1, N_BUNDLE RRR (d__chief_ray, 1, z_plane);
-  dim3 blockDim(N_THREAD,N_THREAD);
-  dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  to_z_plane_chief_kernel LLL gridDim , blockDim RRR (d__chief_ray, 1, z_plane);
+  blockDim = dim3(N_THREAD,N_THREAD);
+  gridDim  = dim3(N_RAY/N_THREAD2+1,1,N_BUNDLE);
   to_z_plane_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, z_plane, d__chief_ray);
 }
 @ where
@@ -527,6 +530,29 @@ void bundle::to_z_plane(rtd z_plane)
       d__ray[k].optical_path_length - d__chief_ray->optical_path_length;
   }
 }
+  __global__ void to_vz_plane_kernel(ray *d__ray, int N_RAY, vector *d__v, ray *d__chief_ray)
+{
+  int i, j, k0, k, iSource;
+  rtd s;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  k = j * gridDim.x * blockDim.x + i;
+  k0 = k;
+  k += iSource*N_RAY;
+  if ( (k0<N_RAY ) && (d__ray[k].v) )
+  {
+    if (d__ray[k].directions.z==0)
+       return;
+    s = (d__v[iSource].z - d__ray[k].coordinates.z)/d__ray[k].directions.z;
+    d__ray[k].coordinates.x = d__ray[k].coordinates.x + s*d__ray[k].directions.x;
+    d__ray[k].coordinates.y = d__ray[k].coordinates.y + s*d__ray[k].directions.y;
+    d__ray[k].coordinates.z = d__v[iSource].z;
+    d__ray[k].optical_path_length = s;
+    d__ray[k].optical_path_difference +=
+      d__ray[k].optical_path_length - d__chief_ray->optical_path_length;
+  }
+}
 __global__ void to_z_plane_chief_kernel(ray *d__ray, int N_RAY, rtd z_plane)
 {
   int k, iSource;
@@ -541,8 +567,35 @@ __global__ void to_z_plane_chief_kernel(ray *d__ray, int N_RAY, rtd z_plane)
   d__ray[k].coordinates.z = z_plane;
   d__ray[k].optical_path_length = s;
 }
+__global__ void to_vz_plane_chief_kernel(ray *d__ray, int N_RAY, vector *d__v)
+{
+  int k, iSource;
+  rtd s;
+  iSource = blockIdx.z;
+  k = iSource;
+  if (d__ray[k].directions.z==0)
+    return;
+  s = (d__v[k].z - d__ray[k].coordinates.z)/d__ray[k].directions.z;
+  d__ray[k].coordinates.x = d__ray[k].coordinates.x + s*d__ray[k].directions.x;
+  d__ray[k].coordinates.y = d__ray[k].coordinates.y + s*d__ray[k].directions.y;
+  d__ray[k].coordinates.z = d__v[k].z;
+  d__ray[k].optical_path_length = s;
+}
 @
-
+The rays are propagated to the plane focal by computing first the coordinates of the intersection of the chief ray with the curved focal plane and then by propagated the rays from the last surface to the z--plane at the intersection of the chief ray with the focal plane.
+<<ray bundle functions>>=
+void bundle::to_focal_plane(rtd z_chief_on_axis, rtd rho_focal_plane)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  <<reference sphere distance>>
+  <<reference sphere origin>>
+  to_vz_plane_chief_kernel LLL gridDim , blockDim RRR (d__chief_ray, 1, d__sphere_origin);
+  blockDim = dim3(N_THREAD,N_THREAD);
+  gridDim  = dim3(N_RAY/N_THREAD2+1,1,N_BUNDLE);
+  to_vz_plane_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, d__sphere_origin, d__chief_ray);
+}
+@ 
 \subsubsection{Reference sphere}
 \label{sec:reference-sphere}
 
