@@ -1437,7 +1437,7 @@ class EdgeSensors:
 
 def Trace( src, S, global_CS=True):
     n = len(S)
-    src.reset()
+    #src.reset()
     xyz = [ src.rays.coordinates.host() ]
     for k in range(n):
         #print 'Material refractive index: %f'%src.rays.refractive_index

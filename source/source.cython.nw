@@ -46,6 +46,7 @@ cdef extern from "source.h":
         void to_z_plane(rtd)
         void to_sphere(vector)
         void to_sphere(rtd , rtd)
+        void to_focal_plane(rtd , rtd)
         void get_coordinates(double *)
         void get_chief_coordinates(double *)
         void get_sphere_origins(double *)
@@ -184,6 +185,22 @@ def to_z_plane(self,rtd z_plane):
     """
     self._c_bundle.to_z_plane(z_plane)
 
+
+def to_focal_plane(self,
+                   rtd focal_plane_distance,
+                   rtd focal_plane_radius):
+    """
+    Propagates the rays to the focal plane
+
+    Parameters
+    ----------
+    focal_plane_distance : double, optional
+        The location of the focal plane on the optical axis
+    focal_plane_radius : double, optional
+        The radius of curvature of the focal plane
+    """
+    self._c_bundle.to_focal_plane(focal_plane_distance, focal_plane_radius)
+
 def to_sphere(self, sphere_origin=None,
               rtd focal_plane_distance=0.0,
               rtd focal_plane_radius=0.0):
@@ -198,7 +215,6 @@ def to_sphere(self, sphere_origin=None,
         The location of the focal plane on the optical axis; default: 0.0
     focal_plane_radius : double, optional
         The radius of curvature of the focal plane; default: 0.0
-
     """
     cdef vector origin
     if sphere_origin is not None:
@@ -592,7 +608,9 @@ cdef class Complex_amplitude:
         void setup(const char *,float *,double *, double *, float , int , rtd, int, vector)
         void cleanup()
         void reset_rays()
+        void reset_rays(int)
         void opd2phase()
+        void opd2phase(int)
         void info()
         float n_photon()
         float n_photon(float)
@@ -842,11 +860,16 @@ cdef class Source:
             self.__pos__()
         return self
 
-    def opd2phase(self):
+    def opd2phase(self, int FLAG=1):
         """
         Transfer the OPD from ray tracing to the wavefront phase
+        
+        Parameters
+        ----------
+        FLAG : int (optional)
+            If FLAG is 0, the rays vignetting mask is not reset, this is used for sequential ray tracing (default: 1) 
         """
-        self._c_source.opd2phase()
+        self._c_source.opd2phase(FLAG)
 
     def updateDirections(self, zenith, azimuth):
         """
@@ -953,11 +976,16 @@ cdef class Source:
         self._c_source.wavefront.reset()
         self._c_source.reset_rays()
 
-    def resetRays(self):
+    def resetRays(self, int FLAG=1):
         """
         Re--initialize the ray bundle
+        
+        Parameters
+        ----------
+        FLAG : int (optional)
+            If FLAG is 0, the rays vignetting mask is not reset, this is used for sequential ray tracing (default: 1) 
         """
-        self._c_source.reset_rays()
+        self._c_source.reset_rays(FLAG)
 
     def piston(self, where='pupil',int units_exponent=0):
         """
