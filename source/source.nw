@@ -57,8 +57,10 @@ struct source {
    void cleanup(void);
 
   void reset_rays(void);
+  void reset_rays(int RESET_RAYS_MASK);
 
   void opd2phase(void);
+  void opd2phase(int RESET_RAYS_MASK);
 
   void info(void);
 
@@ -178,6 +180,7 @@ struct complex_amplitude {
   void cleanup(void);
   void reset(void);
   void reset(complex_amplitude *wavefront);
+  void reset_amplitude(void);
   void reset_phase(void);
   void reset_phase(complex_amplitude *wavefront_prime);
   void add_phase(float alpha, float *phase_prime);
@@ -1453,30 +1456,32 @@ void source::setup(const char *_photometric_band, float *_magnitude,
 <<reset rays>>=
 void source::reset_rays(void)
 {
-  dim3 blockDim(1,1);
-  dim3 gridDim(1,1, rays.N_BUNDLE);
-  ray_coordinates LLL gridDim , blockDim RRR (rays.d__chief_ray, 1,
-                                              dev_ptr,
-                                              0.0, 2, 1, rays.d__origin);
-  if (rays.N_RAY>1)
-    {
-      blockDim = dim3(16,16);
-      gridDim  = dim3(rays.N_L/16+1,rays.N_L/16+1, rays.N_BUNDLE);
-      ray_coordinates_box LLL gridDim , blockDim RRR (rays.d__ray, rays.N_RAY,
-						      dev_ptr,
-						      rays.L, rays.N_L,
-						      rays.d__origin);
-    }
-  else
-    ray_coordinates LLL gridDim , blockDim RRR (rays.d__ray, 1,
-						dev_ptr,
-						0.0, 2, 1, rays.d__origin);
-    
+  <<reset_rays common>>    
   blockDim = dim3(256);
   gridDim  = dim3(rays.V.nel/256+1);
   fill_ones_char LLL gridDim,blockDim RRR (rays.V.m,rays.V.nel);
   rays.V.set_filter_quiet();
 }
+@ with
+<<reset_rays common>>=
+dim3 blockDim(1,1);
+dim3 gridDim(1,1, rays.N_BUNDLE);
+ray_coordinates LLL gridDim , blockDim RRR (rays.d__chief_ray, 1,
+					    dev_ptr,
+					    0.0, 2, 1, rays.d__origin);
+if (rays.N_RAY>1)
+  {
+    blockDim = dim3(16,16);
+    gridDim  = dim3(rays.N_L/16+1,rays.N_L/16+1, rays.N_BUNDLE);
+    ray_coordinates_box LLL gridDim , blockDim RRR (rays.d__ray, rays.N_RAY,
+						    dev_ptr,
+						    rays.L, rays.N_L,
+						    rays.d__origin);
+  }
+ else
+   ray_coordinates LLL gridDim , blockDim RRR (rays.d__ray, 1,
+					       dev_ptr,
+					       0.0, 2, 1, rays.d__origin);
 @ and
 <<bundle coordinates kernel>>=
 __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
@@ -1540,6 +1545,21 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
 x   = L*(i - (N_L-1)*0.5)/(N_L-1);
 y   = L*(j - (N_L-1)*0.5)/(N_L-1);
 @ \end{itemize}
+
+The rays vignetting mask [[V]] is not reset if the flag [[RESET_RAYS_MASK]] is set to 0: 
+<<reset rays>>=
+void source::reset_rays(int RESET_RAYS_MASK)
+{
+  <<reset_rays common>>    
+  blockDim = dim3(256);
+  gridDim  = dim3(rays.V.nel/256+1);
+  if (RESET_RAYS_MASK>0)
+  {
+    fill_ones_char LLL gridDim,blockDim RRR (rays.V.m,rays.V.nel);
+    rays.V.set_filter_quiet();
+  }
+}
+@
 
 The zenith and azimuth angle are updated with:
 \index{source!source!update\_directions}
@@ -1750,21 +1770,22 @@ The ray tracing data are transferred to the wavefront structure with
 <<ray tracing>>=
 void source::opd2phase(void)
 {
-//  printf("Setting wavefront!\n");
   HANDLE_ERROR( cudaMemset(rays.V.m, 0, sizeof(char)*rays.N_RAY*rays.N_BUNDLE ) );
-  dim3 blockDim(16,16);
-  dim3 gridDim(rays.N_L/16+1, rays.N_L/16+1, rays.N_BUNDLE);
-  opd2phase_kernel LLL gridDim , blockDim RRR (wavefront.amplitude,
-                                                   wavefront.phase,
-						   rays.V.m,
-                                                   rays.d__ray, rays.N_RAY,
-                                                   rays.L, rays.N_L,
-                                                   dev_ptr);
-  wavefront.masked(&(rays.V));
-  rays.V.set_filter_quiet();
-  /* wavefront.M = &(rays.V); */
+  <<opd2phase common>>
 }
-@
+@ with
+<<opd2phase common>>=
+dim3 blockDim(16,16);
+dim3 gridDim(rays.N_L/16+1, rays.N_L/16+1, rays.N_BUNDLE);
+opd2phase_kernel LLL gridDim , blockDim RRR (wavefront.amplitude,
+					     wavefront.phase,
+					     rays.V.m,
+					     rays.d__ray, rays.N_RAY,
+					     rays.L, rays.N_L,
+					     dev_ptr);
+wavefront.masked(&(rays.V));
+rays.V.set_filter_quiet();
+@ and
 <<gathering wavefront kernel>>=
 __global__ void opd2phase_kernel(float *amplitude, float *phase,
 				 char *m, ray *d__ray,  int N_RAY,
@@ -1785,6 +1806,21 @@ __global__ void opd2phase_kernel(float *amplitude, float *phase,
       y*src[iSource].theta_y;
   }
 }
+@
+For ray tracing in sequential mode, the rays vignetting mask [[V]] should not be reset.
+The source [[reset_rays]] method should be called instead of the [[reset]] method with 0 passed as argument.
+Then [[opd2phase]] must be called sequentially with also 0 passed as argument.
+This will prevent the rays vignetting mask [[V]] to be resetted.
+<<ray tracing>>=
+void source::opd2phase(int RESET_RAYS_MASK)
+{
+  if (RESET_RAYS_MASK>0)
+    HANDLE_ERROR( cudaMemset(rays.V.m, 0, sizeof(char)*rays.N_RAY*rays.N_BUNDLE ) );
+  else
+    wavefront.reset_amplitude();
+  <<opd2phase common>>
+}
+
 @
 \subsubsection{Input/Output}
 \label{sec:inputoutput}
@@ -1865,12 +1901,11 @@ void source::cleanup(void) {
 @
 The amplitude and phase are initialized to respectively 1 and 0:
 <<square geometry>>=
-__global__ void squarePupil(float* amplitude, float *phase, const int N) {
+__global__ void squarePupil(float* amplitude, const int N) {
   int id;
   id = blockIdx.x * blockDim.x + threadIdx.x;
   if (id<N) {
     amplitude[id] = 1.0;
-    phase[id]     = 0.0;
   }
 }
 
@@ -1886,11 +1921,18 @@ The following resets the wavefront amplitude to zero and phase to 1:
 <<resetting the wavefront>>=
 void complex_amplitude::reset(void)
 {
+  reset_amplitude();
+  reset_phase();
+}
+@
+The amplitude is reset to 1 with:
+\index{source!complex\_amplitude!reset\_amplitude}
+<<resetting the wavefront>>=
+void complex_amplitude::reset_amplitude(void)
+{
   dim3 blockDim(16,1);
   dim3 gridDim(N_PX/16+1,1);
-  squarePupil LLL gridDim,blockDim RRR (amplitude, phase, N_PX);
-  /* if (M!=NULL) */
-  /*   apply_mask LLL gridDim,blockDim RRR (amplitude, phase, M->m, N_PX);   */
+  squarePupil LLL gridDim,blockDim RRR (amplitude, N_PX);
 }
 @ 
 The wavefront amplitude can also be reset to a given wavefront, both wavefronts will share the same mask,:
