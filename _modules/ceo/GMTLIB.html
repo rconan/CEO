@@ -6,7 +6,7 @@
   <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     
-    <title>ceo.GMTLIB &#8212; CEO 1.0 documentation</title>
+    <title>ceo.GMTLIB &mdash; CEO 1.0 documentation</title>
     
     <link rel="stylesheet" href="../../_static/nature.css" type="text/css" />
     <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
@@ -17,16 +17,15 @@
         VERSION:     '1.0',
         COLLAPSE_INDEX: false,
         FILE_SUFFIX: '.html',
-        HAS_SOURCE:  true,
-        SOURCELINK_SUFFIX: '.txt'
+        HAS_SOURCE:  true
       };
     </script>
     <script type="text/javascript" src="../../_static/jquery.js"></script>
     <script type="text/javascript" src="../../_static/underscore.js"></script>
     <script type="text/javascript" src="../../_static/doctools.js"></script>
     <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
-    <link rel="index" title="Index" href="../../genindex.html" />
-    <link rel="search" title="Search" href="../../search.html" /> 
+    <link rel="top" title="CEO 1.0 documentation" href="../../index.html" />
+    <link rel="up" title="Module code" href="../index.html" /> 
   </head>
   <body role="document">
     <div class="related" role="navigation" aria-label="related navigation">
@@ -38,8 +37,8 @@
         <li class="right" >
           <a href="../../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../../index.html">CEO 1.0 documentation</a> &#187;</li>
-          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &#187;</li> 
+        <li class="nav-item nav-item-0"><a href="../../index.html">CEO 1.0 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" accesskey="U">Module code</a> &raquo;</li> 
       </ul>
     </div>  
 
@@ -51,12 +50,15 @@
   <h1>Source code for ceo.GMTLIB</h1><div class="highlight"><pre>
 <span></span><span class="kn">import</span> <span class="nn">sys</span>
 <span class="kn">import</span> <span class="nn">math</span>
-<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
-<span class="kn">import</span> <span class="nn">numpy.linalg</span> <span class="k">as</span> <span class="nn">LA</span>
-<span class="kn">from</span> <span class="nn">scipy.optimize</span> <span class="k">import</span> <span class="n">brenth</span><span class="p">,</span> <span class="n">leastsq</span>
-<span class="kn">from</span> <span class="nn">skimage.feature</span> <span class="k">import</span> <span class="n">blob_log</span>
-<span class="kn">from</span> <span class="nn">scipy.ndimage.interpolation</span> <span class="k">import</span> <span class="n">rotate</span>
-<span class="kn">from</span> <span class="nn">ceo</span> <span class="k">import</span> <span class="n">Source</span><span class="p">,</span> <span class="n">GMT_M1</span><span class="p">,</span> <span class="n">GMT_M2</span><span class="p">,</span> <span class="n">ShackHartmann</span><span class="p">,</span> <span class="n">GeometricShackHartmann</span><span class="p">,</span>\
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="kn">as</span> <span class="nn">np</span>
+<span class="kn">import</span> <span class="nn">numpy.linalg</span> <span class="kn">as</span> <span class="nn">LA</span>
+<span class="kn">from</span> <span class="nn">scipy.optimize</span> <span class="kn">import</span> <span class="n">brenth</span><span class="p">,</span> <span class="n">leastsq</span>
+<span class="kn">from</span> <span class="nn">scipy.signal</span> <span class="kn">import</span> <span class="n">fftconvolve</span>
+<span class="kn">from</span> <span class="nn">skimage.feature</span> <span class="kn">import</span> <span class="n">blob_log</span>
+<span class="kn">from</span> <span class="nn">scipy.ndimage.interpolation</span> <span class="kn">import</span> <span class="n">rotate</span>
+<span class="kn">import</span> <span class="nn">os.path</span>
+<span class="kn">import</span> <span class="nn">phaseStats</span>
+<span class="kn">from</span> <span class="nn">ceo</span> <span class="kn">import</span> <span class="n">Source</span><span class="p">,</span> <span class="n">GMT_M1</span><span class="p">,</span> <span class="n">GMT_M2</span><span class="p">,</span> <span class="n">ShackHartmann</span><span class="p">,</span> <span class="n">GeometricShackHartmann</span><span class="p">,</span>\
     <span class="n">TT7</span><span class="p">,</span>\
     <span class="n">GmtMirrors</span><span class="p">,</span> <span class="n">SegmentPistonSensor</span><span class="p">,</span>\
     <span class="n">constants</span><span class="p">,</span> <span class="n">Telescope</span><span class="p">,</span> <span class="n">cuFloatArray</span><span class="p">,</span> <span class="n">Aperture</span><span class="p">,</span>\
@@ -64,22 +66,22 @@
 
 <span class="k">class</span> <span class="nc">CalibrationVault</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
 
-    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">D</span><span class="p">,</span><span class="n">valid</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span><span class="n">nThreshold</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span><span class="n">insertZeros</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">D</span><span class="p">,</span><span class="n">valid</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">nThreshold</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">insertZeros</span> <span class="o">=</span> <span class="bp">None</span><span class="p">):</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">D</span> <span class="o">=</span> <span class="n">D</span>
-        <span class="k">if</span> <span class="n">nThreshold</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">nThreshold</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_nThreshold_</span> <span class="o">=</span> <span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">*</span><span class="nb">len</span><span class="p">(</span><span class="n">D</span><span class="p">)</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">_nThreshold_</span> <span class="o">=</span> <span class="n">nThreshold</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">_threshold_</span> <span class="o">=</span> <span class="kc">None</span>
-        <span class="k">if</span> <span class="n">valid</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_threshold_</span> <span class="o">=</span> <span class="bp">None</span>
+        <span class="k">if</span> <span class="n">valid</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">valid</span> <span class="o">=</span> <span class="p">[</span> <span class="n">np</span><span class="o">.</span><span class="n">ones</span><span class="p">(</span><span class="n">X</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span><span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">bool</span><span class="p">)</span> <span class="k">for</span> <span class="n">X</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">D</span><span class="p">]</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">valid</span> <span class="o">=</span> <span class="n">valid</span>
-        <span class="k">if</span> <span class="n">insertZeros</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
-            <span class="bp">self</span><span class="o">.</span><span class="n">zeroIdx</span> <span class="o">=</span> <span class="p">[</span><span class="kc">None</span><span class="p">]</span><span class="o">*</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">D</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">insertZeros</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">zeroIdx</span> <span class="o">=</span> <span class="p">[</span><span class="bp">None</span><span class="p">]</span><span class="o">*</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">D</span><span class="p">)</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">zeroIdx</span> <span class="o">=</span> <span class="n">insertZeros</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">UsVT</span> <span class="o">=</span> <span class="p">[</span><span class="n">LA</span><span class="o">.</span><span class="n">svd</span><span class="p">(</span><span class="n">X</span><span class="p">,</span><span class="n">full_matrices</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span> <span class="k">for</span> <span class="n">X</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">D</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">UsVT</span> <span class="o">=</span> <span class="p">[</span><span class="n">LA</span><span class="o">.</span><span class="n">svd</span><span class="p">(</span><span class="n">X</span><span class="p">,</span><span class="n">full_matrices</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span> <span class="k">for</span> <span class="n">X</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">D</span><span class="p">]</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">M</span> <span class="o">=</span> <span class="p">[</span> <span class="bp">self</span><span class="o">.</span><span class="n">__recon__</span><span class="p">(</span><span class="n">X</span><span class="p">,</span><span class="n">Y</span><span class="p">,</span><span class="n">Z</span><span class="p">)</span> <span class="k">for</span> <span class="n">X</span><span class="p">,</span><span class="n">Y</span><span class="p">,</span><span class="n">Z</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">UsVT</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">_nThreshold_</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">zeroIdx</span><span class="p">)</span> <span class="p">]</span>
             
     <span class="k">def</span> <span class="nf">__recon__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">_UsVT_</span><span class="p">,</span><span class="n">_nThreshold_</span><span class="p">,</span><span class="n">zeroIdx</span><span class="p">):</span>
@@ -87,7 +89,7 @@
         <span class="k">if</span> <span class="n">_nThreshold_</span><span class="o">&gt;</span><span class="mi">0</span><span class="p">:</span>
             <span class="n">iS</span><span class="p">[</span><span class="o">-</span><span class="n">_nThreshold_</span><span class="p">:]</span> <span class="o">=</span> <span class="mi">0</span>
         <span class="n">_M_</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">_UsVT_</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="o">.</span><span class="n">T</span><span class="p">,</span><span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">diag</span><span class="p">(</span><span class="n">iS</span><span class="p">),</span><span class="n">_UsVT_</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">T</span><span class="p">))</span>
-        <span class="k">if</span> <span class="n">zeroIdx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">zeroIdx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">None</span><span class="p">:</span>
             <span class="n">_M_</span> <span class="o">=</span>  <span class="n">np</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="n">_M_</span><span class="p">,</span><span class="n">zeroIdx</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">_M_</span>
 
@@ -95,16 +97,16 @@
     <span class="k">def</span> <span class="nf">nThreshold</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="s2">&quot;# of discarded eigen values&quot;</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nThreshold_</span>
-    <span class="nd">@nThreshold</span><span class="o">.</span><span class="n">setter</span>
+    <span class="nd">@nThreshold.setter</span>
     <span class="k">def</span> <span class="nf">nThreshold</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span><span class="p">):</span>
-        <span class="nb">print</span> <span class="s2">&quot;@(CalibrationMatrix)&gt; Updating the pseudo-inverse...&quot;</span>
+        <span class="k">print</span> <span class="s2">&quot;@(CalibrationMatrix)&gt; Updating the pseudo-inverse...&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_nThreshold_</span> <span class="o">=</span> <span class="n">value</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">M</span> <span class="o">=</span> <span class="p">[</span> <span class="bp">self</span><span class="o">.</span><span class="n">__recon__</span><span class="p">(</span><span class="n">X</span><span class="p">,</span><span class="n">Y</span><span class="p">,</span><span class="n">Z</span><span class="p">)</span> <span class="k">for</span> <span class="n">X</span><span class="p">,</span><span class="n">Y</span><span class="p">,</span><span class="n">Z</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">UsVT</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">_nThreshold_</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">zeroIdx</span><span class="p">)</span> <span class="p">]</span>
 
     <span class="nd">@property</span>
     <span class="k">def</span> <span class="nf">threshold</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_threshold_</span>
-    <span class="nd">@threshold</span><span class="o">.</span><span class="n">setter</span>
+    <span class="nd">@threshold.setter</span>
     <span class="k">def</span> <span class="nf">threshold</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">value</span><span class="p">):</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_threshold_</span> <span class="o">=</span> <span class="n">value</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">nThreshold</span> <span class="o">=</span> <span class="p">[</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">X</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="o">&lt;</span><span class="n">X</span><span class="p">[</span><span class="mi">1</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span><span class="o">*</span><span class="n">value</span><span class="p">)</span> <span class="k">for</span> <span class="n">X</span> <span class="ow">in</span>  <span class="bp">self</span><span class="o">.</span><span class="n">UsVT</span> <span class="p">]</span>
@@ -180,10 +182,10 @@
 
 <span class="sd">    &gt;&gt;&gt; gpu_ps1d = src.wavefront.phase()</span>
 <span class="sd">    &quot;&quot;&quot;</span>
-    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">D</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">D_px</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">M1_radial_order</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">M2_radial_order</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
-                 <span class="n">M1_mirror_modes</span><span class="o">=</span><span class="sa">u</span><span class="s2">&quot;zernike&quot;</span><span class="p">,</span> <span class="n">M2_mirror_modes</span><span class="o">=</span><span class="sa">u</span><span class="s2">&quot;zernike&quot;</span><span class="p">,</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">D</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">D_px</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">M1_radial_order</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">M2_radial_order</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+                 <span class="n">M1_mirror_modes</span><span class="o">=</span><span class="s2">u&quot;zernike&quot;</span><span class="p">,</span> <span class="n">M2_mirror_modes</span><span class="o">=</span><span class="s2">u&quot;zernike&quot;</span><span class="p">,</span>
                  <span class="n">M1_N_MODE</span><span class="o">=</span><span class="mi">0</span> <span class="p">,</span><span class="n">M2_N_MODE</span><span class="o">=</span><span class="mi">0</span><span class="p">):</span>
-        <span class="nb">super</span><span class="p">(</span><span class="n">GMT_MX</span><span class="p">,</span><span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">GMT_MX</span><span class="p">,</span><span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span>
                             <span class="n">M1_radial_order</span><span class="o">=</span><span class="n">M1_radial_order</span><span class="p">,</span>
                             <span class="n">M2_radial_order</span><span class="o">=</span><span class="n">M2_radial_order</span><span class="p">,</span>
                             <span class="n">M1_mirror_modes</span><span class="o">=</span><span class="n">M1_mirror_modes</span><span class="p">,</span>
@@ -191,9 +193,9 @@
                             <span class="n">M1_N_MODE</span><span class="o">=</span><span class="n">M1_N_MODE</span><span class="p">,</span>
                             <span class="n">M2_N_MODE</span><span class="o">=</span><span class="n">M2_N_MODE</span><span class="p">)</span>
 
-<div class="viewcode-block" id="GMT_MX.calibrate"><a class="viewcode-back" href="../../index.html#ceo.GMT_MX.calibrate">[docs]</a>    <span class="k">def</span> <span class="nf">calibrate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">wfs</span><span class="p">,</span><span class="n">gs</span><span class="p">,</span><span class="n">mirror</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span><span class="n">mode</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span><span class="n">stroke</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">first_mode</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> 
-                  <span class="n">closed_loop_calib</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">minus_M2_TT</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
-                  <span class="n">calibrationVaultKwargs</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+<div class="viewcode-block" id="GMT_MX.calibrate"><a class="viewcode-back" href="../../index.html#ceo.GMT_MX.calibrate">[docs]</a>    <span class="k">def</span> <span class="nf">calibrate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">wfs</span><span class="p">,</span><span class="n">gs</span><span class="p">,</span><span class="n">mirror</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">mode</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">stroke</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">first_mode</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> 
+                  <span class="n">closed_loop_calib</span><span class="o">=</span><span class="bp">False</span><span class="p">,</span> <span class="n">minus_M2_TT</span><span class="o">=</span><span class="bp">False</span><span class="p">,</span>
+                  <span class="n">calibrationVaultKwargs</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
         <span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Calibrate the different degrees of freedom of the  mirrors</span>
 
@@ -214,7 +216,7 @@
 <span class="sd">        &quot;&quot;&quot;</span>
 
         <span class="k">def</span> <span class="nf">close_NGAOish_loop</span><span class="p">():</span>
-            <span class="n">niter</span> <span class="o">=</span> <span class="mi">7</span>
+            <span class="n">niter</span> <span class="o">=</span> <span class="mi">10</span>
             <span class="n">nzernall</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">modes</span><span class="o">.</span><span class="n">n_mode</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span><span class="o">*</span><span class="mi">7</span>
             <span class="k">for</span> <span class="n">ii</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">niter</span><span class="p">):</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">cl_gs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
@@ -225,21 +227,21 @@
                 <span class="n">slopevec</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cl_wfs</span><span class="o">.</span><span class="n">get_measurement</span><span class="p">()</span>
                 <span class="n">onpsvec</span> <span class="o">=</span>  <span class="bp">self</span><span class="o">.</span><span class="n">onps</span><span class="o">.</span><span class="n">piston</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cl_gs</span><span class="p">)</span><span class="o">.</span><span class="n">ravel</span><span class="p">()</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">onps_signal_ref</span>
                 <span class="n">AOmeasvec</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">((</span><span class="n">slopevec</span><span class="p">,</span> <span class="n">onpsvec</span><span class="p">))</span>
-                <span class="n">myAOest1</span> <span class="o">=</span> <span class="mf">0.9</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">R_AO</span><span class="p">,</span> <span class="n">AOmeasvec</span><span class="p">)</span>
+                <span class="n">myAOest1</span> <span class="o">=</span> <span class="mf">0.7</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">R_AO</span><span class="p">,</span> <span class="n">AOmeasvec</span><span class="p">)</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">modes</span><span class="o">.</span><span class="n">a</span><span class="p">[:,</span><span class="mi">1</span><span class="p">:]</span> <span class="o">-=</span> <span class="n">myAOest1</span><span class="p">[</span><span class="mi">0</span><span class="p">:</span><span class="n">nzernall</span><span class="p">]</span><span class="o">.</span><span class="n">reshape</span><span class="p">((</span><span class="mi">7</span><span class="p">,</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">motion_CS</span><span class="o">.</span><span class="n">origin</span><span class="p">[:,</span><span class="mi">2</span><span class="p">]</span> <span class="o">-=</span> <span class="n">myAOest1</span><span class="p">[</span><span class="n">nzernall</span><span class="p">:]</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">motion_CS</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">modes</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
 
         <span class="k">def</span> <span class="nf">close_LTAOish_loop</span><span class="p">():</span>
-            <span class="n">niter</span> <span class="o">=</span> <span class="mi">7</span>
+            <span class="n">niter</span> <span class="o">=</span> <span class="mi">10</span>
             <span class="k">for</span> <span class="n">ii</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">niter</span><span class="p">):</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">cl_gs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">propagate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cl_gs</span><span class="p">)</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">cl_wfs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">cl_wfs</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cl_gs</span><span class="p">)</span>
                 <span class="n">slopevec</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">cl_wfs</span><span class="o">.</span><span class="n">get_measurement</span><span class="p">()</span>
-                <span class="n">myAOest1</span> <span class="o">=</span> <span class="mf">0.9</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">R_AO</span><span class="p">,</span> <span class="n">slopevec</span><span class="p">)</span> 
+                <span class="n">myAOest1</span> <span class="o">=</span> <span class="mf">0.7</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">R_AO</span><span class="p">,</span> <span class="n">slopevec</span><span class="p">)</span> 
                 <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">modes</span><span class="o">.</span><span class="n">a</span><span class="p">[:,</span><span class="mi">1</span><span class="p">:]</span> <span class="o">-=</span> <span class="n">myAOest1</span><span class="o">.</span><span class="n">reshape</span><span class="p">((</span><span class="mi">7</span><span class="p">,</span><span class="o">-</span><span class="mi">1</span><span class="p">))</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">modes</span><span class="o">.</span><span class="n">update</span><span class="p">()</span>
 
@@ -253,7 +255,7 @@
             <span class="k">def</span> <span class="nf">get_slopes</span><span class="p">(</span><span class="n">stroke_sign</span><span class="p">):</span>
                 <span class="bp">self</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
                 <span class="n">action</span><span class="p">(</span><span class="n">stroke_sign</span><span class="o">*</span><span class="n">stroke</span><span class="p">)</span>
-                <span class="k">if</span> <span class="n">closed_loop_calib</span><span class="o">==</span><span class="kc">True</span><span class="p">:</span> <span class="n">close_AO_loop</span><span class="p">()</span>
+                <span class="k">if</span> <span class="n">closed_loop_calib</span><span class="o">==</span><span class="bp">True</span><span class="p">:</span> <span class="n">close_AO_loop</span><span class="p">()</span>
                 <span class="n">gs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
 		<span class="bp">self</span><span class="o">.</span><span class="n">propagate</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span>
                 <span class="n">wfs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
@@ -543,21 +545,66 @@
 
         <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s2">&quot;------------</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span>
         <span class="c1">#self[mirror].D.update({mode:D})</span>
-        <span class="k">if</span> <span class="n">calibrationVaultKwargs</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">calibrationVaultKwargs</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
             <span class="k">return</span> <span class="n">D</span>
         <span class="k">else</span><span class="p">:</span>
-            <span class="k">return</span> <span class="n">CalibrationVault</span><span class="p">([</span><span class="n">D</span><span class="p">],</span><span class="o">**</span><span class="n">calibrationVaultKwargs</span><span class="p">)</span></div>
+            <span class="k">return</span> <span class="n">CalibrationVault</span><span class="p">([</span><span class="n">D</span><span class="p">],</span><span class="o">**</span><span class="n">calibrationVaultKwargs</span><span class="p">)</span>
+</div>
+    <span class="k">def</span> <span class="nf">PSSn</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">src</span><span class="p">,</span><span class="n">r0</span><span class="o">=</span><span class="mf">15e-2</span><span class="p">,</span><span class="n">L0</span><span class="o">=</span><span class="mf">25.0</span><span class="p">,</span><span class="n">C</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">AW0</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">save</span><span class="o">=</span><span class="bp">False</span><span class="p">):</span>
+
+        <span class="k">if</span> <span class="n">C</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">_r0_</span>  <span class="o">=</span> <span class="n">r0</span><span class="o">*</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">wavelength</span><span class="o">/</span><span class="mf">0.5e-6</span><span class="p">)</span><span class="o">**</span><span class="mf">1.2</span>
+            <span class="n">nPx</span> <span class="o">=</span> <span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">N_L</span>
+            <span class="n">D</span> <span class="o">=</span> <span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">L</span>
+            <span class="n">u</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">2</span><span class="o">*</span><span class="n">nPx</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float</span><span class="p">)</span><span class="o">*</span><span class="n">D</span><span class="o">/</span><span class="p">(</span><span class="n">nPx</span><span class="o">-</span><span class="mi">1</span><span class="p">)</span>
+            <span class="n">u</span> <span class="o">=</span> <span class="n">u</span><span class="o">-</span><span class="n">u</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">/</span><span class="mi">2</span>
+            <span class="n">x</span><span class="p">,</span><span class="n">y</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">meshgrid</span><span class="p">(</span><span class="n">u</span><span class="p">,</span><span class="n">u</span><span class="p">)</span>
+            <span class="n">rho</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">hypot</span><span class="p">(</span><span class="n">x</span><span class="p">,</span><span class="n">y</span><span class="p">)</span>
+            <span class="n">C</span> <span class="o">=</span> <span class="n">phaseStats</span><span class="o">.</span><span class="n">atmOTF</span><span class="p">(</span><span class="n">rho</span><span class="p">,</span><span class="n">_r0_</span><span class="p">,</span><span class="n">L0</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">AW0</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
+            <span class="n">_src_</span> <span class="o">=</span> <span class="n">Source</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">band</span><span class="p">,</span>
+                           <span class="n">rays_box_size</span><span class="o">=</span><span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">L</span><span class="p">,</span>
+                           <span class="n">rays_box_sampling</span><span class="o">=</span><span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">N_L</span><span class="p">,</span>
+                           <span class="n">rays_origin</span><span class="o">=</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="mi">0</span><span class="p">,</span><span class="mi">25</span><span class="p">])</span>
+            <span class="n">state</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">state</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">propagate</span><span class="p">(</span><span class="n">_src_</span><span class="p">)</span>
+            <span class="n">A</span> <span class="o">=</span> <span class="n">_src_</span><span class="o">.</span><span class="n">amplitude</span><span class="o">.</span><span class="n">host</span><span class="p">()</span>
+            <span class="n">F</span> <span class="o">=</span> <span class="n">_src_</span><span class="o">.</span><span class="n">phase</span><span class="o">.</span><span class="n">host</span><span class="p">()</span>
+            <span class="n">k</span> <span class="o">=</span> <span class="mf">2.</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="o">/</span><span class="n">_src_</span><span class="o">.</span><span class="n">wavelength</span>
+            <span class="n">W</span> <span class="o">=</span> <span class="n">A</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="mi">1j</span><span class="o">*</span><span class="n">k</span><span class="o">*</span><span class="n">F</span><span class="p">)</span>
+            <span class="n">S1</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">fliplr</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">flipud</span><span class="p">(</span><span class="n">W</span><span class="p">))</span>
+            <span class="n">S2</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">conj</span><span class="p">(</span><span class="n">W</span><span class="p">)</span>
+            <span class="n">AW0</span> <span class="o">=</span> <span class="n">fftconvolve</span><span class="p">(</span><span class="n">S1</span><span class="p">,</span><span class="n">S2</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">^=</span><span class="n">state</span>
+
+        <span class="n">src</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">propagate</span><span class="p">(</span><span class="n">src</span><span class="p">)</span>
+        <span class="n">A</span> <span class="o">=</span> <span class="n">src</span><span class="o">.</span><span class="n">amplitude</span><span class="o">.</span><span class="n">host</span><span class="p">()</span>
+        <span class="n">F</span> <span class="o">=</span> <span class="n">src</span><span class="o">.</span><span class="n">phase</span><span class="o">.</span><span class="n">host</span><span class="p">()</span>
+        <span class="n">k</span> <span class="o">=</span> <span class="mf">2.</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="o">/</span><span class="n">src</span><span class="o">.</span><span class="n">wavelength</span>
+        <span class="n">W</span> <span class="o">=</span> <span class="n">A</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span><span class="mi">1j</span><span class="o">*</span><span class="n">k</span><span class="o">*</span><span class="n">F</span><span class="p">)</span>
+        <span class="n">S1</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">fliplr</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">flipud</span><span class="p">(</span><span class="n">W</span><span class="p">))</span>
+        <span class="n">S2</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">conj</span><span class="p">(</span><span class="n">W</span><span class="p">)</span>
+        <span class="n">AW</span> <span class="o">=</span> <span class="n">fftconvolve</span><span class="p">(</span><span class="n">S1</span><span class="p">,</span><span class="n">S2</span><span class="p">)</span>
+        <span class="n">out</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">AW</span><span class="o">*</span><span class="n">C</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span><span class="o">/</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">abs</span><span class="p">(</span><span class="n">AW0</span><span class="o">*</span><span class="n">C</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">save</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">(</span><span class="n">out</span><span class="p">,{</span><span class="s1">&#39;C&#39;</span><span class="p">:</span><span class="n">C</span><span class="p">,</span><span class="s1">&#39;AW0&#39;</span><span class="p">:</span><span class="n">AW0</span><span class="p">})</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">out</span>
 
 <span class="c1">## AGWS_CALIBRATE</span>
 
-    <span class="k">def</span> <span class="nf">AGWS_calibrate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">wfs</span><span class="p">,</span><span class="n">gs</span><span class="p">,</span><span class="n">stroke</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span><span class="n">coupled</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span><span class="n">decoupled</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> 
-                       <span class="n">fluxThreshold</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">filterMirrorRotation</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-                       <span class="n">includeBM</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-                       <span class="n">calibrationVaultKwargs</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">AGWS_calibrate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">wfs</span><span class="p">,</span><span class="n">gs</span><span class="p">,</span><span class="n">stroke</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span><span class="n">coupled</span><span class="o">=</span><span class="bp">False</span><span class="p">,</span><span class="n">decoupled</span><span class="o">=</span><span class="bp">False</span><span class="p">,</span> 
+                       <span class="n">fluxThreshold</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">filterMirrorRotation</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span>
+                       <span class="n">includeBM</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span>
+                       <span class="n">calibrationVaultKwargs</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
         <span class="n">gs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">propagate</span><span class="p">(</span><span class="n">gs</span><span class="p">)</span>
-        <span class="k">if</span> <span class="n">stroke</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">stroke</span> <span class="ow">is</span> <span class="bp">None</span><span class="p">:</span>
             <span class="n">stroke</span> <span class="o">=</span> <span class="p">[</span><span class="mf">1e-6</span><span class="p">]</span><span class="o">*</span><span class="mi">5</span>
         <span class="k">if</span> <span class="n">coupled</span><span class="p">:</span>
             <span class="n">wfs</span><span class="o">.</span><span class="n">calibrate</span><span class="p">(</span><span class="n">gs</span><span class="p">,</span><span class="n">fluxThreshold</span><span class="p">)</span>
@@ -613,12 +660,12 @@
             <span class="k">if</span> <span class="n">filterMirrorRotation</span><span class="p">:</span>
                 <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">6</span><span class="p">):</span>
 
-                    <span class="n">U</span><span class="p">,</span><span class="n">s</span><span class="p">,</span><span class="n">VT</span> <span class="o">=</span> <span class="n">LA</span><span class="o">.</span><span class="n">svd</span><span class="p">(</span><span class="n">D_sr</span><span class="p">[</span><span class="n">k</span><span class="p">][:,:</span><span class="mi">6</span><span class="p">],</span><span class="n">full_matrices</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+                    <span class="n">U</span><span class="p">,</span><span class="n">s</span><span class="p">,</span><span class="n">VT</span> <span class="o">=</span> <span class="n">LA</span><span class="o">.</span><span class="n">svd</span><span class="p">(</span><span class="n">D_sr</span><span class="p">[</span><span class="n">k</span><span class="p">][:,:</span><span class="mi">6</span><span class="p">],</span><span class="n">full_matrices</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
                     <span class="n">U</span><span class="p">[:,</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
                     <span class="n">s</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>   <span class="o">=</span> <span class="mi">0</span>
                     <span class="n">D_sr</span><span class="p">[</span><span class="n">k</span><span class="p">][:,:</span><span class="mi">6</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">U</span><span class="p">,</span><span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">diag</span><span class="p">(</span><span class="n">s</span><span class="p">),</span><span class="n">VT</span><span class="p">))</span>
 
-                    <span class="n">U</span><span class="p">,</span><span class="n">s</span><span class="p">,</span><span class="n">VT</span> <span class="o">=</span> <span class="n">LA</span><span class="o">.</span><span class="n">svd</span><span class="p">(</span><span class="n">D_sr</span><span class="p">[</span><span class="n">k</span><span class="p">][:,</span><span class="mi">6</span><span class="p">:</span><span class="mi">12</span><span class="p">],</span><span class="n">full_matrices</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+                    <span class="n">U</span><span class="p">,</span><span class="n">s</span><span class="p">,</span><span class="n">VT</span> <span class="o">=</span> <span class="n">LA</span><span class="o">.</span><span class="n">svd</span><span class="p">(</span><span class="n">D_sr</span><span class="p">[</span><span class="n">k</span><span class="p">][:,</span><span class="mi">6</span><span class="p">:</span><span class="mi">12</span><span class="p">],</span><span class="n">full_matrices</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
                     <span class="n">U</span><span class="p">[:,</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="mi">0</span>
                     <span class="n">s</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>   <span class="o">=</span> <span class="mi">0</span>
                     <span class="n">D_sr</span><span class="p">[</span><span class="n">k</span><span class="p">][:,</span><span class="mi">6</span><span class="p">:</span><span class="mi">12</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">U</span><span class="p">,</span><span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">diag</span><span class="p">(</span><span class="n">s</span><span class="p">),</span><span class="n">VT</span><span class="p">))</span>
@@ -629,7 +676,7 @@
             <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s1">&#39;&quot;coupled&quot; or &quot;decoupled&quot; must be set to True!&#39;</span><span class="p">)</span>
 
 
-    <span class="k">def</span> <span class="nf">cloop_calib_init</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">nPx</span><span class="p">,</span> <span class="n">onaxis_wfs_nLenslet</span><span class="o">=</span><span class="mi">60</span><span class="p">,</span> <span class="n">AOtype</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">cloop_calib_init</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">nPx</span><span class="p">,</span> <span class="n">onaxis_wfs_nLenslet</span><span class="o">=</span><span class="mi">60</span><span class="p">,</span> <span class="n">sh_thr</span><span class="o">=</span><span class="mf">0.2</span><span class="p">,</span> <span class="n">AOtype</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">svd_thr</span><span class="o">=</span><span class="mf">1e-9</span><span class="p">,</span> <span class="n">RECdir</span><span class="o">=</span><span class="s1">&#39;./&#39;</span><span class="p">):</span>
 	<span class="k">assert</span> <span class="n">AOtype</span> <span class="o">==</span> <span class="s1">&#39;NGAOish&#39;</span> <span class="ow">or</span> <span class="n">AOtype</span> <span class="o">==</span> <span class="s1">&#39;LTAOish&#39;</span><span class="p">,</span> <span class="s2">&quot;AOtype should be either &#39;NGAOish&#39;, or &#39;LTAOish&#39;&quot;</span>
 	<span class="bp">self</span><span class="o">.</span><span class="n">AOtype</span> <span class="o">=</span> <span class="n">AOtype</span>
 
@@ -643,7 +690,7 @@
 	<span class="bp">self</span><span class="o">.</span><span class="n">cl_gs</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
 	<span class="bp">self</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
 	<span class="bp">self</span><span class="o">.</span><span class="n">propagate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cl_gs</span><span class="p">)</span>
-	<span class="bp">self</span><span class="o">.</span><span class="n">cl_wfs</span><span class="o">.</span><span class="n">calibrate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cl_gs</span><span class="p">,</span><span class="mf">0.2</span><span class="p">)</span>
+	<span class="bp">self</span><span class="o">.</span><span class="n">cl_wfs</span><span class="o">.</span><span class="n">calibrate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cl_gs</span><span class="p">,</span><span class="n">sh_thr</span><span class="p">)</span>
 
 	<span class="c1">#----&gt; ON-AXIS SEGMENT PISTON SENSOR:</span>
 	<span class="k">if</span> <span class="n">AOtype</span><span class="o">==</span><span class="s1">&#39;NGAOish&#39;</span><span class="p">:</span>
@@ -658,14 +705,26 @@
 	<span class="c1"># 2. SH  - M2 SPP</span>
 	<span class="c1"># 3. SPS - M2 Zernike modes  (Zero matrix)</span>
 	<span class="c1"># 4. SPS - M2 SPP</span>
-	<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Calibrating on-axis &quot;</span><span class="o">+</span><span class="n">AOtype</span><span class="o">+</span><span class="s2">&quot; AO system for closed-loop IntMat calibration&quot;</span><span class="p">)</span>
-	<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;--------------------------------------------------------------------------&quot;</span><span class="p">)</span>
-	<span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--&gt; on-axis SH:&quot;</span><span class="p">)</span>
+	<span class="k">print</span><span class="p">(</span><span class="s2">&quot;Calibrating on-axis &quot;</span><span class="o">+</span><span class="n">AOtype</span><span class="o">+</span><span class="s2">&quot; AO system for closed-loop IntMat calibration&quot;</span><span class="p">)</span>
+	<span class="k">print</span><span class="p">(</span><span class="s2">&quot;--------------------------------------------------------------------------&quot;</span><span class="p">)</span>
+	<span class="k">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--&gt; on-axis SH:&quot;</span><span class="p">)</span>
 	<span class="c1"># 1. SH - M2 segment Zernikes IM</span>
+    	<span class="n">fname</span> <span class="o">=</span> <span class="s1">&#39;IM_SHgeom&#39;</span><span class="o">+</span>\
+    	<span class="s1">&#39;_&#39;</span><span class="o">+</span><span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">mirror_modes_type</span><span class="o">+</span><span class="s1">&#39;_nmode&#39;</span><span class="o">+</span><span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">modes</span><span class="o">.</span><span class="n">n_mode</span><span class="p">)</span><span class="o">+</span><span class="s1">&#39;_SHthr</span><span class="si">%1.1f</span><span class="s1">.npz&#39;</span><span class="o">%</span><span class="n">sh_thr</span>
+   	<span class="n">fnameFull</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">normpath</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">RECdir</span><span class="p">,</span><span class="n">fname</span><span class="p">))</span>
+
 	<span class="n">Zstroke</span> <span class="o">=</span> <span class="mf">20e-9</span> <span class="c1">#m rms</span>
 	<span class="n">z_first_mode</span> <span class="o">=</span> <span class="mi">1</span>  <span class="c1"># to skip piston</span>
-	<span class="n">D_M2_Z</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">calibrate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cl_wfs</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">cl_gs</span><span class="p">,</span> <span class="n">mirror</span><span class="o">=</span><span class="s2">&quot;M2&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">mirror_modes_type</span><span class="p">,</span> <span class="n">stroke</span><span class="o">=</span><span class="n">Zstroke</span><span class="p">,</span>
+
+    	<span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isfile</span><span class="p">(</span><span class="n">fnameFull</span><span class="p">)</span> <span class="o">==</span> <span class="bp">False</span><span class="p">:</span>
+	    <span class="n">D_M2_Z</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">calibrate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cl_wfs</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">cl_gs</span><span class="p">,</span> <span class="n">mirror</span><span class="o">=</span><span class="s2">&quot;M2&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">mirror_modes_type</span><span class="p">,</span> <span class="n">stroke</span><span class="o">=</span><span class="n">Zstroke</span><span class="p">,</span>
 			   <span class="n">first_mode</span><span class="o">=</span><span class="n">z_first_mode</span><span class="p">)</span>
+    	<span class="k">else</span><span class="p">:</span>
+            <span class="k">print</span> <span class="s1">&#39;Reading file: &#39;</span><span class="o">+</span><span class="n">fnameFull</span>
+            <span class="n">ftemp</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">load</span><span class="p">(</span><span class="n">fnameFull</span><span class="p">)</span>
+            <span class="n">D_M2_Z</span> <span class="o">=</span> <span class="n">ftemp</span><span class="o">.</span><span class="n">f</span><span class="o">.</span><span class="n">D_M2</span>
+            <span class="n">ftemp</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+
 	<span class="n">nzernall</span> <span class="o">=</span> <span class="p">(</span><span class="n">D_M2_Z</span><span class="o">.</span><span class="n">shape</span><span class="p">)[</span><span class="mi">1</span><span class="p">]</span>  <span class="c1">## number of zernike DoFs calibrated</span>
 	<span class="c1">#n_zern = self.M2.modes.n_mode</span>
 	<span class="c1"># Identify subapertures belonging to two adjacent segments (leading to control leakage)</span>
@@ -685,15 +744,15 @@
 	    <span class="n">D_M2_PS_sh</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">calibrate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">cl_wfs</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">cl_gs</span><span class="p">,</span> <span class="n">mirror</span><span class="o">=</span><span class="s2">&quot;M2&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="s2">&quot;segment piston&quot;</span><span class="p">,</span> <span class="n">stroke</span><span class="o">=</span><span class="n">PSstroke</span><span class="p">)</span>
 	    <span class="c1">#D_M2_PS_sh[leak_slopes_idx,:] = 0</span>
 
-	    <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--&gt; on-axis SPS:&quot;</span><span class="p">)</span>
+	    <span class="k">print</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\n</span><span class="s2">--&gt; on-axis SPS:&quot;</span><span class="p">)</span>
 	    <span class="c1"># 3. Ideal SPS - M2 segment Zernikes IM</span>
-	    <span class="c1">#D_M2_Z_PSideal = np.zeros((7,nzernall))</span>
-	    <span class="n">Zstroke</span> <span class="o">=</span> <span class="mf">20e-9</span> <span class="c1">#m rms</span>
-	    <span class="n">z_first_mode</span> <span class="o">=</span> <span class="mi">1</span>  <span class="c1"># to skip some low-order modes</span>
-	    <span class="n">D_M2_Z_PSideal</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">calibrate</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">onps</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">cl_gs</span><span class="p">,</span> <span class="n">mirror</span><span class="o">=</span><span class="s2">&quot;M2&quot;</span><span class="p">,</span> <span class="n">mode</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">mirror_modes_type</span><span class="p">,</span> <span class="n">stroke</span><span class="o">=</span><span class="n">Zstroke</span><span class="p">,</span> <span class="n">first_mode</span><span class="o">=</span><span class="n">z_first_mode</span><span class="p">)</span>
+	    <span class="n">D_M2_Z_PSideal</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">7</span><span class="p">,</span><span class="n">nzernall</span><span class="p">))</span>
+	    <span class="c1">#Zstroke = 20e-9 #m rms</span>
+	    <span class="c1">#z_first_mode = 1  # to skip some low-order modes</span>
+	    <span class="c1">#D_M2_Z_PSideal = self.calibrate(self.onps, self.cl_gs, mirror=&quot;M2&quot;, mode=self.M2.mirror_modes_type, stroke=Zstroke, first_mode=z_first_mode)</span>
 	    
-	    <span class="nb">print</span> <span class="s1">&#39;AO SPS - M2 Segment Zernike IM:&#39;</span>
-	    <span class="nb">print</span> <span class="n">D_M2_Z_PSideal</span><span class="o">.</span><span class="n">shape</span>
+	    <span class="k">print</span> <span class="s1">&#39;AO SPS - M2 Segment Zernike IM:&#39;</span>
+	    <span class="k">print</span> <span class="n">D_M2_Z_PSideal</span><span class="o">.</span><span class="n">shape</span>
 
 	    <span class="c1"># 4. Ideal SPS - M2 segment piston IM</span>
 	    <span class="n">PSstroke</span> <span class="o">=</span> <span class="mf">50e-9</span> <span class="c1">#m</span>
@@ -709,17 +768,17 @@
 	<span class="k">elif</span> <span class="n">AOtype</span><span class="o">==</span><span class="s1">&#39;LTAOish&#39;</span><span class="p">:</span>
 	    <span class="n">D_AO</span> <span class="o">=</span> <span class="n">D_M2_Z</span>
 
-	<span class="nb">print</span> <span class="s1">&#39;</span><span class="se">\n</span><span class="s1">On-axis AO merged IM condition number: </span><span class="si">%f</span><span class="s1">&#39;</span><span class="o">%</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">cond</span><span class="p">(</span><span class="n">D_AO</span><span class="p">)</span>
-	<span class="bp">self</span><span class="o">.</span><span class="n">R_AO</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">pinv</span><span class="p">(</span><span class="n">D_AO</span><span class="p">)</span></div>
+	<span class="k">print</span> <span class="s1">&#39;</span><span class="se">\n</span><span class="s1">On-axis AO merged IM condition number: </span><span class="si">%f</span><span class="s1">&#39;</span><span class="o">%</span><span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">cond</span><span class="p">(</span><span class="n">D_AO</span><span class="p">)</span>
+	<span class="bp">self</span><span class="o">.</span><span class="n">R_AO</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">linalg</span><span class="o">.</span><span class="n">pinv</span><span class="p">(</span><span class="n">D_AO</span><span class="p">,</span> <span class="n">rcond</span><span class="o">=</span><span class="n">svd_thr</span><span class="p">)</span>
 	<span class="c1">#return [D_M2_Z,D_M2_PS_sh, D_M2_Z_PSideal, D_M2_PSideal]</span>
 
-<span class="c1"># JGMT_MX</span>
-<span class="kn">from</span> <span class="nn">utilities</span> <span class="k">import</span> <span class="n">JSONAbstract</span>
+<span class="c1"># JGMT_MX</span></div>
+<span class="kn">from</span> <span class="nn">utilities</span> <span class="kn">import</span> <span class="n">JSONAbstract</span>
 <span class="k">class</span> <span class="nc">JGMT_MX</span><span class="p">(</span><span class="n">JSONAbstract</span><span class="p">,</span><span class="n">GMT_MX</span><span class="p">):</span>
-    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">jprms</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">jsonfile</span> <span class="o">=</span> <span class="kc">None</span><span class="p">):</span>
-        <span class="nb">print</span> <span class="s2">&quot;@(ceo.JGMT_MX)&gt;&quot;</span>
-        <span class="n">JSONAbstract</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">jprms</span><span class="o">=</span><span class="n">jprms</span><span class="p">,</span> <span class="n">jsonfile</span><span class="o">=</span><span class="n">jsonfile</span><span class="p">)</span>
-        <span class="n">GMT_MX</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">jprms</span><span class="p">[</span><span class="s2">&quot;pupil size&quot;</span><span class="p">],</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">jprms</span> <span class="o">=</span> <span class="bp">None</span><span class="p">,</span> <span class="n">jsonfile</span> <span class="o">=</span> <span class="bp">None</span><span class="p">):</span>
+        <span class="k">print</span> <span class="s2">&quot;@(ceo.JGMT_MX)&gt;&quot;</span>
+        <span class="n">JSONAbstract</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">jprms</span><span class="o">=</span><span class="n">jprms</span><span class="p">,</span> <span class="n">jsonfile</span><span class="o">=</span><span class="n">jsonfile</span><span class="p">)</span>
+        <span class="n">GMT_MX</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">jprms</span><span class="p">[</span><span class="s2">&quot;pupil size&quot;</span><span class="p">],</span>
                         <span class="bp">self</span><span class="o">.</span><span class="n">jprms</span><span class="p">[</span><span class="s2">&quot;pupil sampling&quot;</span><span class="p">],</span>
                         <span class="n">M1_radial_order</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">jprms</span><span class="p">[</span><span class="s2">&quot;M1&quot;</span><span class="p">][</span><span class="s2">&quot;Zernike radial order&quot;</span><span class="p">],</span>
                         <span class="n">M2_radial_order</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">jprms</span><span class="p">[</span><span class="s2">&quot;M2&quot;</span><span class="p">][</span><span class="s2">&quot;Zernike radial order&quot;</span><span class="p">])</span>
@@ -728,8 +787,8 @@
 <span class="k">class</span> <span class="nc">SHTT7</span><span class="p">(</span><span class="n">ShackHartmann</span><span class="p">):</span>
 
     <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">N_SIDE_LENSLET</span><span class="p">,</span> <span class="n">N_PX_LENSLET</span><span class="p">,</span> <span class="n">d</span><span class="p">,</span>
-	          <span class="n">DFT_osf</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">N_PX_IMAGE</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">BIN_IMAGE</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">N_GS</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
-        <span class="n">ShackHartmann</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">N_SIDE_LENSLET</span><span class="p">,</span> <span class="n">N_PX_LENSLET</span><span class="p">,</span> <span class="n">d</span><span class="p">,</span>
+	          <span class="n">DFT_osf</span><span class="o">=</span><span class="mi">2</span><span class="p">,</span> <span class="n">N_PX_IMAGE</span><span class="o">=</span><span class="bp">None</span><span class="p">,</span> <span class="n">BIN_IMAGE</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">N_GS</span><span class="o">=</span><span class="mi">1</span><span class="p">):</span>
+        <span class="n">ShackHartmann</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span><span class="n">N_SIDE_LENSLET</span><span class="p">,</span> <span class="n">N_PX_LENSLET</span><span class="p">,</span> <span class="n">d</span><span class="p">,</span>
                                 <span class="n">DFT_osf</span><span class="o">=</span><span class="n">DFT_osf</span><span class="p">,</span>
                                 <span class="n">N_PX_IMAGE</span><span class="o">=</span><span class="n">N_PX_IMAGE</span><span class="p">,</span>
                                 <span class="n">BIN_IMAGE</span><span class="o">=</span><span class="n">BIN_IMAGE</span><span class="p">,</span>
@@ -751,7 +810,7 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">M</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">nvl</span><span class="p">,</span><span class="mi">7</span><span class="p">))</span>
         <span class="n">mas2rad</span> <span class="o">=</span> <span class="mf">1e-3</span><span class="o">*</span><span class="n">math</span><span class="o">.</span><span class="n">pi</span><span class="o">/</span><span class="mi">180</span><span class="o">/</span><span class="mi">3600</span>
         <span class="n">px_scale</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">pixel_scale</span>
-        <span class="nb">print</span> <span class="s2">&quot;TT7 pixel scale: </span><span class="si">%.2f</span><span class="s2">mas&quot;</span><span class="o">%</span><span class="p">(</span><span class="n">px_scale</span><span class="o">/</span><span class="n">mas2rad</span><span class="p">)</span>
+        <span class="k">print</span> <span class="s2">&quot;TT7 pixel scale: </span><span class="si">%.2f</span><span class="s2">mas&quot;</span><span class="o">%</span><span class="p">(</span><span class="n">px_scale</span><span class="o">/</span><span class="n">mas2rad</span><span class="p">)</span>
         <span class="n">stroke</span> <span class="o">=</span> <span class="n">stroke_pixel</span><span class="o">*</span><span class="n">px_scale</span>
         <span class="n">slopes_cut</span> <span class="o">=</span> <span class="n">stroke_pixel</span><span class="o">**</span><span class="mi">2</span><span class="o">*</span><span class="mi">2</span><span class="o">*</span><span class="n">slopes_threshold</span>
 
@@ -779,7 +838,7 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">c7</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">((</span><span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">c</span><span class="p">[</span><span class="mi">0</span><span class="p">,:</span><span class="n">nvl</span><span class="p">],</span><span class="bp">self</span><span class="o">.</span><span class="n">M</span><span class="p">)</span><span class="o">/</span><span class="n">w</span><span class="p">,</span>
                                   <span class="n">np</span><span class="o">.</span><span class="n">dot</span><span class="p">(</span><span class="n">c</span><span class="p">[</span><span class="mi">0</span><span class="p">,</span><span class="n">nvl</span><span class="p">:],</span><span class="bp">self</span><span class="o">.</span><span class="n">M</span><span class="p">)</span><span class="o">/</span><span class="n">w</span><span class="p">))</span>
 
-<span class="kn">from</span> <span class="nn">abc</span> <span class="k">import</span> <span class="n">ABCMeta</span><span class="p">,</span> <span class="n">abstractmethod</span>
+<span class="kn">from</span> <span class="nn">abc</span> <span class="kn">import</span> <span class="n">ABCMeta</span><span class="p">,</span> <span class="n">abstractmethod</span>
 <span class="k">class</span> <span class="nc">Sensor</span><span class="p">:</span>
     <span class="n">__metaclass__</span> <span class="o">=</span> <span class="n">ABCMeta</span>
     <span class="nd">@abstractmethod</span>
@@ -813,7 +872,7 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">n_valid_slopes</span>   <span class="o">=</span> <span class="mi">14</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">reference_slopes</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">14</span><span class="p">,</span><span class="mi">1</span><span class="p">))</span>
 
-    <span class="k">def</span> <span class="nf">calibrate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">src</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">calibrate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">src</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
         <span class="n">data</span> <span class="o">=</span> <span class="n">src</span><span class="o">.</span><span class="n">segmentsWavefrontGradient</span><span class="p">()</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">reference_slopes</span> <span class="o">=</span> <span class="n">data</span>
 
@@ -896,12 +955,12 @@
 <span class="sd">    cuFloatArray : an interface class between GPU host and device data for floats</span>
 <span class="sd">    &quot;&quot;&quot;</span>
     <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">M1</span><span class="p">,</span> <span class="n">src</span><span class="p">,</span> <span class="n">dispersion</span><span class="o">=</span><span class="mf">5.0</span><span class="p">,</span> <span class="n">field_of_view</span><span class="o">=</span><span class="mf">3.0</span><span class="p">,</span><span class="n">nyquist_factor</span><span class="o">=</span><span class="mf">1.0</span><span class="p">):</span>
-        <span class="n">SegmentPistonSensor</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">M1</span><span class="p">,</span> <span class="n">src</span><span class="p">,</span>
+        <span class="n">SegmentPistonSensor</span><span class="o">.</span><span class="n">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">M1</span><span class="p">,</span> <span class="n">src</span><span class="p">,</span>
                                      <span class="n">dispersion</span><span class="o">=</span><span class="n">dispersion</span><span class="p">,</span>
                                      <span class="n">field_of_view</span><span class="o">=</span><span class="n">field_of_view</span><span class="p">,</span>
                                      <span class="n">nyquist_factor</span><span class="o">=</span><span class="n">nyquist_factor</span><span class="p">)</span>
 	<span class="bp">self</span><span class="o">.</span><span class="n">_N_SRC</span> <span class="o">=</span> <span class="n">src</span><span class="o">.</span><span class="n">N_SRC</span>
-	<span class="bp">self</span><span class="o">.</span><span class="n">INIT_ALL_ATTRIBUTES</span> <span class="o">=</span> <span class="kc">False</span>
+	<span class="bp">self</span><span class="o">.</span><span class="n">INIT_ALL_ATTRIBUTES</span> <span class="o">=</span> <span class="bp">False</span>
 	<span class="bp">self</span><span class="o">.</span><span class="n">lobe_detection</span> <span class="o">=</span> <span class="s1">&#39;gaussfit&#39;</span>
 
 <div class="viewcode-block" id="DispersedFringeSensor.init_detector_mask"><a class="viewcode-back" href="../../index.html#ceo.DispersedFringeSensor.init_detector_mask">[docs]</a>    <span class="k">def</span> <span class="nf">init_detector_mask</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">mask_size</span><span class="p">):</span>
@@ -914,15 +973,15 @@
 <span class="sd">	   Diameter of mask in arcseconds. </span>
 <span class="sd">	&quot;&quot;&quot;</span>
 	<span class="n">mask_size_px</span> <span class="o">=</span> <span class="n">mask_size</span> <span class="o">/</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pixel_scale</span> <span class="o">*</span> <span class="n">constants</span><span class="o">.</span><span class="n">RAD2ARCSEC</span><span class="p">)</span>
-	<span class="nb">print</span> <span class="s2">&quot;Size of DFS detector mask [pix]: </span><span class="si">%d</span><span class="s2">&quot;</span><span class="o">%</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">mask_size_px</span><span class="p">))</span> 
+	<span class="k">print</span> <span class="s2">&quot;Size of DFS detector mask [pix]: </span><span class="si">%d</span><span class="s2">&quot;</span><span class="o">%</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">round</span><span class="p">(</span><span class="n">mask_size_px</span><span class="p">))</span> 
 	<span class="n">N_PX_FRINGE_IMAGE</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">camera</span><span class="o">.</span><span class="n">N_PX_IMAGE</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">camera</span><span class="o">.</span><span class="n">BIN_IMAGE</span>
 	<span class="n">scale</span> <span class="o">=</span> <span class="n">mask_size_px</span> <span class="o">/</span> <span class="n">N_PX_FRINGE_IMAGE</span>
 	<span class="n">circ</span> <span class="o">=</span> <span class="n">Telescope</span><span class="p">(</span><span class="n">N_PX_FRINGE_IMAGE</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="n">scale</span><span class="o">=</span><span class="n">scale</span><span class="p">)</span>
 	<span class="n">circ_m</span> <span class="o">=</span> <span class="n">circ</span><span class="o">.</span><span class="n">f</span><span class="o">.</span><span class="n">host</span><span class="p">(</span><span class="n">shape</span><span class="o">=</span><span class="p">(</span><span class="n">N_PX_FRINGE_IMAGE</span><span class="p">,</span><span class="n">N_PX_FRINGE_IMAGE</span><span class="p">))</span>
 	<span class="n">big_circ_m</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">tile</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">tile</span><span class="p">(</span><span class="n">circ_m</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">camera</span><span class="o">.</span><span class="n">N_SIDE_LENSLET</span><span class="p">)</span><span class="o">.</span><span class="n">T</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">camera</span><span class="o">.</span><span class="n">N_SIDE_LENSLET</span><span class="p">)</span>
 	<span class="n">gpu_big_circ_m</span> <span class="o">=</span> <span class="n">cuFloatArray</span><span class="p">(</span><span class="n">host_data</span><span class="o">=</span><span class="n">big_circ_m</span><span class="p">)</span>
-	<span class="bp">self</span><span class="o">.</span><span class="n">fft_mask</span><span class="o">.</span><span class="n">alter</span><span class="p">(</span><span class="n">gpu_big_circ_m</span><span class="p">)</span></div>
-
+	<span class="bp">self</span><span class="o">.</span><span class="n">fft_mask</span><span class="o">.</span><span class="n">alter</span><span class="p">(</span><span class="n">gpu_big_circ_m</span><span class="p">)</span>
+</div>
 <div class="viewcode-block" id="DispersedFringeSensor.gaussian_func"><a class="viewcode-back" href="../../index.html#ceo.DispersedFringeSensor.gaussian_func">[docs]</a>    <span class="k">def</span> <span class="nf">gaussian_func</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">height</span><span class="p">,</span> <span class="n">center_x</span><span class="p">,</span> <span class="n">center_y</span><span class="p">,</span> <span class="n">width_x</span><span class="p">,</span> <span class="n">width_y</span><span class="p">,</span> <span class="n">rotation</span><span class="p">):</span>
     	<span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">	Returns a gaussian function G(x,y) to produce a 2D Gaussian with the given parameters</span>
@@ -952,8 +1011,8 @@
             <span class="n">g</span> <span class="o">=</span> <span class="n">height</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">exp</span><span class="p">(</span> <span class="o">-</span><span class="p">(((</span><span class="n">center_x</span><span class="o">-</span><span class="n">xp</span><span class="p">)</span><span class="o">/</span><span class="n">width_x</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span><span class="o">+</span>
               		  	 <span class="p">((</span><span class="n">center_y</span><span class="o">-</span><span class="n">yp</span><span class="p">)</span><span class="o">/</span><span class="n">width_y</span><span class="p">)</span><span class="o">**</span><span class="mi">2</span><span class="p">)</span><span class="o">/</span><span class="mf">2.</span><span class="p">)</span>
             <span class="k">return</span> <span class="n">g</span>
-    	<span class="k">return</span> <span class="n">rotgauss</span></div>
-
+    	<span class="k">return</span> <span class="n">rotgauss</span>
+</div>
 <div class="viewcode-block" id="DispersedFringeSensor.fitgaussian"><a class="viewcode-back" href="../../index.html#ceo.DispersedFringeSensor.fitgaussian">[docs]</a>    <span class="k">def</span> <span class="nf">fitgaussian</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span><span class="p">):</span>
     	<span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">	Fits a 2D Gaussian to the input data, and returns the Gaussian fit parameters: (amplidute, x, y, width_x, width_y, rotation)</span>
@@ -978,8 +1037,8 @@
 	<span class="n">params</span> <span class="o">=</span> <span class="n">moments</span><span class="p">()</span>
     	<span class="n">errorfunction</span> <span class="o">=</span> <span class="k">lambda</span> <span class="n">p</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ravel</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">gaussian_func</span><span class="p">(</span><span class="o">*</span><span class="n">p</span><span class="p">)(</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">indices</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">shape</span><span class="p">))</span> <span class="o">-</span> <span class="n">data</span><span class="p">)</span>
     	<span class="n">p</span><span class="p">,</span> <span class="n">success</span> <span class="o">=</span> <span class="n">leastsq</span><span class="p">(</span><span class="n">errorfunction</span><span class="p">,</span> <span class="n">params</span><span class="p">)</span>
-    	<span class="k">return</span> <span class="n">p</span></div>
-
+    	<span class="k">return</span> <span class="n">p</span>
+</div>
 <div class="viewcode-block" id="DispersedFringeSensor.get_data_cube"><a class="viewcode-back" href="../../index.html#ceo.DispersedFringeSensor.get_data_cube">[docs]</a>    <span class="k">def</span> <span class="nf">get_data_cube</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data_type</span><span class="o">=</span><span class="s1">&#39;fftlet&#39;</span><span class="p">):</span>
 	<span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">	Returns the DFS data (either fringe or fftlet images) in cube format</span>
@@ -1012,8 +1071,8 @@
             	<span class="n">k</span> <span class="o">+=</span> <span class="mi">1</span>
             	<span class="k">if</span> <span class="n">k</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">_N_SRC</span><span class="o">*</span><span class="mi">12</span><span class="p">:</span> <span class="k">break</span>
             <span class="k">if</span> <span class="n">k</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">_N_SRC</span><span class="o">*</span><span class="mi">12</span><span class="p">:</span> <span class="k">break</span>
-    	<span class="k">return</span> <span class="n">dataCube</span></div>
-
+    	<span class="k">return</span> <span class="n">dataCube</span>
+</div>
 <div class="viewcode-block" id="DispersedFringeSensor.calibrate"><a class="viewcode-back" href="../../index.html#ceo.DispersedFringeSensor.calibrate">[docs]</a>    <span class="k">def</span> <span class="nf">calibrate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">src</span><span class="p">,</span> <span class="n">gmt</span><span class="p">):</span>
 	<span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">	Calibrates the lobe detection masks (spsmask).</span>
@@ -1037,7 +1096,7 @@
 	<span class="bp">self</span><span class="o">.</span><span class="n">fftlet_rotation</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">N_SRC</span><span class="o">*</span><span class="mi">12</span><span class="p">)</span>
 	<span class="bp">self</span><span class="o">.</span><span class="n">spsmask</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="bp">self</span><span class="o">.</span><span class="n">camera</span><span class="o">.</span><span class="n">N_PX_IMAGE</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">camera</span><span class="o">.</span><span class="n">N_PX_IMAGE</span><span class="p">,</span><span class="n">src</span><span class="o">.</span><span class="n">N_SRC</span><span class="o">*</span><span class="mi">12</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="s1">&#39;bool&#39;</span><span class="p">)</span>
 	<span class="c1">### Additional data for visualization and debugging</span>
-	<span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">INIT_ALL_ATTRIBUTES</span> <span class="o">==</span> <span class="kc">True</span><span class="p">:</span>
+	<span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">INIT_ALL_ATTRIBUTES</span> <span class="o">==</span> <span class="bp">True</span><span class="p">:</span>
 	    <span class="bp">self</span><span class="o">.</span><span class="n">blob_data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">src</span><span class="o">.</span><span class="n">N_SRC</span><span class="o">*</span><span class="mi">12</span><span class="p">,</span> <span class="mi">3</span><span class="p">,</span> <span class="mi">3</span><span class="p">))</span>
 	    <span class="bp">self</span><span class="o">.</span><span class="n">pl_m</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">src</span><span class="o">.</span><span class="n">N_SRC</span><span class="o">*</span><span class="mi">12</span><span class="p">))</span>
 	    <span class="bp">self</span><span class="o">.</span><span class="n">pl_b</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="n">src</span><span class="o">.</span><span class="n">N_SRC</span><span class="o">*</span><span class="mi">12</span><span class="p">))</span>
@@ -1085,20 +1144,20 @@
 	    <span class="n">xx</span><span class="p">,</span><span class="n">yy</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">meshgrid</span><span class="p">(</span><span class="n">u</span><span class="p">,</span><span class="n">v</span><span class="p">)</span>
 	    <span class="bp">self</span><span class="o">.</span><span class="n">spsmask</span><span class="p">[:,:,</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">yy</span> <span class="o">&gt;</span> <span class="n">xx</span><span class="o">*</span><span class="n">pp_m</span><span class="o">+</span><span class="n">pp_b</span>
 
-	    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">INIT_ALL_ATTRIBUTES</span> <span class="o">==</span> <span class="kc">True</span><span class="p">:</span>
+	    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">INIT_ALL_ATTRIBUTES</span> <span class="o">==</span> <span class="bp">True</span><span class="p">:</span>
 		<span class="bp">self</span><span class="o">.</span><span class="n">blob_data</span><span class="p">[</span><span class="n">k</span><span class="p">,:,:]</span> <span class="o">=</span> <span class="n">blob_data</span>
 		<span class="bp">self</span><span class="o">.</span><span class="n">pl_m</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">pl_m</span>
 		<span class="bp">self</span><span class="o">.</span><span class="n">pl_b</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">pl_b</span>
 		<span class="bp">self</span><span class="o">.</span><span class="n">pp_m</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">pp_m</span>
-		<span class="bp">self</span><span class="o">.</span><span class="n">pp_b</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">pp_b</span></div>
-
+		<span class="bp">self</span><span class="o">.</span><span class="n">pp_b</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">pp_b</span>
+</div>
 <div class="viewcode-block" id="DispersedFringeSensor.reset"><a class="viewcode-back" href="../../index.html#ceo.DispersedFringeSensor.reset">[docs]</a>    <span class="k">def</span> <span class="nf">reset</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 	<span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">	Resets both the SPS detector frame and the fftlet buffer to zero.</span>
 <span class="sd">	&quot;&quot;&quot;</span>
 	<span class="bp">self</span><span class="o">.</span><span class="n">camera</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
-	<span class="bp">self</span><span class="o">.</span><span class="n">fftlet</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span></div>
-
+	<span class="bp">self</span><span class="o">.</span><span class="n">fftlet</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
+</div>
 <div class="viewcode-block" id="DispersedFringeSensor.process"><a class="viewcode-back" href="../../index.html#ceo.DispersedFringeSensor.process">[docs]</a>    <span class="k">def</span> <span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
 	<span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">	Processes the Dispersed Fringe Sensor detector frame</span>
@@ -1106,7 +1165,7 @@
 	<span class="n">dataCube</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_data_cube</span><span class="p">(</span><span class="n">data_type</span><span class="o">=</span><span class="s1">&#39;fftlet&#39;</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">measurement</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_N_SRC</span><span class="o">*</span><span class="mi">12</span><span class="p">)</span>
 
-	<span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">INIT_ALL_ATTRIBUTES</span> <span class="o">==</span> <span class="kc">True</span><span class="p">:</span>
+	<span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">INIT_ALL_ATTRIBUTES</span> <span class="o">==</span> <span class="bp">True</span><span class="p">:</span>
             <span class="bp">self</span><span class="o">.</span><span class="n">fftlet_fit_params</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">((</span><span class="mi">6</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">_N_SRC</span><span class="o">*</span><span class="mi">12</span><span class="p">))</span>
 	    <span class="bp">self</span><span class="o">.</span><span class="n">measurement_ortho</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_N_SRC</span><span class="o">*</span><span class="mi">12</span><span class="p">)</span>
 	    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">lobe_detection</span> <span class="o">==</span> <span class="s1">&#39;gaussfit&#39;</span><span class="p">:</span>
@@ -1119,7 +1178,7 @@
 		<span class="n">params</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">fitgaussian</span><span class="p">(</span><span class="n">mylobe</span><span class="p">)</span>
         	<span class="p">(</span><span class="n">height</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">width_y</span><span class="p">,</span> <span class="n">width_x</span><span class="p">,</span> <span class="n">rot</span><span class="p">)</span> <span class="o">=</span> <span class="n">params</span>
     	    <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">lobe_detection</span> <span class="o">==</span> <span class="s1">&#39;peak_value&#39;</span><span class="p">:</span>
-		<span class="n">mylobe</span>  <span class="o">=</span> <span class="n">rotate</span><span class="p">(</span><span class="n">mylobe</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">fftlet_rotation</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">*</span><span class="mi">180</span><span class="o">/</span><span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="n">reshape</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
+		<span class="n">mylobe</span>  <span class="o">=</span> <span class="n">rotate</span><span class="p">(</span><span class="n">mylobe</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">fftlet_rotation</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">*</span><span class="mi">180</span><span class="o">/</span><span class="n">np</span><span class="o">.</span><span class="n">pi</span><span class="p">,</span> <span class="n">reshape</span><span class="o">=</span><span class="bp">False</span><span class="p">)</span>
         	<span class="n">height</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">max</span><span class="p">(</span><span class="n">mylobe</span><span class="p">)</span>
         	<span class="n">height_pos</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">argmax</span><span class="p">(</span><span class="n">mylobe</span><span class="p">)</span>
 		<span class="n">y</span><span class="p">,</span> <span class="n">x</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">unravel_index</span><span class="p">(</span><span class="n">height_pos</span><span class="p">,</span> <span class="n">mylobe</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
@@ -1135,13 +1194,13 @@
 	    <span class="n">x1</span> <span class="o">=</span> <span class="n">x</span>
 	    <span class="bp">self</span><span class="o">.</span><span class="n">measurement</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">y1</span>
 
-	    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">INIT_ALL_ATTRIBUTES</span> <span class="o">==</span> <span class="kc">True</span><span class="p">:</span>
+	    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">INIT_ALL_ATTRIBUTES</span> <span class="o">==</span> <span class="bp">True</span><span class="p">:</span>
 		<span class="bp">self</span><span class="o">.</span><span class="n">measurement_ortho</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">x1</span>
 		<span class="bp">self</span><span class="o">.</span><span class="n">fftlet_fit_params</span><span class="p">[:,</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">height</span> <span class="o">/</span> <span class="n">centralpeak</span><span class="p">,</span> <span class="n">y</span><span class="p">,</span> <span class="n">x</span><span class="p">,</span> <span class="n">width_y</span><span class="p">,</span> <span class="n">width_x</span><span class="p">,</span> <span class="n">rot</span><span class="p">)</span>
 		<span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">lobe_detection</span> <span class="o">==</span> <span class="s1">&#39;gaussfit&#39;</span><span class="p">:</span>
 		    <span class="n">fftlet_shape</span> <span class="o">=</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">camera</span><span class="o">.</span><span class="n">N_PX_IMAGE</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">camera</span><span class="o">.</span><span class="n">N_PX_IMAGE</span><span class="p">)</span>
-		    <span class="bp">self</span><span class="o">.</span><span class="n">fftlet_fit_images</span><span class="p">[:,:,</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">gaussian_func</span><span class="p">(</span><span class="o">*</span><span class="n">params</span><span class="p">)(</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">indices</span><span class="p">(</span><span class="n">fftlet_shape</span><span class="p">))</span></div>
-
+		    <span class="bp">self</span><span class="o">.</span><span class="n">fftlet_fit_images</span><span class="p">[:,:,</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">gaussian_func</span><span class="p">(</span><span class="o">*</span><span class="n">params</span><span class="p">)(</span><span class="o">*</span><span class="n">np</span><span class="o">.</span><span class="n">indices</span><span class="p">(</span><span class="n">fftlet_shape</span><span class="p">))</span>
+</div>
 <div class="viewcode-block" id="DispersedFringeSensor.analyze"><a class="viewcode-back" href="../../index.html#ceo.DispersedFringeSensor.analyze">[docs]</a>    <span class="k">def</span> <span class="nf">analyze</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">src</span><span class="p">):</span>
 	<span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">	Propagates the guide star to the SPS detector (noiseless) and processes the frame</span>
@@ -1154,8 +1213,8 @@
         <span class="bp">self</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">propagate</span><span class="p">(</span><span class="n">src</span><span class="p">)</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">fft</span><span class="p">()</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">process</span><span class="p">()</span></div>
-
+        <span class="bp">self</span><span class="o">.</span><span class="n">process</span><span class="p">()</span>
+</div>
 <div class="viewcode-block" id="DispersedFringeSensor.piston"><a class="viewcode-back" href="../../index.html#ceo.DispersedFringeSensor.piston">[docs]</a>    <span class="k">def</span> <span class="nf">piston</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">src</span><span class="p">):</span>
         <span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Return M1 differential piston. This method was created to provide compatibility with the IdealSegmentPistonSensor Piston method.</span>
@@ -1172,20 +1231,20 @@
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">analyze</span><span class="p">(</span><span class="n">src</span><span class="p">)</span>
         <span class="n">p</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">measurement</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="o">-</span><span class="mi">1</span><span class="p">,</span><span class="mi">12</span><span class="p">)</span>
-	<span class="k">return</span> <span class="n">p</span></div>
-
+	<span class="k">return</span> <span class="n">p</span>
+</div>
 <div class="viewcode-block" id="DispersedFringeSensor.get_measurement"><a class="viewcode-back" href="../../index.html#ceo.DispersedFringeSensor.get_measurement">[docs]</a>    <span class="k">def</span> <span class="nf">get_measurement</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the measurement vector</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">measurement</span><span class="o">.</span><span class="n">ravel</span><span class="p">()</span></div>
-
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">measurement</span><span class="o">.</span><span class="n">ravel</span><span class="p">()</span>
+</div>
 <div class="viewcode-block" id="DispersedFringeSensor.get_measurement_size"><a class="viewcode-back" href="../../index.html#ceo.DispersedFringeSensor.get_measurement_size">[docs]</a>    <span class="k">def</span> <span class="nf">get_measurement_size</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the size of the measurement vector</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_N_SRC</span><span class="o">*</span><span class="mi">12</span></div></div>
-
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_N_SRC</span><span class="o">*</span><span class="mi">12</span>
+</div></div>
 <div class="viewcode-block" id="IdealSegmentPistonSensor"><a class="viewcode-back" href="../../index.html#ceo.IdealSegmentPistonSensor">[docs]</a><span class="k">class</span> <span class="nc">IdealSegmentPistonSensor</span><span class="p">:</span>
     <span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A class for the GMT segment piston sensor</span>
@@ -1246,7 +1305,7 @@
 <span class="sd">    &gt;&gt;&gt; SPS.piston(src)</span>
 <span class="sd">    &quot;&quot;&quot;</span>
 
-    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">src</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">D_px</span><span class="p">,</span> <span class="n">W</span><span class="o">=</span><span class="mf">1.5</span><span class="p">,</span> <span class="n">L</span><span class="o">=</span><span class="mf">1.5</span><span class="p">,</span> <span class="n">segment</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+    <span class="k">def</span> <span class="nf">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">src</span><span class="p">,</span> <span class="n">D</span><span class="p">,</span> <span class="n">D_px</span><span class="p">,</span> <span class="n">W</span><span class="o">=</span><span class="mf">1.5</span><span class="p">,</span> <span class="n">L</span><span class="o">=</span><span class="mf">1.5</span><span class="p">,</span> <span class="n">segment</span><span class="o">=</span><span class="bp">None</span><span class="p">):</span>
         <span class="k">assert</span> <span class="n">segment</span><span class="o">==</span><span class="s2">&quot;full&quot;</span> <span class="ow">or</span> <span class="n">segment</span><span class="o">==</span><span class="s2">&quot;edge&quot;</span><span class="p">,</span> <span class="s2">&quot;segment parameter is either &quot;&quot;full&quot;&quot; or &quot;&quot;edge&quot;&quot;&quot;</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">segment</span> <span class="o">=</span> <span class="n">segment</span>
         <span class="bp">self</span><span class="o">.</span><span class="n">_N_SRC</span> <span class="o">=</span> <span class="n">src</span><span class="o">.</span><span class="n">N_SRC</span>
@@ -1315,21 +1374,21 @@
                              <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span> <span class="n">W</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">,:]</span><span class="o">*</span><span class="n">_P_</span><span class="p">[</span><span class="mi">6</span><span class="p">,:]</span><span class="o">*</span><span class="n">_M_</span><span class="p">[</span><span class="n">k</span><span class="p">,:]</span> <span class="p">)</span><span class="o">/</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span> <span class="n">_P_</span><span class="p">[</span><span class="mi">6</span><span class="p">,:]</span><span class="o">*</span><span class="n">_M_</span><span class="p">[</span><span class="n">k</span><span class="p">,:]</span> <span class="p">)</span>
                     <span class="n">p</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">,</span><span class="mi">2</span><span class="o">*</span><span class="n">k</span><span class="o">+</span><span class="mi">1</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span> <span class="n">W</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">,:]</span><span class="o">*</span><span class="n">_P_</span><span class="p">[</span><span class="n">k</span><span class="p">,:]</span><span class="o">*</span><span class="n">_M_</span><span class="p">[</span><span class="n">k</span><span class="o">+</span><span class="mi">6</span><span class="p">,:]</span> <span class="p">)</span><span class="o">/</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span> <span class="n">_P_</span><span class="p">[</span><span class="n">k</span><span class="p">,:]</span><span class="o">*</span><span class="n">_M_</span><span class="p">[</span><span class="n">k</span><span class="o">+</span><span class="mi">6</span><span class="p">,:]</span> <span class="p">)</span> <span class="o">-</span> \
                                <span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span> <span class="n">W</span><span class="p">[</span><span class="n">k_SRC</span><span class="p">,:]</span><span class="o">*</span><span class="n">_P_</span><span class="p">[(</span><span class="n">k</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="o">%</span><span class="mi">6</span><span class="p">,:]</span><span class="o">*</span><span class="n">_M_</span><span class="p">[</span><span class="n">k</span><span class="o">+</span><span class="mi">6</span><span class="p">,:]</span> <span class="p">)</span><span class="o">/</span><span class="n">np</span><span class="o">.</span><span class="n">sum</span><span class="p">(</span> <span class="n">_P_</span><span class="p">[(</span><span class="n">k</span><span class="o">+</span><span class="mi">1</span><span class="p">)</span><span class="o">%</span><span class="mi">6</span><span class="p">,:]</span><span class="o">*</span><span class="n">_M_</span><span class="p">[</span><span class="n">k</span><span class="o">+</span><span class="mi">6</span><span class="p">,:]</span> <span class="p">)</span>
-        <span class="k">return</span> <span class="n">p</span></div>
-
+        <span class="k">return</span> <span class="n">p</span>
+</div>
 <div class="viewcode-block" id="IdealSegmentPistonSensor.analyze"><a class="viewcode-back" href="../../index.html#ceo.IdealSegmentPistonSensor.analyze">[docs]</a>    <span class="k">def</span> <span class="nf">analyze</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">src</span><span class="p">):</span>
         <span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Computes either M1 segment piston or M1 differential piston (calling the &quot;piston&quot; method), and stores the result in the &quot;measurement&quot; property.</span>
 <span class="sd">        &quot;&quot;&quot;</span>
         <span class="n">p</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">piston</span><span class="p">(</span><span class="n">src</span><span class="p">)</span>
-        <span class="bp">self</span><span class="o">.</span><span class="n">measurement</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">ravel</span><span class="p">()</span></div>
-
+        <span class="bp">self</span><span class="o">.</span><span class="n">measurement</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">ravel</span><span class="p">()</span>
+</div>
 <div class="viewcode-block" id="IdealSegmentPistonSensor.get_measurement"><a class="viewcode-back" href="../../index.html#ceo.IdealSegmentPistonSensor.get_measurement">[docs]</a>    <span class="k">def</span> <span class="nf">get_measurement</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the measurement vector</span>
 <span class="sd">        &quot;&quot;&quot;</span>
-        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">measurement</span></div>
-
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">measurement</span>
+</div>
 <div class="viewcode-block" id="IdealSegmentPistonSensor.get_measurement_size"><a class="viewcode-back" href="../../index.html#ceo.IdealSegmentPistonSensor.get_measurement_size">[docs]</a>    <span class="k">def</span> <span class="nf">get_measurement_size</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
         <span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">        Returns the size of the measurement vector</span>
@@ -1338,8 +1397,8 @@
             <span class="n">n_meas</span> <span class="o">=</span> <span class="mi">12</span>
         <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">segment</span><span class="o">==</span><span class="s2">&quot;full&quot;</span><span class="p">:</span>
             <span class="n">n_meas</span> <span class="o">=</span> <span class="mi">7</span>
-        <span class="k">return</span> <span class="n">n_meas</span><span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">_N_SRC</span></div></div>
-
+        <span class="k">return</span> <span class="n">n_meas</span><span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">_N_SRC</span>
+</div></div>
 <span class="k">class</span> <span class="nc">SegmentTipTiltSensor</span><span class="p">:</span>
     <span class="sd">&quot;&quot;&quot;</span>
 <span class="sd">    A class for the GMT segment tip-tilt geometric sensor</span>
@@ -1404,7 +1463,7 @@
             <span class="k">return</span> <span class="n">q</span>
 
         <span class="n">p</span> <span class="o">=</span> <span class="n">mirror</span><span class="o">.</span><span class="n">M_ID</span> <span class="o">-</span> <span class="mi">1</span>
-        <span class="nb">print</span> <span class="n">p</span>
+        <span class="k">print</span> <span class="n">p</span>
 
         <span class="bp">self</span><span class="o">.</span><span class="n">rho0</span> <span class="o">=</span> <span class="n">brenth</span><span class="p">(</span><span class="n">fun</span><span class="p">,</span><span class="n">mirror</span><span class="o">.</span><span class="n">D_clear</span><span class="o">/</span><span class="mi">2</span><span class="p">,</span><span class="mi">1</span><span class="o">+</span><span class="n">mirror</span><span class="o">.</span><span class="n">D_clear</span><span class="o">/</span><span class="mi">2</span><span class="p">)</span>
         <span class="n">k</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">arange</span><span class="p">(</span><span class="mi">6</span><span class="p">)</span>
@@ -1426,41 +1485,41 @@
         <span class="n">u2</span><span class="p">,</span><span class="n">v2</span><span class="p">,</span><span class="n">w2</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">M</span><span class="o">.</span><span class="n">edge_sensors</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">x2</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">y2</span><span class="p">,</span><span class="bp">self</span><span class="o">.</span><span class="n">z</span><span class="p">,</span><span class="n">segId0</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span><span class="n">edgeSensorId</span><span class="o">=</span><span class="mi">6</span><span class="p">)</span>
         <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">((</span><span class="n">v0</span><span class="p">,</span><span class="n">v1</span><span class="o">-</span><span class="n">v2</span><span class="p">)),</span><span class="n">np</span><span class="o">.</span><span class="n">concatenate</span><span class="p">((</span><span class="n">w0</span><span class="p">,</span><span class="n">w1</span><span class="o">-</span><span class="n">w2</span><span class="p">))</span>
 
-<span class="k">def</span> <span class="nf">Trace</span><span class="p">(</span> <span class="n">src</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">global_CS</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span>
+<span class="k">def</span> <span class="nf">Trace</span><span class="p">(</span> <span class="n">rays</span><span class="p">,</span> <span class="n">S</span><span class="p">,</span> <span class="n">global_CS</span><span class="o">=</span><span class="bp">True</span><span class="p">,</span> <span class="n">wavelength</span><span class="o">=</span><span class="mf">550e-9</span><span class="p">):</span>
     <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">S</span><span class="p">)</span>
-    <span class="n">src</span><span class="o">.</span><span class="n">reset</span><span class="p">()</span>
-    <span class="n">xyz</span> <span class="o">=</span> <span class="p">[</span> <span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">coordinates</span><span class="o">.</span><span class="n">host</span><span class="p">()</span> <span class="p">]</span>
+    <span class="c1">#rays.reset()</span>
+    <span class="n">xyz</span> <span class="o">=</span> <span class="p">[</span> <span class="n">rays</span><span class="o">.</span><span class="n">coordinates</span><span class="o">.</span><span class="n">host</span><span class="p">()</span> <span class="p">]</span>
     <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
-        <span class="c1">#print &#39;Material refractive index: %f&#39;%src.rays.refractive_index</span>
+        <span class="c1">#print &#39;Material refractive index: %f&#39;%rays.refractive_index</span>
         <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">S</span><span class="p">[</span><span class="n">k</span><span class="p">],</span><span class="n">Aperture</span><span class="p">):</span>
-            <span class="n">S</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">vignetting</span><span class="p">(</span><span class="n">src</span><span class="p">)</span>
+            <span class="n">S</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">vignetting</span><span class="p">(</span><span class="n">rays</span><span class="p">)</span>
         <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">S</span><span class="p">[</span><span class="n">k</span><span class="p">],(</span><span class="n">GMT_M1</span><span class="p">,</span><span class="n">GMT_M2</span><span class="p">)):</span>
-            <span class="n">S</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">trace</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="p">)</span>
-            <span class="n">xyz</span><span class="o">.</span><span class="n">append</span><span class="p">(</span> <span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">coordinates</span><span class="o">.</span><span class="n">host</span><span class="p">()</span> <span class="p">)</span>
+            <span class="n">S</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">trace</span><span class="p">(</span><span class="n">rays</span><span class="p">)</span>
+            <span class="n">xyz</span><span class="o">.</span><span class="n">append</span><span class="p">(</span> <span class="n">rays</span><span class="o">.</span><span class="n">coordinates</span><span class="o">.</span><span class="n">host</span><span class="p">()</span> <span class="p">)</span>
         <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">S</span><span class="p">[</span><span class="n">k</span><span class="p">],(</span><span class="n">GmtMirrors</span><span class="p">,</span><span class="n">GMT_MX</span><span class="p">)):</span>
-            <span class="c1">#S[k].M2.blocking(src.rays)            </span>
-            <span class="n">S</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">trace</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="p">)</span>            
-            <span class="n">xyz</span><span class="o">.</span><span class="n">append</span><span class="p">(</span> <span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">coordinates</span><span class="o">.</span><span class="n">host</span><span class="p">()</span> <span class="p">)</span>
-            <span class="n">S</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">trace</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="p">)</span>            
-            <span class="n">xyz</span><span class="o">.</span><span class="n">append</span><span class="p">(</span> <span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">coordinates</span><span class="o">.</span><span class="n">host</span><span class="p">()</span> <span class="p">)</span>
+            <span class="c1">#S[k].M2.blocking(rays)            </span>
+            <span class="n">S</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">M1</span><span class="o">.</span><span class="n">trace</span><span class="p">(</span><span class="n">rays</span><span class="p">)</span>            
+            <span class="n">xyz</span><span class="o">.</span><span class="n">append</span><span class="p">(</span> <span class="n">rays</span><span class="o">.</span><span class="n">coordinates</span><span class="o">.</span><span class="n">host</span><span class="p">()</span> <span class="p">)</span>
+            <span class="n">S</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">M2</span><span class="o">.</span><span class="n">trace</span><span class="p">(</span><span class="n">rays</span><span class="p">)</span>            
+            <span class="n">xyz</span><span class="o">.</span><span class="n">append</span><span class="p">(</span> <span class="n">rays</span><span class="o">.</span><span class="n">coordinates</span><span class="o">.</span><span class="n">host</span><span class="p">()</span> <span class="p">)</span>
         <span class="k">else</span><span class="p">:</span>
             <span class="n">_S_</span> <span class="o">=</span> <span class="n">S</span><span class="p">[</span><span class="n">k</span><span class="p">]</span>
-            <span class="n">Transform_to_S</span><span class="p">(</span><span class="n">src</span><span class="p">,</span><span class="n">_S_</span><span class="p">)</span>
+            <span class="n">Transform_to_S</span><span class="p">(</span><span class="n">rays</span><span class="p">,</span><span class="n">_S_</span><span class="p">)</span>
             <span class="k">if</span> <span class="ow">not</span> <span class="n">_S_</span><span class="o">.</span><span class="n">coord_break</span><span class="p">:</span> 
-                <span class="n">Intersect</span><span class="p">(</span><span class="n">src</span><span class="p">,</span><span class="n">_S_</span><span class="p">)</span>
-                <span class="n">n_S</span> <span class="o">=</span> <span class="n">_S_</span><span class="o">.</span><span class="n">refractive_index</span><span class="p">(</span><span class="n">src</span><span class="p">)</span>
+                <span class="n">Intersect</span><span class="p">(</span><span class="n">rays</span><span class="p">,</span><span class="n">_S_</span><span class="p">)</span>
+                <span class="n">n_S</span> <span class="o">=</span> <span class="n">_S_</span><span class="o">.</span><span class="n">refractive_index</span><span class="p">(</span><span class="n">wavelength</span><span class="p">)</span>
                 <span class="k">if</span> <span class="n">n_S</span><span class="o">!=</span><span class="mi">0</span><span class="p">:</span>
                     <span class="k">if</span> <span class="n">n_S</span><span class="o">==-</span><span class="mi">1</span><span class="p">:</span>
-                        <span class="n">Reflect</span><span class="p">(</span><span class="n">src</span><span class="p">)</span>
+                        <span class="n">Reflect</span><span class="p">(</span><span class="n">rays</span><span class="p">)</span>
                     <span class="k">else</span><span class="p">:</span>
-                        <span class="n">mu</span> <span class="o">=</span> <span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">refractive_index</span><span class="o">/</span><span class="n">n_S</span>
+                        <span class="n">mu</span> <span class="o">=</span> <span class="n">rays</span><span class="o">.</span><span class="n">refractive_index</span><span class="o">/</span><span class="n">n_S</span>
                         <span class="k">if</span> <span class="n">mu</span><span class="o">!=</span><span class="mf">1.0</span><span class="p">:</span>
-                            <span class="n">Refract</span><span class="p">(</span><span class="n">src</span><span class="p">,</span><span class="n">mu</span><span class="p">)</span>
-                            <span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">refractive_index</span> <span class="o">=</span> <span class="n">n_S</span>
+                            <span class="n">Refract</span><span class="p">(</span><span class="n">rays</span><span class="p">,</span><span class="n">mu</span><span class="p">)</span>
+                            <span class="n">rays</span><span class="o">.</span><span class="n">refractive_index</span> <span class="o">=</span> <span class="n">n_S</span>
             <span class="k">if</span> <span class="n">global_CS</span><span class="p">:</span>
-                <span class="n">Transform_to_R</span><span class="p">(</span><span class="n">src</span><span class="p">,</span><span class="n">_S_</span><span class="p">)</span>
-            <span class="n">xyz</span><span class="o">.</span><span class="n">append</span><span class="p">(</span> <span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">coordinates</span><span class="o">.</span><span class="n">host</span><span class="p">()</span> <span class="p">)</span>
-    <span class="n">vignet_idx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">nonzero</span><span class="p">(</span><span class="n">src</span><span class="o">.</span><span class="n">rays</span><span class="o">.</span><span class="n">vignetting</span><span class="o">.</span><span class="n">host</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">==</span><span class="mi">0</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
+                <span class="n">Transform_to_R</span><span class="p">(</span><span class="n">rays</span><span class="p">,</span><span class="n">_S_</span><span class="p">)</span>
+            <span class="n">xyz</span><span class="o">.</span><span class="n">append</span><span class="p">(</span> <span class="n">rays</span><span class="o">.</span><span class="n">coordinates</span><span class="o">.</span><span class="n">host</span><span class="p">()</span> <span class="p">)</span>
+    <span class="n">vignet_idx</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">nonzero</span><span class="p">(</span><span class="n">rays</span><span class="o">.</span><span class="n">vignetting</span><span class="o">.</span><span class="n">host</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span><span class="o">==</span><span class="mi">0</span><span class="p">)[</span><span class="mi">0</span><span class="p">]</span>
     <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">xyz</span><span class="p">)</span>
     <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">):</span>
         <span class="n">xyz</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">delete</span><span class="p">(</span><span class="n">xyz</span><span class="p">[</span><span class="n">k</span><span class="p">],</span><span class="n">vignet_idx</span><span class="p">,</span><span class="n">axis</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
@@ -1475,11 +1534,14 @@
 <div id="searchbox" style="display: none" role="search">
   <h3>Quick search</h3>
     <form class="search" action="../../search.html" method="get">
-      <div><input type="text" name="q" /></div>
-      <div><input type="submit" value="Go" /></div>
+      <input type="text" name="q" />
+      <input type="submit" value="Go" />
       <input type="hidden" name="check_keywords" value="yes" />
       <input type="hidden" name="area" value="default" />
     </form>
+    <p class="searchtip" style="font-size: 90%">
+    Enter search terms or a module, class or function name.
+    </p>
 </div>
 <script type="text/javascript">$('#searchbox').show(0);</script>
         </div>
@@ -1495,13 +1557,13 @@
         <li class="right" >
           <a href="../../py-modindex.html" title="Python Module Index"
              >modules</a> |</li>
-        <li class="nav-item nav-item-0"><a href="../../index.html">CEO 1.0 documentation</a> &#187;</li>
-          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &#187;</li> 
+        <li class="nav-item nav-item-0"><a href="../../index.html">CEO 1.0 documentation</a> &raquo;</li>
+          <li class="nav-item nav-item-1"><a href="../index.html" >Module code</a> &raquo;</li> 
       </ul>
     </div>
     <div class="footer" role="contentinfo">
-        &#169; Copyright 2015, R. Conan.
-      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 1.5.1.
+        &copy; Copyright 2015, R. Conan.
+      Created using <a href="http://sphinx-doc.org/">Sphinx</a> 1.3.1.
     </div>
   </body>
 </html>
