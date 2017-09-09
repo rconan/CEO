@@ -42,6 +42,7 @@ cdef extern from "source.h":
 	ray *d__chief_ray
         void setup(rtd, int, int , vector, int)
         void setup(rtd, int , vector, int)
+        void setup_free(int, double *, double *, vector)
         void cleanup()
         void to_z_plane(rtd)
         void to_sphere(vector)
@@ -133,10 +134,10 @@ cdef class Bundle:
         The sampling of the box encompassing the ray bundle (the number of rays is N_L$\times$N_L
     """
 
-    def __cinit__(self, Source src):
+    def __cinit__(self, *args, **kwargs):
         self._c_bundle = new bundle()
-        self._c_bundle = &(src._c_source.rays)
 
+    def __init__(self):
         self._coordinates_               = cuDoubleArray(
             shape=(self._c_bundle.N_RAY*self._c_bundle.N_BUNDLE,3),dev_malloc=True)
         self._chief_coordinates_         = cuDoubleArray(
@@ -167,6 +168,61 @@ cdef class Bundle:
         self._piston_mask_._c_gpu.dev_data = self._c_bundle.d__piston_mask;
 
     <<bundle common>>
+@
+This a special [[Bundle]] class that is solely used by the [[Source]] class
+\index{source!python!SourceBundle}
+<<source.pyx>>=
+cdef class SourceBundle(Bundle):
+    """
+    A class to represent a bundle of rays
+
+    This class is instanciated by the Source class
+
+    Parameters
+    ----------
+    src : Source
+        The Source object that contains the pointer to CEO bundle structure
+
+    See also
+    --------
+    Bundle: the parent class for all ray bundle classes
+
+    """
+    def __init__(self,Source src):
+        self._c_bundle = &(src._c_source.rays)
+        super(SourceBundle,self).__init__()
+@
+This ray bundle used user--defined ray coordinates:        
+\index{source!python!FreeBundle}
+<<source.pyx>>=        
+cdef class FreeBundle(Bundle):
+    """
+    A class to represent a bundle of rays
+    
+
+    Parameters
+    ----------
+    x : ndarray
+        the x coordinates of the rays in the entrance pupil
+    y : ndarray
+        the y coordinates of the rays in the entrance pupil
+    origin : list
+        the point of origin of the chief ray
+
+    See also
+    --------
+    Bundle: the parent class for all ray bundle classes
+
+    """
+    def __init__(self, ndarray x, ndarray y, list origin):
+        cdef vector __origin
+        __origin.x = <rtd>origin[0]
+        __origin.y = <rtd>origin[1]
+        __origin.z = <rtd>origin[2]
+        self._c_bundle.setup_free(x.size, <double *>x.data, <double *>y.data, __origin)
+        super(FreeBundle,self).__init__()
+    def __dealloc__(self):
+        self._c_bundle.cleanup()
 @
 <<bundle common>>=
 """
@@ -799,7 +855,7 @@ cdef class Source:
         if fwhm is not None:
             self._c_source.fwhm = fwhm
         self.wavefront = Complex_amplitude(self)
-        self.rays = Bundle(self)
+        self.rays = SourceBundle(self)
         self.N_SRC = self._c_source.N_SRC
         self.sphere_distance = None
         self.samplingTime = samplingTime

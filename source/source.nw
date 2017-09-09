@@ -91,6 +91,7 @@ struct source {
 <<to z plane kernel>>
 <<to sphere kernel>>
 <<reference sphere origin from chief ray>>
+<<bundle free coordinates kernel>>
 <<ray bundle kernels>>
 <<bundle reset kernel>>
 <<wavefront differentiation kernel (partial illumination identification)>>
@@ -284,6 +285,7 @@ struct bundle {
   <<ray bundle parameters>>
   void setup(rtd RADIUS, int N_RADIUS, int N_THETA, vector origin, int N_SRC);
   void setup(rtd L, int N_L, vector origin, int N_SRC);
+  void setup_free(int _N_RAY_, double *x, double *y, vector origin);
   void cleanup(void);
   void to_z_plane(rtd z_in);
   void to_focal_plane(rtd z_chief_on_axis, rtd rho_focal_plane);
@@ -445,6 +447,66 @@ The cartesian coordinates are defined with the sampling of the square box length
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY_TOTAL ) );
   <<chief ray allocation>>
+}
+@
+The ray bundle can be set to arbitrary coordinates in the entrance puil
+\index{source!bundle!setup}
+<<ray bundle functions>>=
+void bundle::setup_free(int _N_RAY_, double *x, double *y, vector origin)
+{
+  strcpy(geom,"free");
+  N_BUNDLE = 1;
+  N_RAY = _N_RAY_;
+  N_RAY_TOTAL = N_RAY*N_BUNDLE;
+  V.setup(N_RAY_TOTAL);
+  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY_TOTAL ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
+  HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
+			    sizeof(vector), cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY_TOTAL ) );
+  <<chief ray allocation>>
+
+  double *d__x, *d__y;
+  int n_byte = sizeof(double)*N_RAY_TOTAL;
+  HANDLE_ERROR( cudaMalloc((void**)&d__x, n_byte ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__y, n_byte ) );
+  HANDLE_ERROR( cudaMemcpy( d__x, x, n_byte, cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMemcpy( d__y, y, n_byte, cudaMemcpyHostToDevice ) );
+
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY_TOTAL/N_THREAD2+1,1, N_BUNDLE);
+  ray_free_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, d__x, d__y, d__origin);
+  
+  HANDLE_ERROR( cudaMemset(d__x, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(d__y, 0, n_byte ) );
+  blockDim = dim3(1,1);
+  gridDim  = dim3(1,1, N_BUNDLE);
+  ray_free_coordinates LLL gridDim , blockDim RRR (d__chief_ray, 1, d__x, d__y, d__origin);
+
+  HANDLE_ERROR( cudaFree( d__x ) );
+  HANDLE_ERROR( cudaFree( d__y ) );
+}
+@ with
+<<bundle free coordinates kernel>>=
+__global__ void ray_free_coordinates(ray *d__ray, int N_RAY, double *d__x, double *d__y, vector *origin)
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+//  iSource = blockIdx.z;
+  k = j * gridDim.x * blockDim.x + i;
+  if (i<N_RAY)
+  {
+    d__ray[k].coordinates.x = d__x[k] + origin->x;
+    d__ray[k].coordinates.y = d__y[k] + origin->y;
+    d__ray[k].coordinates.z = origin->z;
+    d__ray[k].directions.x  =  0.0;
+    d__ray[k].directions.y  =  0.0;
+    d__ray[k].directions.z  = -1.0;
+    d__ray[k].optical_path_length = 0.0;
+    d__ray[k].optical_path_difference = 0.0;
+    d__ray[k].v = 1;
+  }
 }
 @
 The direction cosines $(k,l,m)$ of the rays are defined from the source zenith $\zeta$ and azimuth $\xi$ angles as
