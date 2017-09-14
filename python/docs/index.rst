@@ -55,6 +55,16 @@ Bundle
 .. autoclass:: Bundle
     :members:
 
+SourceBundle
+~~~~~~
+.. autoclass:: SourceBundle
+    :members:
+
+FreeBundle
+~~~~~~
+.. autoclass:: FreeBundle
+    :members:
+
 Complex_amplitude
 ~~~~~~~~~~~~~~~~~
 .. autoclass:: Complex_amplitude
