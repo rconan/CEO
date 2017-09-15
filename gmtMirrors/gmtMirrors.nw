@@ -58,6 +58,7 @@
 
 <<bending modes surface update>>
 <<bending modes functions>>
+<<modes to surface update>>
 <<modes functions>>
 <<GMT M1 functions>>
 <<GMT M2 functions>>
@@ -2683,6 +2684,7 @@ void modes::load(void)
   FILE * pFile;
   long lSize;
   double * buffer;
+  int *s2b;
   size_t result;
 
   char path[256]; 
@@ -2692,6 +2694,7 @@ void modes::load(void)
   pFile = fopen ( path , "rb" );
   if (pFile==NULL) {fputs ("File error",stderr); exit (1);}
 
+  // read modal basis info
   result = fread (&BM_N_SAMPLE,sizeof(int)   ,1,pFile);
   result = fread (&BM_radius  ,sizeof(double),1,pFile);
   result = fread (&N_SET,sizeof(int)   ,1,pFile);
@@ -2699,8 +2702,16 @@ void modes::load(void)
   fprintf(stdout,"@(CEO)>modes: grid sampling and size: %d pixel, %f meter\n",BM_N_SAMPLE,BM_radius);
   fprintf(stdout,"@(CEO)>modes: number of set: %d and number of modes per set: %d\n",N_SET,N_MODE);
 
+  // read surface 2 mode array
+  s2b = (int*) malloc (N*sizeof(int));
+  result = fread (s2b  ,sizeof(int),N,pFile);
+  HANDLE_ERROR( cudaMalloc((void**)&d__s2b, N*sizeof(int)) );
+  HANDLE_ERROR( cudaMemcpy( d__s2b  , s2b, N*sizeof(int),
+			    cudaMemcpyHostToDevice ) );
+  
+
   // allocate memory to contain the whole file:
-  lSize = 7*N_MODE*BM_N_SAMPLE*BM_N_SAMPLE;
+  lSize = N_SET*N_MODE*BM_N_SAMPLE*BM_N_SAMPLE;
   buffer = (double*) malloc (lSize*sizeof(double));
   if (buffer == NULL) {fputs ("Memory error",stderr); exit (2);}
 
@@ -2717,7 +2728,48 @@ void modes::load(void)
 
   // terminate
   fclose (pFile);
+  free(s2b);
   free (buffer);
+}
+@
+\subsection{Update}
+\label{sec:update}
+
+The bending mode coefficients [[d__b]] and the associated surface [[d__BMS]] are updated with:
+<<modes functions>>=
+void modes::update(rtd *b)
+{
+  int n_byte = sizeof(rtd)*n_mode*N;
+  HANDLE_ERROR( cudaMemcpy( d__b, b,
+			    n_byte, cudaMemcpyHostToDevice ) );
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(BM_N_SAMPLE/N_THREAD+1,BM_N_SAMPLE/N_THREAD+1,N);
+  
+  modes2surface LLL gridDim, blockDim RRR 
+    (d__BMS, n_mode, d__b, d__s2b, d__BM, N_MODE, BM_N_SAMPLE);
+}
+@ with the kernel
+<<modes to surface update>>=
+__global__ void modes2surface(double *BMS, const int n_mode,
+                              rtd *b, int *s2b,
+                              double *BM, const int N_MODE,
+                              const int N_SAMPLE)
+{
+  int i, j, k, kz, l, k_mode, o;
+  rtd *z;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  l = blockIdx.z;
+  if ( (i<N_SAMPLE) && (j<N_SAMPLE)) {
+    k = kz = i*N_SAMPLE + j;
+    k += l*N_SAMPLE*N_SAMPLE;
+    BMS[k] = 0.0;
+    for (k_mode=0; k_mode<n_mode; k_mode++) {
+      o = (s2b[l]*N_MODE+k_mode)*N_SAMPLE*N_SAMPLE;
+      z = BM + o;
+      BMS[k] += b[k_mode + l*n_mode]*z[kz];
+    }
+  }
 }
 @
 

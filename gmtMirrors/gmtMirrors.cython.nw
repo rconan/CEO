@@ -5,7 +5,7 @@
 
 <<gmtMirrors.pxd>>=
 from numpy cimport ndarray
-from utilities cimport rtd, vector, cuFloatArray, cuDoubleArray
+from utilities cimport rtd, vector, cuIntArray, cuFloatArray, cuDoubleArray
 from rayTracing cimport coordinate_system, zernikeS, ZernikeS, Coordinate_system, Coordinates
 from source cimport Source, bundle, Bundle
 cdef extern from "gmtMirrors.h":
@@ -532,10 +532,12 @@ cdef class PolishMap:
     cdef cppclass modes:
         double *d__BM
         double *d__BMS
+        int *d__s2b
         int N, BM_N_SAMPLE, N_SET, n_mode, N_MODE
         double BM_radius
         void setup(char *, int, int)
         void cleanup()
+        void update(rtd *)
 @
 \subsubsection{Class definition}
 \label{sec:class-definition-6}
@@ -546,6 +548,8 @@ cdef class Modes:
         modes *_c_modes
         public rtd[:,:] a
         public cuDoubleArray M
+        public cuDoubleArray S
+        public cuIntArray s2b
 @
 
 \subsection{PYX file}
@@ -562,9 +566,34 @@ cdef class Modes:
                                       self._c_modes.N_SET*self._c_modes.N_MODE),
                                order='F')
         self.M._c_gpu.dev_data = self._c_modes.d__BM
+        self.S = cuDoubleArray(shape=(self._c_modes.BM_N_SAMPLE**2,N),
+                               order='F')
+        self.S._c_gpu.dev_data = self._c_modes.d__BMS
+        self.s2b = cuIntArray(shape=N)
+        self.s2b._c_gpu.dev_data = self._c_modes.d__s2b
 
     def __dealloc__(self):
         self._c_modes.cleanup();
+
+    def update(self, rtd[:,:] modes=None, **kwargs):
+        """
+        Updates the bending modes surface based on the bending modes coefficients
+
+        Parameters
+        ----------
+        modes : ndarray
+        The modal coefficients array in the $7\times [[N_MODE]]$ matrix form
+        """
+        if modes is not None:
+            self.a[:] = modes
+        self._c_modes.update(&self.a[0,0])
+    
+    def reset(self):
+        """
+        Resets the bending modes coefficients to zero and update the bending modes surface
+        """
+        self.a[:] = 0
+        self._c_modes.update(&self.a[0,0])
 
     @property
     def radius(self):
