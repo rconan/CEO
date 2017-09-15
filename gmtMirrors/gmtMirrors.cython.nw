@@ -519,7 +519,77 @@ cdef class PolishMap:
         """
         self.a[:] = 0
         self._c_bending_modes.update(&self.a[0,0])
-@ 
+@
+\section{Modes}
+\label{sec:modes}
+
+\index{gmtMirrors!python!modes}
+
+\subsection{PXD file}
+\label{sec:pxd-file-7}
+
+<<gmtMirrors.pxd contents>>=
+    cdef cppclass modes:
+        double *d__BM
+        double *d__BMS
+        int N, BM_N_SAMPLE, N_SET, n_mode, N_MODE
+        double BM_radius
+        void setup(char *, int, int)
+        void cleanup()
+@
+\subsubsection{Class definition}
+\label{sec:class-definition-6}
+
+<<class definitions>>=
+cdef class Modes:
+    cdef:
+        modes *_c_modes
+        public rtd[:,:] a
+        public cuDoubleArray M
+@
+
+\subsection{PYX file}
+\label{sec:pyx-file-6}
+
+<<gmtMirrors.pyx>>=
+cdef class Modes:
+
+    def __cinit__(self, bytes filename, int N, int n_mode):
+        self._c_modes = new modes()
+        self._c_modes.setup(filename,N,n_mode);
+        self.a = np.zeros((self._c_modes.N, self._c_modes.n_mode), dtype=np.float64)
+        self.M = cuDoubleArray(shape=(self._c_modes.BM_N_SAMPLE**2,
+                                      self._c_modes.N_SET*self._c_modes.N_MODE),
+                               order='F')
+        self.M._c_gpu.dev_data = self._c_modes.d__BM
+
+    def __dealloc__(self):
+        self._c_modes.cleanup();
+
+    @property
+    def radius(self):
+        return self._c_modes.BM_radius
+
+    @property
+    def N_SAMPLE(self):
+        return self._c_modes.BM_N_SAMPLE
+
+    @property
+    def N_SET(self):
+        return self._c_modes.N_SET
+
+    @property
+    def N_MODE_AVAILABLE(self):
+        return self._c_modes.N_MODE
+
+    @property
+    def N_MODE(self):
+        return self._c_modes.n_mode
+    @N_MODE.setter
+    def N_MODE(self,int value):
+        self._c_modes.n_mode = value
+@
+        
 \section{GMT M1}
 \label{sec:gmt-m1-1}
 

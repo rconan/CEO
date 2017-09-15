@@ -26,6 +26,7 @@
 <<partial z bending modes surface>>
 
 <<bending modes structure>>
+<<modes structure>>
 <<GMT M1 structure>>
 <<GMT M2 structure>>
 <<stereoscopic edge sensors structure>>
@@ -57,6 +58,7 @@
 
 <<bending modes surface update>>
 <<bending modes functions>>
+<<modes functions>>
 <<GMT M1 functions>>
 <<GMT M2 functions>>
 
@@ -1626,13 +1628,224 @@ for (k=0;k<N;k++)
     <<global tip-tilt transformation>>
   }
 @
+\section{GMT M2}
+\label{sec:gmt-m2}
 
-\subsection{Bending modes}
+\index{gmtMirrors!gmt\_m2}
+A new structure to hold GMT M1 parameters and functions is defined.
+<<GMT M2 structure>>=
+struct gmt_m2 {
+  <<GMT M12 parameters>>
+  <<GMT M12 functions>>
+  void pointing_neutral(float tip, float tilt);
+  void coma_neutral(float tip, float tilt);
+};
+@
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup-2}
+
+\index{gmtMirrors!gmt\_m2!setup}
+<<GMT M2 functions>>=
+void gmt_m2::setup(void)
+{
+  BS = NULL;
+  ZS = NULL;
+  <<M2 parameters>>
+  <<GMT setup common>>
+}
+@ 
+<<GMT M2 functions>>=
+void gmt_m2::setup(struct bending_modes *_BS_)
+{
+  BS = _BS_;
+  ZS = NULL;
+  <<M2 parameters>>
+  <<GMT setup common>>
+}
+@ with
+<<M2 parameters>>=
+ M_ID    = 2;
+ D_assembly = 3.168;
+ D_full  = 1.0425*1.005; // slightly larger to always encompass M1; needed for the Zernike
+ D_clear = 1.0415;
+ ri      = 0.0;
+ beta    = -14.777462*PI/180.0;
+ L       = 1.08774;
+ N       = 7;
+ conic_c = -1.0/4.1639009;
+ conic_k = 1-0.71692784;
+ height  = 20.26247614;
+ idx_offset = 3;
+@
+\index{gmtMirrors!gmt\_m2!setup}
+<<GMT M2 functions>>=
+void gmt_m2::setup(zernikeS *_ZS_)
+{
+  ZS = _ZS_;
+  BS = NULL;
+  M_ID    = 2;
+  <<M2 parameters>>
+  <<GMT setup common>>
+}
+@
+Memory is freed with
+\index{gmtMirrors!gmt\_m2!cleanup}
+<<GMT M2 functions>>=
+void gmt_m2::cleanup(void)
+{
+  fprintf(stdout,"@(CEO)>gmt_m2: freeing memory!\n");
+  <<GMT cleanup common>>
+}
+@
+\subsection{Blocking}
+\label{sec:blocking-2}
+
+The rays blocking with M2 is computed with
+\index{gmtMirrors!gmt\_m2!blocking}
+<<GMT M2 functions>>=
+void gmt_m2::blocking(bundle *rays)
+{
+  <<GMT blocking common>>
+}
+@
+\subsection{Ray tracing}
+\label{sec:ray-tracing-2}
+
+The rays propagation through M1 is computed with
+\index{gmtMirrors!gmt\_m2!trace}
+<<GMT M2 functions>>=
+void gmt_m2::trace(bundle *rays)
+{
+  <<GMT trace common>>
+}
+@
+The rigid body motion parameters are updated with:
+\index{gmtMirrors!gmt\_m2!update}
+<<GMT M2 functions>>=
+void gmt_m2::update(vector _origin_, vector _euler_angles_,int idx)
+{
+    <<GMT M12 update>>
+}
+@
+The rigid body motion are reset to 0 with:
+\index{gmtMirrors!gmt\_m2!reset}
+<<GMT M2 functions>>=
+void gmt_m2::reset(void)
+{
+    <<GMT M12 reset>>
+}
+@
+\subsection{Segment selection}
+\label{sec:segment-selection}
+
+Segments can be removed from the M1 or M2 models with the routine:
+\index{gmtMirrors!gmt\_m2!remove}
+<<GMT M2 functions>>=
+void gmt_m2::remove(int *seg_ID, int N_ID)
+{
+  <<GMT remove segments>>
+}
+@
+One can also specifies the segments to keep
+\index{gmtMirrors!gmt\_m2!keep}
+<<GMT M2 functions>>=
+void gmt_m2::keep(int *seg_ID, int N_ID)
+{
+  <<GMT keep segments>>
+}
+@
+\subsection{Global motions}
+\label{sec:global-motions}
+
+\subsection{Global tip--tilt}
+\label{sec:global-tip-tilt-1}
+
+\index{gmtMirrors!gmt\_m2!global\_tiptilt}
+<<GMT M2 functions>>=
+void gmt_m2::global_tiptilt(float tip, float tilt)
+{
+  <<GMT global tip-tilt common>>
+}
+@
+\subsubsection{Tip--tilt neutral}
+\label{sec:tip-tilt-neutral}
+
+\index{gmtMirrors!gmt\_m2!pointing\_neutral}
+<<GMT M2 functions>>=
+void gmt_m2::pointing_neutral(float tip, float tilt)
+{
+  double alpha, beta, *d__C;
+  vector origin, euler_angles;
+  cublasHandle_t handle;
+  coordinate_system TT_CS;
+
+  origin.x = origin.y = 0.0;
+  origin.z = height - 4390.312E-03;
+  euler_angles.x = tip;
+  euler_angles.y = tilt;
+  euler_angles.z = 0.0;
+
+  TT_CS.setup(origin, euler_angles);
+  cublasCreate(&handle);
+
+  alpha = 1;
+  beta  = 0;
+  HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
+  int k, k9;
+  for (k=0;k<N;k++)
+    {
+      k9 = k*9;
+      <<global tip-tilt transformation>>
+    }
+
+  cublasDestroy(handle);
+  TT_CS.cleanup();
+  HANDLE_ERROR( cudaFree( d__C ) );
+}
+@
+\subsubsection{Coma neutral}
+\label{sec:coma-neutral}
+
+\index{gmtMirrors!gmt\_m2!coma\_neutral}
+<<GMT M2 functions>>=
+void gmt_m2::coma_neutral(float tip, float tilt)
+{
+  double alpha, beta, *d__C;
+  vector origin, euler_angles;
+  cublasHandle_t handle;
+  coordinate_system TT_CS;
+
+  origin.x = origin.y = 0.0;
+  origin.z = height - 2246.410E-03;
+  euler_angles.x = tip;
+  euler_angles.y = tilt;
+  euler_angles.z = 0.0;
+
+  TT_CS.setup(origin, euler_angles);
+  cublasCreate(&handle);
+
+  alpha = 1;
+  beta  = 0;
+  HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
+  int k, k9;
+  for (k=0;k<N;k++)
+    {
+      k9 = k*9;
+      <<global tip-tilt transformation>>
+    }
+
+  cublasDestroy(handle);
+  TT_CS.cleanup();
+  HANDLE_ERROR( cudaFree( d__C ) );
+}
+@
+
+\section{Bending modes}
 \label{sec:bending-modes}
 
 This section defines the routine to load the bending modes and interpolated the bending modes;
 The parameters and routines associated to the bending modes are gatherered in the \emph{bending\_modes} structure:
-\index{gmtMirrors!bending\_modes!load\_bending\_modes}
+\index{gmtMirrors!bending\_modes}
 <<bending modes structure>>=
 struct bending_modes {
   <<bending modes parameters>>	
@@ -1697,7 +1910,7 @@ int N;
 @
 \end{itemize}
 
-\subsubsection{Setup \& Cleanup}
+\subsection{Setup \& Cleanup}
 \label{sec:setup--cleanup}
 
 The bending modes are loaded with:
@@ -1706,6 +1919,7 @@ The bending modes are loaded with:
 void bending_modes::setup(int _n_mode_)
 {
   N = 1;
+  n_mode = _n_mode_;
   <<bending modes setup common>>
   load_reg();
   <<bending modes setup common (surface)>>
@@ -1716,6 +1930,7 @@ or for a set of [[N]] bending modes
 void bending_modes::setup(int _n_mode_, int N_SET)
 {
   N = N_SET;
+  n_mode = _n_mode_;
   <<bending modes setup common>>
   load_reg();
   <<bending modes setup common (surface)>>
@@ -1726,6 +1941,7 @@ void bending_modes::setup(int _n_mode_, int N_SET)
 void bending_modes::setupKL(int _n_mode_)
 {
   N = 1;
+  n_mode = _n_mode_;
   <<bending modes setup common>>
   load_KL();
   <<bending modes setup common (surface)>>
@@ -1736,6 +1952,7 @@ or for a set of [[N]] bending modes
 void bending_modes::setupKL(int _n_mode_, int N_SET)
 {
   N = N_SET;
+  n_mode = _n_mode_;
   <<bending modes setup common>>
   load_KL();
   <<bending modes setup common (surface)>>
@@ -1746,6 +1963,7 @@ or for the polishing map
 void bending_modes::setupPolish(int _n_mode_, int N_SET)
 {
   N = N_SET;
+  n_mode = _n_mode_;
   <<bending modes setup common>>
   load_polish();
   <<bending modes setup common (surface)>>
@@ -1753,7 +1971,6 @@ void bending_modes::setupPolish(int _n_mode_, int N_SET)
 @
 with 
 <<bending modes setup common>>=
-n_mode = _n_mode_;
 int n_byte = sizeof(rtd)*n_mode*N;
 b = (rtd *)malloc( n_byte );
 HANDLE_ERROR( cudaMalloc((void**)&d__b, n_byte ) );
@@ -1768,7 +1985,9 @@ HANDLE_ERROR( cudaMemset(d__BMS, 0, n_byte ) );
 Memory is freed with
 \index{gmtMirrors!bending\_modes!cleanup}
 <<bending modes functions>>=
-void bending_modes::cleanup(void)
+void bending_modes::<<modes cleanup>>
+<<modes cleanup>>=
+cleanup(void)
 {
   fprintf(stdout,"@(CEO)>bending_modes: freeing memory!\n");
   free( b );
@@ -1777,7 +1996,7 @@ void bending_modes::cleanup(void)
   HANDLE_ERROR( cudaFree( d__BMS ) );
 }
 @
-\subsubsection{Update}
+\subsection{Update}
 \label{sec:update}
 
 The bending mode coefficients [[d__b]] and the associated surface [[d__BMS]] are updated with:
@@ -1815,16 +2034,16 @@ __global__ void surface_update(double *BMS, const int N_mode, rtd *b,
   }
 }
 @ 
-\subsubsection{Loading the bending modes}
+\subsection{Loading the bending modes}
 \label{sec:load-bend-modes}
 
-\paragraph{Irregular grid}
+\subsubsection{Irregular grid}
 \label{sec:irregular-grid}
 
 The bending modes are originally computed on a 27685 points irregular grid sampling a circle of 4.181m radius.
 The points coordinates and the bending modes are stored into the file \emph{bendingModes.bin}.
 They are loaded into the \emph{gmt\_m1} structure with:
-\index{gmtMirrors!bending\_modes!load\_bending\_modes}
+\index{gmtMirrors!bending\_modes!load}
 <<bending modes functions>>=
 void bending_modes::load(void)
 {
@@ -1871,14 +2090,14 @@ void bending_modes::load(void)
   free (buffer);
 }
 @
-\paragraph{Regular grid}
+\subsubsection{Regular grid}
 \label{sec:regular-grid}
 
 The bending modes are interpolated on a regular grid are saved in the file \emph{bendingModesReg.bin}.
 The regular grid is made of $169\times 169$ points.
 The range of the grid is $\pm$4.231m.
 The bending modes are loaded into the \emph{gmt\_m1} structure with:
-\index{gmtMirrors!bending\_modes!load\_bending\_modes\_reg}
+\index{gmtMirrors!bending\_modes!load\_reg}
 <<bending modes functions>>=
 void bending_modes::load_reg(void)
 {
@@ -1923,14 +2142,14 @@ void bending_modes::load_reg(void)
   free (buffer);
 }
 @
-\paragraph{Polishing map}
+\subsubsection{Polishing map}
 \label{sec:polishing-map}
 
 The polishing map is interpolated on a regular grid are saved in the file \emph{polishingMap.bin}.
 The regular grid is made of $483\times 483$ points.
 The range of the grid is $\pm$4.26m.
 The bending modes are loaded into the \emph{gmt\_m1} structure with:
-\index{gmtMirrors!bending\_modes!load\_bending\_modes\_reg}
+\index{gmtMirrors!bending\_modes!load\_polish}
 <<bending modes functions>>=
 void bending_modes::load_polish(void)
 {
@@ -1975,7 +2194,7 @@ void bending_modes::load_polish(void)
   free (buffer);
 }
 @
-\paragraph{Karhunen--Loeve}
+\subsubsection{Karhunen--Loeve}
 \label{sec:regular-grid}
 
 The Karhunen--Loeve modes are interpolated on a regular grid are saved in the file \emph{KarhunenLoeveModes.bin}.
@@ -2027,7 +2246,7 @@ void bending_modes::load_KL(void)
   free (buffer);
 }
 @ 
-\subsubsection{Nearest neighbor interpolation}
+\subsection{Nearest neighbor interpolation}
 \label{sec:near-neighb-interp}
 
 The bending modes are interpolation on a regular $[[NI]]\times[[NI]]$ grid with spacing [[di]].
@@ -2155,12 +2374,12 @@ for (k_BM=0; k_BM<BM_N_SAMPLE; k_BM++) {
 }
 @ 
 
-\subsubsection{Bilinear interpolation}
+\subsection{Bilinear interpolation}
 \label{sec:bilin-interp}
 
 The bending modes in this section are derived through linear interpolation of the bending modes computed on a regular grid.
 
-\paragraph{Bending modes and derivatives}
+\subsubsection{Bending modes and derivatives}
 \label{sec:bend-modes-deriv}
 
 The following method re--samples the bending modes on a $[[NI]]\times[[NI]]$ grid with step [[di]].
@@ -2273,7 +2492,7 @@ t -= ft;
 onemt = 1 - t;
 onems = 1 - s;
 @
-\paragraph{Bending mode surface}
+\subsubsection{Bending mode surface}
 \label{sec:bending-mode-surface}
 
 A bending mode surface $S(\vec r)$ is given by a linear combination of bending modes $B_i(\vec r)$:
@@ -2382,6 +2601,125 @@ __device__ inline rtd partial_z_bending_modes_surface(void)
   return 0.0;
 }
 @ 
+
+\section{Modes}
+\label{sec:modes}
+
+The [[modes]] structure is a generalization of the the [[bending_modes]] structure;
+The [[bending_modes]] structure takes a single modal basis and applies to each segment.
+The [[modes]] structures has [[N_SET]] modal bases.
+The number of surface to be made of the bases set is [[N]].
+If $[[N_SET]]=1$, then each surface uses exactly the same modal basis.
+But if $[[N_SET]]=[[N]]$, then each surface uses a different modal basis.
+
+\index{gmtMirrors!modes}
+<<modes structure>>=
+struct modes {
+  <<bending modes parameters>>	
+  <<modes parameters>>	
+  void setup(char *filename, int N, int n_mode);
+  void cleanup(void);
+  void load(void);
+  void update(rtd *b);
+};
+@
+The parameters are
+\begin{itemize}
+\item the filename where the modes are saved:
+<<modes parameters>>=
+char filename[64];
+@
+\item the number of modal basis set
+<<modes parameters>>=
+int N_SET;
+@
+\item the number of modes in the load modal basis, as opposed to [[n_mode]] the number of modes used to build a surface
+<<modes parameters>>=
+int N_MODE;
+@
+\item the index array of size [[N]] indicating for each surface which modal basis to use:
+<<modes parameters>>=
+int *d__s2b;
+@
+\end{itemize}
+@
+
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
+The bending modes are loaded with:
+\index{gmtMirrors!modes!setup}
+<<modes functions>>=
+  void modes::setup(char *_filename_, int _N_, int _n_mode_)
+{
+  N = _N_;
+  n_mode = _n_mode_;
+  strcpy(filename,_filename_);
+  load();
+  <<bending modes setup common>>
+  <<bending modes setup common (surface)>>
+} 
+@
+Memory is freed with
+\index{gmtMirrors!_modes!cleanup}
+<<modes functions>>=
+void modes::<<modes cleanup>>
+@ 
+
+\subsection{Loading the modes}
+\label{sec:load-modes}
+
+The modes must be defined on a regular grid which size is restricted to a single segment.
+The linear grid sampling [[BM_N_SAMPLE]] and size [[BM_RADIUS]] is the same for all the segment.
+The number of modes per segment [[N_MODE]] is also the same.
+
+The binary file [[filename]] that contains the modes has the following format :
+[[N_SAMPLE]]:int$\times1$, [[LENGTH]]: double$\times1$, [[N_SET]]int$\times1$, [[N_MODE]]int$\times1$, [[d__s2b]]int$\times [[N]]$, [[d__BM]]: double$\times(7[[n_mode]][[BM_N_SAMPLE]]^2)$.
+The surface \#k with $k=[0,\dots,[[N]]-1]$ will use the basis in [[d__BM]] that starts at $d__s2b[k]*[[N_MODE]]*[[N_SAMPLE]]^2$.
+\index{gmtMirrors!modes!load}
+<<modes functions>>=
+void modes::load(void)
+{
+  FILE * pFile;
+  long lSize;
+  double * buffer;
+  size_t result;
+
+  char path[256]; 
+  sprintf(path, "%sgmtMirrors/%s.bin",CEOPATH,filename);
+  fprintf(stdout,"@(CEO)>modes: loading modes from %s\n",path);
+
+  pFile = fopen ( path , "rb" );
+  if (pFile==NULL) {fputs ("File error",stderr); exit (1);}
+
+  result = fread (&BM_N_SAMPLE,sizeof(int)   ,1,pFile);
+  result = fread (&BM_radius  ,sizeof(double),1,pFile);
+  result = fread (&N_SET,sizeof(int)   ,1,pFile);
+  result = fread (&N_MODE,sizeof(int)   ,1,pFile);
+  fprintf(stdout,"@(CEO)>modes: grid sampling and size: %d pixel, %f meter\n",BM_N_SAMPLE,BM_radius);
+  fprintf(stdout,"@(CEO)>modes: number of set: %d and number of modes per set: %d\n",N_SET,N_MODE);
+
+  // allocate memory to contain the whole file:
+  lSize = 7*N_MODE*BM_N_SAMPLE*BM_N_SAMPLE;
+  buffer = (double*) malloc (lSize*sizeof(double));
+  if (buffer == NULL) {fputs ("Memory error",stderr); exit (2);}
+
+  // copy the file into the buffer:
+  result = fread (buffer  ,sizeof(double),lSize,pFile);
+  if (result != lSize) {fputs ("Reading error",stderr); exit (3);}
+
+  /* the whole file is now loaded in the memory buffer. */
+  BM_radius *= 0.5;
+  HANDLE_ERROR( cudaMalloc((void**)&d__BM_buffer, lSize*sizeof(double)) );
+  HANDLE_ERROR( cudaMemcpy( d__BM_buffer  , buffer, lSize*sizeof(double),
+			    cudaMemcpyHostToDevice ) );
+  d__BM   = d__BM_buffer;
+
+  // terminate
+  fclose (pFile);
+  free (buffer);
+}
+@
 
 \section{Edge sensors}
 \label{sec:edge-sensors}
@@ -3344,215 +3682,3 @@ x[i_cam]   = w*uP[i_cam];
 y[i_cam]   = w*vP[i_cam];
 @
 \end{enumerate}
-@
-\section{GMT M2}
-\label{sec:gmt-m2}
-
-\index{gmtMirrors!gmt\_m2}
-A new structure to hold GMT M1 parameters and functions is defined.
-<<GMT M2 structure>>=
-struct gmt_m2 {
-  <<GMT M12 parameters>>
-  <<GMT M12 functions>>
-  void pointing_neutral(float tip, float tilt);
-  void coma_neutral(float tip, float tilt);
-};
-@
-\subsection{Setup \& Cleanup}
-\label{sec:setup--cleanup-2}
-
-\index{gmtMirrors!gmt\_m2!setup}
-<<GMT M2 functions>>=
-void gmt_m2::setup(void)
-{
-  BS = NULL;
-  ZS = NULL;
-  <<M2 parameters>>
-  <<GMT setup common>>
-}
-@ 
-<<GMT M2 functions>>=
-void gmt_m2::setup(struct bending_modes *_BS_)
-{
-  BS = _BS_;
-  ZS = NULL;
-  <<M2 parameters>>
-  <<GMT setup common>>
-}
-@ with
-<<M2 parameters>>=
- M_ID    = 2;
- D_assembly = 3.168;
- D_full  = 1.0425*1.005; // slightly larger to always encompass M1; needed for the Zernike
- D_clear = 1.0415;
- ri      = 0.0;
- beta    = -14.777462*PI/180.0;
- L       = 1.08774;
- N       = 7;
- conic_c = -1.0/4.1639009;
- conic_k = 1-0.71692784;
- height  = 20.26247614;
- idx_offset = 3;
-@
-\index{gmtMirrors!gmt\_m2!setup}
-<<GMT M2 functions>>=
-void gmt_m2::setup(zernikeS *_ZS_)
-{
-  ZS = _ZS_;
-  BS = NULL;
-  M_ID    = 2;
-  <<M2 parameters>>
-  <<GMT setup common>>
-}
-@
-Memory is freed with
-\index{gmtMirrors!gmt\_m2!cleanup}
-<<GMT M2 functions>>=
-void gmt_m2::cleanup(void)
-{
-  fprintf(stdout,"@(CEO)>gmt_m2: freeing memory!\n");
-  <<GMT cleanup common>>
-}
-@
-\subsection{Blocking}
-\label{sec:blocking-2}
-
-The rays blocking with M2 is computed with
-\index{gmtMirrors!gmt\_m2!blocking}
-<<GMT M2 functions>>=
-void gmt_m2::blocking(bundle *rays)
-{
-  <<GMT blocking common>>
-}
-@
-\subsection{Ray tracing}
-\label{sec:ray-tracing-2}
-
-The rays propagation through M1 is computed with
-\index{gmtMirrors!gmt\_m2!trace}
-<<GMT M2 functions>>=
-void gmt_m2::trace(bundle *rays)
-{
-  <<GMT trace common>>
-}
-@
-The rigid body motion parameters are updated with:
-\index{gmtMirrors!gmt\_m2!update}
-<<GMT M2 functions>>=
-void gmt_m2::update(vector _origin_, vector _euler_angles_,int idx)
-{
-    <<GMT M12 update>>
-}
-@
-The rigid body motion are reset to 0 with:
-\index{gmtMirrors!gmt\_m2!reset}
-<<GMT M2 functions>>=
-void gmt_m2::reset(void)
-{
-    <<GMT M12 reset>>
-}
-@
-\subsection{Segment selection}
-\label{sec:segment-selection}
-
-Segments can be removed from the M1 or M2 models with the routine:
-\index{gmtMirrors!gmt\_m2!remove}
-<<GMT M2 functions>>=
-void gmt_m2::remove(int *seg_ID, int N_ID)
-{
-  <<GMT remove segments>>
-}
-@
-One can also specifies the segments to keep
-\index{gmtMirrors!gmt\_m2!keep}
-<<GMT M2 functions>>=
-void gmt_m2::keep(int *seg_ID, int N_ID)
-{
-  <<GMT keep segments>>
-}
-@
-\subsection{Global motions}
-\label{sec:global-motions}
-
-\subsection{Global tip--tilt}
-\label{sec:global-tip-tilt-1}
-
-\index{gmtMirrors!gmt\_m2!global\_tiptilt}
-<<GMT M2 functions>>=
-void gmt_m2::global_tiptilt(float tip, float tilt)
-{
-  <<GMT global tip-tilt common>>
-}
-@
-\subsubsection{Tip--tilt neutral}
-\label{sec:tip-tilt-neutral}
-
-\index{gmtMirrors!gmt\_m2!pointing\_neutral}
-<<GMT M2 functions>>=
-void gmt_m2::pointing_neutral(float tip, float tilt)
-{
-  double alpha, beta, *d__C;
-  vector origin, euler_angles;
-  cublasHandle_t handle;
-  coordinate_system TT_CS;
-
-  origin.x = origin.y = 0.0;
-  origin.z = height - 4390.312E-03;
-  euler_angles.x = tip;
-  euler_angles.y = tilt;
-  euler_angles.z = 0.0;
-
-  TT_CS.setup(origin, euler_angles);
-  cublasCreate(&handle);
-
-  alpha = 1;
-  beta  = 0;
-  HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
-  int k, k9;
-  for (k=0;k<N;k++)
-    {
-      k9 = k*9;
-      <<global tip-tilt transformation>>
-    }
-
-  cublasDestroy(handle);
-  TT_CS.cleanup();
-  HANDLE_ERROR( cudaFree( d__C ) );
-}
-@
-\subsubsection{Coma neutral}
-\label{sec:coma-neutral}
-
-\index{gmtMirrors!gmt\_m2!coma\_neutral}
-<<GMT M2 functions>>=
-void gmt_m2::coma_neutral(float tip, float tilt)
-{
-  double alpha, beta, *d__C;
-  vector origin, euler_angles;
-  cublasHandle_t handle;
-  coordinate_system TT_CS;
-
-  origin.x = origin.y = 0.0;
-  origin.z = height - 2246.410E-03;
-  euler_angles.x = tip;
-  euler_angles.y = tilt;
-  euler_angles.z = 0.0;
-
-  TT_CS.setup(origin, euler_angles);
-  cublasCreate(&handle);
-
-  alpha = 1;
-  beta  = 0;
-  HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
-  int k, k9;
-  for (k=0;k<N;k++)
-    {
-      k9 = k*9;
-      <<global tip-tilt transformation>>
-    }
-
-  cublasDestroy(handle);
-  TT_CS.cleanup();
-  HANDLE_ERROR( cudaFree( d__C ) );
-}
-@
