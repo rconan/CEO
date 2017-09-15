@@ -464,6 +464,7 @@ cdef class cuFloatArray:
 cdef dtype type
 cdef public int size
 cdef public shape
+cdef public order
 cdef dev_malloc
 cdef public ndarray host_data
 cdef units
@@ -477,7 +478,7 @@ cdef class cuFloatArray:
     <<cu array class doc>>
     """
 
-    def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
+    def __cinit__(self,shape=None,order='C',host_data=None,dev_malloc=False):
         self._c_gpu = new gpu_t[float]()
         self.type = dtype(np.float32)
         <<cu array constructor>>
@@ -513,6 +514,7 @@ dev_malloc : bool
 <<cu array constructor>>=
 self._c_gpu.setup();
 self.dev_malloc = dev_malloc
+self.order = order
 if shape is not None:
     self.shape = shape
     self.size = np.prod(shape)
@@ -521,7 +523,7 @@ if self.dev_malloc:
     self._c_gpu.N = self.size
     self._c_gpu.dev_malloc()           
 if host_data is not None:
-    self.host_data = np.array( host_data , dtype=self.type , order='C')
+    self.host_data = np.array( host_data , dtype=self.type , order=self.order)
     self.shape = host_data.shape
     self.size = np.prod(self.shape)
     self._c_gpu.N = self.size
@@ -538,7 +540,7 @@ def __dealloc__(self):
     if self.dev_malloc:
         self._c_gpu.free_dev()
 
-def host(self,units=None,zm=False,mask=None,shape=None):
+def host(self,units=None,zm=False,mask=None,shape=None, order=None):
     <<cu array host>>
 
 def reset(self):
@@ -552,7 +554,9 @@ if shape is not None:
     prod = lambda x,y : x*y
     assert reduce(prod,shape,)==reduce(prod,self.shape), "Total size of array must be unchanged!"
     self.shape = shape
-self.host_data = np.zeros(self.shape,order='c',dtype=self.type)
+if order is not None:
+    self.order = order    
+self.host_data = np.zeros(self.shape,order=self.order,dtype=self.type)
 self.assign_ptr()
 self._c_gpu.dev2host()
 if zm:
@@ -603,7 +607,7 @@ cdef class cuIntArray:
     <<cu array class doc>>
     """
 
-    def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
+    def __cinit__(self,shape=None,host_data=None,dev_malloc=False,order='C'):
         self._c_gpu = new gpu_t[int]()
         self.type = dtype(np.int32)
         <<cu array constructor>>
@@ -631,7 +635,7 @@ cdef class cuDoubleArray:
     <<cu array class doc>>
     """
 
-    def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
+    def __cinit__(self,shape=None,host_data=None,dev_malloc=False,order='C'):
         self._c_gpu = new gpu_t[double]()
         self.type = dtype(np.double)
         <<cu array constructor>>
@@ -678,7 +682,7 @@ cdef class cuFloatComplexArray:
     <<cu complex array class doc>>
     """
 
-    def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
+    def __cinit__(self,shape=None,host_data=None,dev_malloc=False,order='C'):
         self._c_gpu = new gpu_t[float2]()
         self.type = dtype(np.complex64)
         <<cu complex array constructor>>
@@ -717,6 +721,7 @@ cdef int k
 cdef tuple subs
 self._c_gpu.setup();
 self.dev_malloc = dev_malloc
+self.order = order
 if shape is not None:
     self.shape = shape
     self.size = np.prod(shape)
@@ -726,7 +731,7 @@ if self.dev_malloc:
     self._c_gpu.dev_malloc()           
     self.assign_ptr()
 if host_data is not None:
-    self.host_data = np.array( host_data , dtype=self.type , order='C')
+    self.host_data = np.array( host_data , dtype=self.type , order=self.order)
     self.shape = host_data.shape
     self.size = np.prod(self.shape)
     self._c_gpu.N = self.size
@@ -748,7 +753,7 @@ def __dealloc__(self):
         self._c_gpu.free_dev()
         PyMem_Free(self._host_data_)
 
-def host(self,units=None,zm=False,mask=None,shape=None):
+def host(self,units=None,zm=False,mask=None,shape=None,order=None):
     <<cu complex array host>>
 
 def reset(self):
@@ -764,7 +769,9 @@ if shape is not None:
     prod = lambda x,y : x*y
     assert reduce(prod,shape,)==reduce(prod,self.shape), "Total size of array must be unchanged!"
     self.shape = shape
-self.host_data = np.zeros(self.shape,order='c',dtype=self.type)
+if order is not None:
+    self.order = order    
+self.host_data = np.zeros(self.shape,order=self.order,dtype=self.type)
 self.assign_ptr()
 self._c_gpu.dev2host()
 for k in range(self.size):
