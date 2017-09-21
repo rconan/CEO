@@ -500,7 +500,7 @@ class GMT_MX(GmtMirrors):
         else:
             return CalibrationVault([D],**calibrationVaultKwargs)
 
-    def PSSn(self,src,r0=15e-2,L0=25.0,zenith_distance=0,C=None,AW0=None,save=False):
+    def PSSn(self,src,r0=15e-2,L0=25.0,zenith_distance=30,C=None,AW0=None,save=False):
         """
         Computes the PSSn corresponding to the current state of the telescope
 
@@ -514,7 +514,7 @@ class GMT_MX(GmtMirrors):
         L0 : float, optional
             The outer scale in meter; default: 25m
         zenith_distance : float, optional
-            The angular distance of the source from zenith in degree; default: 0 degree    
+            The angular distance of the source from zenith in degree; default: 30 degree    
         C : ndarray, optional
             The atmosphere OTF; default: None
         AW0 : ndarray, optional
