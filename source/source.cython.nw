@@ -82,7 +82,7 @@ cdef class Bundle:
         cuIntArray _n_iteration_
         public cuDoubleArray sphere_radius
         public cuDoubleArray sphere_distance
-        cuIntArray _piston_mask_
+        public cuIntArray _piston_mask_
 @
 \subsection{PYX file}
 \label{sec:pyx-file}
@@ -660,8 +660,8 @@ cdef class Complex_amplitude:
 	void setup(const char *,float , float , float , int )
         void setup(const char *,float *, float *, float , int , int )
         void setup(const char *,float *, float *, float , int , rtd, int, vector)
-        #void setup(const char *,float *,float *, float *, float , int , rtd, int, vector)
         void setup(const char *,float *,double *, double *, float , int , rtd, int, vector)
+        void setup(const char *,float *,double *, double *, float , int , int, double *, double *, vector)
         void cleanup()
         void reset_rays()
         void reset_rays(int)
@@ -816,7 +816,9 @@ cdef class Source:
                  rays_box_size=None,
                  rays_box_sampling=None,
                  rays_origin=None,
-                 samplingTime = 1.0 ):
+                 samplingTime = 1.0,
+                 int N_RAY=0,
+                 double[:] rays_x=None, double[:] rays_y=None):
 
         cdef float[:] z,a
         if rays_box_sampling is not None:
@@ -832,13 +834,7 @@ cdef class Source:
         self.height  = float(height);
         self.size = self._zenith_.size
         cdef vector _origin_
-        if rays_box_size is None:
-            z = np.array( zenith,  dtype=np.float32, ndmin=1)
-            a = np.array( azimuth, dtype=np.float32, ndmin=1)
-            self._c_source.setup(photometric_band,
-                                 &z[0],&a[0], height,
-                                 self.size, np.prod(resolution))
-        else:
+        if N_RAY>0:
             _origin_.x = <float>rays_origin[0]
             _origin_.y = <float>rays_origin[1]
             _origin_.z = <float>rays_origin[2]
@@ -847,9 +843,29 @@ cdef class Source:
                                  &self._zenith_[0],
                                  &self._azimuth_[0], height,
                                  self.size,
-                                 rays_box_size,
-				 rays_box_sampling,
-				 _origin_)
+                                 N_RAY,
+                                 &rays_x[0],
+                                 &rays_y[0],
+                                 _origin_)
+        else:
+            if rays_box_size is None:
+                z = np.array( zenith,  dtype=np.float32, ndmin=1)
+                a = np.array( azimuth, dtype=np.float32, ndmin=1)
+                self._c_source.setup(photometric_band,
+                                     &z[0],&a[0], height,
+                                     self.size, np.prod(resolution))
+            else:
+                _origin_.x = <float>rays_origin[0]
+                _origin_.y = <float>rays_origin[1]
+                _origin_.z = <float>rays_origin[2]
+                self._c_source.setup(photometric_band,
+                                     &self._magnitude_[0],
+                                     &self._zenith_[0],
+                                     &self._azimuth_[0], height,
+                                     self.size,
+                                     rays_box_size,
+                                     rays_box_sampling,
+                                     _origin_)
         #if magnitude is not None:
         #    self._c_source.magnitude = magnitude
         if fwhm is not None:
