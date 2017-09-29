@@ -533,8 +533,9 @@ class GMT_MX(GmtMirrors):
             _r0_ = (_r0_**(-5./3.)/np.cos(zenith_distance*np.pi/180))**(-3./5.)
             nPx = src.rays.N_L
             D = src.rays.L
-            u = np.arange(2*nPx-1,dtype=np.float)*D/(nPx-1)
-            u = u-u[-1]/2
+            #u = np.arange(2*nPx-1,dtype=np.float)*D/(nPx-1)
+            #u = u-u[-1]/2
+            u = np.fft.fftshift(np.fft.fftfreq(2*nPx-1))*(2*nPx-1)*D/(nPx-1)
             x,y = np.meshgrid(u,u)
             rho = np.hypot(x,y)
             C = phaseStats.atmOTF(rho,_r0_,L0)
