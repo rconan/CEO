@@ -16,6 +16,7 @@ cdef extern from "segmentPistonSensor.h":
         complex_amplitude lenslet
         imaging camera, FFT
         void setup(gmt_m1 *, source *, float, float, float)
+        void setup(gmt_m1 *, source *, float, float, float, int)
         void cleanup()
         void propagate(source *)
         void readout(float, float, float)
@@ -77,13 +78,15 @@ cdef class SegmentPistonSensor:
     def __cinit__(self,GMT_M1 M1, Source gs,
                   float dispersion=5.0,
                   float field_of_view=3.0,
-                  float nyquist_factor=1.0):
+                  float nyquist_factor=1.0,
+                  int BIN_IMAGE=2):
         self._c_segmentPistonSensor = new segmentPistonSensor()
         self._c_segmentPistonSensor.setup(M1._c_gmt_m12,
                                           gs._c_source,
                                           dispersion*ARCSEC2RAD*1e6,
                                           field_of_view*ARCSEC2RAD,
-                                          nyquist_factor)
+                                          nyquist_factor,
+                                          BIN_IMAGE)
 
         self.lenslet_mask = MaskAbstract(self._c_segmentPistonSensor.N_PX2)
         self.lenslet_mask._c_mask = &(self._c_segmentPistonSensor.lenslet_mask)
@@ -96,7 +99,7 @@ cdef class SegmentPistonSensor:
         self.camera = Imaging(self._c_segmentPistonSensor.N_LENSLET,
                               self._c_segmentPistonSensor.N_PX_LENSLET,
                               N_PX_IMAGE = self._c_segmentPistonSensor.N_PX_IMAGE,
-                              BIN_IMAGE = 2, isPtr=1)
+                              BIN_IMAGE = BIN_IMAGE, isPtr=1)
         self.camera.set_ptr( &(self._c_segmentPistonSensor.camera) )
 
         self.fft_mask = MaskAbstract( self.camera.N_PX_FRAME**2)

@@ -89,6 +89,7 @@ void cleanup(void);
 void update(vector _origin_, vector _euler_angles_,int idx);
 void reset(void);
 void trace(bundle *rays);
+void traceall(bundle *rays);
 void blocking(bundle *rays);
 void global_tiptilt(float tip, float tilt);
 void test_ray_tracing(void);
@@ -633,14 +634,23 @@ The rays propagation through M1 is computed with
 void gmt_m1::trace(bundle *rays)
 {
   rays->V.area = area0*rays->N_BUNDLE*area_fraction;
+  dim3 blockDim, gridDim;
+  rtd R2, Rri2;
+  R2 = D_clear*D_clear*0.25;
+  Rri2 = R2*ri*ri;
+  <<GMT trace common>>
+}
+void gmt_m1::traceall(bundle *rays)
+{
+  rays->V.area = area0*rays->N_BUNDLE*area_fraction;
+  dim3 blockDim, gridDim;
+  rtd R2, Rri2;
+  R2 = D_clear*D_clear*0.25*1.25;
+  Rri2 = 0;
   <<GMT trace common>>
 }
 @ where
 <<GMT trace common>>=
- dim3 blockDim, gridDim;
- rtd R2, Rri2;
- R2 = D_clear*D_clear*0.25;
- Rri2 = R2*ri*ri;
  /* if (V!=NULL) { */
  /*    blockDim = dim3(N_THREAD,N_THREAD); */
  /*    gridDim  = dim3(rays->N_RAY/N_THREAD2+1,1,rays->N_BUNDLE); */
@@ -1718,6 +1728,19 @@ The rays propagation through M1 is computed with
 <<GMT M2 functions>>=
 void gmt_m2::trace(bundle *rays)
 {
+  dim3 blockDim, gridDim;
+  rtd R2, Rri2;
+  R2 = D_clear*D_clear*0.25;
+  Rri2 = R2*ri*ri;
+  <<GMT trace common>>
+}
+void gmt_m2::traceall(bundle *rays)
+{
+  rays->V.area = area0*rays->N_BUNDLE*area_fraction;
+  dim3 blockDim, gridDim;
+  rtd R2, Rri2;
+  R2 = D_clear*D_clear*0.25*1.25;
+  Rri2 = 0;
   <<GMT trace common>>
 }
 @
@@ -2689,7 +2712,7 @@ void modes::load(void)
   size_t result;
 
   char path[256]; 
-  sprintf(path, "%sgmtMirrors/%s.bin",CEOPATH,filename);
+  sprintf(path, "%sgmtMirrors/%s.ceo",CEOPATH,filename);
   fprintf(stdout,"@(CEO)>modes: loading modes from %s\n",path);
 
   pFile = fopen ( path , "rb" );

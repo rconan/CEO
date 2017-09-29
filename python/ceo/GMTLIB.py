@@ -500,14 +500,42 @@ class GMT_MX(GmtMirrors):
         else:
             return CalibrationVault([D],**calibrationVaultKwargs)
 
-    def PSSn(self,src,r0=15e-2,L0=25.0,C=None,AW0=None,save=False):
+    def PSSn(self,src,r0=15e-2,L0=25.0,zenith_distance=30,C=None,AW0=None,save=False):
+        """
+        Computes the PSSn corresponding to the current state of the telescope
+
+        Parameters
+        ----------
+        src : Source
+            The source object that is propagated through the telescope, the 
+            PSSn is given at the wavelenght of the source
+        r0 : float, optional
+            The Fried parameter at zenith and at 500nm in meter; default: 0.15m
+        L0 : float, optional
+            The outer scale in meter; default: 25m
+        zenith_distance : float, optional
+            The angular distance of the source from zenith in degree; default: 30 degree    
+        C : ndarray, optional
+            The atmosphere OTF; default: None
+        AW0 : ndarray, optional
+            The collimated telescope OTF; default: None
+        save : boolean, optional
+            If True, return in addition to the PSSn, a dictionnary with C and AW0; default: False
+
+        Return
+        ------
+        PSSn : float
+            The PSSn value
+        """
 
         if C is None:
             _r0_  = r0*(src.wavelength/0.5e-6)**1.2
+            _r0_ = (_r0_**(-5./3.)/np.cos(zenith_distance*np.pi/180))**(-3./5.)
             nPx = src.rays.N_L
             D = src.rays.L
-            u = np.arange(2*nPx-1,dtype=np.float)*D/(nPx-1)
-            u = u-u[-1]/2
+            #u = np.arange(2*nPx-1,dtype=np.float)*D/(nPx-1)
+            #u = u-u[-1]/2
+            u = np.fft.fftshift(np.fft.fftfreq(2*nPx-1))*(2*nPx-1)*D/(nPx-1)
             x,y = np.meshgrid(u,u)
             rho = np.hypot(x,y)
             C = phaseStats.atmOTF(rho,_r0_,L0)

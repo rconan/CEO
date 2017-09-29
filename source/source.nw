@@ -54,6 +54,9 @@ struct source {
   void setup(const char *_photometric_band, float *magnitude,
 	     rtd *_zenith, rtd *_azimuth, float _height,
 	     int _N_SRC, rtd _L_, int _N_L_, vector origin);
+  void setup(const char *_photometric_band, float *_magnitude,
+	     rtd *_zenith, rtd *_azimuth, float _height, int _N_SRC,
+	     int _N_RAY_, double *x, double *y, vector origin);
    void cleanup(void);
 
   void reset_rays(void);
@@ -1659,6 +1662,34 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
 <<rays box coordinates definition>>=
 x   = L*(i - (N_L-1)*0.5)/(N_L-1);
 y   = L*(j - (N_L-1)*0.5)/(N_L-1);
+@  \item for multiple sources with wavefront resolution and with ray bundle coordinates (different magnitudes), zenith and azimuth are in double precision for ray tracing:
+<<setup for multiple sources with wavefront resolution and ray bundle>>=
+void source::setup(const char *_photometric_band, float *_magnitude,
+                   rtd *_zenith, rtd *_azimuth, float _height, int _N_SRC,
+                   int N_RAY, double *x, double *y, vector origin)
+{
+  <<setup multiple sources contents: common part (host)>>
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  for (int i_SRC=0;i_SRC<min(N_SRC,10);i_SRC++) {
+    <<setup multiple sources contents: common part (device)>>
+    __src.magnitude        = _magnitude[i_SRC];
+    __src.N_PHOTON         = n_photon(_magnitude[i_SRC]);
+    HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
+			      sizeof(source) ,
+			      cudaMemcpyHostToDevice ) );
+    fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
+	    _zenith[i_SRC]*RADIAN2ARCSEC,
+	    _azimuth[i_SRC]*180/PI,_height,
+	    wavelength_micron(),_magnitude[i_SRC]);
+  }
+  fprintf(stdout," N_RAY: %d\n", N_RAY);
+  wavefront.setup(N_RAY,N_SRC);
+  fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
+  rays_exist = 1;
+  rays.setup_free(N_RAY, x, y, origin);
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+}
 @ \end{itemize}
 
 The rays vignetting mask [[V]] is not reset if the flag [[RESET_RAYS_MASK]] is set to 0: 

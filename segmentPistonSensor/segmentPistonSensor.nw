@@ -34,6 +34,11 @@ struct segmentPistonSensor {
 	     float dispersion,
 	     float field_of_view,
 	     float _nyquist_factor_);
+  void setup(gmt_m1 *M1, source *src, 
+	     float dispersion,
+	     float field_of_view,
+	     float _nyquist_factor_,
+	     int _BIN_IMAGE_);
   void cleanup(void);
   void propagate(source *src);
   void readout(float exposureTime, float readoutNoiseRms, 
@@ -183,6 +188,10 @@ imaging *camera_array;
 \item the Nyquist factor, a value of 1 meaning Nyquist sampling, higher value increases the resolution of the image; sampling is always defined for the shortest wavelength
 <<parameters>>=
 float nyquist_factor;
+@
+\item the camera binning factor:
+<<parameters>>=
+int BIN_IMAGE;
 @ 
 \item the pixel size of one [[lenslet]]:
 <<parameters>>=
@@ -228,10 +237,24 @@ void segmentPistonSensor::setup(gmt_m1 *M1, source *src,
 				float _nyquist_factor_)
 {
   int k, N_DFT, DFT_osf;
+  BIN_IMAGE=2;
   <<setup content>>
   info();
 }
 @ 
+<<setup>>=
+void segmentPistonSensor::setup(gmt_m1 *M1, source *src, 
+				float _dispersion_,
+				float _field_of_view_,
+				float _nyquist_factor_,
+                                int _BIN_IMAGE_)
+{
+  int k, N_DFT, DFT_osf;
+  BIN_IMAGE=_BIN_IMAGE_;
+  <<setup content>>
+  info();
+}
+@
 The lenslet size, height and location as well as the sensor spectral dispersion, field--of--view and Nyquist factor are set with
 <<setup content>>=
 lenslet_size   = 1.5;
@@ -269,18 +292,25 @@ HANDLE_ERROR( cudaMemset( lenslet.amplitude, 0 , sizeof(float)*lenslet.N_PX) );
 @
 The spectral resolution is derived from the pixel scale at the shortest wavelength and the grism dispersion power.
 <<setup content>>=
-spectral_bandwidth = src[0].spectral_bandwidth();
-lambda0            = src[0].wavelength() - spectral_bandwidth*0.5;
 DFT_osf            = (int) rint(2*nyquist_factor);
-pixel_scale = lambda0/(DFT_osf*2*lenslet_size);
-N_LAMBDA    = (int) 2*dispersion*spectral_bandwidth/pixel_scale;
+if (dispersion>0) {
+  spectral_bandwidth = src[0].spectral_bandwidth();
+  lambda0            = src[0].wavelength() - spectral_bandwidth*0.5;
+  pixel_scale = lambda0/(DFT_osf*2*lenslet_size);
+  N_LAMBDA    = (int) 2*dispersion*spectral_bandwidth/pixel_scale;
+ } else {
+  spectral_bandwidth = src[0].spectral_bandwidth();
+  lambda0            = src[0].wavelength();
+  pixel_scale = lambda0/(DFT_osf*2*lenslet_size);
+  N_LAMBDA    = 1;
+ }
 @ 
 The detector [[camera]] of the segment piston sensor is defined such as the image corresponding to the shortest wavelength is Nyquist sampled.
 A shadow imaging object [[FFT]] is also created to perform the Fourier transform of all the sensor images.
 <<setup content>>=
 N_PX_IMAGE  = (int) ceil(field_of_view/pixel_scale);
 N_PX_IMAGE += N_PX_IMAGE%2;
-camera.setup(N_PX_LENSLET-1,N_LENSLET,DFT_osf,N_PX_IMAGE,2,1);
+camera.setup(N_PX_LENSLET-1,N_LENSLET,DFT_osf,N_PX_IMAGE,BIN_IMAGE,1);
 FFT.setup(camera.N_PX_CAMERA-1,N_LENSLET,2,camera.N_PX_CAMERA*2,1,1);
 @
 An array of imaging object [[camera_array]] is used to compute an image at each wavelength.
@@ -288,10 +318,15 @@ The image are co--added in the [[camera]] object.
 <<setup content>>=
 camera_array = (imaging *) malloc( sizeof(imaging)*N_LAMBDA) ;
 fprintf(stdout,"@(CEO)>segmentPistonSensor: camera array setup!");
+if (N_LAMBDA>1) {
 for (k=0;k<N_LAMBDA;k++) {
   N_DFT = (int) DFT_osf*N_PX_LENSLET*(1 + k*(spectral_bandwidth/lambda0)/(N_LAMBDA-1));
-  camera_array[k].setupSegmentPistonSensor(N_PX_LENSLET-1,N_LENSLET,N_DFT,N_PX_IMAGE,2,1);
+  camera_array[k].setupSegmentPistonSensor(N_PX_LENSLET-1,N_LENSLET,N_DFT,N_PX_IMAGE,BIN_IMAGE,1);
 }
+ } else {
+  N_DFT = (int) DFT_osf*N_PX_LENSLET;
+  camera_array[k].setupSegmentPistonSensor(N_PX_LENSLET-1,N_LENSLET,N_DFT,N_PX_IMAGE,BIN_IMAGE,1);
+ }
 @
 A pretend source object [[lenslet_src]] is embedding the \verb|complex_amplitude|  [[lenslet]] object.
 This is the source that is propagated through the [[camera_array]].
@@ -374,6 +409,8 @@ Second, the piecewise wavefront are propagated through the lenslets and to the f
 <<propagation content>>= 
   //lenslet_src.magnitude = gs[0].magnitude;
 lenslet_src.copy_magnitude(gs);
+lenslet_src.fwhm = gs->fwhm;
+if (N_LAMBDA>1) {
 for (k=0;k<N_LAMBDA;k++) {
   camera_array[k].d__frame = camera.d__frame;
   d = spectral_bandwidth*( k - 0.5*(N_LAMBDA-1))/(N_LAMBDA-1);
@@ -381,6 +418,12 @@ for (k=0;k<N_LAMBDA;k++) {
   d *= (dispersion/pixel_scale);
   camera_array[k].propagateNoOverlapSPS(&lenslet_src, d, wavenumber);
 }
+ } else {
+  camera_array[k].d__frame = camera.d__frame;
+  d = 0.0;
+  wavenumber = 2*PI/(gs[0].wavelength() + d);
+  camera_array[k].propagateNoOverlapSPS(&lenslet_src, d, wavenumber);
+ }
   camera.N_FRAME++;
 @
 
