@@ -101,7 +101,7 @@ cdef class GmtMirrors:
     >>> gpu_ps1d = src.wavefront.phase()
     """
     def __init__(self, int M1_radial_order=0, int M2_radial_order=0,
-                 bytes M1_mirror_modes=None, bytes M2_mirror_modes=None,
+                 str M1_mirror_modes=None, str M2_mirror_modes=None,
                  int M1_N_MODE=0, int M2_N_MODE=0):
         self.M1 = GMT_M1(radial_order=M1_radial_order,
                          mirror_modes=M1_mirror_modes,
@@ -722,7 +722,7 @@ cdef class DummyModes:
 cdef class GMT_M1:
     <<GMT M12 docstring>>
 
-    def __cinit__(self, bytes mirror_modes=None, int radial_order=0, int N_MODE=0):
+    def __cinit__(self, str mirror_modes=None, int radial_order=0, int N_MODE=0):
         self._c_gmt_m12 = new gmt_m1()
         <<GMT M12 constructor>>
 
@@ -800,27 +800,27 @@ euler_angles[2] = np.arctan2(RM[1,0],RM[0,0])
 
 @ 
 <<GMT M12 constructor (old)>>=
-self.mirror_modes_type = mirror_modes
-if mirror_modes==u"zernike":
+self.mirror_modes_type = mirror_modes.encode()
+if mirror_modes==b"zernike":
     self.zernike = ZernikeS(radial_order,N_SURF=7)
     self._c_gmt_m12.setup( <zernikeS *> self.zernike._c_zernikeS)
-elif mirror_modes==u"bending modes":
+elif mirror_modes==b"bending modes":
     self.BM = BendingModes(N_MODE,N_SURF=7)
     self._c_gmt_m12.setup( <bending_modes *> self.BM._c_bending_modes)
-elif mirror_modes==u"Karhunen-Loeve":
+elif mirror_modes==b"Karhunen-Loeve":
     self.KL = KarhunenLoeve(N_MODE,N_SURF=7)
     self._c_gmt_m12.setup( <bending_modes *> self.KL._c_bending_modes)
-elif mirror_modes==u"polishing map":
+elif mirror_modes==b"polishing map":
     print "!!polishing map!!"
     self.PM = PolishMap(1,N_SURF=7)
     self._c_gmt_m12.setup( <bending_modes *> self.PM._c_bending_modes)
 else:
     self._c_gmt_m12.setup()
 <<GMT M12 constructor>>=
-self.mirror_modes_type = mirror_modes
-if mirror_modes is None:
+self.mirror_modes_type = mirror_modes.encode()
+if self.mirror_modes_type is None:
     self._c_gmt_m12.setup()
-elif mirror_modes=="zernike":
+elif self.mirror_modes_type==b"zernike":
     self.zernike = ZernikeS(radial_order,N_SURF=7)
     self._c_gmt_m12.setup( <zernikeS *> self.zernike._c_zernikeS)
 else:    
@@ -1017,7 +1017,7 @@ property modes:
         """
         if self.mirror_modes_type is None:
             return DummyModes()
-        elif self.mirror_modes_type=="zernike":
+        elif self.mirror_modes_type==b"zernike":
             return self.zernike
         else:
             return self.B
@@ -1130,7 +1130,7 @@ cdef class GMT_M2:
 cdef class GMT_M2:
     <<GMT M12 docstring>>
 
-    def __cinit__(self, bytes mirror_modes=None, int radial_order=0, int N_MODE=0):
+    def __cinit__(self, str mirror_modes=None, int radial_order=0, int N_MODE=0):
         self._c_gmt_m12 = new gmt_m2()
         <<GMT M12 constructor>>
 

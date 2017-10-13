@@ -1,7 +1,7 @@
 import math
 import numpy as np
 from scipy import special
-import atmosphere
+from . import atmosphere
 
 def variance(r0=None,L0=None,atmosphere=None):
     if atmosphere is not None:

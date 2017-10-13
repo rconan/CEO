@@ -807,7 +807,7 @@ cdef class Source:
         self._c_source = new source()
         self.parameters = {'args':args,'kwargs':kwargs}
 
-    def __init__(self,char *photometric_band,
+    def __init__(self,photometric_band,
                  zenith=0, azimuth=0,
                  magnitude=None,
                  height=float("inf"),
@@ -838,7 +838,7 @@ cdef class Source:
             _origin_.x = <float>rays_origin[0]
             _origin_.y = <float>rays_origin[1]
             _origin_.z = <float>rays_origin[2]
-            self._c_source.setup(photometric_band,
+            self._c_source.setup(<bytes>photometric_band.encode(),
                                  &self._magnitude_[0],
                                  &self._zenith_[0],
                                  &self._azimuth_[0], height,
@@ -851,14 +851,14 @@ cdef class Source:
             if rays_box_size is None:
                 z = np.array( zenith,  dtype=np.float32, ndmin=1)
                 a = np.array( azimuth, dtype=np.float32, ndmin=1)
-                self._c_source.setup(photometric_band,
+                self._c_source.setup(<bytes>photometric_band.encode(),
                                      &z[0],&a[0], height,
                                      self.size, np.prod(resolution))
             else:
                 _origin_.x = <float>rays_origin[0]
                 _origin_.y = <float>rays_origin[1]
                 _origin_.z = <float>rays_origin[2]
-                self._c_source.setup(photometric_band,
+                self._c_source.setup(<bytes>photometric_band.encode(),
                                      &self._magnitude_[0],
                                      &self._zenith_[0],
                                      &self._azimuth_[0], height,
@@ -923,7 +923,8 @@ cdef class Source:
         """
         assert self.OPTICALPATH is not None, "OPTICALPATH is not set!"
         self.reset()
-        map(lambda x: x.propagate(self), self.OPTICALPATH)
+        #map(lambda x: x.propagate(self), self.OPTICALPATH)
+        l = [x.propagate(self) for x in self.OPTICALPATH]
         self.timeStamp += self.samplingTime
 
     def __iadd__(self, int x):

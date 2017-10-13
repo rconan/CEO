@@ -7,7 +7,7 @@ from scipy.signal import fftconvolve
 from skimage.feature import blob_log
 from scipy.ndimage.interpolation import rotate
 import os.path
-import phaseStats
+from . import phaseStats
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
     TT7,\
     GmtMirrors, SegmentPistonSensor,\
@@ -49,7 +49,7 @@ class CalibrationVault(object):
         return self._nThreshold_
     @nThreshold.setter
     def nThreshold(self, value):
-        print "@(CalibrationMatrix)> Updating the pseudo-inverse..."
+        print("@(CalibrationMatrix)> Updating the pseudo-inverse...")
         self._nThreshold_ = value
         self.M = [ self.__recon__(X,Y,Z) for X,Y,Z in zip(self.UsVT,self._nThreshold_,self.zeroIdx) ]
 
@@ -156,7 +156,7 @@ class GMT_MX(GmtMirrors):
         gs : Source
             The guide star
         mirror : string
-            The mirror label: eiher "M1" or "M2"
+            The mirror label: eiher "M1" or "M2" ("MOUNT" is also corrected a will emulate a telescope pointing error)
         mode : string
             The degrees of freedom label
             for M1: "global tip-tilt", "zernike", "bending modes", "Txyz", "Rxyz", "Rz", "segment tip-tilt"
@@ -172,7 +172,7 @@ class GMT_MX(GmtMirrors):
                 self.cl_gs.reset()
                 self.propagate(self.cl_gs)
                 self.cl_wfs.reset()
-		self.onps.reset()
+                self.onps.reset()
                 self.cl_wfs.analyze(self.cl_gs)
                 slopevec = self.cl_wfs.get_measurement()
                 onpsvec =  self.onps.piston(self.cl_gs).ravel() - self.onps_signal_ref
@@ -195,11 +195,11 @@ class GMT_MX(GmtMirrors):
                 self.M2.modes.a[:,1:] -= myAOest1.reshape((7,-1))
                 self.M2.modes.update()
 
-	def close_AO_loop():
-	    if self.AOtype=='NGAOish':
-		close_NGAOish_loop()
-	    elif self.AOtype=='LTAOish':
-		close_LTAOish_loop()
+        def close_AO_loop():
+            if self.AOtype=='NGAOish':
+                close_NGAOish_loop()
+            elif self.AOtype=='LTAOish':
+                close_LTAOish_loop()
 
         def pushpull(action):
             def get_slopes(stroke_sign):
@@ -207,7 +207,7 @@ class GMT_MX(GmtMirrors):
                 action(stroke_sign*stroke)
                 if closed_loop_calib==True: close_AO_loop()
                 gs.reset()
-		self.propagate(gs)
+                self.propagate(gs)
                 wfs.reset()
                 wfs.analyze(gs)
                 return wfs.get_measurement()
@@ -216,19 +216,19 @@ class GMT_MX(GmtMirrors):
             return 0.5*(s_push-s_pull)/stroke
 
         def pushpull_minus_M2TT(action):
-	    def close_M2_segTT_loop():
-		niter = 3
-		myTTest1 = np.zeros(14)
-		for ii in range(niter):
-        	    gs.reset()
-		    self.propagate(gs)
-        	    wfs.reset()
-        	    wfs.analyze(gs)
-        	    slopevec = wfs.get_measurement()
-        	    myTTest1 += np.dot(recmat, slopevec)
-        	    myTTest = myTTest1.reshape((7,2))
-        	    for idx in range(7): self.M2.update(euler_angles=
-				[-myTTest[idx,0],-myTTest[idx,1],0], idx=idx+1)
+            def close_M2_segTT_loop():
+                niter = 3
+                myTTest1 = np.zeros(14)
+                for ii in range(niter):
+                    gs.reset()
+                    self.propagate(gs)
+                    wfs.reset()
+                    wfs.analyze(gs)
+                    slopevec = wfs.get_measurement()
+                    myTTest1 += np.dot(recmat, slopevec)
+                    myTTest = myTTest1.reshape((7,2))
+                    for idx in range(7): self.M2.update(euler_angles=
+                                [-myTTest[idx,0],-myTTest[idx,1],0], idx=idx+1)
             def get_slopes(stroke_sign):
                 self.reset()
                 action(stroke_sign*stroke)
@@ -335,10 +335,10 @@ class GMT_MX(GmtMirrors):
                         D[:,idx] = np.ravel( pushpull( M1_zernike_update ) )
                         idx += 1
                     sys.stdout.write("\n")
-	    if mode=="segment piston":
-		n_mode = 6
-		D = np.zeros((wfs.get_measurement_size(),n_mode))
-		idx = 0
+            if mode=="segment piston":
+                n_mode = 6
+                D = np.zeros((wfs.get_measurement_size(),n_mode))
+                idx = 0
                 Tz = lambda x : self.M1.update(origin=[0,0,x],euler_angles=[0,0,0],idx=kSeg)
                 sys.stdout.write("Segment #:")
                 for kSeg in range(1,7):
@@ -346,8 +346,8 @@ class GMT_MX(GmtMirrors):
                     D[:,idx] = pushpull( Tz )
                     idx += 1
                 #if segment=="full":
-		#    D = D[0:6,:]
-		sys.stdout.write("\n")
+                #    D = D[0:6,:]
+                sys.stdout.write("\n")
 
         if mirror=="M2":
             if mode=="global tip-tilt":
@@ -454,21 +454,21 @@ class GMT_MX(GmtMirrors):
                     D[:,idx] = pushpull( Ry )
                     idx += 1
                 sys.stdout.write("\n")
-	    if mode=="segment piston":
-		n_mode = 7
-		D = np.zeros((wfs.get_measurement_size(),n_mode))
-		idx = 0
+            if mode=="segment piston":
+                n_mode = 7
+                D = np.zeros((wfs.get_measurement_size(),n_mode))
+                idx = 0
                 Tz = lambda x : self.M2.update(origin=[0,0,x],euler_angles=[0,0,0],idx=kSeg)
                 sys.stdout.write("Segment #:")
                 for kSeg in range(1,8):
                     sys.stdout.write("%d "%kSeg)
                     D[:,idx] = pushpull( Tz )
                     idx += 1
-		sys.stdout.write("\n")
-	    if mode=="geometric segment tip-tilt":
+                sys.stdout.write("\n")
+            if mode=="geometric segment tip-tilt":
                 n_meas = 14
-		D = np.zeros((n_meas*gs.N_SRC,14))
-		idx = 0
+                D = np.zeros((n_meas*gs.N_SRC,14))
+                idx = 0
                 Rx = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[x,0,0],idx=kSeg)
                 Ry = lambda x : self.M2.update(origin=[0,0,0],euler_angles=[0,x,0],idx=kSeg)
                 sys.stdout.write("Segment #:")
@@ -541,7 +541,7 @@ class GMT_MX(GmtMirrors):
             C = phaseStats.atmOTF(rho,_r0_,L0)
 
         if AW0 is None:
-            _src_ = Source(src.band,
+            _src_ = Source(src.band.decode(),
                            rays_box_size=src.rays.L,
                            rays_box_sampling=src.rays.N_L,
                            rays_origin=[0,0,25])
@@ -577,7 +577,7 @@ class GMT_MX(GmtMirrors):
 
     def AGWS_calibrate(self,wfs,gs,stroke=None,coupled=False,decoupled=False, 
                        fluxThreshold=0.0, filterMirrorRotation=True,
-                       includeBM=True,
+                       includeBM=True, includeMount=False,
                        calibrationVaultKwargs=None):
         gs.reset()
         self.reset()
@@ -594,6 +594,8 @@ class GMT_MX(GmtMirrors):
             D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
             if includeBM:
                 D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=stroke[4]) )
+            if includeMount:
+                D.append( self.calibrate(gwfs,gs,mirror='MOUNT',mode='pointing',stroke=ceo.constants.ARCSEC2RAD) )
             D  = np.concatenate(D,axis=1)
             return CalibrationVault([D],**calibrationVaultKwargs)
         elif decoupled:
@@ -655,106 +657,106 @@ class GMT_MX(GmtMirrors):
 
 
     def cloop_calib_init(self, D, nPx, onaxis_wfs_nLenslet=60, sh_thr=0.2, AOtype=None, svd_thr=1e-9, RECdir='./'):
-	assert AOtype == 'NGAOish' or AOtype == 'LTAOish', "AOtype should be either 'NGAOish', or 'LTAOish'"
-	self.AOtype = AOtype
+        assert AOtype == 'NGAOish' or AOtype == 'LTAOish', "AOtype should be either 'NGAOish', or 'LTAOish'"
+        self.AOtype = AOtype
 
-	#----> ON-AXIS AO SH WFS:
-	d = D/onaxis_wfs_nLenslet
-	self.cl_wfs = GeometricShackHartmann(onaxis_wfs_nLenslet, d, N_GS=1)
-	self.cl_gs = Source("R",zenith=0.,azimuth=0.,
-		rays_box_size=D, rays_box_sampling=nPx, rays_origin=[0.0,0.0,25])
+        #----> ON-AXIS AO SH WFS:
+        d = D/onaxis_wfs_nLenslet
+        self.cl_wfs = GeometricShackHartmann(onaxis_wfs_nLenslet, d, N_GS=1)
+        self.cl_gs = Source("R",zenith=0.,azimuth=0.,
+                rays_box_size=D, rays_box_sampling=nPx, rays_origin=[0.0,0.0,25])
 
-	# Calibrate SH (valid SAs, slope null vector)
-	self.cl_gs.reset()
-	self.reset()
-	self.propagate(self.cl_gs)
-	self.cl_wfs.calibrate(self.cl_gs,sh_thr)
+        # Calibrate SH (valid SAs, slope null vector)
+        self.cl_gs.reset()
+        self.reset()
+        self.propagate(self.cl_gs)
+        self.cl_wfs.calibrate(self.cl_gs,sh_thr)
 
-	#----> ON-AXIS SEGMENT PISTON SENSOR:
-	if AOtype=='NGAOish':
-	    self.onps = IdealSegmentPistonSensor(self.cl_gs, D, nPx, segment='full')
-	    self.cl_gs.reset()
-	    self.reset()
-	    self.propagate(self.cl_gs)
-	    self.onps_signal_ref = self.onps.piston(self.cl_gs).ravel() #[0:6] # reference signal
+        #----> ON-AXIS SEGMENT PISTON SENSOR:
+        if AOtype=='NGAOish':
+            self.onps = IdealSegmentPistonSensor(self.cl_gs, D, nPx, segment='full')
+            self.cl_gs.reset()
+            self.reset()
+            self.propagate(self.cl_gs)
+            self.onps_signal_ref = self.onps.piston(self.cl_gs).ravel() #[0:6] # reference signal
 
-	#-----> ON-AXIS AO SYSTEM INTERACTION MATRIX CALIBRATIONS
-	# 1. SH  - M2 Zernike modes
-	# 2. SH  - M2 SPP
-	# 3. SPS - M2 Zernike modes  (Zero matrix)
-	# 4. SPS - M2 SPP
-	print("Calibrating on-axis "+AOtype+" AO system for closed-loop IntMat calibration")
-	print("--------------------------------------------------------------------------")
-	print("\n--> on-axis SH:")
-	# 1. SH - M2 segment Zernikes IM
-    	fname = 'IM_SHgeom'+\
-    	'_'+self.M2.mirror_modes_type+'_nmode'+str(self.M2.modes.n_mode)+'_SHthr%1.1f.npz'%sh_thr
-   	fnameFull = os.path.normpath(os.path.join(RECdir,fname))
+        #-----> ON-AXIS AO SYSTEM INTERACTION MATRIX CALIBRATIONS
+        # 1. SH  - M2 Zernike modes
+        # 2. SH  - M2 SPP
+        # 3. SPS - M2 Zernike modes  (Zero matrix)
+        # 4. SPS - M2 SPP
+        print("Calibrating on-axis "+AOtype+" AO system for closed-loop IntMat calibration")
+        print("--------------------------------------------------------------------------")
+        print("\n--> on-axis SH:")
+        # 1. SH - M2 segment Zernikes IM
+        fname = 'IM_SHgeom'+\
+        '_'+self.M2.mirror_modes_type+'_nmode'+str(self.M2.modes.n_mode)+'_SHthr%1.1f.npz'%sh_thr
+        fnameFull = os.path.normpath(os.path.join(RECdir,fname))
 
-	Zstroke = 20e-9 #m rms
-	z_first_mode = 1  # to skip piston
+        Zstroke = 20e-9 #m rms
+        z_first_mode = 1  # to skip piston
 
-    	if os.path.isfile(fnameFull) == False:
-	    D_M2_Z = self.calibrate(self.cl_wfs, self.cl_gs, mirror="M2", mode=self.M2.mirror_modes_type, stroke=Zstroke,
-			   first_mode=z_first_mode)
-    	else:
-            print 'Reading file: '+fnameFull
+        if os.path.isfile(fnameFull) == False:
+            D_M2_Z = self.calibrate(self.cl_wfs, self.cl_gs, mirror="M2", mode=self.M2.mirror_modes_type, stroke=Zstroke,
+                           first_mode=z_first_mode)
+        else:
+            print('Reading file: '+fnameFull)
             ftemp = np.load(fnameFull)
             D_M2_Z = ftemp.f.D_M2
             ftemp.close()
 
-	nzernall = (D_M2_Z.shape)[1]  ## number of zernike DoFs calibrated
-	#n_zern = self.M2.modes.n_mode
-	# Identify subapertures belonging to two adjacent segments (leading to control leakage)
-	#QQ = D_M2_Z == 0
-	#LL = np.sum(QQ, axis=1)
-	#LI = np.where( LL[0:self.cl_wfs.n_valid_lenslet] < (n_zern-1)*6)
-	#print ("   A total of %d leaking SH WFS SAs identified.\n"%(LI[0].shape))
-	#vlens = self.cl_wfs.valid_lenslet.f.host().ravel()>0
-	#idx = np.where( vlens == 1)
-	#vlens[idx[0][LI]] = 0
-	#leak_slopes_idx = np.array([LI[0], LI[0]+self.cl_wfs.n_valid_lenslet]).ravel()
-	#D_M2_Z[leak_slopes_idx,:] = 0
+        nzernall = (D_M2_Z.shape)[1]  ## number of zernike DoFs calibrated
+        #n_zern = self.M2.modes.n_mode
+        # Identify subapertures belonging to two adjacent segments (leading to control leakage)
+        #QQ = D_M2_Z == 0
+        #LL = np.sum(QQ, axis=1)
+        #LI = np.where( LL[0:self.cl_wfs.n_valid_lenslet] < (n_zern-1)*6)
+        #print ("   A total of %d leaking SH WFS SAs identified.\n"%(LI[0].shape))
+        #vlens = self.cl_wfs.valid_lenslet.f.host().ravel()>0
+        #idx = np.where( vlens == 1)
+        #vlens[idx[0][LI]] = 0
+        #leak_slopes_idx = np.array([LI[0], LI[0]+self.cl_wfs.n_valid_lenslet]).ravel()
+        #D_M2_Z[leak_slopes_idx,:] = 0
 
-	if AOtype=='NGAOish':
-	    # 2. SH - M2 segment piston IM
-	    PSstroke = 200e-9 #m
-	    D_M2_PS_sh = self.calibrate(self.cl_wfs, self.cl_gs, mirror="M2", mode="segment piston", stroke=PSstroke)
-	    #D_M2_PS_sh[leak_slopes_idx,:] = 0
+        if AOtype=='NGAOish':
+            # 2. SH - M2 segment piston IM
+            PSstroke = 200e-9 #m
+            D_M2_PS_sh = self.calibrate(self.cl_wfs, self.cl_gs, mirror="M2", mode="segment piston", stroke=PSstroke)
+            #D_M2_PS_sh[leak_slopes_idx,:] = 0
 
-	    print("\n--> on-axis SPS:")
-	    # 3. Ideal SPS - M2 segment Zernikes IM
-	    D_M2_Z_PSideal = np.zeros((7,nzernall))
-	    #Zstroke = 20e-9 #m rms
-	    #z_first_mode = 1  # to skip some low-order modes
-	    #D_M2_Z_PSideal = self.calibrate(self.onps, self.cl_gs, mirror="M2", mode=self.M2.mirror_modes_type, stroke=Zstroke, first_mode=z_first_mode)
-	    
-	    print 'AO SPS - M2 Segment Zernike IM:'
-	    print D_M2_Z_PSideal.shape
+            print("\n--> on-axis SPS:")
+            # 3. Ideal SPS - M2 segment Zernikes IM
+            D_M2_Z_PSideal = np.zeros((7,nzernall))
+            #Zstroke = 20e-9 #m rms
+            #z_first_mode = 1  # to skip some low-order modes
+            #D_M2_Z_PSideal = self.calibrate(self.onps, self.cl_gs, mirror="M2", mode=self.M2.mirror_modes_type, stroke=Zstroke, first_mode=z_first_mode)
+            
+            print('AO SPS - M2 Segment Zernike IM:')
+            print(D_M2_Z_PSideal.shape)
 
-	    # 4. Ideal SPS - M2 segment piston IM
-	    PSstroke = 50e-9 #m
-	    D_M2_PSideal = self.calibrate(self.onps, self.cl_gs, mirror="M2", mode="segment piston", stroke=PSstroke)
+            # 4. Ideal SPS - M2 segment piston IM
+            PSstroke = 50e-9 #m
+            D_M2_PSideal = self.calibrate(self.onps, self.cl_gs, mirror="M2", mode="segment piston", stroke=PSstroke)
 
-	    #----> Create super-merger IM for "simplified NGAO control"
-	    # DoFs: segment Zernikes (Z2->Zx), segment Piston
-	    # Sensors: on-axis SH WFS, on-axis idealized Piston Sensor
-	    D_AO_SH = np.concatenate((D_M2_Z, D_M2_PS_sh), axis=1)
-	    D_AO_PS = np.concatenate((D_M2_Z_PSideal, D_M2_PSideal), axis=1)
- 	    D_AO = np.concatenate((D_AO_SH, D_AO_PS), axis=0)
+            #----> Create super-merger IM for "simplified NGAO control"
+            # DoFs: segment Zernikes (Z2->Zx), segment Piston
+            # Sensors: on-axis SH WFS, on-axis idealized Piston Sensor
+            D_AO_SH = np.concatenate((D_M2_Z, D_M2_PS_sh), axis=1)
+            D_AO_PS = np.concatenate((D_M2_Z_PSideal, D_M2_PSideal), axis=1)
+            D_AO = np.concatenate((D_AO_SH, D_AO_PS), axis=0)
 
-	elif AOtype=='LTAOish':
-	    D_AO = D_M2_Z
+        elif AOtype=='LTAOish':
+            D_AO = D_M2_Z
 
-	print '\nOn-axis AO merged IM condition number: %f'%np.linalg.cond(D_AO)
-	self.R_AO = np.linalg.pinv(D_AO, rcond=svd_thr)
-	#return [D_M2_Z,D_M2_PS_sh, D_M2_Z_PSideal, D_M2_PSideal]
+        print('\nOn-axis AO merged IM condition number: %f'%np.linalg.cond(D_AO))
+        self.R_AO = np.linalg.pinv(D_AO, rcond=svd_thr)
+        #return [D_M2_Z,D_M2_PS_sh, D_M2_Z_PSideal, D_M2_PSideal]
 
 # JGMT_MX
-from utilities import JSONAbstract
+from .utilities import JSONAbstract
 class JGMT_MX(JSONAbstract,GMT_MX):
     def __init__(self, jprms = None, jsonfile = None):
-        print "@(ceo.JGMT_MX)>"
+        print("@(ceo.JGMT_MX)>")
         JSONAbstract.__init__(self,jprms=jprms, jsonfile=jsonfile)
         GMT_MX.__init__(self,self.jprms["pupil size"],
                         self.jprms["pupil sampling"],
@@ -765,7 +767,7 @@ class JGMT_MX(JSONAbstract,GMT_MX):
 class SHTT7(ShackHartmann):
 
     def __init__(self, N_SIDE_LENSLET, N_PX_LENSLET, d,
-	          DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, N_GS=1):
+                  DFT_osf=2, N_PX_IMAGE=None, BIN_IMAGE=1, N_GS=1):
         ShackHartmann.__init__(self,N_SIDE_LENSLET, N_PX_LENSLET, d,
                                 DFT_osf=DFT_osf,
                                 N_PX_IMAGE=N_PX_IMAGE,
@@ -788,7 +790,7 @@ class SHTT7(ShackHartmann):
         self.M = np.zeros((nvl,7))
         mas2rad = 1e-3*math.pi/180/3600
         px_scale = self.pixel_scale
-        print "TT7 pixel scale: %.2fmas"%(px_scale/mas2rad)
+        print("TT7 pixel scale: %.2fmas"%(px_scale/mas2rad))
         stroke = stroke_pixel*px_scale
         slopes_cut = stroke_pixel**2*2*slopes_threshold
 
@@ -859,11 +861,11 @@ class GeometricTT7(Sensor):
 
     def analyze(self, src):
         data = src.segmentsWavefrontGradient()
-	self.valid_slopes = data - self.reference_slopes
+        self.valid_slopes = data - self.reference_slopes
 
     def propagate(self, src):
         data = src.segmentsWavefrontGradient()
-	self.valid_slopes = data - self.reference_slopes
+        self.valid_slopes = data - self.reference_slopes
 
     def process(self):
         pass
@@ -893,36 +895,36 @@ class DispersedFringeSensor(SegmentPistonSensor):
     Attributes
     ----------
     INIT_ALL_ATTRIBUTES : bool ; Default: False
-	If True, additional attributes (mainly for display and debugging) will be created. See list of Additional Attributes below.
+        If True, additional attributes (mainly for display and debugging) will be created. See list of Additional Attributes below.
     fftlet_rotation : float ; vector with 12xN_SRC elements
         The angle of the line joining the center of the three lobes of the fftlet image. Init by calibrate() method.
     lobe_detection : string  ; default: 'gaussfit'
-	Algorithm for lobe detection, either 'gaussfit' for 2D gaussian fit, or 'peak_value' for peak detection.
+        Algorithm for lobe detection, either 'gaussfit' for 2D gaussian fit, or 'peak_value' for peak detection.
     spsmask : bool
-	Data cube containing the masks (one for each fftlet) required to isolate the "detection blob", i.e. the upper-most lobe from which the measurement will be computed. Init by calibrate() method.
+        Data cube containing the masks (one for each fftlet) required to isolate the "detection blob", i.e. the upper-most lobe from which the measurement will be computed. Init by calibrate() method.
 
     measurement : float
-	Dispersed Fringe Sensor output measurement vector; y-coordinate of the detection blob in the rotated reference frame (i.e. the reference frame having the x-axis passing through the three lobe peaks on a fftlet image, and the y-axis perpendicular to it. Units: pixels in the fftlet image plane.
+        Dispersed Fringe Sensor output measurement vector; y-coordinate of the detection blob in the rotated reference frame (i.e. the reference frame having the x-axis passing through the three lobe peaks on a fftlet image, and the y-axis perpendicular to it. Units: pixels in the fftlet image plane.
 
     Attributes (Additional)
     -----------------------
     blob_data : float
-	fftlet peak detection data; blob_data is a matrix containing the (x,y,radius) of the three lobes on each fftlet image. Init by calibrate() method.
+        fftlet peak detection data; blob_data is a matrix containing the (x,y,radius) of the three lobes on each fftlet image. Init by calibrate() method.
 
     pl_m, pl_b : float
-	Slope and y-intercept of the line passing through the three lobe peaks on a fftlet image. Init by calibrate() method.
+        Slope and y-intercept of the line passing through the three lobe peaks on a fftlet image. Init by calibrate() method.
 
     pp_m, pp_b : float
-	Slope and y-intercept of the perpendicular line to the line above, passing between the central and the "detection blob" in a ffltlet image. Init by calibrate() method.
+        Slope and y-intercept of the perpendicular line to the line above, passing between the central and the "detection blob" in a ffltlet image. Init by calibrate() method.
 
     fftlet_fit_params : float
-	Gaussian fit parameters of detection blobs (Amplitude normalized to central lobe peak, y, x, width_y, width_x, rotation). Init by process() method.
+        Gaussian fit parameters of detection blobs (Amplitude normalized to central lobe peak, y, x, width_y, width_x, rotation). Init by process() method.
 
     fftlet_fit_images : float
-	Data cube containing best-fit 2D gaussians of detection blobs. Init by process() method.
+        Data cube containing best-fit 2D gaussians of detection blobs. Init by process() method.
 
     measurement_ortho : float
-	x-coordinate of the detection blob in the rotated reference frame (i.e. the reference frame having the x-axis passing through the three lobe peaks on a fftlet image, and the y-axis perpendicular to it. Init by process() method.
+        x-coordinate of the detection blob in the rotated reference frame (i.e. the reference frame having the x-axis passing through the three lobe peaks on a fftlet image, and the y-axis perpendicular to it. Init by process() method.
 
     See also
     --------
@@ -937,257 +939,257 @@ class DispersedFringeSensor(SegmentPistonSensor):
                                      dispersion=dispersion,
                                      field_of_view=field_of_view,
                                      nyquist_factor=nyquist_factor)
-	self._N_SRC = src.N_SRC
-	self.INIT_ALL_ATTRIBUTES = False
-	self.lobe_detection = 'gaussfit'
+        self._N_SRC = src.N_SRC
+        self.INIT_ALL_ATTRIBUTES = False
+        self.lobe_detection = 'gaussfit'
 
     def init_detector_mask(self, mask_size):
-	"""
-	Defines the circular mask to be applied over each fringe image.
+        """
+        Defines the circular mask to be applied over each fringe image.
 
-	Parameters
-	----------
-	mask_size: float
-	   Diameter of mask in arcseconds. 
-	"""
-	mask_size_px = mask_size / (self.pixel_scale * constants.RAD2ARCSEC)
-	print "Size of DFS detector mask [pix]: %d"%(np.round(mask_size_px)) 
-	N_PX_FRINGE_IMAGE = self.camera.N_PX_IMAGE / self.camera.BIN_IMAGE
-	scale = mask_size_px / N_PX_FRINGE_IMAGE
-	circ = Telescope(N_PX_FRINGE_IMAGE, 1, scale=scale)
-	circ_m = circ.f.host(shape=(N_PX_FRINGE_IMAGE,N_PX_FRINGE_IMAGE))
-	big_circ_m = np.tile(np.tile(circ_m,self.camera.N_SIDE_LENSLET).T,self.camera.N_SIDE_LENSLET)
-	gpu_big_circ_m = cuFloatArray(host_data=big_circ_m)
-	self.fft_mask.alter(gpu_big_circ_m)
+        Parameters
+        ----------
+        mask_size: float
+           Diameter of mask in arcseconds. 
+        """
+        mask_size_px = mask_size / (self.pixel_scale * constants.RAD2ARCSEC)
+        print("Size of DFS detector mask [pix]: %d"%(np.round(mask_size_px)) )
+        N_PX_FRINGE_IMAGE = self.camera.N_PX_IMAGE / self.camera.BIN_IMAGE
+        scale = mask_size_px / N_PX_FRINGE_IMAGE
+        circ = Telescope(N_PX_FRINGE_IMAGE, 1, scale=scale)
+        circ_m = circ.f.host(shape=(N_PX_FRINGE_IMAGE,N_PX_FRINGE_IMAGE))
+        big_circ_m = np.tile(np.tile(circ_m,self.camera.N_SIDE_LENSLET).T,self.camera.N_SIDE_LENSLET)
+        gpu_big_circ_m = cuFloatArray(host_data=big_circ_m)
+        self.fft_mask.alter(gpu_big_circ_m)
 
     def gaussian_func(self, height, center_x, center_y, width_x, width_y, rotation):
-    	"""
-	Returns a gaussian function G(x,y) to produce a 2D Gaussian with the given parameters
+        """
+        Returns a gaussian function G(x,y) to produce a 2D Gaussian with the given parameters
 
-	Parameters
-	----------
-	height : float
-	    Amplitude of the Gaussian
-	center_x : float
-	    x-coordinates of the Gaussian's center in pixels.
-	center_y : float
-	    y-coordinates of the Gaussian's center in pixels.
-	width_x : float
-	    standard deviation in the x-direction in pixels.
-	width_y : float
-	    standard deviation in the y-direction in  pixels.
-	rotation : float
-	    angle of rotation of the Gaussian (x,y)  axes in degrees.
-	"""
-	width_x = float(np.absolute(width_x))
-	width_y = float(np.absolute(width_y))
-	rotation = np.deg2rad(rotation)
+        Parameters
+        ----------
+        height : float
+            Amplitude of the Gaussian
+        center_x : float
+            x-coordinates of the Gaussian's center in pixels.
+        center_y : float
+            y-coordinates of the Gaussian's center in pixels.
+        width_x : float
+            standard deviation in the x-direction in pixels.
+        width_y : float
+            standard deviation in the y-direction in  pixels.
+        rotation : float
+            angle of rotation of the Gaussian (x,y)  axes in degrees.
+        """
+        width_x = float(np.absolute(width_x))
+        width_y = float(np.absolute(width_y))
+        rotation = np.deg2rad(rotation)
 
-	def rotgauss(x,y):
+        def rotgauss(x,y):
             xp = (x-center_x) * np.cos(rotation) - (y-center_y) * np.sin(rotation) + center_x
             yp = (x-center_x) * np.sin(rotation) + (y-center_y) * np.cos(rotation) + center_y
             g = height*np.exp( -(((center_x-xp)/width_x)**2+
-              		  	 ((center_y-yp)/width_y)**2)/2.)
+                                 ((center_y-yp)/width_y)**2)/2.)
             return g
-    	return rotgauss
+        return rotgauss
 
     def fitgaussian(self, data):
-    	"""
-	Fits a 2D Gaussian to the input data, and returns the Gaussian fit parameters: (amplidute, x, y, width_x, width_y, rotation)
+        """
+        Fits a 2D Gaussian to the input data, and returns the Gaussian fit parameters: (amplidute, x, y, width_x, width_y, rotation)
 
-	Parameters
-	----------
-	data : numpy 2D ndarray
-	    The array containing the image (i.e. the detection blob) to be fitted with a 2D Gaussian
-	"""
-    	def moments():
-    	    total = data.sum()
-    	    X, Y = np.indices(data.shape)
-    	    x = (X*data).sum()/total
-    	    y = (Y*data).sum()/total
-    	    col = data[:, int(y)]
-    	    width_x = np.sqrt(abs((np.arange(col.size)-y)**2*col).sum()/col.sum())
-    	    row = data[int(x), :]
-    	    width_y = np.sqrt(abs((np.arange(row.size)-x)**2*row).sum()/row.sum())
-    	    height = data.max()
-    	    return height, x, y, width_x, width_y, 0.0
+        Parameters
+        ----------
+        data : numpy 2D ndarray
+            The array containing the image (i.e. the detection blob) to be fitted with a 2D Gaussian
+        """
+        def moments():
+            total = data.sum()
+            X, Y = np.indices(data.shape)
+            x = (X*data).sum()/total
+            y = (Y*data).sum()/total
+            col = data[:, int(y)]
+            width_x = np.sqrt(abs((np.arange(col.size)-y)**2*col).sum()/col.sum())
+            row = data[int(x), :]
+            width_y = np.sqrt(abs((np.arange(row.size)-x)**2*row).sum()/row.sum())
+            height = data.max()
+            return height, x, y, width_x, width_y, 0.0
 
-	params = moments()
-    	errorfunction = lambda p: np.ravel(self.gaussian_func(*p)(*np.indices(data.shape)) - data)
-    	p, success = leastsq(errorfunction, params)
-    	return p
+        params = moments()
+        errorfunction = lambda p: np.ravel(self.gaussian_func(*p)(*np.indices(data.shape)) - data)
+        p, success = leastsq(errorfunction, params)
+        return p
 
     def get_data_cube(self, data_type='fftlet'):
-	"""
-	Returns the DFS data (either fringe or fftlet images) in cube format
+        """
+        Returns the DFS data (either fringe or fftlet images) in cube format
 
-	Parameters
-	----------
-	data_type : string
-		Set to "camera" to return fringes; set to "fftlet" to return fftlet images; default: fftlet
-	"""
+        Parameters
+        ----------
+        data_type : string
+                Set to "camera" to return fringes; set to "fftlet" to return fftlet images; default: fftlet
+        """
 
-	assert data_type == 'fftlet' or data_type == 'camera' or data_type == 'pupil_masks', "data_type should be either 'fftlet', 'camera', or 'pupil_masks'"
+        assert data_type == 'fftlet' or data_type == 'camera' or data_type == 'pupil_masks', "data_type should be either 'fftlet', 'camera', or 'pupil_masks'"
 
-	n_lenslet = self.camera.N_SIDE_LENSLET
+        n_lenslet = self.camera.N_SIDE_LENSLET
 
-	if data_type == 'fftlet':
-	    data = self.fftlet.host()
-	    n_px = self.camera.N_PX_IMAGE
-	elif data_type == 'camera':
-	    data = self.camera.frame.host()
- 	    n_px = self.camera.N_PX_IMAGE/2
-	elif data_type == 'pupil_masks':
-	    data = self.W.amplitude.host()
-	    n_px = (data.shape)[0] / n_lenslet
+        if data_type == 'fftlet':
+            data = self.fftlet.host()
+            n_px = self.camera.N_PX_IMAGE
+        elif data_type == 'camera':
+            data = self.camera.frame.host()
+            n_px = self.camera.N_PX_IMAGE/2
+        elif data_type == 'pupil_masks':
+            data = self.W.amplitude.host()
+            n_px = (data.shape)[0] / n_lenslet
 
-    	dataCube = np.zeros((n_px, n_px, self._N_SRC*12))
-    	k = 0
-    	for j in range(n_lenslet):
+        dataCube = np.zeros((n_px, n_px, self._N_SRC*12))
+        k = 0
+        for j in range(n_lenslet):
             for i in range(n_lenslet):
-            	dataCube[:,:,k] = data[i*n_px:(i+1)*n_px, j*n_px:(j+1)*n_px]
-            	k += 1
-            	if k == self._N_SRC*12: break
+                dataCube[:,:,k] = data[i*n_px:(i+1)*n_px, j*n_px:(j+1)*n_px]
+                k += 1
+                if k == self._N_SRC*12: break
             if k == self._N_SRC*12: break
-    	return dataCube
+        return dataCube
 
     def calibrate(self, src, gmt):
-	"""
-	Calibrates the lobe detection masks (spsmask).
+        """
+        Calibrates the lobe detection masks (spsmask).
 
-    	Parameters
-    	----------
-    	src : Source
+        Parameters
+        ----------
+        src : Source
              The Source object used for piston sensing
-    	gmt : GMT_MX
+        gmt : GMT_MX
              The GMT object
-	"""
-	gmt.reset()
-	src.reset()
-	self.reset()
-	gmt.propagate(src)
-	self.propagate(src)
-	self.fft()
-	dataCube = self.get_data_cube(data_type='fftlet')
+        """
+        gmt.reset()
+        src.reset()
+        self.reset()
+        gmt.propagate(src)
+        self.propagate(src)
+        self.fft()
+        dataCube = self.get_data_cube(data_type='fftlet')
 
-	### Essential data
-	self.fftlet_rotation = np.zeros(src.N_SRC*12)
-	self.spsmask = np.zeros((self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE,src.N_SRC*12), dtype='bool')
-	### Additional data for visualization and debugging
-	if self.INIT_ALL_ATTRIBUTES == True:
-	    self.blob_data = np.zeros((src.N_SRC*12, 3, 3))
-	    self.pl_m = np.zeros((src.N_SRC*12))
-	    self.pl_b = np.zeros((src.N_SRC*12))
-	    self.pp_m = np.zeros((src.N_SRC*12))
-	    self.pp_b = np.zeros((src.N_SRC*12))
+        ### Essential data
+        self.fftlet_rotation = np.zeros(src.N_SRC*12)
+        self.spsmask = np.zeros((self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE,src.N_SRC*12), dtype='bool')
+        ### Additional data for visualization and debugging
+        if self.INIT_ALL_ATTRIBUTES == True:
+            self.blob_data = np.zeros((src.N_SRC*12, 3, 3))
+            self.pl_m = np.zeros((src.N_SRC*12))
+            self.pl_b = np.zeros((src.N_SRC*12))
+            self.pp_m = np.zeros((src.N_SRC*12))
+            self.pp_b = np.zeros((src.N_SRC*12))
 
-	for k in range(src.N_SRC*12):
-	    ### Find center coordinates of three lobes (i.e. central and two lateral ones) on each imagelet.
-	    blob_data = blob_log(dataCube[:,:,k], min_sigma=5, max_sigma=10, overlap=1,
-				 threshold=0.005*np.max(dataCube[:,:,k]))
-	    assert blob_data.shape == (3,3), "lobe detection failed"
-    	    blob_data = blob_data[np.argsort(blob_data[:,0])]  #order data in asceding y-coord
+        for k in range(src.N_SRC*12):
+            ### Find center coordinates of three lobes (i.e. central and two lateral ones) on each imagelet.
+            blob_data = blob_log(dataCube[:,:,k], min_sigma=5, max_sigma=10, overlap=1,
+                                 threshold=0.005*np.max(dataCube[:,:,k]))
+            assert blob_data.shape == (3,3), "lobe detection failed"
+            blob_data = blob_data[np.argsort(blob_data[:,0])]  #order data in asceding y-coord
 
-	    ### The code below does the following:
-	    ### 1) Fit a line passing through the centers of the three lobes (aka pl line).
-	    ###    y = pl_m * x + pl_b
-	    ### 2) Find the perpendicular to the pl line (aka pp line) passing through a point lying between
-	    ###    the central and uppermost lobe (aka BORDER POINT).
-	    ###    y = pp_m * x + pp_b
+            ### The code below does the following:
+            ### 1) Fit a line passing through the centers of the three lobes (aka pl line).
+            ###    y = pl_m * x + pl_b
+            ### 2) Find the perpendicular to the pl line (aka pp line) passing through a point lying between
+            ###    the central and uppermost lobe (aka BORDER POINT).
+            ###    y = pp_m * x + pp_b
 
-	    ### BORDER POINT coordinates (pp_x, pp,y)
-	    ### separation tweaking: 0.5 will select BORDER POINT equidistant to the two lobes.
-	    separation_tweaking = 0.6
-	    pp_py, pp_px = blob_data[1,0:2] + separation_tweaking*(blob_data[2,0:2] - blob_data[1,0:2])
+            ### BORDER POINT coordinates (pp_x, pp,y)
+            ### separation tweaking: 0.5 will select BORDER POINT equidistant to the two lobes.
+            separation_tweaking = 0.6
+            pp_py, pp_px = blob_data[1,0:2] + separation_tweaking*(blob_data[2,0:2] - blob_data[1,0:2])
 
-    	    if np.all(blob_data[:,1] == blob_data[0,1]):    # pl line is VERTICAL
-        	pp_m = 0.
-        	self.fftlet_rotation[k] = 0.
-		pl_m = float('inf')
-    	    else:
-        	pl_m, pl_b = np.polyfit(blob_data[:,1], blob_data[:,0], 1)  # pl line fitting
-        	pp_m = -1.0 / pl_m
-        	fftlet_rotation = np.arctan(pl_m)
-		### We know that the rotation angles are [-90, -30, 30, 90].
-		apriori_angles = np.array([-90,-30,30,90])
-		fftlet_rotation = (math.pi/180)*min(apriori_angles, key=lambda aa:abs(aa-fftlet_rotation*180/math.pi))
-		self.fftlet_rotation[k] = fftlet_rotation
-		pp_m = -1.0/ np.tan(fftlet_rotation)
+            if np.all(blob_data[:,1] == blob_data[0,1]):    # pl line is VERTICAL
+                pp_m = 0.
+                self.fftlet_rotation[k] = 0.
+                pl_m = float('inf')
+            else:
+                pl_m, pl_b = np.polyfit(blob_data[:,1], blob_data[:,0], 1)  # pl line fitting
+                pp_m = -1.0 / pl_m
+                fftlet_rotation = np.arctan(pl_m)
+                ### We know that the rotation angles are [-90, -30, 30, 90].
+                apriori_angles = np.array([-90,-30,30,90])
+                fftlet_rotation = (math.pi/180)*min(apriori_angles, key=lambda aa:abs(aa-fftlet_rotation*180/math.pi))
+                self.fftlet_rotation[k] = fftlet_rotation
+                pp_m = -1.0/ np.tan(fftlet_rotation)
 
-    	    pp_b = pp_py - pp_m * pp_px
+            pp_b = pp_py - pp_m * pp_px
 
-	    ### Define the SPS masks as the region y > pp line
-	    u = np.arange(self.camera.N_PX_IMAGE)
-	    v = np.arange(self.camera.N_PX_IMAGE)
-	    xx,yy = np.meshgrid(u,v)
-	    self.spsmask[:,:,k] = yy > xx*pp_m+pp_b
+            ### Define the SPS masks as the region y > pp line
+            u = np.arange(self.camera.N_PX_IMAGE)
+            v = np.arange(self.camera.N_PX_IMAGE)
+            xx,yy = np.meshgrid(u,v)
+            self.spsmask[:,:,k] = yy > xx*pp_m+pp_b
 
-	    if self.INIT_ALL_ATTRIBUTES == True:
-		self.blob_data[k,:,:] = blob_data
-		self.pl_m[k] = pl_m
-		self.pl_b[k] = pl_b
-		self.pp_m[k] = pp_m
-		self.pp_b[k] = pp_b
+            if self.INIT_ALL_ATTRIBUTES == True:
+                self.blob_data[k,:,:] = blob_data
+                self.pl_m[k] = pl_m
+                self.pl_b[k] = pl_b
+                self.pp_m[k] = pp_m
+                self.pp_b[k] = pp_b
 
     def reset(self):
-	"""
-	Resets both the SPS detector frame and the fftlet buffer to zero.
-	"""
-	self.camera.reset()
-	self.fftlet.reset()
+        """
+        Resets both the SPS detector frame and the fftlet buffer to zero.
+        """
+        self.camera.reset()
+        self.fftlet.reset()
 
     def process(self):
-	"""
-	Processes the Dispersed Fringe Sensor detector frame
-	"""
-	dataCube = self.get_data_cube(data_type='fftlet')
+        """
+        Processes the Dispersed Fringe Sensor detector frame
+        """
+        dataCube = self.get_data_cube(data_type='fftlet')
         self.measurement = np.zeros(self._N_SRC*12)
 
-	if self.INIT_ALL_ATTRIBUTES == True:
+        if self.INIT_ALL_ATTRIBUTES == True:
             self.fftlet_fit_params = np.zeros((6,self._N_SRC*12))
-	    self.measurement_ortho = np.zeros(self._N_SRC*12)
-	    if self.lobe_detection == 'gaussfit':
-	        self.fftlet_fit_images = np.zeros((self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE,self._N_SRC*12))
+            self.measurement_ortho = np.zeros(self._N_SRC*12)
+            if self.lobe_detection == 'gaussfit':
+                self.fftlet_fit_images = np.zeros((self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE,self._N_SRC*12))
 
         for k in range(self._N_SRC*12):
-    	    mylobe = dataCube[:,:,k] * self.spsmask[:,:,k]
-    	    centralpeak = np.max(dataCube[:,:,k])
-    	    if self.lobe_detection == 'gaussfit':
-		params = self.fitgaussian(mylobe)
-        	(height, y, x, width_y, width_x, rot) = params
-    	    elif self.lobe_detection == 'peak_value':
-		mylobe  = rotate(mylobe,self.fftlet_rotation[k]*180/np.pi, reshape=False)
-        	height = np.max(mylobe)
-        	height_pos = np.argmax(mylobe)
-		y, x = np.unravel_index(height_pos, mylobe.shape)
-		if y < (mylobe.shape[0]-1) and x < (mylobe.shape[1]-1):
-		    dx = 0.5*(mylobe[y,x-1] - mylobe[y,x+1]) / (mylobe[y,x-1]+mylobe[y,x+1]-2*height+1e-6)
-		    dy = 0.5*(mylobe[y-1,x] - mylobe[y+1,x]) / (mylobe[y-1,x]+mylobe[y+1,x]-2*height+1e-6)
-		    x += dx
-		    y += dy
-        	width_x, width_y, rot = 0,0,0
-	    #x1 = x * np.cos(-self.fftlet_rotation[k]) - y * np.sin(-self.fftlet_rotation[k])
-	    #y1 = x * np.sin(-self.fftlet_rotation[k]) + y * np.cos(-self.fftlet_rotation[k])
-	    y1 = y
-	    x1 = x
-	    self.measurement[k] = y1
+            mylobe = dataCube[:,:,k] * self.spsmask[:,:,k]
+            centralpeak = np.max(dataCube[:,:,k])
+            if self.lobe_detection == 'gaussfit':
+                params = self.fitgaussian(mylobe)
+                (height, y, x, width_y, width_x, rot) = params
+            elif self.lobe_detection == 'peak_value':
+                mylobe  = rotate(mylobe,self.fftlet_rotation[k]*180/np.pi, reshape=False)
+                height = np.max(mylobe)
+                height_pos = np.argmax(mylobe)
+                y, x = np.unravel_index(height_pos, mylobe.shape)
+                if y < (mylobe.shape[0]-1) and x < (mylobe.shape[1]-1):
+                    dx = 0.5*(mylobe[y,x-1] - mylobe[y,x+1]) / (mylobe[y,x-1]+mylobe[y,x+1]-2*height+1e-6)
+                    dy = 0.5*(mylobe[y-1,x] - mylobe[y+1,x]) / (mylobe[y-1,x]+mylobe[y+1,x]-2*height+1e-6)
+                    x += dx
+                    y += dy
+                width_x, width_y, rot = 0,0,0
+            #x1 = x * np.cos(-self.fftlet_rotation[k]) - y * np.sin(-self.fftlet_rotation[k])
+            #y1 = x * np.sin(-self.fftlet_rotation[k]) + y * np.cos(-self.fftlet_rotation[k])
+            y1 = y
+            x1 = x
+            self.measurement[k] = y1
 
-	    if self.INIT_ALL_ATTRIBUTES == True:
-		self.measurement_ortho[k] = x1
-		self.fftlet_fit_params[:,k] = (height / centralpeak, y, x, width_y, width_x, rot)
-		if self.lobe_detection == 'gaussfit':
-		    fftlet_shape = (self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE)
-		    self.fftlet_fit_images[:,:,k] = self.gaussian_func(*params)(*np.indices(fftlet_shape))
+            if self.INIT_ALL_ATTRIBUTES == True:
+                self.measurement_ortho[k] = x1
+                self.fftlet_fit_params[:,k] = (height / centralpeak, y, x, width_y, width_x, rot)
+                if self.lobe_detection == 'gaussfit':
+                    fftlet_shape = (self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE)
+                    self.fftlet_fit_images[:,:,k] = self.gaussian_func(*params)(*np.indices(fftlet_shape))
 
     def analyze(self, src):
-	"""
-	Propagates the guide star to the SPS detector (noiseless) and processes the frame
+        """
+        Propagates the guide star to the SPS detector (noiseless) and processes the frame
 
         Parameters
         ----------
         src : Source
             The piston sensing guide star object
-	"""
+        """
         self.reset()
         self.propagate(src)
         self.fft()
@@ -1209,7 +1211,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
         """
         self.analyze(src)
         p = self.measurement.reshape(-1,12)
-	return p
+        return p
 
     def get_measurement(self):
         """
@@ -1321,7 +1323,7 @@ class IdealSegmentPistonSensor:
         #print self.M.shape
 
     def reset(self):
-	pass
+        pass
 
     def piston(self,src):
         """
@@ -1441,7 +1443,7 @@ class EdgeSensors:
             return q
 
         p = mirror.M_ID - 1
-        print p
+        print(p)
 
         self.rho0 = brenth(fun,mirror.D_clear/2,1+mirror.D_clear/2)
         k = np.arange(6)

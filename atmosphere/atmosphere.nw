@@ -126,6 +126,9 @@ struct atmosphere {
   void get_phase_screen(source *src,
 			float const delta_x, int N_x, float const delta_y, int N_y,
 			float time);
+  void get_phase_screen(source *src,
+			float const delta_x, int N_x, float const delta_y, int N_y,
+			float time, float exponent);
   void get_phase_screen(source *src, int N_SRC,
 			float const delta_x, int N_x, float const delta_y, int N_y,
 			float time);
@@ -183,6 +186,8 @@ struct atmosphere {
 <<phase screen kernel (square)>>
 <<phase screen kernel (layers)>>
 <<phase screen kernel (square and masked)>>
+<<generic phase screen kernel (square)>>
+<<generic phase screen kernel (square and masked)>>
 
 <<phase screen gradient kernel>>
 <<phase screen gradient kernel (masked)>>
@@ -216,7 +221,8 @@ struct atmosphere {
 <<phase screen V.a>>
 <<phase screen V.b>>
 <<phase screen VI>>
-
+<<generic phase screen>>
+  
 <<phase screen gradient I>>
 <<phase screen gradient II>>
 <<phase screen gradient III>>
@@ -1403,6 +1409,112 @@ __global__ void square_plps_masked(float *phase_screen, char *mask,
       phase_screen[kl] = 1.4*r0*sum;
     }
 }
+@
+The following method is computing phase screens replacing the $11/6$ exponent of the phase power spectrum with a used defined exponent.
+<<generic phase screen>>=
+void atmosphere::get_phase_screen(source *src,
+				  float const delta_x, int N_x,
+				  float const delta_y, int N_y,
+				  float time, float exponent)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim( 1+N_x/16 , 1+N_y/16, src->N_SRC);
+  if (src->wavefront.M==NULL) {
+    square_gplps LLL gridDim , blockDim RRR
+      (src->wavefront.phase,
+       delta_x, N_x, delta_y, N_y,
+       d__turbulence,
+       wavenumber*powf(r0,-5.0/6.0),
+       d__layers, N_LAYER,
+       zeta1, eta1, zeta2, eta2,
+       src->dev_ptr, time, exponent);
+  } else {
+    square_gplps_masked LLL gridDim , blockDim RRR
+      (src->wavefront.phase, src->wavefront.M->m,
+       delta_x, N_x, delta_y, N_y,
+       d__turbulence,
+       wavenumber*powf(r0,-5.0/6.0),
+       d__layers, N_LAYER,
+       zeta1, eta1, zeta2, eta2,
+       src->dev_ptr, time, exponent);
+  }
+}
+@  with the kernels
+<<generic phase screen kernel (square)>>=
+__global__ void square_gplps(float *phase_screen,
+			       float const delta_x, int N_x, float const delta_y, int N_y,
+			       profile *turb, float r0, layer *layers, int N_LAYER,
+			       float *zeta1, float *eta1, float *zeta2, float *eta2,
+			       source *src, float time, float exponent)
+{
+  <<declarations>>
+
+  <<thread to coordinate index (square)>>
+
+  sum = 0;
+  if ( (i<N_x) && (j<N_y) )
+    {
+
+      <<variables>>
+
+      for (i=0;i<turb->N_k;i++)
+	{
+	  <<frequency magnitude sum exponent>>
+          for (j=0;j<turb->N_a;j++)
+	    {
+	      <<frequency angle sum>>
+	      for (l=0;l<N_LAYER;l++)
+		{
+		  <<layer sum>>
+		}
+	      sum += sqrt_spectrum_kernel*sum_l;
+	    }
+	}
+      phase_screen[kl] = 1.4*r0*sum;
+    }
+}
+@ and
+<<generic phase screen kernel (square and masked)>>=
+__global__ void square_gplps_masked(float *phase_screen, char *mask,
+				    float const delta_x, int N_x, float const delta_y, int N_y,
+				    profile *turb, float r0, layer *layers, int N_LAYER,
+				    float *zeta1, float *eta1, float *zeta2, float *eta2,
+				    source *src, float time, float exponent)
+{
+  <<declarations>>
+
+  <<thread to coordinate index (square)>>
+
+  sum = 0;
+  if ( ( (i<N_x) && (j<N_y) ) && (mask[i * N_x + j]) )
+    {
+
+      <<variables>>
+
+      for (i=0;i<turb->N_k;i++)
+	{
+	  <<frequency magnitude sum exponent>>
+          for (j=0;j<turb->N_a;j++)
+	    {
+	      <<frequency angle sum>>
+	      for (l=0;l<N_LAYER;l++)
+		{
+		  <<layer sum>>
+		}
+	      sum += sqrt_spectrum_kernel*sum_l;
+	    }
+	}
+      phase_screen[kl] = 1.4*r0*sum;
+    }
+}
+@ where
+<<frequency magnitude sum exponent>>=
+f_red *= f_red0;
+freq_mag = freq_mag0*f_red;
+delta_freq_mag = delta_freq_mag0*f_red;
+sqrt_spectrum_kernel =
+  powf( freq_mag*freq_mag + freq_L0_square, -0.5*exponent)*
+  sqrt(freq_mag*delta_freq_mag*turb->delta);
 @
 Each thread is computing one value of the phase screen at the coordinate [[x_kl = i*delta_x]] and [[y_kl = j*delta_y]]
 <<thread to coordinate index (square)>>=
