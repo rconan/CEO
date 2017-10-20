@@ -761,6 +761,8 @@ cdef class GMT_M1:
             (Txyz,Rxyz)
         """
         <<backward and forward transform>>
+        cdef double[:,:] rigid_body_CS_origin
+        rigid_body_CS_origin = self.rigid_body_CS.origin[:]
         a = 0
         b = 0
         c = theta
@@ -789,7 +791,7 @@ RTT = np.dot(Rc,np.dot(Rb,Ra))
 @ 
 <<transform part 2>>=
 origin = np.ravel(forward_transform(ut,self.rigid_body_CS.R[idx],
-                                    self.rigid_body_CS.origin[idx,:][:,None]))
+                                    rigid_body_CS_origin[idx,:][:,None]))
 
 RM = np.dot(self.rigid_body_CS.R[idx].T,np.dot(RTT,self.rigid_body_CS.R[idx]))
 
@@ -942,7 +944,7 @@ def keep(self, list seg_ID):
 
 def transform(self,list xyz, list abc, list segId=None):
     """
-    Decomposes GCS Txyz and Rxyz into segment Txyx and Rxyz
+    Decomposes mirror Txyz and Rxyz (origin is conic vertex) into segment Txyx and Rxyz
 
     Parameters
     ----------
@@ -960,6 +962,9 @@ def transform(self,list xyz, list abc, list segId=None):
     """
 
     <<backward and forward transform>>
+    cdef ndarray rigid_body_CS_origin
+    rigid_body_CS_origin = self.rigid_body_CS.origin[:]
+    rigid_body_CS_origin[:,2] = self.height - self.rigid_body_CS.origin[:,2] 
     if segId is None:
         segId = range(7)
     else:
@@ -969,7 +974,7 @@ def transform(self,list xyz, list abc, list segId=None):
     c = abc[2]        
     <<transform part 1>>
     for idx in segId:
-        ut = backward_transform(self.rigid_body_CS.origin[idx,:][:,None],RTT,np.transpose(np.array(xyz,ndmin=2)))
+        ut = backward_transform(rigid_body_CS_origin[idx,:][:,None],RTT,np.transpose(np.array(xyz,ndmin=2)))
         <<transform part 2>>
         self.motion_CS.origin[idx,:] = origin
         self.motion_CS.euler_angles[idx,:] = euler_angles
@@ -1179,6 +1184,8 @@ cdef class GMT_M2:
             (Txyz,Rxyz)
         """
         <<backward and forward transform>>
+        cdef double[:,:] rigid_body_CS_origin
+        rigid_body_CS_origin = self.rigid_body_CS.origin[:]
         a = 0
         b = 0
         c = theta
