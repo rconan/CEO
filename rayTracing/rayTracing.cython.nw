@@ -510,7 +510,7 @@ cdef class Conic:
             " [c=%g,k=%g]"%(self._c_conic.c,self._c_conic.k)+\
             origin+euler_angles
 
-    def trace(self, Source src):
+    def trace(self, Bundle rays):
         """
         Traces the rays of the source to the conic optical surface
 
@@ -523,15 +523,15 @@ cdef class Conic:
         --------
         Source : the celestial source class
         """
-        self._c_conic.trace(&(src._c_source.rays))
+        self._c_conic.trace(rays._c_bundle)
 
-    def refractive_index(self, Source src = None):
+    def refractive_index(self, float wavelength=-1.0):
         if self.material['name'] == '':
             return self._c_conic.refractive_index
         else:
-            if src is not None:
+            if wavelength>0:
                 return glass_index(self.material['formula'],
-                                   src.wavelength*1e6,
+                                   wavelength*1e6,
                                    None,None,
                                    self.material['c'])
 @
@@ -599,7 +599,7 @@ cdef class Aperture:
     def __dealloc__(self):
         self._c_aperture.cleanup()
 
-    def vignetting(self, Source src):
+    def vignetting(self, Bundle rays):
         """
         Vignets the rays of the source according to the aperture geometry
 
@@ -612,7 +612,7 @@ cdef class Aperture:
         --------
         Source : the celestial source class
         """
-        self._c_aperture.vignetting(src.rays._c_bundle)
+        self._c_aperture.vignetting(rays._c_bundle)
 @
 \section{Zernike}
 \label{sec:zernike}
@@ -752,12 +752,14 @@ cdef class ZernikeS:
     def __dealloc__(self):
         self._c_zernikeS.cleanup();
 
-    def update(self):
+    def update(self, rtd[:,:] modes=None, **kwargs):
         """
         Updates the Zernike surface based on the Zernike coefficients
         """
         cdef:
             double[:,:] __a__
+        if modes is not None:
+            self.a[:] = modes
         self._c_zernikeS.update(<rtd *>self.a.data)
         if self.__log__>0:
             k = self.__log_idx__%self.__log__
@@ -1012,7 +1014,7 @@ def Zernike_Surface(rtd r, rtd o, int max_n, np.ndarray a):
 
 <<rayTracing.pyx>>=
 # ray tracing
-def Transform_to_S(Source src, Conic F):
+def Transform_to_S(Bundle rays, Conic F):
     """
     Transforms the rays of the source into the coordinate system of the conic object
 
@@ -1028,7 +1030,7 @@ def Transform_to_S(Source src, Conic F):
     Source : the celestial source class
     Conic : the optics conic surface class
     """
-    transform_to_S(src.rays._c_bundle, F._c_conic)
+    transform_to_S(rays._c_bundle, F._c_conic)
 #def Transform_to_S_from_A(Source src, Aperture A):
 #    transform_to_S(src.rays._c_bundle, A._c_aperture)
 @ 
@@ -1039,7 +1041,7 @@ def Transform_to_S(Source src, Conic F):
 \index{rayTracing!python!Transform\_to\_R}
 
 <<rayTracing.pyx>>=
-def Transform_to_R(Source src, Conic F):
+def Transform_to_R(Bundle rays, Conic F):
     """
     Transforms the rays of the source into the coordinate system of the rays
     This is the inverse of Transform_to_S
@@ -1056,7 +1058,7 @@ def Transform_to_R(Source src, Conic F):
     Source : the celestial source class
     Conic : the optics conic surface class
     """
-    transform_to_R(src.rays._c_bundle, F._c_conic)
+    transform_to_R(rays._c_bundle, F._c_conic)
 #def Transform_to_R_from_A(Source src, Aperture A):
 #    transform_to_R(src.rays._c_bundle, A._c_aperture)
 @ 
@@ -1067,7 +1069,7 @@ def Transform_to_R(Source src, Conic F):
 \index{rayTracing!python!Intersect}
 
 <<rayTracing.pyx>>=
-def Intersect(Source src, Conic F):
+def Intersect(Bundle rays, Conic F):
     """
     Intersection of the rays of the source with the surface represented by the conic object
 
@@ -1083,7 +1085,7 @@ def Intersect(Source src, Conic F):
     Source : the celestial source class
     Conic : the optics conic surface class
     """
-    intersect(src.rays._c_bundle, F._c_conic)
+    intersect(rays._c_bundle, F._c_conic)
 @ 
 
 \subsubsection{Reflect}
@@ -1092,7 +1094,7 @@ def Intersect(Source src, Conic F):
 \index{rayTracing!python!Reflect}
 
 <<rayTracing.pyx>>=
-def Reflect(Source src):
+def Reflect(Bundle rays):
     """
     Reflection of the rays of the source from the surface represented by the conic object
 
@@ -1105,7 +1107,7 @@ def Reflect(Source src):
     --------
     Source : the celestial source class
     """
-    reflect(src.rays._c_bundle)
+    reflect(rays._c_bundle)
 @ 
 
 \subsubsection{Refract}
@@ -1114,7 +1116,7 @@ def Reflect(Source src):
 \index{rayTracing!python!Refract}
 
 <<rayTracing.pyx>>=
-def Refract(Source src, rtd mu):
+def Refract(Bundle rays, rtd mu):
     """
     Refraction of the rays of the source through the surface represented by the conic object
 
@@ -1129,7 +1131,7 @@ def Refract(Source src, rtd mu):
     --------
     Source : the celestial source class
     """
-    refract(src.rays._c_bundle, mu)
+    refract(rays._c_bundle, mu)
 @
 \subsubsection{Trace}
 \label{sec:trace}
@@ -1139,42 +1141,42 @@ def Refract(Source src, rtd mu):
 <<rayTracing.pyx (opt-out)>>=
 from ceo cimport GMT_M1, GMT_M2, GmtMirrors
 from GMTLIB import GMT_MX
-def Trace(Source src, list S, bint global_CS=True):
+def Trace(Bundle rays, list S, bint global_CS=True, float wavelength=550e-9):
     cdef: 
         int k, n
         rtd n_S, mu
         list xyz
         Conic _S_
     n = len(S)
-    src.reset()
-    xyz = [ src.rays.coordinates.host() ]
+    #src.reset()
+    xyz = [ rays.coordinates.host() ]
     for k in range(n):
         #print 'Material refractive index: %f'%src.rays.refractive_index
         if isinstance(S[k],Aperture):
-            S[k].vignetting(src)
+            S[k].vignetting(rays)
         elif isinstance(S[k],(GMT_M1,GMT_M2)):
-            S[k].trace(src.rays)
+            S[k].trace(rays)
         elif isinstance(S[k],(GmtMirrors)):
-            S[k].M2.blocking(src.rays)            
-            S[k].M1.trace(src.rays)            
-            S[k].M2.trace(src.rays)            
+            S[k].M2.blocking(rays)            
+            S[k].M1.trace(rays)            
+            S[k].M2.trace(rays)            
         else:
             _S_ = S[k]
-            Transform_to_S(src,_S_)
+            Transform_to_S(rays,_S_)
             if not _S_.coord_break: 
-                Intersect(src,_S_)
-                n_S = _S_.refractive_index(src)
+                Intersect(rays,_S_)
+                n_S = _S_.refractive_index(wavelength)
                 if n_S!=0:
                     if n_S==-1:
-                        Reflect(src)
+                        Reflect(rays)
                     else:
-                     mu = src.rays.refractive_index/n_S
+                     mu = rays.refractive_index/n_S
                         if mu!=1.0:
-                            Refract(src,mu)
-                            src.rays.refractive_index = n_S
+                            Refract(rays,mu)
+                            rays.refractive_index = n_S
             if global_CS:
-                Transform_to_R(src,_S_)
-            xyz.append( src.rays.coordinates.host() )
+                Transform_to_R(rays,_S_)
+            xyz.append( rays.coordinates.host() )
     return xyz
     #chief()
 @ 

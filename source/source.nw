@@ -54,11 +54,16 @@ struct source {
   void setup(const char *_photometric_band, float *magnitude,
 	     rtd *_zenith, rtd *_azimuth, float _height,
 	     int _N_SRC, rtd _L_, int _N_L_, vector origin);
+  void setup(const char *_photometric_band, float *_magnitude,
+	     rtd *_zenith, rtd *_azimuth, float _height, int _N_SRC,
+	     int _N_RAY_, double *x, double *y, vector origin);
    void cleanup(void);
 
   void reset_rays(void);
+  void reset_rays(int RESET_RAYS_MASK);
 
   void opd2phase(void);
+  void opd2phase(int RESET_RAYS_MASK);
 
   void info(void);
 
@@ -89,6 +94,7 @@ struct source {
 <<to z plane kernel>>
 <<to sphere kernel>>
 <<reference sphere origin from chief ray>>
+<<bundle free coordinates kernel>>
 <<ray bundle kernels>>
 <<bundle reset kernel>>
 <<wavefront differentiation kernel (partial illumination identification)>>
@@ -178,6 +184,7 @@ struct complex_amplitude {
   void cleanup(void);
   void reset(void);
   void reset(complex_amplitude *wavefront);
+  void reset_amplitude(void);
   void reset_phase(void);
   void reset_phase(complex_amplitude *wavefront_prime);
   void add_phase(float alpha, float *phase_prime);
@@ -281,12 +288,15 @@ struct bundle {
   <<ray bundle parameters>>
   void setup(rtd RADIUS, int N_RADIUS, int N_THETA, vector origin, int N_SRC);
   void setup(rtd L, int N_L, vector origin, int N_SRC);
+  void setup_free(int _N_RAY_, double *x, double *y, vector origin);
   void cleanup(void);
   void to_z_plane(rtd z_in);
+  void to_focal_plane(rtd z_chief_on_axis, rtd rho_focal_plane);
   void to_sphere(vector sphere_origin);
   void to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane);
   void get_coordinates(double *d__coord);
   void get_chief_coordinates(double *d__coord);
+  void get_sphere_origins(double *d__coord);
   void get_directions(double *d__dir);
   void get_chief_directions(double *d__dir);
   void get_chief_optical_path_length(double *d__opl);
@@ -442,6 +452,66 @@ The cartesian coordinates are defined with the sampling of the square box length
   <<chief ray allocation>>
 }
 @
+The ray bundle can be set to arbitrary coordinates in the entrance puil
+\index{source!bundle!setup}
+<<ray bundle functions>>=
+void bundle::setup_free(int _N_RAY_, double *x, double *y, vector origin)
+{
+  strcpy(geom,"free");
+  N_BUNDLE = 1;
+  N_RAY = _N_RAY_;
+  N_RAY_TOTAL = N_RAY*N_BUNDLE;
+  V.setup(N_RAY_TOTAL);
+  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY_TOTAL ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
+  HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
+			    sizeof(vector), cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY_TOTAL ) );
+  <<chief ray allocation>>
+
+  double *d__x, *d__y;
+  int n_byte = sizeof(double)*N_RAY_TOTAL;
+  HANDLE_ERROR( cudaMalloc((void**)&d__x, n_byte ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__y, n_byte ) );
+  HANDLE_ERROR( cudaMemcpy( d__x, x, n_byte, cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMemcpy( d__y, y, n_byte, cudaMemcpyHostToDevice ) );
+
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY_TOTAL/N_THREAD2+1,1, N_BUNDLE);
+  ray_free_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, d__x, d__y, d__origin);
+  
+  HANDLE_ERROR( cudaMemset(d__x, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(d__y, 0, n_byte ) );
+  blockDim = dim3(1,1);
+  gridDim  = dim3(1,1, N_BUNDLE);
+  ray_free_coordinates LLL gridDim , blockDim RRR (d__chief_ray, 1, d__x, d__y, d__origin);
+
+  HANDLE_ERROR( cudaFree( d__x ) );
+  HANDLE_ERROR( cudaFree( d__y ) );
+}
+@ with
+<<bundle free coordinates kernel>>=
+__global__ void ray_free_coordinates(ray *d__ray, int N_RAY, double *d__x, double *d__y, vector *origin)
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+//  iSource = blockIdx.z;
+  k = j * gridDim.x * blockDim.x + i;
+  if (i<N_RAY)
+  {
+    d__ray[k].coordinates.x = d__x[k] + origin->x;
+    d__ray[k].coordinates.y = d__y[k] + origin->y;
+    d__ray[k].coordinates.z = origin->z;
+    d__ray[k].directions.x  =  0.0;
+    d__ray[k].directions.y  =  0.0;
+    d__ray[k].directions.z  = -1.0;
+    d__ray[k].optical_path_length = 0.0;
+    d__ray[k].optical_path_difference = 0.0;
+    d__ray[k].v = 1;
+  }
+}
+@
 The direction cosines $(k,l,m)$ of the rays are defined from the source zenith $\zeta$ and azimuth $\xi$ angles as
 \begin{eqnarray}
   \label{eq:2}
@@ -493,9 +563,11 @@ The rays are propagated to the plane $z=[[z__plane]]$ with
 <<ray bundle functions>>=
 void bundle::to_z_plane(rtd z_plane)
 {
-  to_z_plane_chief_kernel LLL 1, 1, N_BUNDLE RRR (d__chief_ray, 1, z_plane);
-  dim3 blockDim(N_THREAD,N_THREAD);
-  dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  to_z_plane_chief_kernel LLL gridDim , blockDim RRR (d__chief_ray, 1, z_plane);
+  blockDim = dim3(N_THREAD,N_THREAD);
+  gridDim  = dim3(N_RAY/N_THREAD2+1,1,N_BUNDLE);
   to_z_plane_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, z_plane, d__chief_ray);
 }
 @ where
@@ -523,6 +595,29 @@ void bundle::to_z_plane(rtd z_plane)
       d__ray[k].optical_path_length - d__chief_ray->optical_path_length;
   }
 }
+  __global__ void to_vz_plane_kernel(ray *d__ray, int N_RAY, vector *d__v, ray *d__chief_ray)
+{
+  int i, j, k0, k, iSource;
+  rtd s;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  k = j * gridDim.x * blockDim.x + i;
+  k0 = k;
+  k += iSource*N_RAY;
+  if ( (k0<N_RAY ) && (d__ray[k].v) )
+  {
+    if (d__ray[k].directions.z==0)
+       return;
+    s = (d__v[iSource].z - d__ray[k].coordinates.z)/d__ray[k].directions.z;
+    d__ray[k].coordinates.x = d__ray[k].coordinates.x + s*d__ray[k].directions.x;
+    d__ray[k].coordinates.y = d__ray[k].coordinates.y + s*d__ray[k].directions.y;
+    d__ray[k].coordinates.z = d__v[iSource].z;
+    d__ray[k].optical_path_length = s;
+    d__ray[k].optical_path_difference +=
+      d__ray[k].optical_path_length - d__chief_ray->optical_path_length;
+  }
+}
 __global__ void to_z_plane_chief_kernel(ray *d__ray, int N_RAY, rtd z_plane)
 {
   int k, iSource;
@@ -537,8 +632,35 @@ __global__ void to_z_plane_chief_kernel(ray *d__ray, int N_RAY, rtd z_plane)
   d__ray[k].coordinates.z = z_plane;
   d__ray[k].optical_path_length = s;
 }
+__global__ void to_vz_plane_chief_kernel(ray *d__ray, int N_RAY, vector *d__v)
+{
+  int k, iSource;
+  rtd s;
+  iSource = blockIdx.z;
+  k = iSource;
+  if (d__ray[k].directions.z==0)
+    return;
+  s = (d__v[k].z - d__ray[k].coordinates.z)/d__ray[k].directions.z;
+  d__ray[k].coordinates.x = d__ray[k].coordinates.x + s*d__ray[k].directions.x;
+  d__ray[k].coordinates.y = d__ray[k].coordinates.y + s*d__ray[k].directions.y;
+  d__ray[k].coordinates.z = d__v[k].z;
+  d__ray[k].optical_path_length = s;
+}
 @
-
+The rays are propagated to the plane focal by computing first the coordinates of the intersection of the chief ray with the curved focal plane and then by propagated the rays from the last surface to the z--plane at the intersection of the chief ray with the focal plane.
+<<ray bundle functions>>=
+void bundle::to_focal_plane(rtd z_chief_on_axis, rtd rho_focal_plane)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  <<reference sphere distance>>
+  <<reference sphere origin>>
+  to_vz_plane_chief_kernel LLL gridDim , blockDim RRR (d__chief_ray, 1, d__sphere_origin);
+  blockDim = dim3(N_THREAD,N_THREAD);
+  gridDim  = dim3(N_RAY/N_THREAD2+1,1,N_BUNDLE);
+  to_vz_plane_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, d__sphere_origin, d__chief_ray);
+}
+@ 
 \subsubsection{Reference sphere}
 \label{sec:reference-sphere}
 
@@ -792,6 +914,7 @@ void bundle::to_sphere(rtd *s, rtd sphere_radius)
 The coordinates, directions, optical path length and vignetting map are copied into arrays with the following functions:
 <<ray bundle functions>>=
 <<gathering ray coordinates>>
+<<gathering sphere origins>>
 <<gathering ray directions>>
 <<gathering ray optical path length>>
 <<gathering ray optical path difference>>
@@ -801,6 +924,7 @@ The coordinates, directions, optical path length and vignetting map are copied i
 @
 <<ray bundle kernels>>=
 <<gathering ray coordinates kernel>>
+<<gathering sphere origins kernel>>
 <<gathering ray directions kernel>>
 <<gathering ray optical path length kernel>>
 <<gathering ray optical path difference kernel>>
@@ -843,6 +967,34 @@ __global__ void get_coordinates_kernel(double *d__coord, ray *d__ray, int N_RAY)
     d__coord[l++] = d__ray[k].coordinates.x;
     d__coord[l++] = d__ray[k].coordinates.y;
     d__coord[l]   = d__ray[k].coordinates.z;
+  }
+}
+@
+\index{source!bundle!get\_sphere\_origin}
+<<gathering sphere origins>>=
+void bundle::get_sphere_origins(double *d__coord)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  get_sphere_origins_kernel LLL gridDim, blockDim RRR (d__coord, d__sphere_origin, 1);
+}
+@
+<<gathering sphere origins kernel>>=
+__global__ void get_sphere_origins_kernel(double *d__coord, vector *d__sphere_origin, int N_RAY)
+{
+  int i, j, k0, k, l, iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
+  k0 = k;
+  k += iSource*N_RAY;
+  if ( k0<N_RAY )
+  {
+    l = k*3;
+    d__coord[l++] = d__sphere_origin[k].x;
+    d__coord[l++] = d__sphere_origin[k].y;
+    d__coord[l]   = d__sphere_origin[k].z;
   }
 }
 @
@@ -1399,7 +1551,7 @@ void source::setup(const char *_photometric_band, float *_magnitude,
   <<setup multiple sources contents: common part (host)>>
   fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
-  for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
+  for (int i_SRC=0;i_SRC<min(N_SRC,10);i_SRC++) {
     <<setup multiple sources contents: common part (device)>>
     __src.magnitude        = _magnitude[i_SRC];
     __src.N_PHOTON         = n_photon(_magnitude[i_SRC]);
@@ -1422,22 +1574,32 @@ void source::setup(const char *_photometric_band, float *_magnitude,
 <<reset rays>>=
 void source::reset_rays(void)
 {
-  dim3 blockDim(1,1);
-  dim3 gridDim(1,1, rays.N_BUNDLE);
-  ray_coordinates LLL gridDim , blockDim RRR (rays.d__chief_ray, 1,
-                                              dev_ptr,
-                                              0.0, 2, 1, rays.d__origin);
-  blockDim = dim3(16,16);
-  gridDim  = dim3(rays.N_L/16+1,rays.N_L/16+1, rays.N_BUNDLE);
-  ray_coordinates_box LLL gridDim , blockDim RRR (rays.d__ray, rays.N_RAY,
-                                                  dev_ptr,
-                                                  rays.L, rays.N_L,
-                                                  rays.d__origin);
+  <<reset rays common>>    
   blockDim = dim3(256);
   gridDim  = dim3(rays.V.nel/256+1);
   fill_ones_char LLL gridDim,blockDim RRR (rays.V.m,rays.V.nel);
   rays.V.set_filter_quiet();
 }
+@ with
+<<reset rays common>>=
+dim3 blockDim(1,1);
+dim3 gridDim(1,1, rays.N_BUNDLE);
+ray_coordinates LLL gridDim , blockDim RRR (rays.d__chief_ray, 1,
+					    dev_ptr,
+					    0.0, 2, 1, rays.d__origin);
+if (rays.N_RAY>1)
+  {
+    blockDim = dim3(16,16);
+    gridDim  = dim3(rays.N_L/16+1,rays.N_L/16+1, rays.N_BUNDLE);
+    ray_coordinates_box LLL gridDim , blockDim RRR (rays.d__ray, rays.N_RAY,
+						    dev_ptr,
+						    rays.L, rays.N_L,
+						    rays.d__origin);
+  }
+ else
+   ray_coordinates LLL gridDim , blockDim RRR (rays.d__ray, 1,
+					       dev_ptr,
+					       0.0, 2, 1, rays.d__origin);
 @ and
 <<bundle coordinates kernel>>=
 __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
@@ -1500,7 +1662,50 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
 <<rays box coordinates definition>>=
 x   = L*(i - (N_L-1)*0.5)/(N_L-1);
 y   = L*(j - (N_L-1)*0.5)/(N_L-1);
+@  \item for multiple sources with wavefront resolution and with ray bundle coordinates (different magnitudes), zenith and azimuth are in double precision for ray tracing:
+<<setup for multiple sources with wavefront resolution and ray bundle>>=
+void source::setup(const char *_photometric_band, float *_magnitude,
+                   rtd *_zenith, rtd *_azimuth, float _height, int _N_SRC,
+                   int N_RAY, double *x, double *y, vector origin)
+{
+  <<setup multiple sources contents: common part (host)>>
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  for (int i_SRC=0;i_SRC<min(N_SRC,10);i_SRC++) {
+    <<setup multiple sources contents: common part (device)>>
+    __src.magnitude        = _magnitude[i_SRC];
+    __src.N_PHOTON         = n_photon(_magnitude[i_SRC]);
+    HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
+			      sizeof(source) ,
+			      cudaMemcpyHostToDevice ) );
+    fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
+	    _zenith[i_SRC]*RADIAN2ARCSEC,
+	    _azimuth[i_SRC]*180/PI,_height,
+	    wavelength_micron(),_magnitude[i_SRC]);
+  }
+  fprintf(stdout," N_RAY: %d\n", N_RAY);
+  wavefront.setup(N_RAY,N_SRC);
+  fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
+  rays_exist = 1;
+  rays.setup_free(N_RAY, x, y, origin);
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+}
 @ \end{itemize}
+
+The rays vignetting mask [[V]] is not reset if the flag [[RESET_RAYS_MASK]] is set to 0: 
+<<reset rays>>=
+void source::reset_rays(int RESET_RAYS_MASK)
+{
+  <<reset rays common>>    
+  blockDim = dim3(256);
+  gridDim  = dim3(rays.V.nel/256+1);
+  if (RESET_RAYS_MASK>0)
+  {
+    fill_ones_char LLL gridDim,blockDim RRR (rays.V.m,rays.V.nel);
+    rays.V.set_filter_quiet();
+  }
+}
+@
 
 The zenith and azimuth angle are updated with:
 \index{source!source!update\_directions}
@@ -1586,6 +1791,8 @@ The [[wavelength]] in meter corresponding to the photometric band is given by
 <<wavelength>>=
 float source::wavelength(void) {
   float lambda;
+  if (strcmp(photometric_band,"Vs")==0)
+    lambda = 0.500;
   if (strcmp(photometric_band,"V")==0)
     lambda = 0.550;
   if (strcmp(photometric_band,"R")==0)
@@ -1625,6 +1832,8 @@ float source::n_photon(float _magnitude_) {
 @ with 
 <<photometry zero point>>=
  float zero_point;
+ if (strcmp(photometric_band,"Vs")==0)
+    zero_point = 8.97e9;
  if (strcmp(photometric_band,"V")==0)
     zero_point = 8.97e9;
  if (strcmp(photometric_band,"R")==0)
@@ -1653,6 +1862,8 @@ float source::n_background_photon(float backgroundMagnitude) {
 <<spectral bandwidth>>=
 float source::spectral_bandwidth(void) {
   float spectral_bandwidth;
+  if (strcmp(photometric_band,"Vs")==0)
+    spectral_bandwidth = 0.090;
   if (strcmp(photometric_band,"V")==0)
     spectral_bandwidth = 0.090;
   if (strcmp(photometric_band,"R")==0)
@@ -1676,6 +1887,8 @@ float source::spectral_bandwidth(void) {
 <<wavenumber>>=
 float source::wavenumber(void) {
   float lambda;
+  if (strcmp(photometric_band,"Vs")==0)
+    lambda = 0.550;
   if (strcmp(photometric_band,"V")==0)
     lambda = 0.550;
   if (strcmp(photometric_band,"R")==0)
@@ -1703,21 +1916,23 @@ The ray tracing data are transferred to the wavefront structure with
 <<ray tracing>>=
 void source::opd2phase(void)
 {
-//  printf("Setting wavefront!\n");
   HANDLE_ERROR( cudaMemset(rays.V.m, 0, sizeof(char)*rays.N_RAY*rays.N_BUNDLE ) );
-  dim3 blockDim(16,16);
-  dim3 gridDim(rays.N_L/16+1, rays.N_L/16+1, rays.N_BUNDLE);
-  opd2phase_kernel LLL gridDim , blockDim RRR (wavefront.amplitude,
-                                                   wavefront.phase,
-						   rays.V.m,
-                                                   rays.d__ray, rays.N_RAY,
-                                                   rays.L, rays.N_L,
-                                                   dev_ptr);
-  wavefront.masked(&(rays.V));
-  rays.V.set_filter_quiet();
-  /* wavefront.M = &(rays.V); */
+  <<opd2phase common>>
 }
-@
+@ %def opd2phase
+@ with
+<<opd2phase common>>=
+dim3 blockDim(16,16);
+dim3 gridDim(rays.N_L/16+1, rays.N_L/16+1, rays.N_BUNDLE);
+opd2phase_kernel LLL gridDim , blockDim RRR (wavefront.amplitude,
+					     wavefront.phase,
+					     rays.V.m,
+					     rays.d__ray, rays.N_RAY,
+					     rays.L, rays.N_L,
+					     dev_ptr);
+wavefront.masked(&(rays.V));
+rays.V.set_filter_quiet();
+@ and
 <<gathering wavefront kernel>>=
 __global__ void opd2phase_kernel(float *amplitude, float *phase,
 				 char *m, ray *d__ray,  int N_RAY,
@@ -1738,6 +1953,21 @@ __global__ void opd2phase_kernel(float *amplitude, float *phase,
       y*src[iSource].theta_y;
   }
 }
+@
+For ray tracing in sequential mode, the rays vignetting mask [[V]] should not be reset.
+The source [[reset_rays]] method should be called instead of the [[reset]] method with 0 passed as argument.
+Then [[opd2phase]] must be called sequentially with also 0 passed as argument.
+This will prevent the rays vignetting mask [[V]] to be resetted.
+<<ray tracing>>=
+void source::opd2phase(int RESET_RAYS_MASK)
+{
+  if (RESET_RAYS_MASK>0)
+    HANDLE_ERROR( cudaMemset(rays.V.m, 0, sizeof(char)*rays.N_RAY*rays.N_BUNDLE ) );
+  else
+    wavefront.reset_amplitude();
+  <<opd2phase common>>
+}
+
 @
 \subsubsection{Input/Output}
 \label{sec:inputoutput}
@@ -1818,12 +2048,11 @@ void source::cleanup(void) {
 @
 The amplitude and phase are initialized to respectively 1 and 0:
 <<square geometry>>=
-__global__ void squarePupil(float* amplitude, float *phase, const int N) {
+__global__ void squarePupil(float* amplitude, const int N) {
   int id;
   id = blockIdx.x * blockDim.x + threadIdx.x;
   if (id<N) {
     amplitude[id] = 1.0;
-    phase[id]     = 0.0;
   }
 }
 
@@ -1839,11 +2068,18 @@ The following resets the wavefront amplitude to zero and phase to 1:
 <<resetting the wavefront>>=
 void complex_amplitude::reset(void)
 {
+  reset_amplitude();
+  reset_phase();
+}
+@
+The amplitude is reset to 1 with:
+\index{source!complex\_amplitude!reset\_amplitude}
+<<resetting the wavefront>>=
+void complex_amplitude::reset_amplitude(void)
+{
   dim3 blockDim(16,1);
   dim3 gridDim(N_PX/16+1,1);
-  squarePupil LLL gridDim,blockDim RRR (amplitude, phase, N_PX);
-  /* if (M!=NULL) */
-  /*   apply_mask LLL gridDim,blockDim RRR (amplitude, phase, M->m, N_PX);   */
+  squarePupil LLL gridDim,blockDim RRR (amplitude, N_PX);
 }
 @ 
 The wavefront amplitude can also be reset to a given wavefront, both wavefronts will share the same mask,:
@@ -1935,6 +2171,8 @@ __global__ void apply_mask(float* amplitude, float* phase, const int N,
 <<wavefront stats>>=
 void complex_amplitude::rms(float *rms)
 {
+  if (M==NULL)
+	  ERROR("Wavefront mask is undefined!");
   float mean_data, nnz;
   int n_data = N_PX/N, idx, k;
   cublasHandle_t handle;

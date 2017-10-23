@@ -5,7 +5,7 @@
 
 <<gmtMirrors.pxd>>=
 from numpy cimport ndarray
-from utilities cimport rtd, vector, cuFloatArray, cuDoubleArray
+from utilities cimport rtd, vector, cuIntArray, cuFloatArray, cuDoubleArray
 from rayTracing cimport coordinate_system, zernikeS, ZernikeS, Coordinate_system, Coordinates
 from source cimport Source, bundle, Bundle
 cdef extern from "gmtMirrors.h":
@@ -101,7 +101,7 @@ cdef class GmtMirrors:
     >>> gpu_ps1d = src.wavefront.phase()
     """
     def __init__(self, int M1_radial_order=0, int M2_radial_order=0,
-                 unicode M1_mirror_modes=u"zernike", unicode M2_mirror_modes=u"zernike",
+                 bytes M1_mirror_modes=None, bytes M2_mirror_modes=None,
                  int M1_N_MODE=0, int M2_N_MODE=0):
         self.M1 = GMT_M1(radial_order=M1_radial_order,
                          mirror_modes=M1_mirror_modes,
@@ -168,7 +168,8 @@ cdef class GmtMirrors:
             src.updateDirections(__zenith__, __azimuth__)
             src.opd2phase()
         if where_to=="focal plane":
-            src.rays.to_z_plane(self.focal_plane_distance)
+            src.rays.to_focal_plane(self.focal_plane_distance,
+                                    self.focal_plane_radius)
 
     def reset(self, dict state=None):
         """
@@ -180,7 +181,7 @@ cdef class GmtMirrors:
         self.M1.motion_CS.reset()
         self.M1.modes.reset()
         self.M2.motion_CS.reset()
-        self.M2. modes.reset()
+        self.M2.modes.reset()
         if state is not None:
             for mirror in state:
                 self[mirror].__ixor__(state[mirror])
@@ -249,8 +250,12 @@ cdef class GmtMirrors:
     @property
     def state(self):
         cdef dict d
-        d = {'M1': {'Rxyz':self.M1.motion_CS['Rxyz'] , 'Txyz':self.M1.motion_CS['Txyz']},
-             'M2': {'Rxyz':self.M2.motion_CS['Rxyz'] , 'Txyz':self.M2.motion_CS['Txyz']}}
+        d = {'M1': {'Rxyz':self.M1.motion_CS['Rxyz'].copy(),
+                    'Txyz':self.M1.motion_CS['Txyz'].copy(),
+                    'modes':np.asarray(self.M1.modes.a.copy())},
+             'M2': {'Rxyz':self.M2.motion_CS['Rxyz'].copy(),
+                    'Txyz':self.M2.motion_CS['Txyz'].copy(),
+                    'modes':np.asarray(self.M2.modes.a.copy())}}
         return d
         
 @
@@ -269,6 +274,7 @@ cdef class GmtMirrors:
         double *d__BM
         double *d__BMS
         int BM_N_SAMPLE
+        double BM_radius
         void setup(int, int)
         void setupKL(int, int)
         void setupPolish(int, int)
@@ -290,7 +296,7 @@ cdef class GmtMirrors:
 cdef class BendingModes:
     cdef:
         bending_modes *_c_bending_modes
-        public int n_mode, N_SURF
+        public int n_mode, N_SURF, NPX
         public rtd[:,:] a
 @
 
@@ -315,8 +321,11 @@ cdef class BendingModes:
             cuDoubleArray x_BM, y_BM, BM
         if grid=='regular':
             self._c_bending_modes.load_reg()
-            BM = cuDoubleArray(shape=(1,self._c_bending_modes.BM_N_SAMPLE*self._c_bending_modes.BM_N_SAMPLE))
+            BM = cuDoubleArray(shape=(self.n_mode,
+                                      self._c_bending_modes.BM_N_SAMPLE*\
+                                      self._c_bending_modes.BM_N_SAMPLE))
             BM._c_gpu.dev_data = self._c_bending_modes.d__BM
+            self.NPX = 169
             return BM
         else:
             self._c_bending_modes.load()
@@ -348,18 +357,32 @@ cdef class BendingModes:
                                                    NI, di, k_mode)
         return (BMi,partial_x_BMi,partial_y_BMi)
 
-    def update(self):
-        """
-        Updates the bending modes surface based on the bending modes coefficients
-        """
-        self._c_bending_modes.update(&self.a[0,0])
-
+    <<modes update>>
+    
     def reset(self):
         """
         Resets the bending modes coefficients to zero and update the bending modes surface
         """
         self.a[:] = 0
         self._c_bending_modes.update(&self.a[0,0])
+
+    @property
+    def radius(self):
+        return self._c_bending_modes.BM_radius
+@ with
+<<modes update>>=        
+def update(self, rtd[:,:] modes=None, **kwargs):
+    """
+    Updates the bending modes surface based on the bending modes coefficients
+    
+    Parameters
+    ----------
+    modes : ndarray
+    The modal coefficients array in the $7\times [[N_MODE]]$ matrix form
+    """
+    if modes is not None:
+        self.a[:] = modes
+    self._c_bending_modes.update(&self.a[0,0])
 @
 \section{Karhunen--Loeve modes}
 \label{sec:KL-modes}
@@ -420,11 +443,7 @@ cdef class KarhunenLoeve:
                                      NI, di, k_mode)
         return (BMi,partial_x_BMi,partial_y_BMi)
 
-    def update(self):
-        """
-        Updates the bending modes surface based on the bending modes coefficients
-        """
-        self._c_bending_modes.update(&self.a[0,0])
+    <<modes update>>
 
     def reset(self):
         """
@@ -492,11 +511,7 @@ cdef class PolishMap:
                                      NI, di, k_mode)
         return (BMi,partial_x_BMi,partial_y_BMi)
 
-    def update(self):
-        """
-        Updates the bending modes surface based on the bending modes coefficients
-        """
-        self._c_bending_modes.update(&self.a[0,0])
+    <<modes update>>
 
     def reset(self):
         """
@@ -504,7 +519,133 @@ cdef class PolishMap:
         """
         self.a[:] = 0
         self._c_bending_modes.update(&self.a[0,0])
-@ 
+@
+\section{Modes}
+\label{sec:modes}
+
+\index{gmtMirrors!python!modes}
+
+\subsection{PXD file}
+\label{sec:pxd-file-7}
+
+<<gmtMirrors.pxd contents>>=
+    cdef cppclass modes:
+        double *d__BM
+        double *d__BMS
+        int *d__s2b
+        int N, BM_N_SAMPLE, N_SET, n_mode, N_MODE
+        double BM_radius
+        void setup(char *, int, int)
+        void cleanup()
+        void update(rtd *)
+@
+\subsubsection{Class definition}
+\label{sec:class-definition-6}
+
+<<class definitions>>=
+cdef class Modes:
+    cdef:
+        modes *_c_modes
+        public rtd[:,:] a
+        public cuDoubleArray M
+        public cuDoubleArray S
+        public cuIntArray s2b
+@
+
+\subsection{PYX file}
+\label{sec:pyx-file-6}
+
+<<gmtMirrors.pyx>>=
+cdef class Modes:
+    """
+    A class representing modal basis
+
+    Parameters
+    ----------
+    filename : bytes
+        The name of the file with the modal basis
+    N : int
+        The number of surfaces to generate from the modal basis
+    n_mode : int
+        The number of modes used to generate the surfaces
+
+    Attributes
+    ----------
+    a : rtd
+        The basis coefficients as a [NXn_mode] array
+    M : cuDoubleArray
+        The modal basis array
+    S : cuDoubleArray
+        The surfaces array
+    s2b : cuIntArray
+        The surface to basis mapping indices
+
+    See also
+    --------
+    cuDoubleArray : an interface class between GPU host and device data for doubles
+    cuIntArray : an interface class between GPU host and device data for ints
+    """
+    def __cinit__(self, bytes filename, int N, int n_mode):
+        self._c_modes = new modes()
+        self._c_modes.setup(filename,N,n_mode);
+        self.a = np.zeros((self._c_modes.N, self._c_modes.n_mode), dtype=np.float64)
+        self.M = cuDoubleArray(shape=(self._c_modes.BM_N_SAMPLE**2,
+                                      self._c_modes.N_SET*self._c_modes.N_MODE),
+                               order='F')
+        self.M._c_gpu.dev_data = self._c_modes.d__BM
+        self.S = cuDoubleArray(shape=(self._c_modes.BM_N_SAMPLE**2,N),
+                               order='F')
+        self.S._c_gpu.dev_data = self._c_modes.d__BMS
+        self.s2b = cuIntArray(shape=N)
+        self.s2b._c_gpu.dev_data = self._c_modes.d__s2b
+
+    def __dealloc__(self):
+        self._c_modes.cleanup();
+
+    def update(self, rtd[:,:] modes=None, **kwargs):
+        """
+        Updates the bending modes surface based on the bending modes coefficients
+
+        Parameters
+        ----------
+        modes : ndarray
+        The modal coefficients array in the $7\times [[N_MODE]]$ matrix form
+        """
+        if modes is not None:
+            self.a[:] = modes
+        self._c_modes.update(&self.a[0,0])
+    
+    def reset(self):
+        """
+        Resets the bending modes coefficients to zero and update the bending modes surface
+        """
+        self.a[:] = 0
+        self._c_modes.update(&self.a[0,0])
+
+    @property
+    def radius(self):
+        return self._c_modes.BM_radius
+
+    @property
+    def N_SAMPLE(self):
+        return self._c_modes.BM_N_SAMPLE
+
+    @property
+    def N_SET(self):
+        return self._c_modes.N_SET
+
+    @property
+    def N_MODE(self):
+        return self._c_modes.N_MODE
+
+    @property
+    def n_mode(self):
+        return self._c_modes.n_mode
+    @n_mode.setter
+    def n_mode(self,int value):
+        self._c_modes.n_mode = value
+@
+        
 \section{GMT M1}
 \label{sec:gmt-m1-1}
 
@@ -533,12 +674,13 @@ coordinate_system rigid_body_CS
 coordinate_system motion_CS
 coordinate_system TT_CS
 void setup()
-void setup( bending_modes *)
+void setup( modes *)
 void setup( zernikeS *)
 void cleanup()
 void update(vector , vector ,int )
 void reset()
 void trace(bundle *)
+void traceall(bundle *)
 void blocking(bundle *)
 void global_tiptilt(float , float )
 void remove(int *, int )
@@ -560,23 +702,27 @@ cdef:
     public BendingModes BM
     public KarhunenLoeve KL
     public PolishMap PM
+    public Modes B
     public Coordinate_system aperture_CS
     public Coordinate_system conic_CS
     public Coordinate_system rigid_body_CS
     public Coordinate_system motion_CS
     public Coordinate_system TT_CS
     public dict D
-    public unicode mirror_modes_type
+    public bytes mirror_modes_type
 @
 \subsection{PYX file}
 \label{sec:pyx-file-1}
 
 <<gmtMirrors.pyx>>=
+cdef class DummyModes:
+    def reset(self):
+        pass
 # GMT M1
 cdef class GMT_M1:
     <<GMT M12 docstring>>
 
-    def __cinit__(self, unicode mirror_modes=u"zernike", int radial_order=0, int N_MODE=0):
+    def __cinit__(self, bytes mirror_modes=None, int radial_order=0, int N_MODE=0):
         self._c_gmt_m12 = new gmt_m1()
         <<GMT M12 constructor>>
 
@@ -615,6 +761,8 @@ cdef class GMT_M1:
             (Txyz,Rxyz)
         """
         <<backward and forward transform>>
+        cdef double[:,:] rigid_body_CS_origin
+        rigid_body_CS_origin = self.rigid_body_CS.origin[:]
         a = 0
         b = 0
         c = theta
@@ -643,7 +791,7 @@ RTT = np.dot(Rc,np.dot(Rb,Ra))
 @ 
 <<transform part 2>>=
 origin = np.ravel(forward_transform(ut,self.rigid_body_CS.R[idx],
-                                    self.rigid_body_CS.origin[idx,:][:,None]))
+                                    rigid_body_CS_origin[idx,:][:,None]))
 
 RM = np.dot(self.rigid_body_CS.R[idx].T,np.dot(RTT,self.rigid_body_CS.R[idx]))
 
@@ -653,7 +801,7 @@ euler_angles[1] = np.arcsin(-RM[2,0])
 euler_angles[2] = np.arctan2(RM[1,0],RM[0,0])  
 
 @ 
-<<GMT M12 constructor>>=
+<<GMT M12 constructor (old)>>=
 self.mirror_modes_type = mirror_modes
 if mirror_modes==u"zernike":
     self.zernike = ZernikeS(radial_order,N_SURF=7)
@@ -670,6 +818,16 @@ elif mirror_modes==u"polishing map":
     self._c_gmt_m12.setup( <bending_modes *> self.PM._c_bending_modes)
 else:
     self._c_gmt_m12.setup()
+<<GMT M12 constructor>>=
+self.mirror_modes_type = mirror_modes
+if mirror_modes is None:
+    self._c_gmt_m12.setup()
+elif mirror_modes=="zernike":
+    self.zernike = ZernikeS(radial_order,N_SURF=7)
+    self._c_gmt_m12.setup( <zernikeS *> self.zernike._c_zernikeS)
+else:    
+    self.B = Modes(mirror_modes,7,N_MODE)
+    self._c_gmt_m12.setup( <modes *> self.B._c_modes)
 
 self.aperture_CS   = Coordinate_system(7)
 self.conic_CS      = Coordinate_system(7)
@@ -690,14 +848,11 @@ def __dealloc__(self):
     self._c_gmt_m12.cleanup()
 
 def __ixor__(self, dict d):
-    cdef tuple t
     self.motion_CS.update(**d)
-    if 'modes' in d:
-        t = d['modes']
-        self.modes.a[t[0],t[1]] = t[2]
+    self.modes.update(**d)
     return self
 
-def trace(self, Bundle rays):
+def trace(self, Bundle rays, bint vignetting=True):
     """
     Ray tracing to the mirror
 
@@ -710,7 +865,10 @@ def trace(self, Bundle rays):
     --------
     Bundle: a class representing a bundle of light rays used for geometric propagation
     """
-    self._c_gmt_m12.trace(rays._c_bundle)
+    if vignetting:
+        self._c_gmt_m12.trace(rays._c_bundle)
+    else:
+        self._c_gmt_m12.traceall(rays._c_bundle)
 
 def blocking(self, Bundle rays):
     """
@@ -786,7 +944,7 @@ def keep(self, list seg_ID):
 
 def transform(self,list xyz, list abc, list segId=None):
     """
-    Decomposes GCS Txyz and Rxyz into segment Txyx and Rxyz
+    Decomposes mirror Txyz and Rxyz (origin is conic vertex) into segment Txyx and Rxyz
 
     Parameters
     ----------
@@ -804,6 +962,9 @@ def transform(self,list xyz, list abc, list segId=None):
     """
 
     <<backward and forward transform>>
+    cdef ndarray rigid_body_CS_origin
+    rigid_body_CS_origin = self.rigid_body_CS.origin[:]
+    rigid_body_CS_origin[:,2] = self.height - self.rigid_body_CS.origin[:,2] 
     if segId is None:
         segId = range(7)
     else:
@@ -813,7 +974,7 @@ def transform(self,list xyz, list abc, list segId=None):
     c = abc[2]        
     <<transform part 1>>
     for idx in segId:
-        ut = backward_transform(self.rigid_body_CS.origin[idx,:][:,None],RTT,np.transpose(np.array(xyz,ndmin=2)))
+        ut = backward_transform(rigid_body_CS_origin[idx,:][:,None],RTT,np.transpose(np.array(xyz,ndmin=2)))
         <<transform part 2>>
         self.motion_CS.origin[idx,:] = origin
         self.motion_CS.euler_angles[idx,:] = euler_angles
@@ -849,6 +1010,7 @@ property conic_k:
 
 property modes:
     def __get__(self):
+        """
         if self.mirror_modes_type==u"zernike":
             return self.zernike
         elif self.mirror_modes_type==u"bending modes":
@@ -857,6 +1019,13 @@ property modes:
             return self.KL
         elif self.mirror_modes_type==u"polishing map":
             return self.PM
+        """
+        if self.mirror_modes_type is None:
+            return DummyModes()
+        elif self.mirror_modes_type=="zernike":
+            return self.zernike
+        else:
+            return self.B
 
 property M_ID:
     def __get__(self):
@@ -966,7 +1135,7 @@ cdef class GMT_M2:
 cdef class GMT_M2:
     <<GMT M12 docstring>>
 
-    def __cinit__(self, unicode mirror_modes=u"zernike", int radial_order=0, int N_MODE=0):
+    def __cinit__(self, bytes mirror_modes=None, int radial_order=0, int N_MODE=0):
         self._c_gmt_m12 = new gmt_m2()
         <<GMT M12 constructor>>
 
@@ -1015,6 +1184,8 @@ cdef class GMT_M2:
             (Txyz,Rxyz)
         """
         <<backward and forward transform>>
+        cdef double[:,:] rigid_body_CS_origin
+        rigid_body_CS_origin = self.rigid_body_CS.origin[:]
         a = 0
         b = 0
         c = theta

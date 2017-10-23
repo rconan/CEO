@@ -3,9 +3,11 @@ import math
 import numpy as np
 import numpy.linalg as LA
 from scipy.optimize import brenth, leastsq
+from scipy.signal import fftconvolve
 from skimage.feature import blob_log
 from scipy.ndimage.interpolation import rotate
 import os.path
+import phaseStats
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
     TT7,\
     GmtMirrors, SegmentPistonSensor,\
@@ -131,7 +133,7 @@ class GMT_MX(GmtMirrors):
     >>> gpu_ps1d = src.wavefront.phase()
     """
     def __init__(self, D=None, D_px=None, M1_radial_order=0, M2_radial_order=0,
-                 M1_mirror_modes=u"zernike", M2_mirror_modes=u"zernike",
+                 M1_mirror_modes="zernike", M2_mirror_modes="zernike",
                  M1_N_MODE=0 ,M2_N_MODE=0):
         super(GMT_MX,self).__init__(
                             M1_radial_order=M1_radial_order,
@@ -154,7 +156,7 @@ class GMT_MX(GmtMirrors):
         gs : Source
             The guide star
         mirror : string
-            The mirror label: eiher "M1" or "M2"
+            The mirror label: eiher "M1" or "M2" ("MOUNT" is also corrected a will emulate a telescope pointing error)
         mode : string
             The degrees of freedom label
             for M1: "global tip-tilt", "zernike", "bending modes", "Txyz", "Rxyz", "Rz", "segment tip-tilt"
@@ -498,11 +500,189 @@ class GMT_MX(GmtMirrors):
         else:
             return CalibrationVault([D],**calibrationVaultKwargs)
 
+    def PSSn(self,src,r0=16e-2,L0=25.0,zenith_distance=30,C=None,AW0=None,save=False):
+        """
+        Computes the PSSn corresponding to the current state of the telescope
+
+        Parameters
+        ----------
+        src : Source
+            The source object that is propagated through the telescope, the 
+            PSSn is given at the wavelenght of the source
+        r0 : float, optional
+            The Fried parameter at zenith and at 500nm in meter; default: 0.15m
+        L0 : float, optional
+            The outer scale in meter; default: 25m
+        zenith_distance : float, optional
+            The angular distance of the source from zenith in degree; default: 30 degree    
+        C : ndarray, optional
+            The atmosphere OTF; default: None
+        AW0 : ndarray, optional
+            The collimated telescope OTF; default: None
+        save : boolean, optional
+            If True, return in addition to the PSSn, a dictionnary with C and AW0; default: False
+
+        Return
+        ------
+        PSSn : float
+            The PSSn value
+        """
+
+        if C is None:
+            _r0_  = r0*(src.wavelength/0.5e-6)**1.2
+            _r0_ = (_r0_**(-5./3.)/np.cos(zenith_distance*np.pi/180))**(-3./5.)
+            nPx = src.rays.N_L
+            D = src.rays.L
+            #u = np.arange(2*nPx-1,dtype=np.float)*D/(nPx-1)
+            #u = u-u[-1]/2
+            u = np.fft.fftshift(np.fft.fftfreq(2*nPx-1))*(2*nPx-1)*D/(nPx-1)
+            x,y = np.meshgrid(u,u)
+            rho = np.hypot(x,y)
+            C = phaseStats.atmOTF(rho,_r0_,L0)
+
+        if AW0 is None:
+            _src_ = Source(src.band,
+                           rays_box_size=src.rays.L,
+                           rays_box_sampling=src.rays.N_L,
+                           rays_origin=[0,0,25])
+            state = self.state
+            pez = self.pointing_error_zenith
+            pea = self.pointing_error_azimuth
+            self.reset()
+            self.propagate(_src_)
+            A = _src_.amplitude.host()
+            F = _src_.phase.host()
+            k = 2.*np.pi/_src_.wavelength
+            W = A*np.exp(1j*k*F)
+            S1 = np.fliplr(np.flipud(W))
+            S2 = np.conj(W)
+            AW0 = fftconvolve(S1,S2)
+            self^=state
+            self.pointing_error_zenith  = pez
+            self.pointing_error_azimuth = pea
+
+        src.reset()
+        self.propagate(src)
+        A = src.amplitude.host()
+        F = src.phase.host()
+        k = 2.*np.pi/src.wavelength
+        W = A*np.exp(1j*k*F)
+        S1 = np.fliplr(np.flipud(W))
+        S2 = np.conj(W)
+        AW = fftconvolve(S1,S2)
+        out = np.sum(np.abs(AW*C)**2)/np.sum(np.abs(AW0*C)**2)
+
+        if save:
+            return (out,{'C':C,'AW0':AW0})
+        else:
+            return out
+### PSSN
+class PSSn(object):
+
+    def __init__(self,r0=16e-2,L0=25.0,zenith_distance=30):
+        self.r0 = r0
+        self.r0_wavelength = 0.5e-6
+        self.L0 = L0
+        self.zenith_distance = zenith_distance
+        self.C = None
+        self.AW0 = None
+        self.AW = 0
+        self.N = 0
+    
+    def __call__(self, gmt, src, sigma=0):
+        """
+        Computes the PSSn corresponding to the current state of the telescope
+
+        Parameters
+        ----------
+        src : Source
+            The source object that is propagated through the telescope, the 
+            PSSn is given at the wavelenght of the source
+        r0 : float, optional
+            The Fried parameter at zenith and at 500nm in meter; default: 0.15m
+        L0 : float, optional
+            The outer scale in meter; default: 25m
+        zenith_distance : float, optional
+            The angular distance of the source from zenith in degree; default: 30 degree    
+        C : ndarray, optional
+            The atmosphere OTF; default: None
+        AW0 : ndarray, optional
+            The collimated telescope OTF; default: None
+        save : boolean, optional
+            If True, return in addition to the PSSn, a dictionnary with C and AW0; default: False
+
+        Return
+        ------
+        PSSn : float
+            The PSSn value
+        """
+
+        if self.C is None:
+            _r0_  = self.r0*(src.wavelength/self.r0_wavelength)**1.2
+            _r0_ = (_r0_**(-5./3.)/np.cos(self.zenith_distance*np.pi/180))**(-3./5.)
+            nPx = src.rays.N_L
+            D = src.rays.L
+            #u = np.arange(2*nPx-1,dtype=np.float)*D/(nPx-1)
+            #u = u-u[-1]/2
+            u = np.fft.fftshift(np.fft.fftfreq(2*nPx-1))*(2*nPx-1)*D/(nPx-1)
+            x,y = np.meshgrid(u,u)
+            rho = np.hypot(x,y)
+            self.C = phaseStats.atmOTF(rho,_r0_,self.L0)
+
+        if self.AW0 is None:
+            _src_ = Source(src.band,
+                           rays_box_size=src.rays.L,
+                           rays_box_sampling=src.rays.N_L,
+                           rays_origin=[0,0,25])
+            state = gmt.state
+            pez = gmt.pointing_error_zenith
+            pea = gmt.pointing_error_azimuth
+            gmt.reset()
+            gmt.propagate(_src_)
+            A = _src_.amplitude.host()
+            F = _src_.phase.host()
+            k = 2.*np.pi/_src_.wavelength
+            W = A*np.exp(1j*k*F)
+            S1 = np.fliplr(np.flipud(W))
+            S2 = np.conj(W)
+            self.AW0 = fftconvolve(S1,S2)
+            gmt^=state
+            gmt.pointing_error_zenith  = pez
+            gmt.pointing_error_azimuth = pea
+
+
+        self.OTF(gmt,src)
+
+        if sigma>0:
+            nPx = src.rays.N_L
+            D = src.rays.L
+            u = np.fft.fftshift(np.fft.fftfreq(2*nPx-1))*(2*nPx-1)*D/(nPx-1)
+            x,y = np.meshgrid(u,u)
+            K = np.exp(-2*(sigma*np.pi/src.wavelength)**2*(x**2+y**2))
+            out = np.sum(np.abs(self.AW*K*self.C/self.N)**2)/np.sum(np.abs(self.AW0*self.C)**2)
+        else:
+            out = np.sum(np.abs(self.AW*self.C/self.N)**2)/np.sum(np.abs(self.AW0*self.C)**2)
+        self.AW = 0
+        self.N = 0
+        return out
+
+    def OTF(self,gmt,src):
+        src.reset()
+        gmt.propagate(src)
+        A = src.amplitude.host()
+        F = src.phase.host()
+        k = 2.*np.pi/src.wavelength
+        W = A*np.exp(1j*k*F)
+        S1 = np.fliplr(np.flipud(W))
+        S2 = np.conj(W)
+        self.AW += fftconvolve(S1,S2)
+        self.N += 1
+        
 ## AGWS_CALIBRATE
 
     def AGWS_calibrate(self,wfs,gs,stroke=None,coupled=False,decoupled=False, 
                        fluxThreshold=0.0, filterMirrorRotation=True,
-                       includeBM=True,
+                       includeBM=True, includeMount=False,
                        calibrationVaultKwargs=None):
         gs.reset()
         self.reset()
@@ -519,6 +699,8 @@ class GMT_MX(GmtMirrors):
             D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
             if includeBM:
                 D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=stroke[4]) )
+            if includeMount:
+                D.append( self.calibrate(gwfs,gs,mirror='MOUNT',mode='pointing',stroke=ceo.constants.ARCSEC2RAD) )
             D  = np.concatenate(D,axis=1)
             return CalibrationVault([D],**calibrationVaultKwargs)
         elif decoupled:
@@ -1388,41 +1570,41 @@ class EdgeSensors:
         u2,v2,w2 = self.M.edge_sensors(self.x2,self.y2,self.z,segId0=1,edgeSensorId=6)
         return np.concatenate((v0,v1-v2)),np.concatenate((w0,w1-w2))
 
-def Trace( src, S, global_CS=True):
+def Trace( rays, S, global_CS=True, wavelength=550e-9):
     n = len(S)
-    src.reset()
-    xyz = [ src.rays.coordinates.host() ]
+    #rays.reset()
+    xyz = [ rays.coordinates.host() ]
     for k in range(n):
-        #print 'Material refractive index: %f'%src.rays.refractive_index
+        #print 'Material refractive index: %f'%rays.refractive_index
         if isinstance(S[k],Aperture):
-            S[k].vignetting(src)
+            S[k].vignetting(rays)
         elif isinstance(S[k],(GMT_M1,GMT_M2)):
-            S[k].trace(src.rays)
-            xyz.append( src.rays.coordinates.host() )
+            S[k].trace(rays)
+            xyz.append( rays.coordinates.host() )
         elif isinstance(S[k],(GmtMirrors,GMT_MX)):
-            #S[k].M2.blocking(src.rays)            
-            S[k].M1.trace(src.rays)            
-            xyz.append( src.rays.coordinates.host() )
-            S[k].M2.trace(src.rays)            
-            xyz.append( src.rays.coordinates.host() )
+            #S[k].M2.blocking(rays)            
+            S[k].M1.trace(rays)            
+            xyz.append( rays.coordinates.host() )
+            S[k].M2.trace(rays)            
+            xyz.append( rays.coordinates.host() )
         else:
             _S_ = S[k]
-            Transform_to_S(src,_S_)
+            Transform_to_S(rays,_S_)
             if not _S_.coord_break: 
-                Intersect(src,_S_)
-                n_S = _S_.refractive_index(src)
+                Intersect(rays,_S_)
+                n_S = _S_.refractive_index(wavelength)
                 if n_S!=0:
                     if n_S==-1:
-                        Reflect(src)
+                        Reflect(rays)
                     else:
-                        mu = src.rays.refractive_index/n_S
+                        mu = rays.refractive_index/n_S
                         if mu!=1.0:
-                            Refract(src,mu)
-                            src.rays.refractive_index = n_S
+                            Refract(rays,mu)
+                            rays.refractive_index = n_S
             if global_CS:
-                Transform_to_R(src,_S_)
-            xyz.append( src.rays.coordinates.host() )
-    vignet_idx = np.nonzero(src.rays.vignetting.host()[0]==0)[0]
+                Transform_to_R(rays,_S_)
+            xyz.append( rays.coordinates.host() )
+    vignet_idx = np.nonzero(rays.vignetting.host()[0]==0)[0]
     n = len(xyz)
     for k in range(n):
         xyz[k] = np.delete(xyz[k],vignet_idx,axis=0)
