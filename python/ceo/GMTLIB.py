@@ -1039,11 +1039,14 @@ class DispersedFringeSensor(SegmentPistonSensor):
     Source : a class for astronomical sources
     cuFloatArray : an interface class between GPU host and device data for floats
     """
-    def __init__(self, M1, src, dispersion=5.0, field_of_view=3.0,nyquist_factor=1.0):
+    def __init__(self, M1, src, dispersion=5.0, field_of_view=3.0,nyquist_factor=1.0,BIN_IMAGE=2,MALLOC_DFT=True):
         SegmentPistonSensor.__init__(self, M1, src,
                                      dispersion=dispersion,
                                      field_of_view=field_of_view,
-                                     nyquist_factor=nyquist_factor)
+                                     nyquist_factor=nyquist_factor,
+				     BIN_IMAGE=BIN_IMAGE,
+				     MALLOC_DFT=MALLOC_DFT)
+
 	self._N_SRC = src.N_SRC
 	self.INIT_ALL_ATTRIBUTES = False
 	self.lobe_detection = 'gaussfit'
@@ -1130,11 +1133,14 @@ class DispersedFringeSensor(SegmentPistonSensor):
 
 	Parameters
 	----------
-	data_type : string
-		Set to "camera" to return fringes; set to "fftlet" to return fftlet images; default: fftlet
+	data_type : string.  (default: fftlet)
+		Set to "camera" to return fringes; 
+		Set to "fftlet" to return fftlet images;
+		Set to "pupil_masks" to return the sub-aperture masks;
+		Set to "phase" to return the phase on each sub-aperture.
 	"""
 
-	assert data_type == 'fftlet' or data_type == 'camera' or data_type == 'pupil_masks', "data_type should be either 'fftlet', 'camera', or 'pupil_masks'"
+	assert data_type=='fftlet' or data_type=='camera' or data_type=='pupil_masks' or data_type=='phase', "data_type should be either 'fftlet', 'camera', or 'pupil_masks', or 'phase'"
 
 	n_lenslet = self.camera.N_SIDE_LENSLET
 
@@ -1146,6 +1152,9 @@ class DispersedFringeSensor(SegmentPistonSensor):
  	    n_px = self.camera.N_PX_IMAGE/2
 	elif data_type == 'pupil_masks':
 	    data = self.W.amplitude.host()
+	    n_px = (data.shape)[0] / n_lenslet
+	elif data_type == 'phase':
+	    data = self.W.phase.host()
 	    n_px = (data.shape)[0] / n_lenslet
 
     	dataCube = np.zeros((n_px, n_px, self._N_SRC*12))
