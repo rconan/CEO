@@ -9,6 +9,7 @@ cdef extern from "centroiding.h":
     cdef cppclass centroiding:
         float *d__c
         float *d__mass
+        char *lenslet_mask
         void setup(int, int)
         void fried_geometry(mask *, mask *, int , float)
         void get_data(float *, int)
@@ -25,12 +26,13 @@ cdef extern from "centroiding.h":
 \label{sec:class-definitions}
 
 <<class definitions>>=
-from utilities cimport cuFloatArray
+from utilities cimport cuFloatArray, Mask
 cdef class Centroiding:
     cdef:
         centroiding *_c_centroiding
         readonly int N_SIDE_LENSLET, N_SOURCE
         readonly cuFloatArray flux, c
+        readonly Mask lenslet_mask
         char isPtr
     cdef void set_ptr(Centroiding, centroiding *)
 @ 
@@ -97,6 +99,7 @@ cdef class Centroiding:
             self._c_centroiding.setup(self.N_SIDE_LENSLET,self.N_SOURCE)    
             self.flux._c_gpu.dev_data = self._c_centroiding.d__mass
             self.c._c_gpu.dev_data = self._c_centroiding.d__c
+        self.lenslet_mask = Mask(self.N_SIDE_LENSLET*self.N_SIDE_LENSLET)
 
     cdef void set_ptr(self, centroiding *data_proc_ptr):
         self._c_centroiding = data_proc_ptr
@@ -109,6 +112,9 @@ cdef class Centroiding:
 
     def fried_geometry(self,MaskAbstract dm, MaskAbstract pupil, int n, float threshold):
         self._c_centroiding.fried_geometry(dm._c_mask, pupil._c_mask, n, threshold)
+        self.lenslet_mask._c_mask.reset()
+        self.lenslet_mask._c_mask.add(self._c_centroiding.lenslet_mask,
+                                     self.N_SIDE_LENSLET*self.N_SIDE_LENSLET)
 
     def get_data(self, cuFloatArray frame, int N):
         self._c_centroiding.get_data(frame._c_gpu.dev_data,N)
