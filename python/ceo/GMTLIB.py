@@ -768,7 +768,7 @@ class PSSn(object):
         self.AW = 0
         self.N = 0
     
-    def __call__(self, gmt, src, sigma=0):
+    def __call__(self, gmt, src, sigma=0, full_opd = False):
         """
         Computes the PSSn corresponding to the current state of the telescope
 
@@ -830,7 +830,7 @@ class PSSn(object):
             gmt.pointing_error_azimuth = pea
 
 
-        self.OTF(gmt,src)
+        if self.AW==0: self.OTF(src)
 
         if sigma>0:
             nPx = src.rays.N_L
@@ -840,14 +840,16 @@ class PSSn(object):
             K = np.exp(-2*(sigma*np.pi/src.wavelength)**2*(x**2+y**2))
             out = np.sum(np.abs(self.AW*K*self.C/self.N)**2)/np.sum(np.abs(self.AW0*self.C)**2)
         else:
-            out = np.sum(np.abs(self.AW*self.C/self.N)**2)/np.sum(np.abs(self.AW0*self.C)**2)
+            if full_opd:
+                out = np.sum(np.abs(self.AW/self.N)**2)/np.sum(np.abs(self.AW0*self.C)**2)
+            else:
+                out = np.sum(np.abs(self.AW*self.C/self.N)**2)/np.sum(np.abs(self.AW0*self.C)**2)
         self.AW = 0
         self.N = 0
         return out
 
-    def OTF(self,gmt,src):
-        src.reset()
-        gmt.propagate(src)
+    def OTF(self,src):
+        +src
         A = src.amplitude.host()
         F = src.phase.host()
         k = 2.*np.pi/src.wavelength
