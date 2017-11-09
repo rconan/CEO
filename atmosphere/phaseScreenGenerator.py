@@ -3,12 +3,12 @@ import json
 from subprocess import call
 import os
 
-for SEED in [4321,8765]:
-    L0   = 60
+for SEED in [1234,]:
+    L0   = 25.0
     filepath = "/mnt/bins/"
     filename = filepath+"gmtAtmosphereL0%d_%d"%(L0,SEED)
-    atm_prms = {'r0':0.15,'L0':60,'L':26.0,'NXY_PUPIL':346,'fov':20*ceo.constants.ARCMIN2RAD,
-               'duration':1,'N_DURATION':2,'filename':filename+'.bin',
+    atm_prms = {'r0':0.15,'L0':L0,'L':26.0,'NXY_PUPIL':346,'fov':20*ceo.constants.ARCMIN2RAD,
+               'duration':15,'N_DURATION':20,'filename':filename+'.bin',
                 'SEED':SEED}
 
     with open(filename+'.json', 'w') as outfile:

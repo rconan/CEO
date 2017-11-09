@@ -126,6 +126,9 @@ struct atmosphere {
   void get_phase_screen(source *src,
 			float const delta_x, int N_x, float const delta_y, int N_y,
 			float time);
+  void get_phase_screen(source *src,
+			float const delta_x, int N_x, float const delta_y, int N_y,
+			float time, float exponent);
   void get_phase_screen(source *src, int N_SRC,
 			float const delta_x, int N_x, float const delta_y, int N_y,
 			float time);
@@ -137,6 +140,8 @@ struct atmosphere {
 				 char *valid_lenslet, float const d, source *src, float time);
   void get_phase_screen_gradient(centroiding *cog, int NL,
 				 float const d, source *src, float time);
+  void get_phase_screen_gradient_rolling_shutter(centroiding *cog, int NL,
+						 float const d, source *src, float time, float delay);
   void get_phase_screen_gradient(centroiding *cog, int NL,
 				 float const d, source *src, int N_SRC, float time);
   void get_phase_screen_gradient(centroiding *cog, int NL, char *valid_lenslet,
@@ -183,6 +188,8 @@ struct atmosphere {
 <<phase screen kernel (square)>>
 <<phase screen kernel (layers)>>
 <<phase screen kernel (square and masked)>>
+<<generic phase screen kernel (square)>>
+<<generic phase screen kernel (square and masked)>>
 
 <<phase screen gradient kernel>>
 <<phase screen gradient kernel (masked)>>
@@ -216,7 +223,8 @@ struct atmosphere {
 <<phase screen V.a>>
 <<phase screen V.b>>
 <<phase screen VI>>
-
+<<generic phase screen>>
+  
 <<phase screen gradient I>>
 <<phase screen gradient II>>
 <<phase screen gradient III>>
@@ -1404,6 +1412,112 @@ __global__ void square_plps_masked(float *phase_screen, char *mask,
     }
 }
 @
+The following method is computing phase screens replacing the $11/6$ exponent of the phase power spectrum with a used defined exponent.
+<<generic phase screen>>=
+void atmosphere::get_phase_screen(source *src,
+				  float const delta_x, int N_x,
+				  float const delta_y, int N_y,
+				  float time, float exponent)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim( 1+N_x/16 , 1+N_y/16, src->N_SRC);
+  if (src->wavefront.M==NULL) {
+    square_gplps LLL gridDim , blockDim RRR
+      (src->wavefront.phase,
+       delta_x, N_x, delta_y, N_y,
+       d__turbulence,
+       wavenumber*powf(r0,-5.0/6.0),
+       d__layers, N_LAYER,
+       zeta1, eta1, zeta2, eta2,
+       src->dev_ptr, time, exponent);
+  } else {
+    square_gplps_masked LLL gridDim , blockDim RRR
+      (src->wavefront.phase, src->wavefront.M->m,
+       delta_x, N_x, delta_y, N_y,
+       d__turbulence,
+       wavenumber*powf(r0,-5.0/6.0),
+       d__layers, N_LAYER,
+       zeta1, eta1, zeta2, eta2,
+       src->dev_ptr, time, exponent);
+  }
+}
+@  with the kernels
+<<generic phase screen kernel (square)>>=
+__global__ void square_gplps(float *phase_screen,
+			       float const delta_x, int N_x, float const delta_y, int N_y,
+			       profile *turb, float r0, layer *layers, int N_LAYER,
+			       float *zeta1, float *eta1, float *zeta2, float *eta2,
+			       source *src, float time, float exponent)
+{
+  <<declarations>>
+
+  <<thread to coordinate index (square)>>
+
+  sum = 0;
+  if ( (i<N_x) && (j<N_y) )
+    {
+
+      <<variables>>
+
+      for (i=0;i<turb->N_k;i++)
+	{
+	  <<frequency magnitude sum exponent>>
+          for (j=0;j<turb->N_a;j++)
+	    {
+	      <<frequency angle sum>>
+	      for (l=0;l<N_LAYER;l++)
+		{
+		  <<layer sum>>
+		}
+	      sum += sqrt_spectrum_kernel*sum_l;
+	    }
+	}
+      phase_screen[kl] = 1.4*r0*sum;
+    }
+}
+@ and
+<<generic phase screen kernel (square and masked)>>=
+__global__ void square_gplps_masked(float *phase_screen, char *mask,
+				    float const delta_x, int N_x, float const delta_y, int N_y,
+				    profile *turb, float r0, layer *layers, int N_LAYER,
+				    float *zeta1, float *eta1, float *zeta2, float *eta2,
+				    source *src, float time, float exponent)
+{
+  <<declarations>>
+
+  <<thread to coordinate index (square)>>
+
+  sum = 0;
+  if ( ( (i<N_x) && (j<N_y) ) && (mask[i * N_x + j]) )
+    {
+
+      <<variables>>
+
+      for (i=0;i<turb->N_k;i++)
+	{
+	  <<frequency magnitude sum exponent>>
+          for (j=0;j<turb->N_a;j++)
+	    {
+	      <<frequency angle sum>>
+	      for (l=0;l<N_LAYER;l++)
+		{
+		  <<layer sum>>
+		}
+	      sum += sqrt_spectrum_kernel*sum_l;
+	    }
+	}
+      phase_screen[kl] = 1.4*r0*sum;
+    }
+}
+@ where
+<<frequency magnitude sum exponent>>=
+f_red *= f_red0;
+freq_mag = freq_mag0*f_red;
+delta_freq_mag = delta_freq_mag0*f_red;
+sqrt_spectrum_kernel =
+  powf( freq_mag*freq_mag + freq_L0_square, -0.5*exponent)*
+  sqrt(freq_mag*delta_freq_mag*turb->delta);
+@
 Each thread is computing one value of the phase screen at the coordinate [[x_kl = i*delta_x]] and [[y_kl = j*delta_y]]
 <<thread to coordinate index (square)>>=
 i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -1500,6 +1614,25 @@ void atmosphere::get_phase_screen_gradient(centroiding *cog, int NL, float const
 					      zeta1, eta1, zeta2, eta2,
 					      src->dev_ptr, time);
 }
+void atmosphere::get_phase_screen_gradient_rolling_shutter(centroiding *cog, int NL, float const d,
+							   source *src, float time, float delay)
+{
+  dim3 blockDim(16,16);
+    dim3 gridDim( 1+NL/16 , 1+NL/16, src->N_SRC);
+  if (cog->MASK_SET)
+    plps_gradient_mask_rolling_shutter LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy, NL,
+								   cog->lenslet_mask, d,
+								   d__turbulence, wavelength, r0,
+								   d__layers, N_LAYER,
+								   zeta1, eta1, zeta2, eta2,
+								   src->dev_ptr, time, delay);
+  else
+    plps_gradient_rolling_shutter LLL gridDim , blockDim RRR (cog->d__cx, cog->d__cy, NL, d,
+							      d__turbulence, wavelength, r0,
+							      d__layers, N_LAYER,
+							      zeta1, eta1, zeta2, eta2,
+							      src->dev_ptr, time,delay);
+}
 <<phase screen gradient III>>=
 void atmosphere::get_phase_screen_gradient(centroiding *cog, int NL, float const d,
 					   source *src, int N_SRC, float time)
@@ -1574,6 +1707,48 @@ __global__ void plps_gradient(float *sx, float *sy, int NL, float const d,
       sy[kl] = red0*sum_y;
     }
 }
+__global__ void plps_gradient_rolling_shutter(float *sx, float *sy, int NL, float const d,
+			      profile *turb, float wavelength, float r0,
+			      layer *layers, int N_LAYER,
+			      float *zeta1, float *eta1, float *zeta2, float *eta2,
+			      source *src, float _time_, float delay)
+{
+  <<declarations (common)>>
+  float sum_x, sum_l_x, sum_y, sum_l_y, red0, red1, red2;
+  float time, tau;
+  tau = delay/NL/NL;
+
+  <<thread to lenslet coordinate>>
+
+  sum_x = sum_y = 0;
+  if ( (i<NL) && (j<NL) )
+    {
+
+      <<variables>>
+      time = _time_ + (i*NL+j)*tau;
+
+      for (i=0;i<turb->N_k;i++)
+	{
+	  <<frequency magnitude sum>>
+          for (j=0;j<turb->N_a;j++)
+	    {
+	      <<frequency angle sum (common)>>
+		cos_freq_ang *= freq_mag;
+		sin_freq_ang *= freq_mag;
+		sum_l_x = sum_l_y = 0;
+	      for (l=0;l<N_LAYER;l++)
+		{
+		  <<layer sum (gradient)>>
+		}
+	      sum_x += sqrt_spectrum_kernel*sum_l_x;
+	      sum_y += sqrt_spectrum_kernel*sum_l_y;
+	    }
+	}
+      red0 = 1.4*powf(r0,-5.0/6.0)*wavelength/(2*PI);
+      sx[kl] = red0*sum_x;
+      sy[kl] = red0*sum_y;
+    }
+}
 @
 A mask identifying the valid lenslet can also be passed to the routine:
 \index{atmosphere!atmosphere!get\_phase\_screen\_gradient}
@@ -1607,6 +1782,54 @@ __global__ void plps_gradient_mask(float *sx, float *sy, int NL,
   if ( (i<NL) && (j<NL) )
     {
       <<variables>>
+	if (valid_lenslet[i*NL+j]>0)
+	  {
+
+	    for (i=0;i<turb->N_k;i++)
+	      {
+		<<frequency magnitude sum>>
+		  for (j=0;j<turb->N_a;j++)
+		    {
+		      <<frequency angle sum (common)>>
+			cos_freq_ang *= freq_mag;
+		      sin_freq_ang *= freq_mag;
+		      sum_l_x = sum_l_y = 0;
+		      for (l=0;l<N_LAYER;l++)
+			{
+			  <<layer sum (gradient)>>
+			    }
+		      sum_x += sqrt_spectrum_kernel*sum_l_x;
+		      sum_y += sqrt_spectrum_kernel*sum_l_y;
+		    }
+	      }
+	    red0 = 1.4*powf(r0,-5.0/6.0)*wavelength/(2*PI);
+	    sx[kl] = red0*sum_x;
+	    sy[kl] = red0*sum_y;
+	  } else {
+	  sx[kl] = 0.0;
+	  sy[kl] = 0.0;
+	}
+    }
+}
+__global__ void plps_gradient_mask_rolling_shutter(float *sx, float *sy, int NL,
+				   char *valid_lenslet, float const d,
+				   profile *turb, float wavelength, float r0,
+				   layer *layers, int N_LAYER,
+				   float *zeta1, float *eta1, float *zeta2, float *eta2,
+				   source *src, float _time_, float delay)
+{
+  <<declarations (common)>>
+  float sum_x, sum_l_x, sum_y, sum_l_y, red0, red1, red2;
+  float time, tau;
+  tau = delay/NL/NL;
+
+  <<thread to lenslet coordinate>>
+
+      sum_x = sum_y = 0;
+  if ( (i<NL) && (j<NL) )
+    {
+      <<variables>>
+      time = _time_ + (i*NL+j)*tau;
 	if (valid_lenslet[i*NL+j]>0)
 	  {
 

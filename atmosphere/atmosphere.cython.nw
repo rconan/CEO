@@ -35,10 +35,13 @@ cdef extern from "atmosphere.h":
         void save_layer_phasescreens(char *,int)
 	void reset()
         void get_phase_screen(source *, float , int , float , int , float )
+        void get_phase_screen(source *, float , int , float , int , float , float)
         void get_phase_screen(source *, float )
         void get_phase_screen(float*, float *, float *, int,
                               source *, float )
         void get_phase_screen_gradient(centroiding *, int , float , source *, float )
+        void get_phase_screen_gradient_rolling_shutter(
+            centroiding *, int , float , source *, float, float )
         void get_phase_screen_circ_centroids(centroiding *,  float, source *,
 					     int , float )
         void get_phase_screen_circ_uplink_centroids(centroiding *,  float, source *,
@@ -404,7 +407,7 @@ def save_layer_phasescreens(self, bytes filename, int N_DURATION):
 def get_phase_screen(self, Source src,
 		     float delta_x, int N_x,
 		     float delta_y, int N_y,
-		     float time):
+		     float time, float exponent=0.0):
     """
     Computes the N_x$\times$N_y phase screen of the source wavefront
 
@@ -423,9 +426,15 @@ def get_phase_screen(self, Source src,
     time: float
         The time of the atmosphere snapshot since the beginning of the simulation
     """
-    self._c_atmosphere.get_phase_screen(src._c_source,
-					delta_x, N_x,
-					delta_y, N_y, time)
+    if exponent>0:
+        self._c_atmosphere.get_phase_screen(src._c_source,
+                                            delta_x, N_x,
+                                            delta_y, N_y, time,
+                                            exponent)
+    else:
+        self._c_atmosphere.get_phase_screen(src._c_source,
+                                            delta_x, N_x,
+                                            delta_y, N_y, time)
 
 def phase_screen(self, Source src, float time):
     self._c_atmosphere.get_phase_screen(src._c_source, time)
@@ -517,7 +526,7 @@ def propagate(self, Source src):
                                   src.timeStamp)
 
 def get_phase_screen_gradient(self, Centroiding cog, int NL, float d,
-			      Source src, float time):
+			      Source src, float time, float delay=0.0):
     """
     Computes the phase screen gradient of the source wavefront
 
@@ -534,8 +543,13 @@ def get_phase_screen_gradient(self, Centroiding cog, int NL, float d,
     time: float
         The time of the atmosphere snapshot since the beginning of the simulation
     """
-    self._c_atmosphere.get_phase_screen_gradient(cog._c_centroiding, NL, d,
-						 src._c_source, time)
+    if delay>0:
+        self._c_atmosphere.get_phase_screen_gradient_rolling_shutter(
+            cog._c_centroiding, NL, d,
+            src._c_source, time, delay)
+    else:
+        self._c_atmosphere.get_phase_screen_gradient(cog._c_centroiding, NL, d,
+                                                     src._c_source, time)
 
 def get_phase_screen_gradientSH(self, ShackHartmann wfs, int NL, float d,
 			      Source src, float time):
