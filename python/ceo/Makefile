@@ -2,7 +2,7 @@ include ../../common.mk
 
 .pyx.so:
 	cython --directive embedsignature=True --cplus $< -o  $<.cu
-	$(NVCC) -w $(INCS) -I/home/ubuntu/anaconda/envs/python34/include/python3.4m -I/home/ubuntu/anaconda/envs/python34/lib/python3.4/site-packages/numpy/core/include -arch=sm_20 -lineinfo -Xcompiler '-fPIC,-pthread,-O3' -o  $<.o -c  $<.cu
+	$(NVCC) -w $(INCS) -I/home/ubuntu/anaconda/include/python3.6m -I/home/ubuntu/anaconda/lib/python3.6/site-packages/numpy/core/include -lineinfo -Xcompiler '-fPIC,-pthread,-O3' -o  $<.o -c  $<.cu
 	$(NVCC) -shared $<.o -o $@ $(LIBS)
 
 aco:

@@ -133,7 +133,7 @@ class GMT_MX(GmtMirrors):
     >>> gpu_ps1d = src.wavefront.phase()
     """
     def __init__(self, D=None, D_px=None, M1_radial_order=0, M2_radial_order=0,
-                 M1_mirror_modes="zernike", M2_mirror_modes="zernike",
+                 M1_mirror_modes=u"zernike", M2_mirror_modes=u"zernike",
                  M1_N_MODE=0 ,M2_N_MODE=0):
         super(GMT_MX,self).__init__(
                             M1_radial_order=M1_radial_order,
@@ -500,7 +500,7 @@ class GMT_MX(GmtMirrors):
         else:
             return CalibrationVault([D],**calibrationVaultKwargs)
 
-    def PSSn(self,src,r0=15e-2,L0=25.0,zenith_distance=30,C=None,AW0=None,save=False):
+    def PSSn(self,src,r0=16e-2,L0=25.0,zenith_distance=30,C=None,AW0=None,save=False):
         """
         Computes the PSSn corresponding to the current state of the telescope
 
@@ -546,6 +546,8 @@ class GMT_MX(GmtMirrors):
                            rays_box_sampling=src.rays.N_L,
                            rays_origin=[0,0,25])
             state = self.state
+            pez = self.pointing_error_zenith
+            pea = self.pointing_error_azimuth
             self.reset()
             self.propagate(_src_)
             A = _src_.amplitude.host()
@@ -556,6 +558,8 @@ class GMT_MX(GmtMirrors):
             S2 = np.conj(W)
             AW0 = fftconvolve(S1,S2)
             self^=state
+            self.pointing_error_zenith  = pez
+            self.pointing_error_azimuth = pea
 
         src.reset()
         self.propagate(src)
@@ -572,7 +576,6 @@ class GMT_MX(GmtMirrors):
             return (out,{'C':C,'AW0':AW0})
         else:
             return out
-
 ## AGWS_CALIBRATE
 
     def AGWS_calibrate(self,wfs,gs,stroke=None,coupled=False,decoupled=False, 
@@ -752,6 +755,110 @@ class GMT_MX(GmtMirrors):
         self.R_AO = np.linalg.pinv(D_AO, rcond=svd_thr)
         #return [D_M2_Z,D_M2_PS_sh, D_M2_Z_PSideal, D_M2_PSideal]
 
+### PSSN
+class PSSn(object):
+
+    def __init__(self,r0=16e-2,L0=25.0,zenith_distance=30):
+        self.r0 = r0
+        self.r0_wavelength = 0.5e-6
+        self.L0 = L0
+        self.zenith_distance = zenith_distance
+        self.C = None
+        self.AW0 = None
+        self.AW = 0
+        self.N = 0
+    
+    def __call__(self, gmt, src, sigma=0, full_opd = False):
+        """
+        Computes the PSSn corresponding to the current state of the telescope
+
+        Parameters
+        ----------
+        src : Source
+            The source object that is propagated through the telescope, the 
+            PSSn is given at the wavelenght of the source
+        r0 : float, optional
+            The Fried parameter at zenith and at 500nm in meter; default: 0.15m
+        L0 : float, optional
+            The outer scale in meter; default: 25m
+        zenith_distance : float, optional
+            The angular distance of the source from zenith in degree; default: 30 degree    
+        C : ndarray, optional
+            The atmosphere OTF; default: None
+        AW0 : ndarray, optional
+            The collimated telescope OTF; default: None
+        save : boolean, optional
+            If True, return in addition to the PSSn, a dictionnary with C and AW0; default: False
+
+        Return
+        ------
+        PSSn : float
+            The PSSn value
+        """
+
+        if self.C is None:
+            _r0_  = self.r0*(src.wavelength/self.r0_wavelength)**1.2
+            _r0_ = (_r0_**(-5./3.)/np.cos(self.zenith_distance*np.pi/180))**(-3./5.)
+            nPx = src.rays.N_L
+            D = src.rays.L
+            #u = np.arange(2*nPx-1,dtype=np.float)*D/(nPx-1)
+            #u = u-u[-1]/2
+            u = np.fft.fftshift(np.fft.fftfreq(2*nPx-1))*(2*nPx-1)*D/(nPx-1)
+            x,y = np.meshgrid(u,u)
+            rho = np.hypot(x,y)
+            self.C = phaseStats.atmOTF(rho,_r0_,self.L0)
+
+        if self.AW0 is None:
+            _src_ = Source(src.band,
+                           rays_box_size=src.rays.L,
+                           rays_box_sampling=src.rays.N_L,
+                           rays_origin=[0,0,25])
+            state = gmt.state
+            pez = gmt.pointing_error_zenith
+            pea = gmt.pointing_error_azimuth
+            gmt.reset()
+            gmt.propagate(_src_)
+            A = _src_.amplitude.host()
+            F = _src_.phase.host()
+            k = 2.*np.pi/_src_.wavelength
+            W = A*np.exp(1j*k*F)
+            S1 = np.fliplr(np.flipud(W))
+            S2 = np.conj(W)
+            self.AW0 = fftconvolve(S1,S2)
+            gmt^=state
+            gmt.pointing_error_zenith  = pez
+            gmt.pointing_error_azimuth = pea
+
+
+        if self.AW==0: self.OTF(src)
+
+        if sigma>0:
+            nPx = src.rays.N_L
+            D = src.rays.L
+            u = np.fft.fftshift(np.fft.fftfreq(2*nPx-1))*(2*nPx-1)*D/(nPx-1)
+            x,y = np.meshgrid(u,u)
+            K = np.exp(-2*(sigma*np.pi/src.wavelength)**2*(x**2+y**2))
+            out = np.sum(np.abs(self.AW*K*self.C/self.N)**2)/np.sum(np.abs(self.AW0*self.C)**2)
+        else:
+            if full_opd:
+                out = np.sum(np.abs(self.AW/self.N)**2)/np.sum(np.abs(self.AW0*self.C)**2)
+            else:
+                out = np.sum(np.abs(self.AW*self.C/self.N)**2)/np.sum(np.abs(self.AW0*self.C)**2)
+        self.AW = 0
+        self.N = 0
+        return out
+
+    def OTF(self,src):
+        +src
+        A = src.amplitude.host()
+        F = src.phase.host()
+        k = 2.*np.pi/src.wavelength
+        W = A*np.exp(1j*k*F)
+        S1 = np.fliplr(np.flipud(W))
+        S2 = np.conj(W)
+        self.AW += fftconvolve(S1,S2)
+        self.N += 1
+        
 # JGMT_MX
 from .utilities import JSONAbstract
 class JGMT_MX(JSONAbstract,GMT_MX):

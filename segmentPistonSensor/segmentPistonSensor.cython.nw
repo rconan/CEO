@@ -17,8 +17,11 @@ cdef extern from "segmentPistonSensor.h":
         imaging camera, FFT
         void setup(gmt_m1 *, source *, float, float, float)
         void setup(gmt_m1 *, source *, float, float, float, int)
+        void setup_alt(gmt_m1 *, source *, float, float, float, int)
         void cleanup()
+        void cleanup_alt()
         void propagate(source *)
+        void propagate_alt(source *)
         void readout(float, float, float)
         void fft()
 <<class definition>>
@@ -35,6 +38,7 @@ cdef class SegmentPistonSensor:
         readonly Complex_amplitude W
         readonly Imaging camera
         readonly cuFloatArray fftlet
+        bint MALLOC_DFT
 @
 \section{PYX file}
 \label{sec:pyx-file}
@@ -79,14 +83,24 @@ cdef class SegmentPistonSensor:
                   float dispersion=5.0,
                   float field_of_view=3.0,
                   float nyquist_factor=1.0,
-                  int BIN_IMAGE=2):
+                  int BIN_IMAGE=2,
+                  bint MALLOC_DFT=True):
         self._c_segmentPistonSensor = new segmentPistonSensor()
-        self._c_segmentPistonSensor.setup(M1._c_gmt_m12,
-                                          gs._c_source,
-                                          dispersion*ARCSEC2RAD*1e6,
-                                          field_of_view*ARCSEC2RAD,
-                                          nyquist_factor,
-                                          BIN_IMAGE)
+        self.MALLOC_DFT = MALLOC_DFT
+        if self.MALLOC_DFT:
+            self._c_segmentPistonSensor.setup(M1._c_gmt_m12,
+                                              gs._c_source,
+                                              dispersion*ARCSEC2RAD*1e6,
+                                              field_of_view*ARCSEC2RAD,
+                                              nyquist_factor,
+                                              BIN_IMAGE)
+        else:
+            self._c_segmentPistonSensor.setup_alt(M1._c_gmt_m12,
+                                              gs._c_source,
+                                              dispersion*ARCSEC2RAD*1e6,
+                                              field_of_view*ARCSEC2RAD,
+                                              nyquist_factor,
+                                              BIN_IMAGE)
 
         self.lenslet_mask = MaskAbstract(self._c_segmentPistonSensor.N_PX2)
         self.lenslet_mask._c_mask = &(self._c_segmentPistonSensor.lenslet_mask)
@@ -112,7 +126,10 @@ cdef class SegmentPistonSensor:
         self.fftlet._c_gpu.dev_data = self._c_segmentPistonSensor.FFT.d__frame
 
     def __dealloc__(self):
-        self._c_segmentPistonSensor.cleanup()
+        if self.MALLOC_DFT:
+            self._c_segmentPistonSensor.cleanup()
+        else:
+            self._c_segmentPistonSensor.cleanup_alt()
 
     def propagate(self, Source gs):
         """
@@ -123,8 +140,11 @@ cdef class SegmentPistonSensor:
         gs : Source
             The segment piston sensor guide star(s)
         """
-        self._c_segmentPistonSensor.propagate(gs._c_source)
-     
+        if self.MALLOC_DFT:
+            self._c_segmentPistonSensor.propagate(gs._c_source)
+        else:
+            self._c_segmentPistonSensor.propagate_alt(gs._c_source)
+
     def readOut(self, float exposureTime, float readOutNoiseRms, 
                 float backgroundMagnitude):
         """

@@ -649,7 +649,7 @@ cdef class ZernikeS:
         zernikeS *_c_zernikeS
         public int max_n, n_mode, N_SURF
         public ndarray a
-        public ndarray invZmat, projZmat
+        public ndarray Zmat, invZmat, projZmat
         double [:,::1] _a_
         <<log variables>>
 @
@@ -932,7 +932,7 @@ cdef class ZernikeS:
         # Build a Zernike Influence-function Matrix for all segments
         #alphaId = 0   # only on-axis direction supported...
 
-        Zmat = np.zeros((gs.n*gs.m,self.n_mode,7))
+        self.Zmat = np.zeros((gs.n*gs.m,self.n_mode,7))
         for segId in range(1,8):
             self.reset()
             cutheta = cuDoubleArray(host_data=theta[segId-1,:,alphaId].reshape(gs.m,gs.n))
@@ -941,23 +941,23 @@ cdef class ZernikeS:
                 self.a[0,k] = 1
                 self.update()
                 S = self.surface(curho,cutheta).host(shape=(gs.m*gs.n,1))*P[segId-1,:,alphaId].reshape(-1,1)
-                Zmat[:,k,segId-1] = S.flatten()
+                self.Zmat[:,k,segId-1] = S.flatten()
                 self.a[0,k] = 0
 
         print 'Zernike Inflence Function Matrix:'
-        print Zmat.shape
+        print np.shape(self.Zmat)
 
         #Pseudo-inverse of Zmat
         self.invZmat = np.zeros((self.n_mode,gs.m*gs.n,7))
         for segId in range(1,8):
-            self.invZmat[:,:,segId-1] = np.linalg.pinv(Zmat[:,:,segId-1])
+            self.invZmat[:,:,segId-1] = np.linalg.pinv(self.Zmat[:,:,segId-1])
         #print 'inverse of Zernike Influence Function Matrix:'
         #print self.invZmat.shape
 
         #Projection matrix
         self.projZmat = np.zeros((self.n_mode,gs.m*gs.n,7))
         for segId in range(1,8):
-            self.projZmat[:,:,segId-1] = Zmat[:,:,segId-1].T / np.sum(P[segId-1,:,alphaId])
+            self.projZmat[:,:,segId-1] = self.Zmat[:,:,segId-1].T / np.sum(P[segId-1,:,alphaId])
 
     def projectionS(self, phase):
         cdef:
