@@ -849,7 +849,7 @@ class PSSn(object):
         return out
 
     def OTF(self,src):
-        +src
+        #+src
         A = src.amplitude.host()
         F = src.phase.host()
         k = 2.*np.pi/src.wavelength
