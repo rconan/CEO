@@ -547,6 +547,7 @@ cdef class Modes:
     cdef:
         modes *_c_modes
         public rtd[:,:] a
+        rtd *a_ptr
         public cuDoubleArray M
         public cuDoubleArray S
         public cuIntArray s2b
@@ -589,6 +590,10 @@ cdef class Modes:
         self._c_modes = new modes()
         self._c_modes.setup(filename,N,n_mode);
         self.a = np.zeros((self._c_modes.N, self._c_modes.n_mode), dtype=np.float64)
+        if n_mode>0:
+            self.a_ptr = &self.a[0,0]
+        else:
+            self.a_ptr = NULL
         self.M = cuDoubleArray(shape=(self._c_modes.BM_N_SAMPLE**2,
                                       self._c_modes.N_SET*self._c_modes.N_MODE),
                                order='F')
@@ -613,14 +618,14 @@ cdef class Modes:
         """
         if modes is not None:
             self.a[:] = modes
-        self._c_modes.update(&self.a[0,0])
+        self._c_modes.update(self.a_ptr)
     
     def reset(self):
         """
         Resets the bending modes coefficients to zero and update the bending modes surface
         """
         self.a[:] = 0
-        self._c_modes.update(&self.a[0,0])
+        self._c_modes.update(self.a_ptr)
 
     @property
     def radius(self):
@@ -820,7 +825,7 @@ else:
     self._c_gmt_m12.setup()
 <<GMT M12 constructor>>=
 self.mirror_modes_type = bytes(mirror_modes)
-if mirror_modes=='None':
+if mirror_modes==None:
     self._c_gmt_m12.setup()
 elif mirror_modes=="zernike":
     self.zernike = ZernikeS(radial_order,N_SURF=7)
