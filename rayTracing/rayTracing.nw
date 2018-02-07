@@ -36,6 +36,8 @@ The ray tracing method involves 4 steps \cite{}:
 
 __host__ __device__ rtd even_asphere(rtd r, int N, rtd *a);
 __host__ __device__ rtd partial_x_or_y_even_asphere(rtd x_or_y, rtd r2, int N, rtd *a);
+__host__ __device__ rtd coating_surface(rtd r);
+__host__ __device__ rtd partial_x_or_y_coating_surface(rtd x_or_y, rtd r);
 
 <<zernikeS structure>>
 
@@ -87,6 +89,7 @@ void refract(bundle *rays, rtd mu);
 <<coordinates backward transform>>
 
 <<even asphere equations>>
+<<coating surface equations>>
 
 <<zernike surface kernel>>
 <<zernike surface and derivatives kernel>>
@@ -449,7 +452,8 @@ __host__ __device__ inline rtd conic_equation(vector *v, vector *v0,
 {
   rtd rho2, asphere;
   rho2    = v->rho2_shift(v0->x,v0->y);
-  asphere = even_asphere(rho2, N, a);
+  //  asphere = even_asphere(rho2, N, a);
+  asphere =  coating_surface(v->mag_shift(v0->x,v0->y));
   rho2   *= c;
   if (c==0)
     return 0.0 + asphere;
@@ -486,7 +490,8 @@ The partial derivative of the conic equation are written
 {
   rtd rho2, asphere;
   rho2    = v->rho2_shift(v0->x,v0->y);
-  asphere = partial_x_or_y_even_asphere(v->x - v0->x, rho2, N, a);
+  //  asphere = partial_x_or_y_even_asphere(v->x - v0->x, rho2, N, a);
+  asphere = partial_x_or_y_coating_surface(v->x - v0->x, v->mag_shift(v0->x,v0->y));
   rho2   *= c;
   if (c==0)
     return 0.0 - asphere;
@@ -510,7 +515,8 @@ __device__ inline rtd partial_y_conic_surface(vector *v, vector *v0,
 {
   rtd rho2, asphere;
   rho2    = v->rho2_shift(v0->x,v0->y);
-  asphere = partial_x_or_y_even_asphere(v->y - v0->y, rho2, N, a);
+  //  asphere = partial_x_or_y_even_asphere(v->y - v0->y, rho2, N, a);
+  asphere = partial_x_or_y_coating_surface(v->y - v0->y, v->mag_shift(v0->x,v0->y));
   rho2   *= c;
   if (c==0)
     return 0.0 - asphere;
@@ -727,6 +733,107 @@ else {
     A += (k+1)*a[k]*_r2_;
   }
   A *= 2*x_or_y;
+}
+@
+
+@
+
+\subsection{Coating surface definition}
+\label{sec:coating}
+
+The coating surface is defined by
+\begin{equation}
+  \label{eq:60}
+  S(\rho) = a \exp\left( -{(\rho-b_{1/3})^2\over 2c^2} \right)  + a \exp\left(
+    -{(\rho-b_{2/3})^2\over 2c^2} \right)  +  a_0 \exp\left( -{\rho^2\over 2c_0^2} \right),
+\end{equation}
+with $a=20$nm, $c=16$mm, $b_{1/3}=4.2/3$, $b_{2/3}=8.4/3$, $a_0=500$nm and $c_0=30$mm.
+\index{rayTracing!conic!coating\_surface}
+<<coating surface equations>>=
+__host__ __device__ rtd coating_surface(rtd r)
+{
+  rtd S, a, b, c2, red;
+  a = 20e-9;
+  c2 = 16e-3;
+  c2 *= c2;
+  c2 *= 2;
+
+  b = 4.2/3;
+  red = r - b;
+  red *= red;
+  S = a*exp(-red/c2);
+
+  b *= 2;  
+  red = r - b;
+  red *= red;
+  S += a*exp(-red/c2);
+
+  a = 500e-9;
+  c2 = 30e-3;
+  c2 *= c2;
+  c2 *= 2;
+  red = r;
+  red *= red;
+  S += a*exp(-red/c2);
+
+  return S;
+}
+@
+The partial derivatives of the coating surface equation are:
+\begin{itemize}
+\item for $x$:
+  \begin{eqnarray}
+    \label{eq:61}
+    {\partial A(\rho) \over \partial x} &=& {ax(b_{1/3}-r)\over c^2r}\exp\left(
+                                            -{(\rho-b_{1/3})^2\over 2c^2} \right) \\
+    && + {ax(b_{2/3}-r)\over c^2r}\exp\left( -{(\rho-b_{2/3})^2\over 2c^2} \right) \\
+    && - {ax\over c^2}\exp\left( -{\rho^2\over 2c^2} \right) 
+  \end{eqnarray}
+\item for $y$:
+  \begin{eqnarray}
+    \label{eq:62}
+    {\partial A(\rho) \over \partial x} &=& {ay(b_{1/3}-\rho)\over c^2r}\exp\left(
+                                            -{(\rho-b_{1/3})^2\over 2c^2} \right) \\
+    && + {ay(b_{2/3}-\rho)\over c^2r}\exp\left( -{(\rho-b_{2/3})^2\over 2c^2} \right) \\
+    && - {ay\over c^2}\exp\left( -{\rho^2\over 2c^2} \right) 
+  \end{eqnarray}
+\end{itemize}
+\index{rayTracing!conic!partial\_x\_coating\_surface}
+<<coating surface equations>>=
+__host__ __device__ rtd partial_x_or_y_coating_surface(rtd x_or_y, rtd r)
+{
+  rtd S, F, a, b, c2, red;
+  a = 20e-9;
+  c2 = 16e-3;
+  c2 *= c2;
+
+  b = 4.2/3;
+  red = r - b;
+  if (r>0)
+    F = -x_or_y*red/r/c2;
+  else
+    F = b/c2;
+  red *= red;
+  S = a*F*exp(-0.5*red/c2);
+
+  b *= 2;  
+  red = r - b;
+  if (r>0)
+    F = -x_or_y*red/r/c2;
+  else
+    F = b/c2;
+  red *= red;
+  S += a*F*exp(-0.5*red/c2);
+
+  a = 500e-9;
+  c2 = 30e-3;
+  c2 *= c2;
+  red = r;
+  F = -x_or_y/c2;
+  red *= red;
+  S += a*F*exp(-0.5*red/c2);
+
+  return S;
 }
 @
 \subsection{Setup \& Cleanup}
