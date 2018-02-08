@@ -36,8 +36,10 @@ The ray tracing method involves 4 steps \cite{}:
 
 __host__ __device__ rtd even_asphere(rtd r, int N, rtd *a);
 __host__ __device__ rtd partial_x_or_y_even_asphere(rtd x_or_y, rtd r2, int N, rtd *a);
-__host__ __device__ rtd coating_surface(rtd r);
-__host__ __device__ rtd partial_x_or_y_coating_surface(rtd x_or_y, rtd r);
+__host__ __device__ rtd coating_surface(vector *v, vector *v0);
+__host__ __device__ rtd partial_x_coating_surface(vector *v, vector *v0);
+__host__ __device__ rtd partial_y_coating_surface(vector *v, vector *v0);
+__host__ __device__ rtd partial_z_coating_surface(void);
 
 <<zernikeS structure>>
 
@@ -452,8 +454,7 @@ __host__ __device__ inline rtd conic_equation(vector *v, vector *v0,
 {
   rtd rho2, asphere;
   rho2    = v->rho2_shift(v0->x,v0->y);
-  //  asphere = even_asphere(rho2, N, a);
-  asphere =  coating_surface(v->mag_shift(v0->x,v0->y));
+  asphere = 0;//even_asphere(rho2, N, a);
   rho2   *= c;
   if (c==0)
     return 0.0 + asphere;
@@ -490,8 +491,7 @@ The partial derivative of the conic equation are written
 {
   rtd rho2, asphere;
   rho2    = v->rho2_shift(v0->x,v0->y);
-  //  asphere = partial_x_or_y_even_asphere(v->x - v0->x, rho2, N, a);
-  asphere = partial_x_or_y_coating_surface(v->x - v0->x, v->mag_shift(v0->x,v0->y));
+  asphere = 0;//partial_x_or_y_even_asphere(v->x - v0->x, rho2, N, a);
   rho2   *= c;
   if (c==0)
     return 0.0 - asphere;
@@ -515,8 +515,7 @@ __device__ inline rtd partial_y_conic_surface(vector *v, vector *v0,
 {
   rtd rho2, asphere;
   rho2    = v->rho2_shift(v0->x,v0->y);
-  //  asphere = partial_x_or_y_even_asphere(v->y - v0->y, rho2, N, a);
-  asphere = partial_x_or_y_coating_surface(v->y - v0->y, v->mag_shift(v0->x,v0->y));
+  asphere = 0;//partial_x_or_y_even_asphere(v->y - v0->y, rho2, N, a);
   rho2   *= c;
   if (c==0)
     return 0.0 - asphere;
@@ -750,14 +749,17 @@ The coating surface is defined by
 with $a=20$nm, $c=16$mm, $b_{1/3}=4.2/3$, $b_{2/3}=8.4/3$, $a_0=500$nm and $c_0=30$mm.
 \index{rayTracing!conic!coating\_surface}
 <<coating surface equations>>=
-__host__ __device__ rtd coating_surface(rtd r)
+__host__ __device__ rtd coating_surface(vector *v, vector *v0)
 {
-  rtd S, a, b, c2, red;
+  rtd S, a, b, c2, red, r;
+  r = v->mag_shift(v0->x,v0->y);
+
   a = 20e-9;
   c2 = 16e-3;
   c2 *= c2;
   c2 *= 2;
 
+  /*
   b = 4.2/3;
   red = r - b;
   red *= red;
@@ -767,16 +769,17 @@ __host__ __device__ rtd coating_surface(rtd r)
   red = r - b;
   red *= red;
   S += a*exp(-red/c2);
-
+  */
+  
   a = 500e-9;
   c2 = 30e-3;
   c2 *= c2;
   c2 *= 2;
   red = r;
   red *= red;
-  S += a*exp(-red/c2);
+  S = a;//*exp(-red/c2);
 
-  return S;
+  return -S;
 }
 @
 The partial derivatives of the coating surface equation are:
@@ -800,13 +803,17 @@ The partial derivatives of the coating surface equation are:
 \end{itemize}
 \index{rayTracing!conic!partial\_x\_coating\_surface}
 <<coating surface equations>>=
-__host__ __device__ rtd partial_x_or_y_coating_surface(rtd x_or_y, rtd r)
+__host__ __device__ rtd partial_x_coating_surface(vector *v, vector *v0)
 {
-  rtd S, F, a, b, c2, red;
+  rtd S, F, a, b, c2, red, r, x_or_y;
+  r = v->mag_shift(v0->x,v0->y);
+  x_or_y = v->x - v0->x;
+
   a = 20e-9;
   c2 = 16e-3;
   c2 *= c2;
 
+  /*
   b = 4.2/3;
   red = r - b;
   if (r>0)
@@ -824,16 +831,59 @@ __host__ __device__ rtd partial_x_or_y_coating_surface(rtd x_or_y, rtd r)
     F = b/c2;
   red *= red;
   S += a*F*exp(-0.5*red/c2);
-
+  */
+  
   a = 500e-9;
   c2 = 30e-3;
   c2 *= c2;
   red = r;
   F = -x_or_y/c2;
   red *= red;
-  S += a*F*exp(-0.5*red/c2);
+  S = 0;//a*F*exp(-0.5*red/c2);
 
-  return S;
+  return -S;
+}
+__host__ __device__ rtd partial_y_coating_surface(vector *v, vector *v0)
+{
+  rtd S, F, a, b, c2, red, r, x_or_y;
+  r = v->mag_shift(v0->x,v0->y);
+  x_or_y = v->y - v0->y;
+
+  a = 20e-9;
+  c2 = 16e-3;
+  c2 *= c2;
+/*
+  b = 4.2/3;
+  red = r - b;
+  if (r>0)
+    F = -x_or_y*red/r/c2;
+  else
+    F = b/c2;
+  red *= red;
+  S = a*F*exp(-0.5*red/c2);
+
+  b *= 2;  
+  red = r - b;
+  if (r>0)
+    F = -x_or_y*red/r/c2;
+  else
+    F = b/c2;
+  red *= red;
+  S += a*F*exp(-0.5*red/c2);
+*/
+  a = 500e-9;
+  c2 = 30e-3;
+  c2 *= c2;
+  red = r;
+  F = -x_or_y/c2;
+  red *= red;
+  S = 0;//a*F*exp(-0.5*red/c2);
+
+  return -S;
+}
+__host__ __device__ rtd partial_z_coating_surface(void)
+{
+  return 0.0;
 }
 @
 \subsection{Setup \& Cleanup}
