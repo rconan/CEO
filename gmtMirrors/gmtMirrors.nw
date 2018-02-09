@@ -661,7 +661,57 @@ void gmt_m1::trace(bundle *rays)
   rtd R2, Rri2;
   R2 = D_clear*D_clear*0.25;
   Rri2 = R2*ri*ri;
-  <<GMT trace common>>
+ /* if (V!=NULL) { */
+ /*    blockDim = dim3(N_THREAD,N_THREAD); */
+ /*    gridDim  = dim3(rays->N_RAY/N_THREAD2+1,1,rays->N_BUNDLE); */
+ /*    intersection LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY); */
+ /* } */
+ V = &(rays->V);
+ // fprintf(stdout,"R2=%5.2f - Rri2=%5.2f\n",R2,Rri2);
+ blockDim = dim3(1,1);
+ gridDim  = dim3(1,1,rays->N_BUNDLE);
+ m1_trace_chief_kernel LLL gridDim , blockDim RRR (V->m, rays->d__chief_ray, 1,
+						   conic_CS.d__R,
+						   conic_CS.d__origin,
+						   conic_k, conic_c,
+						   d__conic_origin,
+						   rigid_body_CS.d__R,
+						   rigid_body_CS.d__origin,
+						   motion_CS.d__R,
+						   motion_CS.d__origin);
+ blockDim = dim3(N_THREAD,N_THREAD);
+ gridDim  = dim3(rays->N_RAY/N_THREAD2+1,1,rays->N_BUNDLE);
+ HANDLE_ERROR( cudaMemset(V->m, 0, sizeof(char)*rays->N_RAY*rays->N_BUNDLE ) );
+ HANDLE_ERROR( cudaMemset(rays->d__piston_mask, 0,
+			  sizeof(int)*rays->N_RAY*rays->N_BUNDLE ) );
+
+  m1_coating_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY,
+					    Rri2, R2,
+					    aperture_CS.d__R,
+					    aperture_CS.d__origin,
+					    conic_CS.d__R,
+					    conic_CS.d__origin,
+					    conic_k, d__conic_c,
+					    d__conic_origin,
+					    rigid_body_CS.d__R,
+					    rigid_body_CS.d__origin,
+					    motion_CS.d__R,
+					    motion_CS.d__origin,
+					    ZS->max_n, ZS->n_mode,
+					    ZS->d__a, ZS->d__cx, ZS->d__cy,
+					    0.5*D_full,
+					    rays->d__chief_ray,
+					    rays->d__piston_mask,
+					    d__valid_segments);
+
+intersection LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY);
+float previous_nnz = rays->V.nnz;
+//fprintf(stdout,"M%d previous nnz rays: %f\n",M_ID,previous_nnz);
+rays->V.set_filter_quiet();
+//fprintf(stdout,"M%d current nnz rays: %f\n",M_ID,rays->V.nnz);
+if (previous_nnz<rays->N_RAY_TOTAL)
+  rays->V.area *= rays->V.nnz/previous_nnz;
+//fprintf(stdout,"M%d current area: %f\n",M_ID,rays->V.area);
 }
 void gmt_m1::traceall(bundle *rays)
 {
@@ -794,6 +844,64 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 	    d__piston_mask[ij] = iCoordSys + 1;
 
             <<from motion CS to conic intersection and back to global CS>>
+	    d__ray[ij].optical_path_difference +=
+		d__ray[ij].optical_path_length - d__chief_ray[iSource].optical_path_length;
+	    return;
+	  }
+        }
+      }
+  }
+}
+@ for $M_1$ coating
+<<GMT ray tracing kernel>>=
+__global__ void m1_coating_trace_kernel(char *mask, ray *d__ray, int N_RAY,
+				rtd inner2, rtd outer2,
+				rtd *d__aperture_R, vector *d__aperture_origin,
+				rtd *d__conic_R, vector *d__conic_origin,
+                                const rtd Fk, rtd *d__Fc,
+                                vector *d__conic_self_origin,
+				rtd *d__rigid_body_R, vector *d__rigid_body_origin,
+				rtd *d__motion_R, vector *d__motion_origin,
+				int max_n, int n_mode,
+				rtd *d__a, rtd *d__cx, rtd *d__cy, rtd R,
+				ray *d__chief_ray, int *d__piston_mask,
+				char *d__valid_segments)
+{
+  int i, j, ij, iCoordSys, iSource, b_n_mode;
+  rtd rho2;
+  rtd x, y, z, x1, y1, s0, k, l, m;
+  rtd s1, S, K, L ,M, dSds;
+  rtd G2, a;
+  rtd Fc;
+  vector d__origin, xyz, klm, xyz_GS, klm_GS, Snormal;
+
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = threadIdx.y;
+  //  iCoordSys = blockIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
+  j = ij;
+  ij += iSource*N_RAY;
+  b_n_mode = max_n*(max_n+1)*0.5;
+  if  ( ( j<N_RAY ) && (d__ray[ij].v) )// & (iCoordSys<1) )
+  {
+
+    for (iCoordSys=0; iCoordSys<7 ; iCoordSys++)
+      {
+	Fc = d__Fc[iCoordSys];
+        if (d__valid_segments[iCoordSys]>0) {
+	d__origin = d__conic_self_origin[iCoordSys];
+
+        <<from global CS to motion CS>>
+
+	<<from motion CS to aperture intersection>>
+
+	if (rho2<=outer2)
+	  {
+	    mask[ij] = 1;
+	    d__piston_mask[ij] = iCoordSys + 1;
+
+            <<from motion CS to conic intersection and back to global CS (coating)>>
 	    d__ray[ij].optical_path_difference +=
 		d__ray[ij].optical_path_length - d__chief_ray[iSource].optical_path_length;
 	    return;
@@ -987,6 +1095,25 @@ The intersection with and reflection from the surface is done with
 <<from rigid body CS to global CS>>
 @
 \begin{itemize}
+\item $M_1$ coating:
+<<from motion CS to conic intersection and back to global CS (coating)>>=
+klm.x = klm_GS.x;
+klm.y =	klm_GS.y;
+klm.z =	klm_GS.z;
+xyz.x = xyz_GS.x;
+xyz.y =	xyz_GS.y;
+xyz.z =	xyz_GS.z;
+<<GMT intersection with aspheric (coating)>>
+<<reflection from the surface>>
+klm_GS.x = klm.x;
+klm_GS.y = klm.y;
+klm_GS.z = klm.z;
+xyz_GS.x = xyz.x;
+xyz_GS.y = xyz.y;
+xyz_GS.z = xyz.z;
+<<from motion CS to rigid body CS>>
+<<from rigid body CS to global CS>>
+@
 \item Zernike modes:
 <<from motion CS to conic intersection and back to global CS>>=
 klm.x = klm_GS.x;
@@ -1100,6 +1227,39 @@ y1 = y + l*s0;
 @
 The intersection with the plane $z=0$ in the conic coordinate transformed is computed with
 \begin{itemize}
+ \item $M_1$ coating:
+<<GMT intersection with aspheric (coating)>>=
+k  = klm.x;
+l  = klm.y;
+m  = klm.z;
+if (m==0) { return; }
+s0 = -xyz.z/m;
+x1 = xyz.x + k*s0;
+y1 = xyz.y + l*s0;
+d__ray[ij].optical_path_length = s0;
+s0 = s1 = 0;
+for (j=0; j<SNELL_N_ITERATION; j++)
+{
+  xyz.x = x1 + k*s0;
+  xyz.y = y1 + l*s0;
+  xyz.z = m*s0;
+  <<aspheric surface and derivatives (coating)>>
+  dSds = K*k + L*l + M*m;
+  if (dSds==0) { break; }
+  s1 = s0 - S/dSds;
+  if (abs(s1-s0)<TOL)
+    {
+      xyz.x = x1 + k*s1;
+      xyz.y = y1 + l*s1;
+      xyz.z = m*s1;
+      <<aspheric surface derivatives (coating)>>
+      d__ray[ij].optical_path_length += s1;
+      d__ray[ij].n_iteration = j;
+      break;
+    }
+  s0 = s1;
+}
+@
  \item Zernike modes:
 <<GMT intersection with aspheric>>=
 k  = klm.x;
@@ -1178,6 +1338,13 @@ S = conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
 @
 The coordinates are transformed back into the motion CS where the Zernike height is added to the conic height:
 \begin{itemize}
+\item $M_1$ coating:
+<<aspheric surface (motion CS, coating)>>=
+// CONIC <<<
+forward_transform_centered(&xyz, &xyz,
+                           d__conic_R+iCoordSys*9);
+S += coating_surface(&xyz, &d__origin); 
+@
 \item Zernike modes:
 <<aspheric surface (motion CS)>>=
 // CONIC <<<
@@ -1213,6 +1380,29 @@ Both above operations are combined together with:
 \end{itemize}
   The surface derivatives follow the same procedure than the surface but before adding the aspheric derivatives to the conic derivatives, the conic gradient vector is tranformed back into the motion CS:
 \begin{itemize}
+\item $M_1$ coating:
+<<aspheric surface derivatives (coating)>>=
+// CONIC >>>
+backward_transform_centered(&xyz, &xyz,
+			    d__conic_R+iCoordSys*9);
+K = partial_x_conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
+L = partial_y_conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
+M = partial_z_conic_surface();
+// CONIC <<<
+forward_transform_centered(&xyz, &xyz,
+                           d__conic_R+iCoordSys*9);
+Snormal.x = K;
+Snormal.y = L;
+Snormal.z = M;
+forward_transform_centered(&Snormal, &Snormal,
+			   d__conic_R+iCoordSys*9);
+K = Snormal.x;
+L = Snormal.y;
+M = Snormal.z;
+K += partial_x_coating_surface(&xyz, &d__origin);
+L += partial_y_coating_surface(&xyz, &d__origin);
+M += partial_z_coating_surface();
+@ 
 \item Zernike modes:
 <<aspheric surface derivatives>>=
 // CONIC >>>
@@ -1270,6 +1460,25 @@ M += partial_z_bending_modes_surface();
 \end{itemize}
 The surface and the surface derivatives are computed together with:
 \begin{itemize}
+\item $M_1$ coating:
+<<aspheric surface and derivatives (coating)>>=
+<<aspheric surface (conic CS)>>
+K = partial_x_conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
+L = partial_y_conic_surface(&xyz, &d__origin, Fk, Fc, 0, &(xyz.x));
+M = partial_z_conic_surface();
+<<aspheric surface (motion CS, coating)>>
+Snormal.x = K;
+Snormal.y = L;
+Snormal.z = M;
+forward_transform_centered(&Snormal, &Snormal,
+			   d__conic_R+iCoordSys*9);
+K = Snormal.x;
+L = Snormal.y;
+M = Snormal.z;
+K += partial_x_coating_surface(&xyz, &d__origin);
+L += partial_y_coating_surface(&xyz, &d__origin);
+M += partial_z_coating_surface();
+@
 \item Zernike modes:
 <<aspheric surface and derivatives (3 steps)>>=
 <<aspheric surface (conic CS)>>
