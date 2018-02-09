@@ -378,7 +378,7 @@ for (k=0; k<N-1; k++)
   <<segment index offset>>
   origin[idx].x = 0.0;
   origin[idx].y = 0.0;
-  origin[idx].z = (M_ID==1) ? depth: -depth;
+  origin[idx].z = 0.0;//(M_ID==1) ? depth: -depth;
   euler_angles[idx].x = 0.0;
   euler_angles[idx].y = 0.0;
   euler_angles[idx].z = 0.0;
@@ -874,6 +874,7 @@ __global__ void m1_coating_trace_kernel(char *mask, ray *d__ray, int N_RAY,
   rtd G2, a;
   rtd Fc;
   vector d__origin, xyz, klm, xyz_GS, klm_GS, Snormal;
+  rtd drain2[7] = {0.000625,0.000625,0.00140625,0.00140625,0.00140625,0.00140625,2.0409527145979673};
 
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = threadIdx.y;
@@ -894,7 +895,7 @@ __global__ void m1_coating_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 
         <<from global CS to motion CS>>
 
-	<<from motion CS to aperture intersection>>
+       <<from motion CS to aperture intersection (coating)>>
 
 	if (rho2<=outer2)
 	  {
@@ -1081,6 +1082,28 @@ forward_transform_centered(&klm, &klm_GS,
 
         rho2 = x1*x1 + y1*y1;
 	if ( (iCoordSys==6) && (rho2<inner2) )
+	  {
+	    return;
+	  }
+<<from motion CS to aperture intersection (coating)>>=
+// APERTURE >>>
+forward_transform(&xyz, &xyz_GS,
+		  d__aperture_R+iCoordSys*9,
+		  d__aperture_origin+iCoordSys);
+forward_transform_centered(&klm, &klm_GS,
+			   d__aperture_R+iCoordSys*9);
+
+	x = xyz.x;
+	y = xyz.y;
+	z = xyz.z;
+	k = klm.x;
+	l = klm.y;
+	m = klm.z;
+
+        <<GMT intersection with aperture plane>>
+
+        rho2 = x1*x1 + y1*y1;
+	if (rho2<drain2[iCoordSys])
 	  {
 	    return;
 	  }
