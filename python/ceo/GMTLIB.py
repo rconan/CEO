@@ -156,11 +156,12 @@ class GMT_MX(GmtMirrors):
         gs : Source
             The guide star
         mirror : string
-            The mirror label: eiher "M1" or "M2" ("MOUNT" is also corrected a will emulate a telescope pointing error)
+            The mirror label: eiher "M1" or "M2" ("MOUNT" is also accepted and will emulate a telescope pointing error)
         mode : string
             The degrees of freedom label
             for M1: "global tip-tilt", "zernike", "bending modes", "Txyz", "Rxyz", "Rz", "segment tip-tilt"
             for M2: "global tip-tilt", "pointing neutral", "coma neutral", "zernike", "Karhunen-Loeve", "Txyz", "Rxyz", "Rz", "segment tip-tilt", "TT7 segment tip-tilt"
+            for MOUNT: "pointing"
         stroke : float
             The amplitude of the motion
         """
