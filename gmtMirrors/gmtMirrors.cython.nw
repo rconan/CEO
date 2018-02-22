@@ -668,7 +668,7 @@ cdef class Modes:
         void test_ray_tracing()
         <<python GMT M12 functions>>
         void preset(bundle *, rtd )
-        void track(float *, float *, int, int)
+        void track(float *, float *, float *, int, int)
 @  where
 <<python GMT M12 functions>>=
 int M_ID
@@ -739,15 +739,21 @@ cdef class GMT_M1:
     def preset(self, Bundle rays, float margin):
         self._c_gmt_m12.preset(rays._c_bundle, margin)
 
-    def track(self, ndarray x, ndarray y, int segId):
+    def track(self, ndarray x, ndarray y, ndarray z, int segId):
 
         cdef cuFloatArray gx, gy, gz
+        cdef ndarray out = np.zeros((3,x.size))
         gx = cuFloatArray( host_data = x )
         gy = cuFloatArray( host_data = y )
+        gz = cuFloatArray( host_data = z )
         self._c_gmt_m12.track(gx._c_gpu.dev_data,
                               gy._c_gpu.dev_data,
-                              x.size, segId)
-        return gx.host(), gy.host()
+                              gz._c_gpu.dev_data,
+                              x.size, segId-1)
+        out[0,:] = gx.host()
+        out[1,:] = gy.host()
+        out[2,:] = gz.host()
+        return out
 
     def clocking(self,seg_id,theta):
         """

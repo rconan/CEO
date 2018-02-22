@@ -93,7 +93,7 @@ void traceall(bundle *rays);
 void blocking(bundle *rays);
 void global_tiptilt(float tip, float tilt);
 void test_ray_tracing(void);
-void track(float *x, float *y, int N, int idx);
+void track(float *x, float *y, float *z, int N, int idx);
 void remove(int *seg_ID, int N_ID);
 void keep(int *seg_ID, int N_ID);
 @
@@ -1425,11 +1425,11 @@ HANDLE_ERROR( cudaMemcpy( d__valid_segments, valid,
 \subsection{Mirror location tracker}
 \label{sec:mirr-locat-track}
 
-The track function transforms the coordinates $(x,y,0)$ in the motion CS of segment [[idx]] to the GCS.
+The track function transforms the coordinates $(x,y,z)$ in the motion CS of segment [[idx]] to the GCS.
 
 \index{gmtMirrors!gmt\_m1!track}
 <<GMT M1 functions>>=
-void gmt_m1::track(float *d__x, float *d__y, int N, int idx)
+void gmt_m1::track(float *d__x, float *d__y, float *d__z, int N, int idx)
 {
   <<GMT track common>>
 }
@@ -1437,7 +1437,7 @@ void gmt_m1::track(float *d__x, float *d__y, int N, int idx)
 <<GMT track common>>=
 dim3 blockDim(N_THREAD,1);
 dim3 gridDim(N/N_THREAD+1,1);
-track_kernel LLL gridDim, blockDim RRR (d__x, d__y, N,
+track_kernel LLL gridDim, blockDim RRR (d__x, d__y, d__z, N,
 					idx,
 					rigid_body_CS.d__R,
 					rigid_body_CS.d__origin,
@@ -1445,7 +1445,7 @@ track_kernel LLL gridDim, blockDim RRR (d__x, d__y, N,
 					motion_CS.d__origin);
 @ and
 <<GMT track kernel>>=
-__global__ void track_kernel(float *x, float *y, const int N,
+__global__ void track_kernel(float *x, float *y, float *z, const int N,
 			     const int iCoordSys,
 			     rtd *d__rigid_body_R, vector *d__rigid_body_origin,
 			     rtd *d__motion_R, vector *d__motion_origin)
@@ -1456,7 +1456,7 @@ __global__ void track_kernel(float *x, float *y, const int N,
    if (i<N) {
      v.x = x[i];
      v.y = y[i];
-     v.z = 0.0;
+     v.z = z[i];
      // MOTION <<<
      backward_transform(&v, &v,
 			d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
@@ -1466,6 +1466,7 @@ __global__ void track_kernel(float *x, float *y, const int N,
 			d__rigid_body_origin+iCoordSys);
      x[i] = v.x;
      y[i] = v.y;
+     z[i] = v.z;
    }
 }
 
