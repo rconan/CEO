@@ -564,14 +564,18 @@ class GMT_MX(GmtMirrors):
 
         src.reset()
         self.propagate(src)
-        A = src.amplitude.host()
-        F = src.phase.host()
+        A_ = np.dstack(np.vsplit(src.amplitude.host(),src.N_SRC))
+        F_ = np.dstack(np.vsplit(src.phase.host(),src.N_SRC))
         k = 2.*np.pi/src.wavelength
-        W = A*np.exp(1j*k*F)
-        S1 = np.fliplr(np.flipud(W))
-        S2 = np.conj(W)
-        AW = fftconvolve(S1,S2)
-        out = np.sum(np.abs(AW*C)**2)/np.sum(np.abs(AW0*C)**2)
+        out = np.zeros(src.N_SRC)
+        for k_SRC in range(src.N_SRC):
+            A = A_[:,:,k_SRC]
+            F = F_[:,:,k_SRC]
+            W = A*np.exp(1j*k*F)
+            S1 = np.fliplr(np.flipud(W))
+            S2 = np.conj(W)
+            AW = fftconvolve(S1,S2)
+            out[k_SRC] = np.sum(np.abs(AW*C)**2)/np.sum(np.abs(AW0*C)**2)
 
         if save:
             return (out,{'C':C,'AW0':AW0})
