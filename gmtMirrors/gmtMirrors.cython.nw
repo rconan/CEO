@@ -668,11 +668,12 @@ cdef class Modes:
         void test_ray_tracing()
         <<python GMT M12 functions>>
         void preset(bundle *, rtd )
-        void track(float *, float *, int, int)
+        void track(float *, float *, float *, int, int)
 @  where
 <<python GMT M12 functions>>=
 int M_ID
 rtd D_assembly, D_full, D_clear, L, height, conic_c, conic_k
+rtd *d__conic_c
 coordinate_system aperture_CS
 coordinate_system conic_CS
 coordinate_system rigid_body_CS
@@ -690,6 +691,7 @@ void blocking(bundle *)
 void global_tiptilt(float , float )
 void remove(int *, int )
 void keep(int *, int )
+void update_conic_c(rtd *)
 @ 
 \subsubsection{Class definition}
 \label{sec:class-definition-1}
@@ -698,6 +700,7 @@ void keep(int *, int )
 cdef class GMT_M1:
     cdef:
         gmt_m1 *_c_gmt_m12
+        public cuDoubleArray conic_curv
     <<GMT M12 class properties>>
 @
 @ with
@@ -730,8 +733,21 @@ cdef class GMT_M1:
     def __cinit__(self, unicode mirror_modes=u"None", int radial_order=0, int N_MODE=0):
         self._c_gmt_m12 = new gmt_m1()
         <<GMT M12 constructor>>
+        self.conic_curv = cuDoubleArray(shape=(1,7),dev_malloc=False)
+        self.conic_curv._c_gpu.dev_data = self._c_gmt_m12.d__conic_c
 
     <<GMT M12 methods>>
+
+    @property
+    def radius_error(self):
+        return 1./self.conic_curv.host() - 1./self._c_gmt_m12.conic_c
+    @radius_error.setter
+    def radius_error(self, double[:] val):
+        cdef int k
+        cdef double[:] c = np.zeros(7)
+        for k in range(7):
+            c[k] = 1./(1./self._c_gmt_m12.conic_c + val[k])
+        self._c_gmt_m12.update_conic_c(&c[0])
 
     def test(self):
         self._c_gmt_m12.test_ray_tracing();
@@ -739,15 +755,21 @@ cdef class GMT_M1:
     def preset(self, Bundle rays, float margin):
         self._c_gmt_m12.preset(rays._c_bundle, margin)
 
-    def track(self, ndarray x, ndarray y, int segId):
+    def track(self, ndarray x, ndarray y, ndarray z, int segId):
 
         cdef cuFloatArray gx, gy, gz
+        cdef ndarray out = np.zeros((3,x.size))
         gx = cuFloatArray( host_data = x )
         gy = cuFloatArray( host_data = y )
+        gz = cuFloatArray( host_data = z )
         self._c_gmt_m12.track(gx._c_gpu.dev_data,
                               gy._c_gpu.dev_data,
-                              x.size, segId)
-        return gx.host(), gy.host()
+                              gz._c_gpu.dev_data,
+                              x.size, segId-1)
+        out[0,:] = gx.host()
+        out[1,:] = gy.host()
+        out[2,:] = gz.host()
+        return out
 
     def clocking(self,seg_id,theta):
         """

@@ -696,6 +696,7 @@ cdef class Source:
         readonly tuple OPTICALPATH
         public double samplingTime, timeStamp
         public dict parameters
+        public bytes band
 @
 \subsection{PYX file}
 \label{sec:pyx-file-2}
@@ -833,12 +834,13 @@ cdef class Source:
             self._magnitude_ = np.array( magnitude, dtype=np.float32, ndmin=1)
         self.height  = float(height);
         self.size = self._zenith_.size
+        self.band = <bytes>photometric_band.encode()
         cdef vector _origin_
         if N_RAY>0:
             _origin_.x = <float>rays_origin[0]
             _origin_.y = <float>rays_origin[1]
             _origin_.z = <float>rays_origin[2]
-            self._c_source.setup(<bytes>photometric_band.encode(),
+            self._c_source.setup(self.band,
                                  &self._magnitude_[0],
                                  &self._zenith_[0],
                                  &self._azimuth_[0], height,
@@ -851,14 +853,14 @@ cdef class Source:
             if rays_box_size is None:
                 z = np.array( zenith,  dtype=np.float32, ndmin=1)
                 a = np.array( azimuth, dtype=np.float32, ndmin=1)
-                self._c_source.setup(<bytes>photometric_band.encode(),
+                self._c_source.setup(self.band,
                                      &z[0],&a[0], height,
                                      self.size, np.prod(resolution))
             else:
                 _origin_.x = <float>rays_origin[0]
                 _origin_.y = <float>rays_origin[1]
                 _origin_.z = <float>rays_origin[2]
-                self._c_source.setup(<bytes>photometric_band.encode(),
+                self._c_source.setup(self.band,
                                      &self._magnitude_[0],
                                      &self._zenith_[0],
                                      &self._azimuth_[0], height,
@@ -975,10 +977,6 @@ cdef class Source:
             x = cuFloatArray(shape=(self.n*self.size,self.m))
             x._c_gpu.dev_data = self._c_source.wavefront.amplitude
             return x
-
-    property band:
-        def __get__(self):
-            return self._c_source.photometric_band
         
     property wavelength:
         def __get__(self):

@@ -93,9 +93,10 @@ void traceall(bundle *rays);
 void blocking(bundle *rays);
 void global_tiptilt(float tip, float tilt);
 void test_ray_tracing(void);
-void track(float *x, float *y, int N, int idx);
+void track(float *x, float *y, float *z, int N, int idx);
 void remove(int *seg_ID, int N_ID);
 void keep(int *seg_ID, int N_ID);
+void update_conic_c(rtd *_conic_c_);
 @
 The GMT M12 parameters are:
 \begin{itemize}
@@ -161,6 +162,7 @@ vector conic_origin[7], *d__conic_origin;
 \item the conic parameters:
 <<GMT M12 parameters>>=
 rtd conic_c, conic_k;
+rtd *d__conic_c;
 @
 \item the reference frames of the rigid bodies:
 <<GMT M12 parameters>>=
@@ -273,6 +275,17 @@ idx_offset = 0;
 V = NULL;
 @ and
 <<GMT setup common>>=
+rtd *h__conic_c;
+int n_byte;
+n_byte = 7*sizeof(rtd);
+h__conic_c = (rtd *)malloc( n_byte );
+for (int k=0; k<7; k++)
+  h__conic_c[k] = conic_c;
+HANDLE_ERROR( cudaMalloc((void**)&d__conic_c, n_byte ) );
+HANDLE_ERROR( cudaMemcpy( d__conic_c, h__conic_c,
+              n_byte, cudaMemcpyHostToDevice ) );
+free(h__conic_c);
+
 area_fraction = 1.0;
 vector __v0(0.0,0.0,0.0),
        __v(D_full*0.5,0.0,0.0),
@@ -478,6 +491,16 @@ fprintf(stdout," |-");
 motion_CS.cleanup();
 HANDLE_ERROR( cudaFree( d__conic_origin ) );
 HANDLE_ERROR( cudaFree( d__valid_segments ) );
+HANDLE_ERROR( cudaFree( d__conic_c ) );
+@
+The segment radius of curvature is updated with:
+\index{gmtMirrors!gmt\_m1!update\_conic\_c}
+<<GMT M1 functions>>=
+void gmt_m1::update_conic_c(rtd *_conic_c_)
+{
+  HANDLE_ERROR( cudaMemcpy( d__conic_c, _conic_c_,
+              sizeof(rtd)*7, cudaMemcpyHostToDevice ) );
+}
 @
 The rigid body motion parameters are updated with:
 \index{gmtMirrors!gmt\_m1!update}
@@ -681,7 +704,7 @@ if (ZS!=NULL)
 					    aperture_CS.d__origin,
 					    conic_CS.d__R,
 					    conic_CS.d__origin,
-					    conic_k, conic_c,
+					    conic_k, d__conic_c,
 					    d__conic_origin,
 					    rigid_body_CS.d__R,
 					    rigid_body_CS.d__origin,
@@ -701,7 +724,7 @@ if (BS!=NULL)
 					    aperture_CS.d__origin,
 					    conic_CS.d__R,
 					    conic_CS.d__origin,
-					    conic_k, conic_c,
+					    conic_k, d__conic_c,
 					    d__conic_origin,
 					    rigid_body_CS.d__R,
 					    rigid_body_CS.d__origin,
@@ -727,7 +750,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 				rtd inner2, rtd outer2,
 				rtd *d__aperture_R, vector *d__aperture_origin,
 				rtd *d__conic_R, vector *d__conic_origin,
-                                const rtd Fk, const rtd Fc,
+                                const rtd Fk, rtd *d__Fc,
                                 vector *d__conic_self_origin,
 				rtd *d__rigid_body_R, vector *d__rigid_body_origin,
 				rtd *d__motion_R, vector *d__motion_origin,
@@ -741,6 +764,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
   rtd x, y, z, x1, y1, s0, k, l, m;
   rtd s1, S, K, L ,M, dSds;
   rtd G2, a;
+  rtd Fc;
   vector d__origin, xyz, klm, xyz_GS, klm_GS, Snormal;
 
   i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -756,6 +780,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 
     for (iCoordSys=0; iCoordSys<7 ; iCoordSys++)
       {
+	Fc = d__Fc[iCoordSys];
         if (d__valid_segments[iCoordSys]>0) {
 	d__origin = d__conic_self_origin[iCoordSys];
 
@@ -783,7 +808,7 @@ __global__ void m1_bm_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 				   rtd inner2, rtd outer2,
 				   rtd *d__aperture_R, vector *d__aperture_origin,
 				   rtd *d__conic_R, vector *d__conic_origin,
-				   const rtd Fk, const rtd Fc,
+				   const rtd Fk, rtd *d__Fc,
 				   vector *d__conic_self_origin,
 				   rtd *d__rigid_body_R, vector *d__rigid_body_origin,
 				   rtd *d__motion_R, vector *d__motion_origin,
@@ -797,6 +822,7 @@ __global__ void m1_bm_trace_kernel(char *mask, ray *d__ray, int N_RAY,
   rtd x, y, z, x1, y1, s0, k, l, m;
   rtd s1, S, K, L ,M, dSds;
   rtd G2, a;
+  rtd Fc;
   vector d__origin, xyz, klm, xyz_GS, klm_GS, Snormal;
 
   i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -811,6 +837,7 @@ __global__ void m1_bm_trace_kernel(char *mask, ray *d__ray, int N_RAY,
 
     for (iCoordSys=0; iCoordSys<7 ; iCoordSys++)
       {
+	Fc = d__Fc[iCoordSys];
         if (d__valid_segments[iCoordSys]>0) {
 	d__origin = d__conic_self_origin[iCoordSys];
 
@@ -1425,11 +1452,11 @@ HANDLE_ERROR( cudaMemcpy( d__valid_segments, valid,
 \subsection{Mirror location tracker}
 \label{sec:mirr-locat-track}
 
-The track function transforms the coordinates $(x,y,0)$ in the motion CS of segment [[idx]] to the GCS.
+The track function transforms the coordinates $(x,y,z)$ in the motion CS of segment [[idx]] to the GCS.
 
 \index{gmtMirrors!gmt\_m1!track}
 <<GMT M1 functions>>=
-void gmt_m1::track(float *d__x, float *d__y, int N, int idx)
+void gmt_m1::track(float *d__x, float *d__y, float *d__z, int N, int idx)
 {
   <<GMT track common>>
 }
@@ -1437,7 +1464,7 @@ void gmt_m1::track(float *d__x, float *d__y, int N, int idx)
 <<GMT track common>>=
 dim3 blockDim(N_THREAD,1);
 dim3 gridDim(N/N_THREAD+1,1);
-track_kernel LLL gridDim, blockDim RRR (d__x, d__y, N,
+track_kernel LLL gridDim, blockDim RRR (d__x, d__y, d__z, N,
 					idx,
 					rigid_body_CS.d__R,
 					rigid_body_CS.d__origin,
@@ -1445,7 +1472,7 @@ track_kernel LLL gridDim, blockDim RRR (d__x, d__y, N,
 					motion_CS.d__origin);
 @ and
 <<GMT track kernel>>=
-__global__ void track_kernel(float *x, float *y, const int N,
+__global__ void track_kernel(float *x, float *y, float *z, const int N,
 			     const int iCoordSys,
 			     rtd *d__rigid_body_R, vector *d__rigid_body_origin,
 			     rtd *d__motion_R, vector *d__motion_origin)
@@ -1456,7 +1483,7 @@ __global__ void track_kernel(float *x, float *y, const int N,
    if (i<N) {
      v.x = x[i];
      v.y = y[i];
-     v.z = 0.0;
+     v.z = z[i];
      // MOTION <<<
      backward_transform(&v, &v,
 			d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
@@ -1466,6 +1493,7 @@ __global__ void track_kernel(float *x, float *y, const int N,
 			d__rigid_body_origin+iCoordSys);
      x[i] = v.x;
      y[i] = v.y;
+     z[i] = v.z;
    }
 }
 
