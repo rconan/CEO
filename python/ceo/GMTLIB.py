@@ -6,7 +6,12 @@ from scipy.optimize import brenth, leastsq
 from scipy.signal import fftconvolve
 from skimage.feature import blob_log
 from scipy.ndimage.interpolation import rotate
+from scipy.interpolate import griddata, LinearNDInterpolator, NearestNDInterpolator
+from scipy.spatial import Delaunay
 import os.path
+from collections import OrderedDict
+import boto3
+import botocore
 from . import phaseStats
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
     TT7,\
@@ -135,6 +140,58 @@ class GMT_MX(GmtMirrors):
     def __init__(self, D=None, D_px=None, M1_radial_order=0, M2_radial_order=0,
                  M1_mirror_modes=u"zernike", M2_mirror_modes=u"zernike",
                  M1_N_MODE=0 ,M2_N_MODE=0):
+
+        if type(M2_mirror_modes) is dict:
+        
+            suit = OrderedDict()
+            suit['Ni']     = np.array(M2_mirror_modes['Ni'],dtype=np.int32)
+            suit['L']      = np.array(M2_mirror_modes['L'],dtype=np.double)
+            suit['N_SET']  = np.array(M2_mirror_modes['N_SET'],dtype=np.int32)
+            suit['N_MODE'] = np.array(M2_mirror_modes['N_MODE'],dtype=np.int32)
+            suit['s2b']    = np.zeros(M2_mirror_modes['s2b'],dtype=np.int32)
+            suit['M']      = np.zeros((suit['Ni']**2*suit['N_SET']*suit['N_MODE']))
+
+            BUCKET_NAME =  M2_mirror_modes['S3 bucket']
+            KEY = M2_mirror_modes['S3 key']
+            FILE = os.path.join('/tmp','data.csv')
+
+            s3 = boto3.resource('s3', region_name='us-west-2')
+
+            print('Downloading %s...!'%(BUCKET_NAME+'/'+KEY))
+            try:
+                s3.Bucket(BUCKET_NAME).download_file(KEY, FILE)
+            except botocore.exceptions.ClientError as e:
+                if e.response['Error']['Code'] == "404":
+                    print("The object does not exist.")
+                else:
+                    raise
+
+            data = np.loadtxt(FILE,delimiter=',')
+
+            datatri = Delaunay(data[:,:2])
+
+            itpr = LinearNDInterpolator(datatri,data[:,2])
+            u = np.linspace(-1,1,suit['Ni'])*suit['L']*0.5
+            x,y = np.meshgrid(u,u)
+            zi = itpr(x,y)
+
+            itpr = NearestNDInterpolator(datatri,data[:,2])
+            u = np.linspace(-1,1,suit['Ni'])*suit['L']*0.5
+            x,y = np.meshgrid(u,u)
+            nzi = itpr(x,y)
+
+            idx = np.isnan(zi)
+            zi[idx] = nzi[idx]
+
+            suit['M'] = zi.flatten(order='F')
+
+            M2_mirror_modes = u"modes"
+            path_to_modes = os.path.join('/','home','ubuntu','CEO','gmtMirrors',M2_mirror_modes+'.ceo')
+            print('Writing modes to %s...'%path_to_modes)
+            with open(path_to_modes,'w') as f:
+                for key in suit:
+                    suit[key].tofile(f)
+                
         super(GMT_MX,self).__init__(
                             M1_radial_order=M1_radial_order,
                             M2_radial_order=M2_radial_order,
