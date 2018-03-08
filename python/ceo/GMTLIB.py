@@ -13,11 +13,12 @@ from collections import OrderedDict
 import boto3
 import botocore
 from . import phaseStats
+from  nastran_pch_reader import nastran_pch_reader
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
     TT7,\
     GmtMirrors, SegmentPistonSensor,\
-    constants, Telescope, cuFloatArray, Aperture,\
-    Transform_to_S, Intersect, Reflect, Refract, Transform_to_R
+    constants, Telescope, cuFloatArray, cuDoubleArray, Aperture,\
+    Transform_to_S, Intersect, Reflect, Refract, Transform_to_R, ZernikeS
 
 class CalibrationVault(object):
 
@@ -148,45 +149,111 @@ class GMT_MX(GmtMirrors):
             suit['L']      = np.array(M2_mirror_modes['L'],dtype=np.double)
             suit['N_SET']  = np.array(M2_mirror_modes['N_SET'],dtype=np.int32)
             suit['N_MODE'] = np.array(M2_mirror_modes['N_MODE'],dtype=np.int32)
-            suit['s2b']    = np.zeros(M2_mirror_modes['s2b'],dtype=np.int32)
+            suit['s2b']    = np.array(M2_mirror_modes['s2b'],dtype=np.int32)
             suit['M']      = np.zeros((suit['Ni']**2*suit['N_SET']*suit['N_MODE']))
 
-            BUCKET_NAME =  M2_mirror_modes['S3 bucket']
-            KEY = M2_mirror_modes['S3 key']
-            FILE = os.path.join('/tmp','data.csv')
+            if 'S3 bucket' in M2_mirror_modes:
+                BUCKET_NAME =  M2_mirror_modes['S3 bucket']
+                KEY = M2_mirror_modes['S3 key']
+                file_ext = KEY.split('.')[-1]
+                FILE = os.path.join('/tmp','data.'+file_ext)
 
-            s3 = boto3.resource('s3', region_name='us-west-2')
+                s3 = boto3.resource('s3', region_name='us-west-2')
 
-            print('Downloading %s...!'%(BUCKET_NAME+'/'+KEY))
-            try:
-                s3.Bucket(BUCKET_NAME).download_file(KEY, FILE)
-            except botocore.exceptions.ClientError as e:
-                if e.response['Error']['Code'] == "404":
-                    print("The object does not exist.")
-                else:
-                    raise
+                print('Downloading %s...!'%(BUCKET_NAME+'/'+KEY))
+                try:
+                    s3.Bucket(BUCKET_NAME).download_file(KEY, FILE)
+                except botocore.exceptions.ClientError as e:
+                    if e.response['Error']['Code'] == "404":
+                        print("The object does not exist.")
+                    else:
+                        raise
 
-            data = np.loadtxt(FILE,delimiter=',')
+                if file_ext=='csv':
+                    data_SET = np.loadtxt(FILE,delimiter=',')
+                elif file_ext=='pch':
+                    parser = nastran_pch_reader.PchParser(FILE)
+                    data = parser.get_displacements(1)
 
-            datatri = Delaunay(data[:,:2])
+                    #NODES_FILE =  os.path.join(')
+                    nodes = np.loadtxt('7segmentface.rtf',skiprows=3,usecols=[0,3,4,5])
+                    nodeid = nodes[:,0]
+                    xyz = np.vstack([data[x][:3] for x in nodeid])
+                    S = xyz[:,2]
+                    nodex, nodey, nodez = nodes[:,1]+xyz[:,0],nodes[:,2]+xyz[:,1],nodes[:,3]
 
-            itpr = LinearNDInterpolator(datatri,data[:,2])
-            u = np.linspace(-1,1,suit['Ni'])*suit['L']*0.5
-            x,y = np.meshgrid(u,u)
-            zi = itpr(x,y)
+                    gmt = GMT_MX()
+                    O = gmt.M2.rigid_body_CS.origin[:]
+                    O[:,2] -= O[6,2]
+                    R = gmt.M2.rigid_body_CS.R
 
-            itpr = NearestNDInterpolator(datatri,data[:,2])
-            u = np.linspace(-1,1,suit['Ni'])*suit['L']*0.5
-            x,y = np.meshgrid(u,u)
-            nzi = itpr(x,y)
+                    o = np.arange(101)/101*2*np.pi
+                    r = 1.1/2
+                    x, y = r*np.cos(o),r*np.sin(o)
+                    seg_nodex = []
+                    seg_nodey = []
+                    seg_nodez = []
+                    seg_S = []
+                    for k in range(7):
+                        seg_nodes = R[k,:,:].T @ (np.vstack([nodex,nodey,nodez]) - O[k,:][:,None])
+                        noder = np.hypot(seg_nodes[0,:],seg_nodes[1,:])
+                        m = noder<r
+                        seg_nodex.append( seg_nodes[0,m] )
+                        seg_nodey.append( seg_nodes[1,m] )
+                        seg_nodez.append( seg_nodes[2,m] )
+                        seg_S.append( S[m] )
 
-            idx = np.isnan(zi)
-            zi[idx] = nzi[idx]
+                    Z = ZernikeS(2)
+                    Sp = []
+                    a_ = []
+                    modes = [1,2,3,4]
+                    data = []
+                    for k in range(7):
+                        zr = np.hypot(seg_nodex[k],seg_nodey[k])
+                        zo = np.arctan2(seg_nodey[k],seg_nodex[k])
+                        gzr = cuDoubleArray(host_data=zr/zr.max())
+                        gzo = cuDoubleArray(host_data=zo)
+                        P = []
+                        for mode in modes:
+                            Z.reset()
+                            Z.a[0,mode-1] = 1
+                            Z.update()
+                            P.append( Z.surface(gzr,gzo).host() )
+                        P = np.vstack(P).T
 
-            suit['M'] = zi.flatten(order='F')
+                        S = seg_S[k][:,None]
+                        a = LA.lstsq(P,S,rcond=None)[0]
+                        Sp.append( S- P @ a )
+                        a_.append(a)
+                        data.append( np.vstack([seg_nodex[k],seg_nodey[k],Sp[k].ravel()]).T )
+
+                data_SET = data
+
+            else:
+                data_SET = M2_mirror_modes['DATA']
+
+            M = np.zeros((suit['Ni']**2,suit['N_SET']))
+            for k_SET in range(suit['N_SET']):
+
+                print('Gridding SET #%d'%k_SET)
+                data = data_SET[k_SET]
+                datatri = Delaunay(data[:,:2])
+
+                itpr = LinearNDInterpolator(datatri,data[:,2])
+                u = np.linspace(-1,1,suit['Ni'])*suit['L']*0.5
+                y,x = np.meshgrid(u,u)
+                zi = itpr(x,y)
+                idx = np.isnan(zi)
+                if np.any(idx):
+                    itpr = NearestNDInterpolator(datatri,data[:,2])
+                    nzi = itpr(x[idx],y[idx])
+                    zi[idx] = nzi
+                M[:,k_SET] = zi.ravel();
+            print('')
+            suit['M'] = M.flatten(order='F')
 
             M2_mirror_modes = u"modes"
-            path_to_modes = os.path.join('/','home','ubuntu','CEO','gmtMirrors',M2_mirror_modes+'.ceo')
+            path_to_modes = os.path.join( os.path.abspath(__file__).split('python')[0] , 'gmtMirrors' , M2_mirror_modes+'.ceo' )
             print('Writing modes to %s...'%path_to_modes)
             with open(path_to_modes,'w') as f:
                 for key in suit:
