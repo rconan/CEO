@@ -657,10 +657,11 @@ cdef class Complex_amplitude:
         complex_amplitude wavefront
         bundle rays
         void setup(const char *,float , float , float )
-	void setup(const char *,float , float , float , int )
+        void setup(const char *,float , float , float , int )
         void setup(const char *,float *, float *, float , int , int )
         void setup(const char *,float *, float *, float , int , rtd, int, vector)
         void setup(const char *,float *,double *, double *, float , int , rtd, int, vector)
+        void setup_chief(const char *,float *,double *, double *, float , int , rtd, int, vector, vector)
         void setup(const char *,float *,double *, double *, float , int , int, double *, double *, vector)
         void cleanup()
         void reset_rays()
@@ -817,6 +818,7 @@ cdef class Source:
                  rays_box_size=None,
                  rays_box_sampling=None,
                  rays_origin=None,
+                 chief_ray_origin=None,
                  samplingTime = 1.0,
                  int N_RAY=0,
                  double[:] rays_x=None, double[:] rays_y=None):
@@ -835,7 +837,7 @@ cdef class Source:
         self.height  = float(height);
         self.size = self._zenith_.size
         self.band = <bytes>photometric_band.encode()
-        cdef vector _origin_
+        cdef vector _origin_, _chief_origin_
         if N_RAY>0:
             _origin_.x = <float>rays_origin[0]
             _origin_.y = <float>rays_origin[1]
@@ -860,14 +862,29 @@ cdef class Source:
                 _origin_.x = <float>rays_origin[0]
                 _origin_.y = <float>rays_origin[1]
                 _origin_.z = <float>rays_origin[2]
-                self._c_source.setup(self.band,
-                                     &self._magnitude_[0],
-                                     &self._zenith_[0],
-                                     &self._azimuth_[0], height,
-                                     self.size,
-                                     rays_box_size,
-                                     rays_box_sampling,
-                                     _origin_)
+                if chief_ray_origin is None:
+                    self._c_source.setup(self.band,
+                                         &self._magnitude_[0],
+                                         &self._zenith_[0],
+                                         &self._azimuth_[0], height,
+                                         self.size,
+                                         rays_box_size,
+                                         rays_box_sampling,
+                                         _origin_)
+                else:
+                    _chief_origin_.x = <float>chief_ray_origin[0]
+                    _chief_origin_.y = <float>chief_ray_origin[1]
+                    _chief_origin_.z = <float>chief_ray_origin[2]
+                    self._c_source.setup_chief(self.band,
+                                         &self._magnitude_[0],
+                                         &self._zenith_[0],
+                                         &self._azimuth_[0], height,
+                                         self.size,
+                                         rays_box_size,
+                                         rays_box_sampling,
+                                         _origin_,
+                                         _chief_origin_)
+
         #if magnitude is not None:
         #    self._c_source.magnitude = magnitude
         if fwhm is not None:
