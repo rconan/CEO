@@ -13,7 +13,7 @@ from collections import OrderedDict
 import boto3
 import botocore
 from . import phaseStats
-from  nastran_pch_reader import nastran_pch_reader
+from  ceo.nastran_pch_reader import nastran_pch_reader
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
     TT7,\
     GmtMirrors, SegmentPistonSensor,\
@@ -152,6 +152,8 @@ class GMT_MX(GmtMirrors):
             suit['s2b']    = np.array(M2_mirror_modes['s2b'],dtype=np.int32)
             suit['M']      = np.zeros((suit['Ni']**2*suit['N_SET']*suit['N_MODE']))
 
+            data_SET = None
+
             if 'S3 bucket' in M2_mirror_modes:
                 BUCKET_NAME =  M2_mirror_modes['S3 bucket']
                 KEY = M2_mirror_modes['S3 key']
@@ -169,8 +171,8 @@ class GMT_MX(GmtMirrors):
                     else:
                         raise
 
-                if file_ext=='csv':
-                    data_SET = np.loadtxt(FILE,delimiter=',')
+                if file_ext in ['csv','txt']:
+                    data_SET = [np.loadtxt(FILE,delimiter=',')]
                 elif file_ext=='pch':
                     parser = nastran_pch_reader.PchParser(FILE)
                     data = parser.get_displacements(1)
@@ -227,38 +229,41 @@ class GMT_MX(GmtMirrors):
                         a_.append(a)
                         data.append( np.vstack([seg_nodex[k],seg_nodey[k],Sp[k].ravel()]).T )
 
-                data_SET = data
+                    data_SET = data
 
             else:
                 data_SET = M2_mirror_modes['DATA']
 
-            M = np.zeros((suit['Ni']**2,suit['N_SET']))
-            for k_SET in range(suit['N_SET']):
+            if data_SET is not None:
+                M = np.zeros((suit['Ni']**2,suit['N_SET']))
+                for k_SET in range(suit['N_SET']):
 
-                print('Gridding SET #%d'%k_SET)
-                data = data_SET[k_SET]
-                datatri = Delaunay(data[:,:2])
+                    print('Gridding SET #%d'%k_SET)
+                    data = data_SET[k_SET]
+                    datatri = Delaunay(data[:,:2])
 
-                itpr = LinearNDInterpolator(datatri,data[:,2])
-                u = np.linspace(-1,1,suit['Ni'])*suit['L']*0.5
-                y,x = np.meshgrid(u,u)
-                zi = itpr(x,y)
-                idx = np.isnan(zi)
-                if np.any(idx):
-                    itpr = NearestNDInterpolator(datatri,data[:,2])
-                    nzi = itpr(x[idx],y[idx])
-                    zi[idx] = nzi
-                M[:,k_SET] = zi.ravel();
-            print('')
-            suit['M'] = M.flatten(order='F')
+                    itpr = LinearNDInterpolator(datatri,data[:,2])
+                    u = np.linspace(-1,1,suit['Ni'])*suit['L']*0.5
+                    y,x = np.meshgrid(u,u)
+                    zi = itpr(x,y)
+                    idx = np.isnan(zi)
+                    if np.any(idx):
+                        itpr = NearestNDInterpolator(datatri,data[:,2])
+                        nzi = itpr(x[idx],y[idx])
+                        zi[idx] = nzi
+                    M[:,k_SET] = zi.ravel();
+                print('')
+                suit['M'] = M.flatten(order='F')
 
-            M2_mirror_modes = u"modes"
-            path_to_modes = os.path.join( os.path.abspath(__file__).split('python')[0] , 'gmtMirrors' , M2_mirror_modes+'.ceo' )
-            print('Writing modes to %s...'%path_to_modes)
-            with open(path_to_modes,'w') as f:
-                for key in suit:
-                    suit[key].tofile(f)
-                
+                M2_mirror_modes = u"modes"
+                path_to_modes = os.path.join( os.path.abspath(__file__).split('python')[0] , 'gmtMirrors' , M2_mirror_modes+'.ceo' )
+                print('Writing modes to %s...'%path_to_modes)
+                with open(path_to_modes,'w') as f:
+                    for key in suit:
+                        suit[key].tofile(f)
+            else:
+                M2_mirror_modes=u"zernike"
+                        
         super(GMT_MX,self).__init__(
                             M1_radial_order=M1_radial_order,
                             M2_radial_order=M2_radial_order,
