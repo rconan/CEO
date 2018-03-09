@@ -36,6 +36,7 @@ struct centroiding {
   void show_centroids(char *filename);
   void show_flux(char *filename);
   void fried_geometry(mask *dm, mask *pupil, int n, float threshold);
+  void filter(float *F);
 
 };
 
@@ -64,6 +65,7 @@ struct centroiding {
 <<display centroids>>
 <<display flux>>
 <<Fried geometry>>
+<<filter centroids>>
 @
 
 \section{Parameters}
@@ -78,6 +80,8 @@ int _N_SIDE_LENSLET_, N_LENSLET, N_SOURCE;
 float *d__c, *d__cx, *d__cy, *d__mass;
 char *lenslet_mask, MASK_SET;
 int n_data, DEV_SHARED_MEM, DEV_MAX_THREADS;
+cublasHandle_t handle;
+cublasStatus_t status;
 @ 
 \section{Functions}
 \label{sec:functions}
@@ -424,7 +428,38 @@ for (i=0;i<N_PX_CAMERA;i++)
   cy[k]   += buffer2[i];
 }
 @ \end{enumerate}
- 
+
+\subsubsection{Filtering}
+\label{sec:filtering}
+<<filter centroids>>=
+  void centroiding::filter(float *F)
+{
+  int k, n_byte, N;
+  float alpha, beta;
+  float *c;
+  n_byte = sizeof(float)*N_LENSLET*N_SOURCE*2;
+
+  HANDLE_ERROR( cudaMalloc( (void**)&c   , n_byte ) );
+  HANDLE_ERROR( cudaMemcpy( c, d__c, n_byte, cudaMemcpyDeviceToDevice) );
+  cublasCreate(&handle);
+  alpha = 1;
+  beta = 0;
+  N = N_LENSLET*2;
+  for (k=0;k<N_SOURCE;k++) {
+    CUBLAS_ERROR( cublasSgemv(handle, CUBLAS_OP_N,
+			    N, N,
+			    &alpha, 
+			    F, N,
+			    c+k*N, 1,
+			    &beta,
+			    d__c+k*N , 1));
+  }
+  HANDLE_ERROR( cudaFree( c ) );
+  cublasDestroy(handle);
+
+  //  HANDLE_ERROR( cudaMemset( d__c, 0, sizeof(float)*N_LENSLET*N_SOURCE*2 ) );
+}
+@ 
 \subsection{Input/Output}
 \label{sec:inputoutput}
 
