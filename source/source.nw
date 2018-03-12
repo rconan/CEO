@@ -328,9 +328,12 @@ The total number of rays
 int N_RAY_TOTAL;
 @
 The x and y coordinates of the [[origin]] vector specifies the location of the center of the ray bundle when it crosses the (x,y) plane of the first surface.
-The z coordinate specifies the height of the ray bundle with respect to the first surface.
+The z coordinate specifies the height of the ray bundle with respect to the
+first surface.
+The ray bundle can be rotated clockwise by [[rot_angle]].
 <<ray bundle parameters>>=
 vector *d__origin;
+double rot_angle;
 @
 The chief ray is defined with
 <<ray bundle parameters>>=
@@ -386,6 +389,7 @@ void bundle::setup(rtd RADIUS, int _N_RADIUS_,
   N_BUNDLE = N_SRC;
   N_RAY = (N_RADIUS-1)*N_THETA + 1;
   N_RAY_TOTAL = N_RAY*N_BUNDLE;
+  rot_angle = 0.0;
   V.setup(N_RAY_TOTAL);
   HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY_TOTAL ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
@@ -454,6 +458,7 @@ The cartesian coordinates are defined with the sampling of the square box length
   N_BUNDLE = N_SRC;
   N_RAY = N_L*N_L;
   N_RAY_TOTAL = N_RAY*N_BUNDLE;
+  rot_angle = 0.0;
   V.setup(N_RAY_TOTAL);
   HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY_TOTAL ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
@@ -473,6 +478,7 @@ void bundle::setup(rtd _L_, int _N_L_, vector origin, vector chief_origin, int N
   N_BUNDLE = N_SRC;
   N_RAY = N_L*N_L;
   N_RAY_TOTAL = N_RAY*N_BUNDLE;
+  rot_angle = 0.0;
   V.setup(N_RAY_TOTAL);
   HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY_TOTAL ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
@@ -494,6 +500,7 @@ void bundle::setup_free(int _N_RAY_, double *x, double *y, vector origin)
   N_BUNDLE = 1;
   N_RAY = _N_RAY_;
   N_RAY_TOTAL = N_RAY*N_BUNDLE;
+  rot_angle = 0.0;
   V.setup(N_RAY_TOTAL);
   HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY_TOTAL ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
@@ -562,7 +569,7 @@ The cartesian coordinates $x$ and $y$ of the rays are given by
 blockDim = dim3(N_THREAD,N_THREAD);
 gridDim  = dim3(N_L/N_THREAD+1,N_L/N_THREAD+1, N_BUNDLE);
 ray_coordinates_box LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
-                                                            L, N_L, d__origin);
+                                                L, N_L, d__origin, rot_angle);
 @
 Memory is freed with
 \index{source!bundle!cleanup}
@@ -1652,7 +1659,8 @@ if (rays.N_RAY>1)
     ray_coordinates_box LLL gridDim , blockDim RRR (rays.d__ray, rays.N_RAY,
 						    dev_ptr,
 						    rays.L, rays.N_L,
-						    rays.d__origin);
+                rays.d__origin,
+                rays.rot_angle);
   }
  else
    ray_coordinates LLL gridDim , blockDim RRR (rays.d__ray, 1,
@@ -1700,19 +1708,23 @@ d__ray[k].v = 1;
 @ and
 <<bundle coordinates kernel (box)>>=
 __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
-                                    rtd L, int N_L, vector *origin)
+                                    rtd L, int N_L, vector *origin,
+                                    rtd rot_angle)
 {
   int i, j, k, iSource;
-  rtd x, y, s;
+  rtd x, y, s, so, co;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
   if ( (i<N_L) && (j<N_L) )
   {
     <<rays box coordinates definition>>
+    x += origin->x;
+    y += origin->y;
     k = i + j*N_L + iSource*N_RAY;
-    d__ray[k].coordinates.x = x + origin->x;
-    d__ray[k].coordinates.y = y + origin->y;
+    sincos(rot_angle,&so,&co);
+    d__ray[k].coordinates.x = x*co - y*so;
+    d__ray[k].coordinates.y = x*so + y*co;
     <<bundle coordinates kernel (common)>>
   }
 }

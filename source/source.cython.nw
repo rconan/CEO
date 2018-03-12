@@ -5,7 +5,7 @@
 
 <<source.pxd>>=
 from numpy cimport ndarray
-from utilities cimport mask, cuFloatArray, cuDoubleArray, cuIntArray, MaskAbstract
+from utilities cimport mask, cuFloatArray, cuDoubleArray, cuIntArray, MaskAbstract, gpu_t
 from rayTracing cimport Coordinates
 cdef extern from "utilities.h":
     ctypedef double rtd
@@ -33,13 +33,15 @@ cdef extern from "source.h":
 <<source.pxd contents>>=
     cdef cppclass bundle:
         int N_RAY, N_BUNDLE, N_L
-	int *d__piston_mask
+        int *d__piston_mask
         rtd refractive_index, L
         rtd *d__sphere_radius
         rtd *d__sphere_distance
+        double rot_angle
+        vector *d__origin
         vector *d__sphere_origin
         ray *d__ray
-	ray *d__chief_ray
+        ray *d__chief_ray
         void setup(rtd, int, int , vector, int)
         void setup(rtd, int , vector, int)
         void setup_free(int, double *, double *, vector)
@@ -334,6 +336,34 @@ def ee80(self,spaxel="circle"):
 property N_BUNDLE:
     def __get__(self):
         return self._c_bundle.N_BUNDLE
+
+property origin:
+    def __get__(self):
+        cdef gpu_t[vector] *_c_gpu
+        cdef vector origin
+        _c_gpu = new gpu_t[vector]()
+        _c_gpu.setup(1)
+        _c_gpu.dev_data = self._c_bundle.d__origin
+        _c_gpu.host_data = &origin
+        _c_gpu.dev2host()
+        return origin.x,origin.y,origin.z
+    def __set__(self,val):
+        cdef gpu_t[vector] *_c_gpu
+        cdef vector origin
+        origin.x = val[0]
+        origin.y = val[1]
+        origin.z = val[2]
+        _c_gpu = new gpu_t[vector]()
+        _c_gpu.setup(1)
+        _c_gpu.dev_data = self._c_bundle.d__origin
+        _c_gpu.host_data = &origin
+        _c_gpu.host2dev()
+
+property rot_angle:
+    def __get__(self):
+        return self._c_bundle.rot_angle
+    def __set__(self,val):
+        self._c_bundle.rot_angle = val
 
 property N_L:
     def __get__(self):
