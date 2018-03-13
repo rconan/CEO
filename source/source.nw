@@ -1650,8 +1650,10 @@ void source::reset_rays(void)
 dim3 blockDim(1,1);
 dim3 gridDim(1,1, rays.N_BUNDLE);
 ray_coordinates LLL gridDim , blockDim RRR (rays.d__chief_ray, 1,
-					    dev_ptr,
-					    0.0, 2, 1, rays.d__chief_origin);
+                                            dev_ptr,
+                                            0.0, 2, 1,
+                                            rays.d__chief_origin,
+                                            rays.rot_angle);
 if (rays.N_RAY>1)
   {
     blockDim = dim3(16,16);
@@ -1664,13 +1666,15 @@ if (rays.N_RAY>1)
   }
  else
    ray_coordinates LLL gridDim , blockDim RRR (rays.d__ray, 1,
-					       dev_ptr,
-					       0.0, 2, 1, rays.d__origin);
+                                               dev_ptr,
+                                               0.0, 2, 1,
+                                               rays.d__origin,
+                                               rays.rot_angle);
 @ and
 <<bundle coordinates kernel>>=
 __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
                                 rtd RADIUS, int N_RADIUS, int N_THETA,
-                                vector *origin)
+                                vector *origin, rtd rot_angle)
 {
   int i, j, k, iSource;
   rtd rho, theta, s;
@@ -1719,19 +1723,31 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
   if ( (i<N_L) && (j<N_L) )
   {
     <<rays box coordinates definition>>
-    x += origin->x;
-    y += origin->y;
     k = i + j*N_L + iSource*N_RAY;
-    sincos(rot_angle,&so,&co);
-    d__ray[k].coordinates.x = x*co - y*so;
-    d__ray[k].coordinates.y = x*so + y*co;
-    <<bundle coordinates kernel (common)>>
+
+    d__ray[k].coordinates.z = origin->z;
+    d__ray[k].directions.x  = sin(src[iSource]._zenith_64_)*cos(src[iSource]._azimuth_64_);
+    d__ray[k].directions.y  = sin(src[iSource]._zenith_64_)*sin(src[iSource]._azimuth_64_);
+    d__ray[k].directions.z  = -cos(src[iSource]._zenith_64_);
+    d__ray[k].optical_path_length = 0.0;
+    d__ray[k].optical_path_difference = 0.0;
+    s = -origin->z/d__ray[k].directions.z;
+    x -= s*d__ray[k].directions.x;
+    y -= s*d__ray[k].directions.y;
+    d__ray[k].v = 1;
+
+    //sincos(rot_angle,&so,&co);
+    d__ray[k].coordinates.x = x;//*co - y*so;
+    d__ray[k].coordinates.y = y;//x*so + y*co;
+
   }
 }
 @ with
 <<rays box coordinates definition>>=
 x   = L*(i - (N_L-1)*0.5)/(N_L-1);
 y   = L*(j - (N_L-1)*0.5)/(N_L-1);
+x += origin->x;
+y += origin->y;
 @  \item for multiple sources with wavefront resolution and with ray bundle coordinates (different magnitudes), zenith and azimuth are in double precision for ray tracing:
 <<setup for multiple sources with wavefront resolution and ray bundle>>=
 void source::setup(const char *_photometric_band, float *_magnitude,
@@ -1999,6 +2015,7 @@ opd2phase_kernel LLL gridDim , blockDim RRR (wavefront.amplitude,
 					     rays.V.m,
 					     rays.d__ray, rays.N_RAY,
 					     rays.L, rays.N_L,
+               rays.d__origin,
 					     dev_ptr);
 wavefront.masked(&(rays.V));
 rays.V.set_filter_quiet();
@@ -2006,7 +2023,7 @@ rays.V.set_filter_quiet();
 <<gathering wavefront kernel>>=
 __global__ void opd2phase_kernel(float *amplitude, float *phase,
 				 char *m, ray *d__ray,  int N_RAY,
-				 rtd L,  int N_L,
+         rtd L,  int N_L, vector *origin,
 				 source *src)
 {
   int i, j, k, iSource;
