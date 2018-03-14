@@ -37,7 +37,8 @@ struct centroiding {
   void show_flux(char *filename);
   void fried_geometry(mask *dm, mask *pupil, int n, float threshold);
   void filter(float *F);
-
+  void noisify(float stddev);
+  void reset(void);
 };
 
 #endif  // __CENTROIDING_H__
@@ -65,7 +66,9 @@ struct centroiding {
 <<display centroids>>
 <<display flux>>
 <<Fried geometry>>
+<<resetting the centroids>>
 <<filter centroids>>
+<<add noise to centroids>>
 @
 
 \section{Parameters}
@@ -139,8 +142,14 @@ void centroiding::fried_geometry(mask *dm, mask *pupil, int n, float threshold) 
     dm->set_filter();
     dm->area = pupil->area;
 }
-
-
+@
+The centroids are reset to 0 with
+\index{centroiding!centroiding!reset}
+<<resetting the centroids>>=
+void centroiding::reset(void)
+{
+  HANDLE_ERROR( cudaMemset( d__c, 0, sizeof(float)*N_LENSLET*N_SOURCE*2 ) );
+}
 @
 \subsection{Data processing}
 \label{sec:data-processing}
@@ -431,6 +440,7 @@ for (i=0;i<N_PX_CAMERA;i++)
 
 \subsubsection{Filtering}
 \label{sec:filtering}
+\index{centroiding!centroiding!filter}
 <<filter centroids>>=
   void centroiding::filter(float *F)
 {
@@ -458,6 +468,31 @@ for (i=0;i<N_PX_CAMERA;i++)
   cublasDestroy(handle);
 
   //  HANDLE_ERROR( cudaMemset( d__c, 0, sizeof(float)*N_LENSLET*N_SOURCE*2 ) );
+}
+@
+
+\subsubsection{Noisify}
+\label{sec:noisify}
+
+\index{centroiding!centroiding!noisify}
+<<add noise to centroids>>=
+void centroiding::noisify(float stddev)
+{
+  curandGenerator_t gen;
+
+  HANDLE_ERROR_CURAND(curandCreateGenerator(&gen,
+					    CURAND_RNG_PSEUDO_DEFAULT),
+		      "Failed to create pseudo-random number generator!");
+  HANDLE_ERROR_CURAND(curandSetPseudoRandomGeneratorSeed(gen,
+							 1234ULL),
+		      "Failed to set seed!");
+
+  HANDLE_ERROR_CURAND(curandGenerateNormal(gen, d__c, N_LENSLET*N_SOURCE*2, 0, stddev),
+		      "Failed to generate variates on device!");
+
+
+  HANDLE_ERROR_CURAND(curandDestroyGenerator(gen),
+		      "Failed to the cleanup!");
 }
 @ 
 \subsection{Input/Output}
