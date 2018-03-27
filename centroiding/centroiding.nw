@@ -478,21 +478,34 @@ for (i=0;i<N_PX_CAMERA;i++)
 <<add noise to centroids>>=
 void centroiding::noisify(float stddev)
 {
+  cublasHandle_t handle;
   curandGenerator_t gen;
+  float *d__n, alpha;
+  int N;
+  alpha = 1.0;
+  N = N_LENSLET*N_SOURCE*2;
 
+  HANDLE_ERROR( cudaMalloc( (void**)&d__n   , sizeof(float)*N ) );
+
+  cublasCreate(&handle);
   HANDLE_ERROR_CURAND(curandCreateGenerator(&gen,
 					    CURAND_RNG_PSEUDO_DEFAULT),
 		      "Failed to create pseudo-random number generator!");
+
   HANDLE_ERROR_CURAND(curandSetPseudoRandomGeneratorSeed(gen,
 							 1234ULL),
 		      "Failed to set seed!");
 
-  HANDLE_ERROR_CURAND(curandGenerateNormal(gen, d__c, N_LENSLET*N_SOURCE*2, 0, stddev),
+  HANDLE_ERROR_CURAND(curandGenerateNormal(gen, d__n, N, 0, stddev),
 		      "Failed to generate variates on device!");
 
+  CUBLAS_ERROR( cublasSaxpy(handle, N, &alpha, d__n, 1, d__c, 1) );
 
   HANDLE_ERROR_CURAND(curandDestroyGenerator(gen),
 		      "Failed to the cleanup!");
+  cublasDestroy(handle);
+  HANDLE_ERROR( cudaFree( d__n ) );
+
 }
 @ 
 \subsection{Input/Output}
