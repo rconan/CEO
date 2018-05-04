@@ -691,8 +691,8 @@ class GMT_MX(GmtMirrors):
             self.pointing_error_zenith  = pez
             self.pointing_error_azimuth = pea
 
-        src.reset()
-        self.propagate(src)
+        #src.reset()
+        #self.propagate(src)
         A_ = np.dstack(np.vsplit(src.amplitude.host(),src.N_SRC))
         F_ = np.dstack(np.vsplit(src.phase.host(),src.N_SRC))
         k = 2.*np.pi/src.wavelength
@@ -716,7 +716,7 @@ class GMT_MX(GmtMirrors):
                        withM1=True,withM2=True,
                        fluxThreshold=0.0, filterMirrorRotation=True,
                        includeBM=True, includeMount=False,
-                       calibrationVaultKwargs=None):
+                       calibrationVaultKwargs={'nThreshold':None,'insertZeros': None}):
         gs.reset()
         self.reset()
         self.propagate(gs)
@@ -972,7 +972,7 @@ class PSSn(object):
             self.C = phaseStats.atmOTF(rho,_r0_,self.L0)
 
         if self.AW0 is None:
-            _src_ = Source(src.band,
+            _src_ = Source(src.band.decode(),
                            rays_box_size=src.rays.L,
                            rays_box_sampling=src.rays.N_L,
                            rays_origin=[0,0,25])
@@ -993,7 +993,8 @@ class PSSn(object):
             gmt.pointing_error_azimuth = pea
 
 
-        if self.AW==0: self.OTF(src)
+        if np.isscalar(self.AW):
+            self.OTF(src)
 
         if sigma>0:
             nPx = src.rays.N_L
@@ -1013,15 +1014,49 @@ class PSSn(object):
 
     def OTF(self,src):
         #+src
-        A = src.amplitude.host()
-        F = src.phase.host()
-        k = 2.*np.pi/src.wavelength
+        if isinstance(src,Source):
+            A = src.amplitude.host()
+            F = src.phase.host()
+            src_wavelength = src.wavelength
+        if isinstance(src,tuple):
+            A = src[0]
+            F = src[1]
+            src_wavelength = src[2]            
+        k = 2.*np.pi/src_wavelength
         W = A*np.exp(1j*k*F)
         S1 = np.fliplr(np.flipud(W))
         S2 = np.conj(W)
         self.AW += fftconvolve(S1,S2)
         self.N += 1
-        
+
+    def OTF_integrate(self,src,processes=1):
+        from joblib import Parallel, delayed
+        A = src[0]
+        F = src[1]
+        src_wavelength = src[2]
+        N_F = len(F)
+        n_job = int(N_F/processes)
+        a = [k for k in range(0,processes*n_job,n_job)]
+        b = [k for k in range(n_job,processes*(n_job+1),n_job)]
+        b[-1] = N_F
+        Fsplit = [F[x:y] for x,y in zip(a,b)]
+        params = zip(Fsplit,a,b)
+        out = Parallel(n_jobs=processes)(delayed(integrate)(x) for x in params)
+        self.AW = np.dstack(out).sum(2)
+        self.N += N_F
+
+def integrate(params):
+    from scipy.signal import fftconvolve
+    _F_,a,b = params
+    _AW_=0
+    for l in range(a,b):
+        k = 2.*np.pi/src_wavelength
+        W = np.exp(1j*k*_F_[l-a])
+        S1 = np.fliplr(np.flipud(W))
+        S2 = np.conj(W)
+        _AW_ += fftconvolve(S1,S2)
+    return _AW_
+
 # JGMT_MX
 from .utilities import JSONAbstract
 class JGMT_MX(JSONAbstract,GMT_MX):
