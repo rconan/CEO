@@ -630,7 +630,8 @@ class GMT_MX(GmtMirrors):
         else:
             return CalibrationVault([D],**calibrationVaultKwargs)
 
-    def PSSn(self,src,r0=16e-2,L0=25.0,zenith_distance=30,C=None,AW0=None,save=False):
+    def PSSn(self,src,r0=16e-2,L0=25.0,zenith_distance=30,
+             C=None,AW0=None,ref_src=None,save=False):
         """
         Computes the PSSn corresponding to the current state of the telescope
 
@@ -649,6 +650,8 @@ class GMT_MX(GmtMirrors):
             The atmosphere OTF; default: None
         AW0 : ndarray, optional
             The collimated telescope OTF; default: None
+        ref_src : Source
+             The source from which AW0 is computed
         save : boolean, optional
             If True, return in addition to the PSSn, a dictionnary with C and AW0; default: False
 
@@ -671,15 +674,21 @@ class GMT_MX(GmtMirrors):
             C = phaseStats.atmOTF(rho,_r0_,L0)
 
         if AW0 is None:
-            _src_ = Source(src.band.decode(),
-                           rays_box_size=src.rays.L,
-                           rays_box_sampling=src.rays.N_L,
-                           rays_origin=[0,0,25])
-            state = self.state
-            pez = self.pointing_error_zenith
-            pea = self.pointing_error_azimuth
-            self.reset()
-            self.propagate(_src_)
+            if ref_src is None:
+                _src_ = Source(src.band.decode(),
+                               rays_box_size=src.rays.L,
+                               rays_box_sampling=src.rays.N_L,
+                               rays_origin=[0,0,25])
+                state = self.state
+                pez = self.pointing_error_zenith
+                pea = self.pointing_error_azimuth
+                self.reset()
+                self.propagate(_src_)
+                self^=state
+                self.pointing_error_zenith  = pez
+                self.pointing_error_azimuth = pea
+            else:
+                _src_ = ref_src
             A = _src_.amplitude.host()
             F = _src_.phase.host()
             k = 2.*np.pi/_src_.wavelength
@@ -687,9 +696,6 @@ class GMT_MX(GmtMirrors):
             S1 = np.fliplr(np.flipud(W))
             S2 = np.conj(W)
             AW0 = fftconvolve(S1,S2)
-            self^=state
-            self.pointing_error_zenith  = pez
-            self.pointing_error_azimuth = pea
 
         #src.reset()
         #self.propagate(src)
