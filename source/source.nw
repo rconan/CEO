@@ -1716,7 +1716,7 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
                                     rtd rot_angle)
 {
   int i, j, k, iSource;
-  rtd x, y, s, so, co;
+  rtd x, y, s;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
@@ -1736,7 +1736,6 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
     y -= s*d__ray[k].directions.y;
     d__ray[k].v = 1;
 
-    //sincos(rot_angle,&so,&co);
     d__ray[k].coordinates.x = x;//*co - y*so;
     d__ray[k].coordinates.y = y;//x*so + y*co;
 
@@ -1744,10 +1743,14 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
 }
 @ with
 <<rays box coordinates definition>>=
-x   = L*(i - (N_L-1)*0.5)/(N_L-1);
-y   = L*(j - (N_L-1)*0.5)/(N_L-1);
-x += origin->x;
-y += origin->y;
+  rtd so, co, _x_, _y_;
+sincos(rot_angle,&so,&co);
+_x_   = L*(i - (N_L-1)*0.5)/(N_L-1);
+_y_   = L*(j - (N_L-1)*0.5)/(N_L-1);
+_x_ += origin->x;
+_y_ += origin->y;
+x = _x_*co - _y_*so;
+y = _x_*so + _y_*co;
 @  \item for multiple sources with wavefront resolution and with ray bundle coordinates (different magnitudes), zenith and azimuth are in double precision for ray tracing:
 <<setup for multiple sources with wavefront resolution and ray bundle>>=
 void source::setup(const char *_photometric_band, float *_magnitude,
@@ -2011,20 +2014,21 @@ void source::opd2phase(void)
 dim3 blockDim(16,16);
 dim3 gridDim(rays.N_L/16+1, rays.N_L/16+1, rays.N_BUNDLE);
 opd2phase_kernel LLL gridDim , blockDim RRR (wavefront.amplitude,
-					     wavefront.phase,
-					     rays.V.m,
-					     rays.d__ray, rays.N_RAY,
-					     rays.L, rays.N_L,
-               rays.d__origin,
-					     dev_ptr);
+                                             wavefront.phase,
+                                             rays.V.m,
+                                             rays.d__ray, rays.N_RAY,
+                                             rays.L, rays.N_L,
+                                             rays.d__origin,
+                                             dev_ptr,
+                                             rays.rot_angle);
 wavefront.masked(&(rays.V));
 rays.V.set_filter_quiet();
 @ and
 <<gathering wavefront kernel>>=
 __global__ void opd2phase_kernel(float *amplitude, float *phase,
-				 char *m, ray *d__ray,  int N_RAY,
-         rtd L,  int N_L, vector *origin,
-				 source *src)
+                                 char *m, ray *d__ray,  int N_RAY,
+                                 rtd L,  int N_L, vector *origin,
+                                 source *src,rtd rot_angle)
 {
   int i, j, k, iSource;
   rtd x, y;
