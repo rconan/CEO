@@ -48,6 +48,7 @@ struct imaging {
   void propagateNoOverlapBare(source *src);
   void propagateNoOverlapSPS(source *src, float d, float wavenumber);
   void propagateTT7(source *src);
+  void propagateTT7(source *src, int *d__piston_mask);
   void propagateThroughFieldStop(source *src, float field_stop_diam);
   void propagateThroughPyramid(source *src);
   void propagateThroughModulatedPyramid(source *src, float modulation);
@@ -479,68 +480,89 @@ binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
 \index{imaging!imaging!propagateTT7}
 <<propagation>>=
 void imaging::propagateTT7(source *src) {
-  int M = N_PX_IMAGE/N_PX_CAMERA;
-  /* if ( (pixel_scale>0) && (zenith<0) ) */
-  /*   set_pointing_direction(0.0,0.0); */
-  /*
-  if (pixel_scale>0 ) {
-      printf(" pixel scale: %.2E\n",pixel_scale);
-  float dx, dy, dx_int, dy_int;
-  <<angular offset>>
-  printf("ANGULAR OFFSET:\n");
-  printf(" . x: %3.0f + %4.3f\n",dx_int,dx);
-  printf(" . y: %3.0f + %4.3f\n",dy_int,dy);
-    }
-  */
-  //absolute_pointing = 1;
-  //fprintf(stdout,"Absolute pointing: %d\n",absolute_pointing);
-  dim3 gridDim;
-  dim3 blockDim(16,16);
-  gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
+  <<propagate TT7 setup>>
   complexAmplitudeTT7 LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
-					      src->wavefront.amplitude,
-					      src->wavefront.phase,
-                                              src->wavenumber(),
-                                              src->rays.d__piston_mask,
-					      N_PX_PUPIL, N_PX_IMAGE, M,
-					      N_SIDE_LENSLET, src->dev_ptr,
-                                              pixel_scale, d__theta_x, d__theta_y,
-					      absolute_pointing,1);
+                                                 src->wavefront.amplitude,
+                                                 src->wavefront.phase,
+                                                 src->wavenumber(),
+                                                 src->rays.d__piston_mask,
+                                                 N_PX_PUPIL, N_PX_IMAGE, M,
+                                                 N_SIDE_LENSLET, src->dev_ptr,
+                                                 pixel_scale, d__theta_x, d__theta_y,
+                                                 absolute_pointing,1);
+  <<propagate TT7 to focal plane intensity>>
+}
+void imaging::propagateTT7(source *src, int *d__piston_mask) {
+  <<propagate TT7 setup>>
+    complexAmplitudeTT7 LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
+                                                   src->wavefront.amplitude,
+                                                   src->wavefront.phase,
+                                                   src->wavenumber(),
+                                                   d__piston_mask,
+                                                   N_PX_PUPIL, N_PX_IMAGE, M,
+                                                   N_SIDE_LENSLET, src->dev_ptr,
+                                                   pixel_scale, d__theta_x, d__theta_y,
+                                                   absolute_pointing,1);
+  <<propagate TT7 to focal plane intensity>>
+      }
+@ 
+with
+<<propagate TT7 setup>>=
+int M = N_PX_IMAGE/N_PX_CAMERA;
+/* if ( (pixel_scale>0) && (zenith<0) ) */
+/*   set_pointing_direction(0.0,0.0); */
+/*
+if (pixel_scale>0 ) {
+    printf(" pixel scale: %.2E\n",pixel_scale);
+float dx, dy, dx_int, dy_int;
+<<angular offset>>
+printf("ANGULAR OFFSET:\n");
+printf(" . x: %3.0f + %4.3f\n",dx_int,dx);
+printf(" . y: %3.0f + %4.3f\n",dy_int,dy);
+  }
+*/
+//absolute_pointing = 1;
+//fprintf(stdout,"Absolute pointing: %d\n",absolute_pointing);
+dim3 gridDim;
+dim3 blockDim(16,16);
+gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
+@
+and with
+<<propagate TT7 to focal plane intensity>>=
+HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_FORWARD),
+                    "Unable to execute plan forward FT");
+N_PHOTON_PER_FRAME = N_PHOTON_PER_SECOND_PER_FRAME = src->n_photon()*src->wavefront.M->area;
+float intensity_norm;
+intensity_norm = src->wavefront.M->area/src->wavefront.M->nnz;
+/*
+fprintf(stdout,"Source # of photon: %g\n",src->n_photon());
+fprintf(stdout,"Wavefront mask area and nnz: %f & %f\n",src->wavefront.M->area,src->wavefront.M->nnz);
+fprintf(stdout,"# of photon per second: %g\n",N_PHOTON_PER_SECOND_PER_FRAME);
+*/
+int N, Nb;
+N = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
+Nb = (int) ceilf( sqrtf(N)/16.0 );
+gridDim  = dim3(Nb,Nb);
+wave2intensity LLL gridDim , blockDim RRR( d__wave_PUPIL, N, intensity_norm);
+if (src->fwhm>0) {
+  gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
+  HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_INVERSE),
+                      "Unable to execute plan forward FT");
+  apply_irradiance LLL gridDim , blockDim RRR (d__wave_PUPIL, N_DFT, N_SIDE_LENSLET, src->fwhm);
   HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_FORWARD),
                       "Unable to execute plan forward FT");
-  N_PHOTON_PER_FRAME = N_PHOTON_PER_SECOND_PER_FRAME = src->n_photon()*src->wavefront.M->area;
-  float intensity_norm;
-  intensity_norm = src->wavefront.M->area/src->wavefront.M->nnz;
-  /*
-  fprintf(stdout,"Source # of photon: %g\n",src->n_photon());
-  fprintf(stdout,"Wavefront mask area and nnz: %f & %f\n",src->wavefront.M->area,src->wavefront.M->nnz);
-  fprintf(stdout,"# of photon per second: %g\n",N_PHOTON_PER_SECOND_PER_FRAME);
-  */
-  int N, Nb;
-  N = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
-  Nb = (int) ceilf( sqrtf(N)/16.0 );
-  gridDim  = dim3(Nb,Nb);
-  wave2intensity LLL gridDim , blockDim RRR( d__wave_PUPIL, N, intensity_norm);
-  if (src->fwhm>0) {
-    gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
-    HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_INVERSE),
-                        "Unable to execute plan forward FT");
-    apply_irradiance LLL gridDim , blockDim RRR (d__wave_PUPIL, N_DFT, N_SIDE_LENSLET, src->fwhm);
-    HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_FORWARD),
-                        "Unable to execute plan forward FT");
-  }
-  gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
-                  N_SOURCE);
-  binningTT7 LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
-                                     src->dev_ptr,
-                                     pixel_scale, d__theta_x, d__theta_y,
-                                     absolute_pointing,
-                                     N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
-
-  ++N_FRAME;
 }
+gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
+                N_SOURCE);
+binningTT7 LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
+                                   src->dev_ptr,
+                                   pixel_scale, d__theta_x, d__theta_y,
+                                   absolute_pointing,
+                                   N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
 
-@ which sets the complex amplitude [[d__wave_PUPIL]] with the source wavefront amplitude and phase including the necessary zero padding for the DFT and the phasor to recenter the image.
+++N_FRAME;
+@
+which sets the complex amplitude [[d__wave_PUPIL]] with the source wavefront amplitude and phase including the necessary zero padding for the DFT and the phasor to recenter the image.
 Then the DFT is applied in--place to the complex amplitude [[d__wave_PUPIL]].
 <<propagation (FFT, intensity and binning)>>=
 <<imaging CUFFT execution>>
@@ -1042,7 +1064,8 @@ ij_PUPIL = lenslet2array_overlap(i,j,N_PX_PUPIL,iLenslet,jLenslet,N_SIDE_LENSLET
       wave_PUPIL[ij_DFT].x = wave_PUPIL[ij_DFT].y = 0;
   }
 <<imaging complex amplitude (ii.c,TT7)>>=
-  wave_PUPIL[ij_DFT].x = wave_PUPIL[ij_DFT].y = wavefront_amplitude[ij_PUPIL]*(piston_mask[ij_PUPIL]==(iSource+1));
+  wave_PUPIL[ij_DFT].x = wave_PUPIL[ij_DFT].y = wavefront_amplitude[ij_PUPIL]*
+                                               (piston_mask[ij_PUPIL]==(iSource+1));
         wave_PUPIL[ij_DFT].x *= c;
         wave_PUPIL[ij_DFT].y *= s;
         return;

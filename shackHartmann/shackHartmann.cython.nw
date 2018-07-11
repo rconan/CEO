@@ -39,6 +39,7 @@ void identify_valid_lenslet(source *, float);
 void set_reference_slopes(source *);
 void calibrate(source *, float )
 void propagate(source *)
+void propagate(source *, int *)
 void process()
 void analyze(source *)
 void get_valid_slopes(float *)
@@ -50,7 +51,7 @@ void get_valid_slopes_norm(float *)
 
 \index{shackHartmann!python!ShackHartmann}
 <<class definitions>>=
-from utilities cimport Sensor, cuFloatArray, MaskAbstract
+from utilities cimport Sensor, cuFloatArray, cuIntArray, MaskAbstract
 from imaging cimport Imaging
 from centroiding cimport Centroiding
 from source cimport Source
@@ -534,6 +535,21 @@ cdef class TT7Sensor(Sensor):
         self._c_shackHartmann = new tt7()
 
 <<shackHartmann contents>>
+
+    def propagateWithRef(self, Source gs, cuIntArray mask):
+        """
+        Propagates the guide star to the WFS detector (noiseless)
+
+        Parameters
+        ----------
+        gs : Source
+            The WFS guide star
+
+        See also
+        --------
+        Source : a class for astronomical sources
+        """
+        self._c_shackHartmann.propagate(gs._c_source, mask._c_gpu.dev_data)
 
 cdef class TT7(TT7Sensor):
     def __init__(self, **kwargs):
