@@ -97,6 +97,7 @@ void track(float *x, float *y, float *z, int N, int idx);
 void remove(int *seg_ID, int N_ID);
 void keep(int *seg_ID, int N_ID);
 void update_conic_c(rtd *_conic_c_);
+void set_reflectivity(float *reflectivity);
 @
 The GMT M12 parameters are:
 \begin{itemize}
@@ -216,6 +217,10 @@ char *d__valid_segments;
   //bending_modes *BS;
 modes *BS;
 @
+\item a 7 element array for the segment reflectivity coefficients in the range $[0,1]$
+<<GMT M12 parameters>>=
+float *d__segment_reflectivity;  
+@  
  \end{itemize}
 
 
@@ -275,8 +280,14 @@ idx_offset = 0;
 V = NULL;
 @ and
 <<GMT setup common>>=
-rtd *h__conic_c;
 int n_byte;
+float segment_reflectivity[7] = {1.,1.,1.,1.,1.,1.,1.};
+n_byte = 7*sizeof(float);
+HANDLE_ERROR( cudaMalloc((void**)&d__segment_reflectivity, n_byte ) );
+HANDLE_ERROR( cudaMemcpy( d__segment_reflectivity, segment_reflectivity,
+                          n_byte, cudaMemcpyHostToDevice ) );
+
+rtd *h__conic_c;
 n_byte = 7*sizeof(rtd);
 h__conic_c = (rtd *)malloc( n_byte );
 for (int k=0; k<7; k++)
@@ -492,6 +503,7 @@ motion_CS.cleanup();
 HANDLE_ERROR( cudaFree( d__conic_origin ) );
 HANDLE_ERROR( cudaFree( d__valid_segments ) );
 HANDLE_ERROR( cudaFree( d__conic_c ) );
+HANDLE_ERROR( cudaFree( d__segment_reflectivity ) );
 @
 The segment radius of curvature is updated with:
 \index{gmtMirrors!gmt\_m1!update\_conic\_c}
@@ -1668,6 +1680,23 @@ for (k=0;k<N;k++)
     <<global tip-tilt transformation>>
   }
 @
+\subsection{Segment reflectivity}
+\label{sec:seg-reflect}
+
+The segment reflectivity is set with:
+\index{gmtMirrors!gmt\_m1!set\_reflectivity}
+<<GMT M1 functions>>=
+void gmt_m1::set_reflectivity(float *reflectivity)
+{
+  <<GMT set reflectivity common>>
+}
+@ with
+<<GMT set reflectivity common>>=
+int n_byte;
+n_byte = 7*sizeof(float);
+HANDLE_ERROR( cudaMemcpy( d__segment_reflectivity, reflectivity,
+                          n_byte, cudaMemcpyHostToDevice ) );
+@
 \section{GMT M2}
 \label{sec:gmt-m2}
 
@@ -1890,6 +1919,17 @@ void gmt_m2::coma_neutral(float tip, float tilt)
   cublasDestroy(handle);
   TT_CS.cleanup();
   HANDLE_ERROR( cudaFree( d__C ) );
+}
+@
+\subsection{Segment reflectivity}
+\label{sec:seg-reflect}
+
+The segment reflectivity is set with:
+\index{gmtMirrors!gmt\_m2!set\_reflectivity}
+<<GMT M2 functions>>=
+void gmt_m2::set_reflectivity(float *reflectivity)
+{
+  <<GMT set reflectivity common>>
 }
 @
 

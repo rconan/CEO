@@ -673,6 +673,7 @@ cdef class Modes:
 <<python GMT M12 functions>>=
 int M_ID
 rtd D_assembly, D_full, D_clear, L, height, conic_c, conic_k
+float *d__segment_reflectivity
 rtd *d__conic_c
 coordinate_system aperture_CS
 coordinate_system conic_CS
@@ -692,6 +693,7 @@ void global_tiptilt(float , float )
 void remove(int *, int )
 void keep(int *, int )
 void update_conic_c(rtd *)
+void set_reflectivity(float *)
 @ 
 \subsubsection{Class definition}
 \label{sec:class-definition-1}
@@ -706,6 +708,7 @@ cdef class GMT_M1:
 @ with
 <<GMT M12 class properties>>=
 cdef:
+    readonly cuFloatArray segment_reflectivity
     public ZernikeS zernike
     public BendingModes BM
     public KarhunenLoeve KL
@@ -855,6 +858,9 @@ elif self.mirror_modes_type==b"zernike":
 else:
     self.B = Modes(self.mirror_modes_type,7,N_MODE)
     self._c_gmt_m12.setup( <modes *> self.B._c_modes)
+
+self.segment_reflectivity = cuFloatArray(shape=(7,))
+self.segment_reflectivity._c_gpu.dev_data = self._c_gmt_m12.d__segment_reflectivity
 
 self.aperture_CS   = Coordinate_system(7)
 self.conic_CS      = Coordinate_system(7)
@@ -1057,6 +1063,12 @@ property modes:
 property M_ID:
     def __get__(self):
         return self._c_gmt_m12.M_ID
+
+property reflectivity:
+    def __get__(self):
+        return self.segment_reflectivity
+    def __set__(self, float[:] data):
+        self._c_gmt_m12.set_reflectivity(&data[0])
 @ with
 <<GMT M12 docstring>>=
 """
