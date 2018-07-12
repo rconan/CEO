@@ -276,11 +276,14 @@ rtd optical_path_difference;
 @ the vignetting flag [[v]], $[[v]]=0$ means the ray is vignetted:
 <<ray data>>=
 char v;
-@ and the number of iterative steps for the Raphson--Newton method:
+@  the number of iterative steps for the Raphson--Newton method:
 <<ray data>>=
 int n_iteration;
-
+@ the energy throughput associated with each ray:
+<<ray data>>=
+rtd throughput;
 @
+
 \subsection{Ray bundle}
 \label{sec:ray-bundle}
 
@@ -1709,6 +1712,7 @@ s = -origin->z/d__ray[k].directions.z;
 d__ray[k].coordinates.x -= s*d__ray[k].directions.x;
 d__ray[k].coordinates.y -= s*d__ray[k].directions.y;
 d__ray[k].v = 1;
+d__ray[k].throughput = 1.0;
 @ and
 <<bundle coordinates kernel (box)>>=
 __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
@@ -1735,6 +1739,7 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
     x -= s*d__ray[k].directions.x;
     y -= s*d__ray[k].directions.y;
     d__ray[k].v = 1;
+    d__ray[k].throughput = 1.0;
 
     d__ray[k].coordinates.x = x;//*co - y*so;
     d__ray[k].coordinates.y = y;//x*so + y*co;
@@ -2042,6 +2047,7 @@ __global__ void opd2phase_kernel(float *amplitude, float *phase,
     phase[k]     += d__ray[k].optical_path_difference +
       x*src[iSource].theta_x +
       y*src[iSource].theta_y;
+    amplitude[k] *= d__ray[k].throughput;
   }
 }
 @
