@@ -10,7 +10,7 @@ from distutils.core import setup
 import setuptools.command.build_py
 
 sys.path.append(os.path.dirname(__file__)+"/python")
-print sys.path
+print(sys.path)
 
 class MakeCeoCommand(distutils.cmd.Command):
   """A custom command to run Pylint on all Python source files."""
