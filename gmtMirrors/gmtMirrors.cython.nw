@@ -252,10 +252,10 @@ cdef class GmtMirrors:
         cdef dict d
         d = {'M1': {'Rxyz':self.M1.motion_CS['Rxyz'].copy(),
                     'Txyz':self.M1.motion_CS['Txyz'].copy(),
-                    'modes':np.asarray(self.M1.modes.a.copy())},
+                    'modes':np.copy(self.M1.modes.a)},
              'M2': {'Rxyz':self.M2.motion_CS['Rxyz'].copy(),
                     'Txyz':self.M2.motion_CS['Txyz'].copy(),
-                    'modes':np.asarray(self.M2.modes.a.copy())}}
+                    'modes':np.copy(self.M2.modes.a)}}
         return d
         
 @
@@ -536,6 +536,9 @@ cdef class PolishMap:
         int N, BM_N_SAMPLE, N_SET, n_mode, N_MODE
         double BM_radius
         void setup(char *, int, int)
+        void setup(int, double,
+                   int, int, int *,
+                   double *, int, int)
         void cleanup()
         void update(rtd *)
 @
@@ -586,9 +589,14 @@ cdef class Modes:
     cuDoubleArray : an interface class between GPU host and device data for doubles
     cuIntArray : an interface class between GPU host and device data for ints
     """
-    def __cinit__(self, bytes filename, int N, int n_mode):
+    def __cinit__(self, bytes filename=None, int N=7, int n_mode=0,
+                  int Ni=0, double L=0.0, int N_SET=0, int N_MODE=0,
+                  int[:] s2b=None , double[:] M=None):
         self._c_modes = new modes()
-        self._c_modes.setup(filename,N,n_mode);
+        if filename is None:
+            self._c_modes.setup(Ni,L,N_SET,N_MODE,&s2b[0],&M[0],N,n_mode)
+        else:
+            self._c_modes.setup(filename,N,n_mode)
         self.a = np.zeros((self._c_modes.N, self._c_modes.n_mode), dtype=np.float64)
         if n_mode>0:
             self.a_ptr = &self.a[0,0]
@@ -733,7 +741,8 @@ cdef class DummyModes:
 cdef class GMT_M1:
     <<GMT M12 docstring>>
 
-    def __cinit__(self, unicode mirror_modes=u"None", int radial_order=0, int N_MODE=0):
+    def __cinit__(self, unicode mirror_modes=u"None", int radial_order=0,
+                  int N_MODE=0, dict mirror_modes_data=None):
         self._c_gmt_m12 = new gmt_m1()
         <<GMT M12 constructor>>
         self.conic_curv = cuDoubleArray(shape=(1,7),dev_malloc=False)
@@ -856,7 +865,10 @@ elif self.mirror_modes_type==b"zernike":
     self.zernike = ZernikeS(radial_order,N_SURF=7)
     self._c_gmt_m12.setup( <zernikeS *> self.zernike._c_zernikeS)
 else:
-    self.B = Modes(self.mirror_modes_type,7,N_MODE)
+    if mirror_modes_data is None:
+        self.B = Modes(self.mirror_modes_type,7,N_MODE)
+    else:
+        self.B = Modes(N=7,n_mode=N_MODE,**mirror_modes_data)
     self._c_gmt_m12.setup( <modes *> self.B._c_modes)
 
 self.segment_reflectivity = cuFloatArray(shape=(7,))
@@ -1174,7 +1186,8 @@ cdef class GMT_M2:
 cdef class GMT_M2:
     <<GMT M12 docstring>>
 
-    def __cinit__(self, unicode mirror_modes=None, int radial_order=0, int N_MODE=0):
+    def __cinit__(self, unicode mirror_modes=None, int radial_order=0,
+                  int N_MODE=0, dict mirror_modes_data=None):
         self._c_gmt_m12 = new gmt_m2()
         <<GMT M12 constructor>>
 

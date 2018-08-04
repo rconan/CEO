@@ -2715,8 +2715,14 @@ struct modes {
   <<bending modes parameters>>	
   <<modes parameters>>	
   void setup(char *filename, int N, int n_mode);
+  void setup(int _BM_N_SAMPLE_, double _BM_radius_,
+             int _N_SET_, int _N_MODE_, int *s2b,
+             double *buffer, int _N_, int _n_mode_);
   void cleanup(void);
   void load(void);
+  void load(int _BM_N_SAMPLE_, double _BM_radius_,
+            int _N_SET_, int _N_MODE_, int *s2b,
+            double *buffer);
   void update(rtd *b);
 };
 @
@@ -2747,12 +2753,24 @@ int *d__s2b;
 The bending modes are loaded with:
 \index{gmtMirrors!modes!setup}
 <<modes functions>>=
-  void modes::setup(char *_filename_, int _N_, int _n_mode_)
+void modes::setup(char *_filename_, int _N_, int _n_mode_)
 {
   N = _N_;
   n_mode = _n_mode_;
   strcpy(filename,_filename_);
   load();
+  <<bending modes setup common>>
+  <<bending modes setup common (surface)>>
+} 
+void modes::setup(int _BM_N_SAMPLE_, double _BM_radius_,
+                  int _N_SET_, int _N_MODE_, int *s2b,
+                  double *buffer, int _N_, int _n_mode_)
+{
+  N = _N_;
+  n_mode = _n_mode_;
+  load(_BM_N_SAMPLE_, _BM_radius_,
+       _N_SET_, _N_MODE_, s2b,
+       buffer);
   <<bending modes setup common>>
   <<bending modes setup common (surface)>>
 } 
@@ -2826,6 +2844,34 @@ void modes::load(void)
   fclose (pFile);
   free(s2b);
   free (buffer);
+}
+@
+The modes can also be loaded from input arrays:
+
+<<modes functions>>=
+void modes::load(int _BM_N_SAMPLE_, double _BM_radius_,
+                 int _N_SET_, int _N_MODE_, int *s2b,
+                 double *buffer)
+{
+  long lSize;
+
+  BM_N_SAMPLE = _BM_N_SAMPLE_;
+  BM_radius   = _BM_radius_;
+  N_SET       = _N_SET_;
+  N_MODE      = _N_MODE_;
+
+  HANDLE_ERROR( cudaMalloc((void**)&d__s2b, N*sizeof(int)) );
+  HANDLE_ERROR( cudaMemcpy( d__s2b  , s2b, N*sizeof(int),
+			    cudaMemcpyHostToDevice ) );
+
+  lSize = N_SET*N_MODE*BM_N_SAMPLE*BM_N_SAMPLE;
+
+  BM_radius *= 0.5;
+  HANDLE_ERROR( cudaMalloc((void**)&d__BM_buffer, lSize*sizeof(double)) );
+  HANDLE_ERROR( cudaMemcpy( d__BM_buffer  , buffer, lSize*sizeof(double),
+			    cudaMemcpyHostToDevice ) );
+  d__BM   = d__BM_buffer;
+
 }
 @
 \subsection{Update}
