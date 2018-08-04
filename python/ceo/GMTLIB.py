@@ -140,7 +140,8 @@ class GMT_MX(GmtMirrors):
     """
     def __init__(self, D=None, D_px=None, M1_radial_order=0, M2_radial_order=0,
                  M1_mirror_modes=u"zernike", M2_mirror_modes=u"zernike",
-                 M1_N_MODE=0 ,M2_N_MODE=0):
+                 M1_N_MODE=0 ,M2_N_MODE=0,
+                 M1_mirror_modes_data=None, M2_mirror_modes_data=None):
 
         if type(M2_mirror_modes) is dict:
         
@@ -270,7 +271,9 @@ class GMT_MX(GmtMirrors):
                             M1_mirror_modes=M1_mirror_modes,
                             M2_mirror_modes=M2_mirror_modes,
                             M1_N_MODE=M1_N_MODE,
-                            M2_N_MODE=M2_N_MODE)
+                            M2_N_MODE=M2_N_MODE,
+                            M1_mirror_modes_data=M1_mirror_modes_data,
+                            M2_mirror_modes_data=M2_mirror_modes_data)
 
     def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None, first_mode=3, 
                   closed_loop_calib=False, minus_M2_TT=False,
