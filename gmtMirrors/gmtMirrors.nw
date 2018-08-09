@@ -1,4 +1,4 @@
- -*- mode: Noweb; noweb-code-mode: c-mode -*-
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
 
 @
 \index{gmtMirrors}
@@ -2723,6 +2723,7 @@ struct modes {
   void load(int _BM_N_SAMPLE_, double _BM_radius_,
             int _N_SET_, int _N_MODE_, int *s2b,
             double *buffer);
+  void reset_modes(double *buffer);
   void update(rtd *b);
 };
 @
@@ -2788,6 +2789,10 @@ The modes must be defined on a regular grid which size is restricted to a single
 The linear grid sampling [[BM_N_SAMPLE]] and size [[BM_RADIUS]] is the same for all the segment.
 The number of modes per segment [[N_MODE]] is also the same.
 
+\subsubsection{From a binary file}
+\label{sec:bin-file}
+
+
 The binary file [[filename]] that contains the modes has the following format :
 [[N_SAMPLE]]:int$\times1$, [[LENGTH]]: double$\times1$, [[N_SET]]int$\times1$, [[N_MODE]]int$\times1$, [[d__s2b]]int$\times [[N]]$, [[d__BM]]: double$\times(7[[n_mode]][[BM_N_SAMPLE]]^2)$.
 The surface \#k with $k=[0,\dots,[[N]]-1]$ will use the basis in [[d__BM]] that starts at $[[d__s2b]][k]*[[N_MODE]]*[[N_SAMPLE]]^2$.
@@ -2846,6 +2851,10 @@ void modes::load(void)
   free (buffer);
 }
 @
+
+\subsubsection{From a data set}
+\label{sec:data-set}
+
 The modes can also be loaded from input arrays:
 
 <<modes functions>>=
@@ -2874,6 +2883,28 @@ void modes::load(int _BM_N_SAMPLE_, double _BM_radius_,
 
 }
 @
+
+\subsection{Resetting the mode shapes}
+\label{sec:reset-shapes}
+
+\index{gmtMirrors!modes!reset\_modes}
+
+<<modes functions>>=
+void modes::reset_modes(double *buffer)
+{
+  long lSize = N_SET*N_MODE*BM_N_SAMPLE*BM_N_SAMPLE;
+  HANDLE_ERROR( cudaMemcpy( d__BM_buffer  , buffer, lSize*sizeof(double),
+			    cudaMemcpyHostToDevice ) );
+  d__BM   = d__BM_buffer;
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(BM_N_SAMPLE/N_THREAD+1,BM_N_SAMPLE/N_THREAD+1,N);
+  
+  modes2surface LLL gridDim, blockDim RRR 
+    (d__BMS, n_mode, d__b, d__s2b, d__BM, N_MODE, BM_N_SAMPLE);
+
+}
+@
+
 \subsection{Update}
 \label{sec:update}
 

@@ -65,7 +65,7 @@ class CalibrationVault(object):
     @threshold.setter
     def threshold(self,value):
         self._threshold_ = value
-        self.nThreshold = [ np.sum(X[1]<X[1][0]*value) for X in  self.UsVT ]
+        selfqq.nThreshold = [ np.sum(X[1]<X[1][0]*value) for X in  self.UsVT ]
 
     @property
     def eigenValues(self):
@@ -735,10 +735,12 @@ class GMT_MX(GmtMirrors):
             wfs.calibrate(gs,fluxThreshold)
             flux = wfs.valid_lenslet.f.host()
             D = []
-            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
-            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
-            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
-            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
+            if withM1:
+                D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
+                D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
+            if withM2:
+                D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
+                D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
             if includeBM:
                 D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=stroke[4]) )
             if includeMount:
