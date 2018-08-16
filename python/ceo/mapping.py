@@ -7,7 +7,7 @@ import os
 
 class Mapping(object):
 
-    def __init__(self,xy=None,z=None):
+    def __init__(self,xy=None,z=None,method='CloughTocher'):
 
         self.suit = OrderedDict()
         self.suit['Ni']     = np.array( 0,     dtype=np.int32)
@@ -17,20 +17,22 @@ class Mapping(object):
         self.suit['s2b']    = np.array( [0]*7, dtype=np.int32)
 
         if xy is not None:
-            print("Setting up interpolant: ")
+            #print("Setting up interpolant: ")
             self.datatri   = Delaunay(xy)
             self.__ct_itpr__ = []
             self.__near_itpr__ = []
             self.nz = z.shape[1]
             self.suit['N_MODE'] = np.array( self.nz,     dtype=np.int32)
-            for k in range(self.nz):
-                print('\r%3d'%k,end='')
-                self.__ct_itpr__   += [CloughTocher2DInterpolator(self.datatri,z[:,k])]
-                self.__near_itpr__ += [NearestNDInterpolator(self.datatri,z[:,k])]
-            print('')
+            self.__near_itpr__ = NearestNDInterpolator(self.datatri,z)
+            if method=='CloughTocher':
+                self.__ct_itpr__   = CloughTocher2DInterpolator(self.datatri,z)
+            elif method=='Linear':
+                self.__ct_itpr__   = LinearNDInterpolator(self.datatri,z)
+            else:
+                self.__ct_itpr__ = self.__near_itpr__
 
-    def __call__(self, N_L, L):
-        print('Interpolating: ')
+    def __call__(self, N_L, L,fix_nan=True):
+        #print('Interpolating: ')
         self.suit['Ni']     = np.array( N_L, dtype=np.int32)
         self.suit['L']      = np.array( L,   dtype=np.double)
         u = np.linspace(-1,1,N_L)*L*0.5
@@ -38,15 +40,16 @@ class Mapping(object):
         x = x.ravel()
         y = y.ravel()
         self.zi = np.zeros((x.size,self.nz))
-        for k in range(self.nz):
-            print('\r%3d'%k,end='')
-            zi = self.__ct_itpr__[k](x,y)
-            idx = np.isnan(zi)
+        if fix_nan:
+            zi = self.__ct_itpr__(x,y)
+            idx = np.isnan(zi[:,0])
             if any(idx):
-                zi[idx] = self.__near_itpr__[k](x[idx],y[idx])
-            self.zi[:,k] = zi.reshape(N_L,N_L).flatten(order='F')
-        print('')
-        self.suit['M'] = self.zi.flatten(order='F')
+                zi[idx,:] = self.__near_itpr__(x[idx],y[idx])
+            self.zi = zi#.reshape(N_L,N_L).flatten(order='F')
+        else:
+            zi = self.__ct_itpr__(x,y)
+            self.zi = zi#.reshape(N_L,N_L).flatten(order='F')
+        self.suit['M'] = self.zi.reshape(N_L,N_L,-1).flatten(order='F')
         return self
 
     def prl_call(self, N_L, L):
