@@ -356,6 +356,54 @@ cdef class Imaging(Sensor):
                 q[k] = np.float('inf')
         return np.asarray(q)*units
 
+
+    def ee50(self,double units=1.0, bint from_ghost=0):
+        """
+        Computes the 50% ensquared energy patch size
+        
+        Parameters
+        ----------
+        units : double
+            The units to convert the 80% ensquared energy to
+
+        Returns
+        -------
+        delta : double
+            The 80% ensquared energy patch size in pixel (default) or units if given
+        """
+        cdef:
+            int k, n, m, N_FRAME
+            double[::1] q 
+            double[:,::1] x, y, gate
+            double[:] u, v
+        if from_ghost:
+            psf = np.asarray( self.ghost_frame )
+            N_FRAME = self.ghost_N_FRAME
+        else:
+            psf = self.frame.host()  
+            N_FRAME = self._c_imaging.N_FRAME
+        n,m   = psf.shape
+        n /= self.N_SOURCE
+        #u     = np.linspace(-1.0,1.0,n)*(n/2.0)
+        #v     = np.linspace(-1.0,1.0,m)*(m/2.0)
+        u     = np.arange(n,dtype=np.float64)-(n-1)*0.5
+        v     = np.arange(m,dtype=np.float64)-(m-1)*0.5
+        x,y   = np.meshgrid(u,v)
+        psf = psf.reshape(self.N_SOURCE,n,m)
+        def ee50_fun(float ee_Delta, _psf_):
+            _ee_Delta_ = ee_Delta/2.0
+            #gate = np.logical_and(np.abs(x)<=_ee_Delta_,np.abs(y)<=_ee_Delta_)
+            gate = np.hypot(x,y)<=_ee_Delta_
+            return np.sum(_psf_*gate)/(self._c_imaging.N_PHOTON_PER_FRAME*\
+                                       N_FRAME/self.N_SOURCE) - 0.5
+        q = np.zeros(self.N_SOURCE)
+        for k in range(self.N_SOURCE):
+            try:
+                q[k] = bisect(ee50_fun,3,n,args=(psf[k,:,:]))
+            except ValueError:
+                q[k] = np.float('inf')
+        return np.asarray(q)*units
+
     property photoelectron_gain:
         def __get__(self):
             return self._c_imaging.photoelectron_gain

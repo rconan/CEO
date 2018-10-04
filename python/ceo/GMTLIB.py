@@ -578,7 +578,8 @@ class GMT_MX(GmtMirrors):
             return out
 ## AGWS_CALIBRATE
 
-    def AGWS_calibrate(self,wfs,gs,stroke=None,coupled=False,decoupled=False, 
+    def AGWS_calibrate(self,wfs,gs,stroke=None,coupled=False,decoupled=False,
+                       withM1=True,withM2=True,
                        fluxThreshold=0.0, filterMirrorRotation=True,
                        includeBM=True, includeMount=False,
                        calibrationVaultKwargs=None):
@@ -605,24 +606,52 @@ class GMT_MX(GmtMirrors):
             wfs.calibrate(gs,0.0)
             flux = wfs.valid_lenslet.f.host()
             D = []
-            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
-            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
-            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
-            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
+            if withM1:
+                D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
+            if withM2:
+                D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
+            if withM1:
+                D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
+            if withM2:
+                D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
             if includeBM:
                 D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=stroke[4]) )
-                D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
-                        D[2][:,k*3:k*3+3],
-                        D[1][:,k*3:k*3+3],
-                        D[3][:,k*3:k*3+3],
-                        D[4][:,k*self.M1.modes.n_mode:(k+1)*self.M1.modes.n_mode]],axis=1) 
-                    for k in range(7)]
+                if not withM1 and withM2:
+                    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                            D[1][:,k*3:k*3+3],
+                                            D[2][:,k*self.M1.modes.n_mode:(k+1)*self.M1.modes.n_mode]],axis=1) 
+                            for k in range(7)]
+                elif not withM2 and withM1:
+                    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                            D[1][:,k*3:k*3+3],
+                                            D[2][:,k*self.M1.modes.n_mode:(k+1)*self.M1.modes.n_mode]],axis=1) 
+                            for k in range(7)]
+                elif withM1 and withM2:
+                    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                            D[2][:,k*3:k*3+3],
+                                            D[1][:,k*3:k*3+3],
+                                            D[3][:,k*3:k*3+3],
+                                            D[4][:,k*self.M1.modes.n_mode:(k+1)*self.M1.modes.n_mode]],axis=1) 
+                            for k in range(7)]
+                else:
+                    D_s = [ np.concatenate([D[0][:,k*self.M1.modes.n_mode:(k+1)*self.M1.modes.n_mode]],axis=1) 
+                            for k in range(7)]
+                    
             else:
-                D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
-                        D[2][:,k*3:k*3+3],
-                        D[1][:,k*3:k*3+3],
-                        D[3][:,k*3:k*3+3]],axis=1) 
-                    for k in range(7)]
+                if not withM1:
+                    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                            D[1][:,k*3:k*3+3]],axis=1) 
+                            for k in range(7)]
+                elif not withM2:
+                    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                            D[1][:,k*3:k*3+3]],axis=1) 
+                            for k in range(7)]
+                else:
+                    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                            D[2][:,k*3:k*3+3],
+                                            D[1][:,k*3:k*3+3],
+                                            D[3][:,k*3:k*3+3]],axis=1) 
+                            for k in range(7)]
 
             max_flux = flux.max()
             flux_filter = flux>fluxThreshold*max_flux
@@ -849,7 +878,7 @@ class PSSn(object):
         return out
 
     def OTF(self,src):
-        +src
+        #+src
         A = src.amplitude.host()
         F = src.phase.host()
         k = 2.*np.pi/src.wavelength
