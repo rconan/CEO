@@ -634,7 +634,8 @@ class GMT_MX(GmtMirrors):
             return CalibrationVault([D],**calibrationVaultKwargs)
 
     def PSSn(self,src,r0=16e-2,L0=25.0,zenith_distance=30,
-             C=None,AW0=None,ref_src=None,save=False):
+             C=None,AW0=None,ref_src=None,save=False,
+             amplitude_filter=None):
         """
         Computes the PSSn corresponding to the current state of the telescope
 
@@ -693,6 +694,8 @@ class GMT_MX(GmtMirrors):
             else:
                 _src_ = ref_src
             A = _src_.amplitude.host()
+            if amplitude_filter is not None:
+                A *= amplitude_filter
             F = _src_.phase.host()
             k = 2.*np.pi/_src_.wavelength
             W = A*np.exp(1j*k*F)
@@ -708,6 +711,8 @@ class GMT_MX(GmtMirrors):
         out = np.zeros(src.N_SRC)
         for k_SRC in range(src.N_SRC):
             A = A_[:,:,k_SRC]
+            if amplitude_filter is not None:
+                A *= amplitude_filter
             F = F_[:,:,k_SRC]
             W = A*np.exp(1j*k*F)
             S1 = np.fliplr(np.flipud(W))
@@ -942,7 +947,7 @@ class PSSn(object):
         self.AW = 0
         self.N = 0
     
-    def __call__(self, gmt, src, sigma=0, full_opd = False):
+    def __call__(self, gmt, src, sigma=0, full_opd=False, reset=True):
         """
         Computes the PSSn corresponding to the current state of the telescope
 
@@ -1019,8 +1024,9 @@ class PSSn(object):
                 out = np.sum(np.abs(self.AW/self.N)**2)/np.sum(np.abs(self.AW0*self.C)**2)
             else:
                 out = np.sum(np.abs(self.AW*self.C/self.N)**2)/np.sum(np.abs(self.AW0*self.C)**2)
-        self.AW = 0
-        self.N = 0
+        if reset:
+            self.AW = 0
+            self.N = 0
         return out
 
     def OTF(self,src):
