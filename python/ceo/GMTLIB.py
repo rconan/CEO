@@ -944,7 +944,7 @@ class PSSn(object):
         self.zenith_distance = zenith_distance
         self.C = None
         self.AW0 = None
-        self.AW = 0
+        self.AW = None
         self.N = 0
     
     def __call__(self, gmt, src, sigma=0, full_opd=False, reset=True):
@@ -1008,8 +1008,7 @@ class PSSn(object):
             gmt.pointing_error_zenith  = pez
             gmt.pointing_error_azimuth = pea
 
-
-        if np.isscalar(self.AW):
+        if self.N==0:
             self.OTF(src)
 
         if sigma>0:
@@ -1021,11 +1020,11 @@ class PSSn(object):
             out = np.sum(np.abs(self.AW*K*self.C/self.N)**2)/np.sum(np.abs(self.AW0*self.C)**2)
         else:
             if full_opd:
-                out = np.sum(np.abs(self.AW/self.N)**2)/np.sum(np.abs(self.AW0*self.C)**2)
+                out = np.sum(np.abs(self.AW)**2)/np.sum(np.abs(self.AW0*self.C)**2)
             else:
-                out = np.sum(np.abs(self.AW*self.C/self.N)**2)/np.sum(np.abs(self.AW0*self.C)**2)
+                out = np.sum(np.abs(self.AW*self.C)**2)/np.sum(np.abs(self.AW0*self.C)**2)
         if reset:
-            self.AW = 0
+            self.AW *= 0
             self.N = 0
         return out
 
@@ -1043,8 +1042,13 @@ class PSSn(object):
         W = A*np.exp(1j*k*F)
         S1 = np.fliplr(np.flipud(W))
         S2 = np.conj(W)
-        self.AW += fftconvolve(S1,S2)
+        if self.AW is None:
+            self.AW = np.zeros_like(self.AW0)
+        _AW_ = fftconvolve(S1,S2)
         self.N += 1
+        a = (self.N-1)/self.N
+        b = 1/self.N
+        self.AW = a*self.AW + b*_AW_
 
     def OTF_integrate(self,src,processes=1):
         from joblib import Parallel, delayed
