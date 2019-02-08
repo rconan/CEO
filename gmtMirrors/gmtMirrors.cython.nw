@@ -695,6 +695,7 @@ int M_ID
 rtd D_assembly, D_full, D_clear, L, height, conic_c, conic_k
 float *d__segment_reflectivity
 rtd *d__conic_c
+rtd *d__conic_k
 coordinate_system aperture_CS
 coordinate_system conic_CS
 coordinate_system rigid_body_CS
@@ -713,6 +714,7 @@ void global_tiptilt(float , float )
 void remove(int *, int )
 void keep(int *, int )
 void update_conic_c(rtd *)
+void update_conic_k(rtd *)
 void set_reflectivity(float *)
 @ 
 \subsubsection{Class definition}
@@ -722,7 +724,6 @@ void set_reflectivity(float *)
 cdef class GMT_M1:
     cdef:
         gmt_m1 *_c_gmt_m12
-        public cuDoubleArray conic_curv
     <<GMT M12 class properties>>
 @
 @ with
@@ -741,6 +742,8 @@ cdef:
     public Coordinate_system TT_CS
     public dict D
     public bytes mirror_modes_type
+    public cuDoubleArray conic_curv
+    public cuDoubleArray conic_const
 @
 \subsection{PYX file}
 \label{sec:pyx-file-1}
@@ -757,9 +760,7 @@ cdef class GMT_M1:
                   int N_MODE=0, dict mirror_modes_data=None, **kwargs):
         self._c_gmt_m12 = new gmt_m1()
         <<GMT M12 constructor>>
-        self.conic_curv = cuDoubleArray(shape=(1,7),dev_malloc=False)
-        self.conic_curv._c_gpu.dev_data = self._c_gmt_m12.d__conic_c
-
+ 
     <<GMT M12 methods>>
 
     def test(self):
@@ -859,6 +860,10 @@ elif mirror_modes==b"polishing map":
 else:
     self._c_gmt_m12.setup()
 <<GMT M12 constructor>>=
+self.conic_curv = cuDoubleArray(shape=(1,7),dev_malloc=False)
+self.conic_curv._c_gpu.dev_data = self._c_gmt_m12.d__conic_c
+self.conic_const = cuDoubleArray(shape=(1,7),dev_malloc=False)
+self.conic_const._c_gpu.dev_data = self._c_gmt_m12.d__conic_k
 self.mirror_modes_type = mirror_modes.encode('utf-8')
 if self.mirror_modes_type==b"None":
     self._c_gmt_m12.setup()
@@ -1093,6 +1098,17 @@ def radius_error(self, double[:] val):
     for k in range(7):
         c[k] = 1./(1./self._c_gmt_m12.conic_c + val[k])
     self._c_gmt_m12.update_conic_c(&c[0])
+
+@property
+def conic_error(self):
+    return 1 - (1-self.conic_curv.host())/(1-self._c_gmt_m12.conic_c)
+@conic_error.setter
+def conic_error(self, double[:] val):
+    cdef int k
+    cdef double[:] kk = np.zeros(7)
+    for k in range(7):
+        kk[k] = 1 - (1 - val[k])*(1-self._c_gmt_m12.conic_k)
+    self._c_gmt_m12.update_conic_k(&kk[0])
 @ with
 <<GMT M12 docstring>>=
 """

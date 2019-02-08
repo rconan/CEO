@@ -97,6 +97,7 @@ void track(float *x, float *y, float *z, int N, int idx);
 void remove(int *seg_ID, int N_ID);
 void keep(int *seg_ID, int N_ID);
 void update_conic_c(rtd *_conic_c_);
+void update_conic_k(rtd *_conic_k_);
 void set_reflectivity(float *reflectivity);
 @
 The GMT M12 parameters are:
@@ -163,7 +164,7 @@ vector conic_origin[7], *d__conic_origin;
 \item the conic parameters:
 <<GMT M12 parameters>>=
 rtd conic_c, conic_k;
-rtd *d__conic_c;
+rtd *d__conic_c, *d__conic_k;
 @
 \item the reference frames of the rigid bodies:
 <<GMT M12 parameters>>=
@@ -296,6 +297,16 @@ HANDLE_ERROR( cudaMalloc((void**)&d__conic_c, n_byte ) );
 HANDLE_ERROR( cudaMemcpy( d__conic_c, h__conic_c,
               n_byte, cudaMemcpyHostToDevice ) );
 free(h__conic_c);
+
+rtd *h__conic_k;
+n_byte = 7*sizeof(rtd);
+h__conic_k = (rtd *)malloc( n_byte );
+for (int k=0; k<7; k++)
+  h__conic_k[k] = conic_k;
+HANDLE_ERROR( cudaMalloc((void**)&d__conic_k, n_byte ) );
+HANDLE_ERROR( cudaMemcpy( d__conic_k, h__conic_k,
+                          n_byte, cudaMemcpyHostToDevice ) );
+free(h__conic_k);
 
 area_fraction = 1.0;
 vector __v0(0.0,0.0,0.0),
@@ -503,6 +514,7 @@ motion_CS.cleanup();
 HANDLE_ERROR( cudaFree( d__conic_origin ) );
 HANDLE_ERROR( cudaFree( d__valid_segments ) );
 HANDLE_ERROR( cudaFree( d__conic_c ) );
+HANDLE_ERROR( cudaFree( d__conic_k ) );
 HANDLE_ERROR( cudaFree( d__segment_reflectivity ) );
 @
 The segment radius of curvature is updated with:
@@ -512,6 +524,15 @@ void gmt_m1::update_conic_c(rtd *_conic_c_)
 {
   HANDLE_ERROR( cudaMemcpy( d__conic_c, _conic_c_,
               sizeof(rtd)*7, cudaMemcpyHostToDevice ) );
+}
+@
+The segment conic constant is updated with:
+\index{gmtMirrors!gmt\_m1!update\_conic\_k}
+<<GMT M1 functions>>=
+  void gmt_m1::update_conic_k(rtd *_conic_k_)
+{
+  HANDLE_ERROR( cudaMemcpy( d__conic_k, _conic_k_,
+                            sizeof(rtd)*7, cudaMemcpyHostToDevice ) );
 }
 @
 The rigid body motion parameters are updated with:
@@ -716,7 +737,7 @@ if (ZS!=NULL)
                                               aperture_CS.d__origin,
                                               conic_CS.d__R,
                                               conic_CS.d__origin,
-                                              conic_k, d__conic_c,
+                                              d__conic_k, d__conic_c,
                                               d__conic_origin,
                                               rigid_body_CS.d__R,
                                               rigid_body_CS.d__origin,
@@ -737,7 +758,7 @@ if (BS!=NULL)
                                                  aperture_CS.d__origin,
                                                  conic_CS.d__R,
                                                  conic_CS.d__origin,
-                                                 conic_k, d__conic_c,
+                                                 d__conic_k, d__conic_c,
                                                  d__conic_origin,
                                                  rigid_body_CS.d__R,
                                                  rigid_body_CS.d__origin,
@@ -764,7 +785,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
                                 rtd inner2, rtd outer2,
                                 rtd *d__aperture_R, vector *d__aperture_origin,
                                 rtd *d__conic_R, vector *d__conic_origin,
-                                const rtd Fk, rtd *d__Fc,
+                                rtd *d__Fk, rtd *d__Fc,
                                 vector *d__conic_self_origin,
                                 rtd *d__rigid_body_R, vector *d__rigid_body_origin,
                                 rtd *d__motion_R, vector *d__motion_origin,
@@ -778,7 +799,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
   rtd x, y, z, x1, y1, s0, k, l, m;
   rtd s1, S, K, L ,M, dSds;
   rtd G2, a;
-  rtd Fc;
+  rtd Fc, Fk;
   vector d__origin, xyz, klm, xyz_GS, klm_GS, Snormal;
 
   i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -795,6 +816,7 @@ __global__ void m1_trace_kernel(char *mask, ray *d__ray, int N_RAY,
     for (iCoordSys=0; iCoordSys<7 ; iCoordSys++)
       {
 	Fc = d__Fc[iCoordSys];
+	Fk = d__Fk[iCoordSys];
         if (d__valid_segments[iCoordSys]>0) {
 	d__origin = d__conic_self_origin[iCoordSys];
 
@@ -823,7 +845,7 @@ __global__ void m1_bm_trace_kernel(char *mask, ray *d__ray, int N_RAY,
                                    rtd inner2, rtd outer2,
                                    rtd *d__aperture_R, vector *d__aperture_origin,
                                    rtd *d__conic_R, vector *d__conic_origin,
-                                   const rtd Fk, rtd *d__Fc,
+                                   rtd *d__Fk, rtd *d__Fc,
                                    vector *d__conic_self_origin,
                                    rtd *d__rigid_body_R, vector *d__rigid_body_origin,
                                    rtd *d__motion_R, vector *d__motion_origin,
@@ -837,7 +859,7 @@ __global__ void m1_bm_trace_kernel(char *mask, ray *d__ray, int N_RAY,
   rtd x, y, z, x1, y1, s0, k, l, m;
   rtd s1, S, K, L ,M, dSds;
   rtd G2, a;
-  rtd Fc;
+  rtd Fc, Fk;
   vector d__origin, xyz, klm, xyz_GS, klm_GS, Snormal;
 
   i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -853,6 +875,7 @@ __global__ void m1_bm_trace_kernel(char *mask, ray *d__ray, int N_RAY,
     for (iCoordSys=0; iCoordSys<7 ; iCoordSys++)
       {
 	Fc = d__Fc[iCoordSys];
+	Fk = d__Fk[iCoordSys];
         if (d__valid_segments[iCoordSys]>0) {
 	d__origin = d__conic_self_origin[iCoordSys];
 
@@ -1775,6 +1798,13 @@ void gmt_m2::update_conic_c(rtd *_conic_c_)
 {
   HANDLE_ERROR( cudaMemcpy( d__conic_c, _conic_c_,
               sizeof(rtd)*7, cudaMemcpyHostToDevice ) );
+}
+@
+<<GMT M2 functions>>=
+  void gmt_m2::update_conic_k(rtd *_conic_k_)
+{
+  HANDLE_ERROR( cudaMemcpy( d__conic_k, _conic_k_,
+                            sizeof(rtd)*7, cudaMemcpyHostToDevice ) );
 }
 @
 \subsection{Blocking}
