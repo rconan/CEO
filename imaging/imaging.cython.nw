@@ -6,17 +6,23 @@
 
 <<imaging.pxd>>=
 from source cimport source, Source
-from utilities cimport Sensor, cuFloatArray
+from utilities cimport Sensor, cuFloatArray, cuFloatComplexArray
+cdef extern from "cuda.h":
+    ctypedef struct float2:
+        float x
+        float y
 cdef extern from "imaging.h":
     cdef cppclass imaging:
         int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_PX_CAMERA, N_SOURCE, N_FRAME
         float photoelectron_gain, N_PHOTON_PER_FRAME, N_PHOTON_TOTAL
         float *d__frame
+        float2 *d__wave_PUPIL
         char absolute_pointing
         void setup(int , int , int , int , int, int)
         void cleanup()
         void set_pointing_direction(float *, float *)
         void propagate(source *)
+        void propagate_cpx(source *)
         void propagateThroughFieldStop(source *, float)
         void propagateThroughPyramid(source *)
         void propagateThroughModulatedPyramid(source *, float)
@@ -38,6 +44,7 @@ cdef class Imaging(Sensor):
                      N_PX_IMAGE, BIN_IMAGE, N_SOURCE, \
                      N_PX_FRAME, ghost_N_FRAME
         readonly cuFloatArray frame
+        readonly cuFloatComplexArray cpx
         char isPtr
         public float exposureTime, readOutNoiseRms, nBackgroundPhoton, noiseFactor
         public float[:,:] ghost_frame
@@ -155,6 +162,8 @@ cdef class Imaging(Sensor):
         self.isPtr = isPtr
         self.frame = cuFloatArray(shape=(self.N_SOURCE*self.N_PX_FRAME,
 				         self.N_PX_FRAME))
+        self.cpx = cuFloatComplexArray(shape=(self.DFT_osf*(self.N_PX_PUPIL+1),
+				                              self.DFT_osf*(self.N_PX_PUPIL+1)))
         if not self.isPtr:
             if N_PX_IMAGE is None:
                 N_PX_IMAGE = N_PX_PUPIL
@@ -162,6 +171,7 @@ cdef class Imaging(Sensor):
                                   DFT_osf, N_PX_IMAGE,
                                   BIN_IMAGE, N_SOURCE)
             self.frame._c_gpu.dev_data = self._c_imaging.d__frame
+            self.cpx._c_gpu.dev_data = self._c_imaging.d__wave_PUPIL
             self._c_imaging.photoelectron_gain = photoElectronGain
 
         self.exposureTime      = exposureTime
@@ -213,6 +223,9 @@ cdef class Imaging(Sensor):
         Source : class modeling star objects
         """		       
         self._c_imaging.propagate(src._c_source)
+
+    def propagate_cpx(self, Source src):
+        self._c_imaging.propagate_cpx(src._c_source)
 
     def propagateThroughFieldStop(self, Source src, float field_stop_diam):
         """

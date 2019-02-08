@@ -44,6 +44,7 @@ struct imaging {
   void reset_rng(int SEED);
 
   void propagate(source *src);
+  void propagate_cpx(source *src);
   void propagateNoOverlap(source *src);
   void propagateNoOverlapBare(source *src);
   void propagateNoOverlapSPS(source *src, float d, float wavenumber);
@@ -341,6 +342,25 @@ void imaging::cleanupSegmentPistonSensor(void) {
 \subsection{Propagation}
 \label{sec:propagation}
 
+<<propagation>>=
+void imaging::propagate_cpx(source *src) {
+  int M = N_PX_IMAGE/N_PX_CAMERA;
+  dim3 gridDim;
+  dim3 blockDim(16,16);
+  gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
+  complexAmplitude LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
+					      src->wavefront.amplitude,
+					      src->wavefront.phase,
+                                              src->wavenumber(),
+					      N_PX_PUPIL, N_PX_IMAGE, M,
+					      N_SIDE_LENSLET, src->dev_ptr,
+                                              pixel_scale, d__theta_x, d__theta_y,
+					      absolute_pointing,1);
+
+  HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_FORWARD),
+                      "Unable to execute plan forward FT");
+}
+@
 As we are considering only the case of imaging sources at infinity, the wavefront propagation is performed with the Fraunhofer approximation meaning that the image in the focal plane is simply the Fourier transform of the complex amplitude in the pupil plane.
 The propagation is computing with a call to either the [[propagate]] routine:
 \index{imaging!imaging!propagate}
