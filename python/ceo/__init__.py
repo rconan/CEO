@@ -44,9 +44,11 @@ def sweetcheat():
     display(Markdown("".join(text)))
 
 def ascupy(ceo_cu_array):
-    import cupy as __cp__
-    ptr = __cp__.cuda.UnownedMemory(ceo_cu_array.dev_ptr,
-                                ceo_cu_array.nbytes,ceo_cu_array)
-    return __cp__.ndarray(shape=ceo_cu_array.shape,
+    from cupy.cuda import UnownedMemory, MemoryPointer
+    from cupy import ndarray
+    ptr = UnownedMemory(ceo_cu_array.dev_ptr,
+                        ceo_cu_array.nbytes,
+                        ceo_cu_array)
+    return ndarray(shape=ceo_cu_array.shape,
                       dtype=ceo_cu_array.type,
-                      memptr=__cp__.cuda.MemoryPointer(ptr,0))
+                      memptr=MemoryPointer(ptr,0))
