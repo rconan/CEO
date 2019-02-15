@@ -42,3 +42,10 @@ def sweetcheat():
     text += ['| Reset the detector frame | `~object` | `object.reset()`|\n']
     #print "".join(text)
     display(Markdown("".join(text)))
+
+def ascupy(__cp__,ceo_cu_array):
+    ptr = __cp__.cuda.UnownedMemory(ceo_cu_array.dev_ptr,
+                                ceo_cu_array.nbytes,ceo_cu_array)
+    return __cp__.ndarray(shape=ceo_cu_array.shape,
+                      dtype=ceo_cu_array.type,
+                      memptr=__cp__.cuda.MemoryPointer(ptr,0))

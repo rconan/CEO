@@ -466,12 +466,13 @@ cdef extern from "utilities.h":
 # cuFloatArray
 from operator import mul
 from numpy cimport ndarray, dtype
+from libc.stdint cimport intptr_t
 cdef class cuFloatArray:
     cdef gpu_t[float] *_c_gpu
     <<cu array definitions>>
 @ 
 <<cu array definitions>>=
-cdef dtype type
+cdef public dtype type
 cdef public int size
 cdef public shape
 cdef public order
@@ -557,6 +558,24 @@ def host(self,units=None,zm=False,mask=None,shape=None, order=None):
 
 def reset(self):
     self._c_gpu.reset()
+
+@property
+def dev_ptr(self):
+    cdef intptr_t a
+    a = <intptr_t> self._c_gpu.dev_data
+    return a
+
+@property
+def nbytes(self):
+    cdef size_t nb
+    nb = sizeof(self.type)*self._c_gpu.N
+    return nb
+
+def __repr__(self):
+    repr(self.host())
+
+def __str__(self):
+    str(self.host())
 @
 <<cu array host>>=
 <<cu array method doc>>
