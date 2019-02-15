@@ -43,7 +43,8 @@ def sweetcheat():
     #print "".join(text)
     display(Markdown("".join(text)))
 
-def ascupy(__cp__,ceo_cu_array):
+def ascupy(ceo_cu_array):
+    import cupy as __cp__
     ptr = __cp__.cuda.UnownedMemory(ceo_cu_array.dev_ptr,
                                 ceo_cu_array.nbytes,ceo_cu_array)
     return __cp__.ndarray(shape=ceo_cu_array.shape,
