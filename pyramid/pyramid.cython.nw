@@ -9,9 +9,9 @@ from centroiding cimport centroiding, Centroiding
 from source cimport Source
 cdef extern from "pyramid.h":
     cdef cppclass pyramid:
+        int N_SIDE_LENSLET
         float modulation
         imaging camera
-        centroiding data
         void setup(int, int, float, int)
         void cleanup()
 <<class definitions>>
@@ -25,7 +25,6 @@ cdef class Pyramid:
     cdef:
         pyramid *_c_pyramid
         readonly Imaging camera
-        readonly Centroiding data
 @
 \section{PYX file}
 \label{sec:pyx-file}
@@ -50,8 +49,6 @@ cdef class Pyramid:
     ----------
     camera : Imaging, readonly
        The detector object
-    data : Centroiding, readonly
-       The measurements container
 
     See also
     --------
@@ -84,8 +81,6 @@ cdef class Pyramid:
                               BIN_IMAGE=N_PX_LENSLET/N_SIDE_LENSLET,
                               N_SOURCE=N_GS, isPtr=1)
         self.camera.set_ptr( &(self._c_pyramid.camera) )
-        self.data = Centroiding(N_SIDE_LENSLET*2, N_SOURCE=N_GS, isPtr=1)
-        self.data.set_ptr( &(self._c_pyramid.data) )
 
     def __dealloc__(self):
         self._c_pyramid.cleanup()
@@ -111,3 +106,7 @@ cdef class Pyramid:
     @modulation.setter
     def modulation(self, value):
         self._c_pyramid.modulation = value
+
+    @property
+    def N_SIDE_LENSLET(self):
+        return self._c_pyramid.N_SIDE_LENSLET
