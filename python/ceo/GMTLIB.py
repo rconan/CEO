@@ -1,11 +1,13 @@
 import sys
 import math
 import numpy as np
+import cupy as cp
 import numpy.linalg as LA
 from scipy.optimize import brenth, leastsq
 from scipy.signal import fftconvolve
 from skimage.feature import blob_log
 from scipy.ndimage.interpolation import rotate
+from scipy.ndimage import center_of_mass
 from scipy.interpolate import griddata, LinearNDInterpolator, NearestNDInterpolator
 from scipy.spatial import Delaunay
 import os.path
@@ -16,9 +18,9 @@ from . import phaseStats
 from  ceo.nastran_pch_reader import nastran_pch_reader
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
     TT7,\
-    GmtMirrors, SegmentPistonSensor,\
+    GmtMirrors, SegmentPistonSensor, Pyramid,\
     constants, Telescope, cuFloatArray, cuDoubleArray, Aperture,\
-    Transform_to_S, Intersect, Reflect, Refract, Transform_to_R, ZernikeS
+    Transform_to_S, Intersect, Reflect, Refract, Transform_to_R, ZernikeS, ascupy
 
 class CalibrationVault(object):
 
@@ -277,7 +279,7 @@ class GMT_MX(GmtMirrors):
 
     def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None, first_mode=3, 
                   closed_loop_calib=False, minus_M2_TT=False,
-                  calibrationVaultKwargs=None):
+                  calibrationVaultKwargs=None, stroke_scaling=False):
         """
         Calibrate the different degrees of freedom of the  mirrors
 
@@ -566,11 +568,16 @@ class GMT_MX(GmtMirrors):
                 n_mode = self.M2.modes.n_mode
                 D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
                 idx = 0;
+                if stroke_scaling == True:
+                    stroke_max = stroke
+                    radord = np.floor((np.sqrt(8*np.arange(first_mode+1,n_mode+1)-7)-1)/2)
+                    if first_mode == 0: radord[0] = 1
 
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
                     for kMode in range(first_mode,n_mode):
-                        sys.stdout.write("%d "%(kMode+1))
+                        if stroke_scaling==True: stroke = stroke_max / np.sqrt(radord[kMode])
+                        sys.stdout.write("%d, %2.1f [nm]\n"%(kMode+1,stroke*1e9))
                         D[:,idx] = np.ravel( pushpull( M2_zernike_update ) )
                         idx += 1
                     sys.stdout.write("\n")
@@ -1208,6 +1215,171 @@ class GeometricTT7(Sensor):
     @property 
     def Data(self):
         return self.valid_slopes.reshape(14,1)
+
+
+class PyramidWFS(Pyramid):
+	def __init__(self, N_SIDE_LENSLET, N_PX_LENSLET, modulation=0.0, N_GS=1):
+		Pyramid.__init__(self)
+		self._ccd_frame = ascupy(self.camera.frame)
+		self._SUBAP_NORM = 'MEAN_FLUX_PER_SUBAP'
+	
+	def calibrate(self, src, calib_modulation=10.0, percent_extra_subaps=0.0, thr=0.0):
+		"""
+		Perform the following calibration tasks:
+		1) Acquire a CCD frame using high modulation (default: 10 lambda/D);
+		2) Estimate center of the four sub-pupil images;
+		3) Calibrate an initial pupil registration assuming a circular pupil.
+
+        Parameters
+        ----------
+        src : Source
+             The Source object used for piston sensing
+        gmt : GMT_MX
+             The GMT object
+		calib_modulation: modulation radius applied during calibration (default 10 lambda/D).
+		percent_extra_subaps: percent of extra subapertures across the pupil for initial pupil registration (default: 0).
+		thr: Threshold for pupil registration refinement: select only SAs with flux percentage above thr.
+		"""
+
+		#-> Acquire CCD frame applying high modulation:
+		self.reset()
+		cl_modulation = self.modulation # keep track of selected modulation radius
+		self.modulation = calib_modulation
+		self.propagate(src)
+		ccd_frame = self._ccd_frame.get()
+		self.modulation = cl_modulation
+
+		#-> Find center of four sup-pupil images:
+		nx, ny = ccd_frame.shape
+		x = np.linspace(0, nx-1, nx)
+		y = np.linspace(0, ny-1, ny)
+		xx, yy = np.meshgrid(x, y)
+
+		mqt1 = np.logical_and(xx<(nx/2), yy<(ny/2)) # First quadrant (lower left)
+		mqt2 = np.logical_and(xx>(nx/2), yy<(ny/2)) # Second quadrant (lower right)
+		mqt3 = np.logical_and(xx<(nx/2), yy>(ny/2)) # Third quadrant (upper left)
+		mqt4 = np.logical_and(xx>(nx/2), yy>(ny/2)) # Fourth quadrant (upper right)
+
+		label = np.zeros((nx,ny)) # labels needed for ndimage.center_of_mass
+		label[mqt1] = 1
+		label[mqt2] = 2
+		label[mqt3] = 3
+		label[mqt4] = 4
+
+		centers = center_of_mass(ccd_frame, labels=label, index=[1,2,3,4])
+		print("Center of subpupil images (pix):")
+		print(np.array_str(np.array(centers), precision=1), end='\n')
+
+		#-> Circular pupil registration
+		n_sub = self.N_SIDE_LENSLET + round(self.N_SIDE_LENSLET*percent_extra_subaps/100)
+		print("Number of SAs across pupil: %d"%n_sub, end="\r", flush=True)
+
+		indpup = []  # list of pupil index vectors
+		n_sspp = []
+		for this_pup in range(4):
+			indpup.append( (xx-centers[this_pup][0])**2 + (yy-centers[this_pup][1])**2 <= round(n_sub/2)**2 )
+			n_sspp.append( np.sum(indpup[this_pup]) )
+		n_sspp = np.unique(n_sspp)
+
+		if n_sspp.size > 1:
+			print('Error!! number of valid SAs per sub-pupil are different!')
+			print(np.array_str(np.array(n_sspp)))
+			return	
+
+		#-> Pupil registration refinement based on SA flux thresholding
+		if thr > 0:
+
+			# Compute the flux per SA 
+			flux = np.zeros(n_sspp)
+			for subpup in indpup:
+				flux += ccd_frame[subpup]
+
+			meanflux = np.mean(flux) 
+			fluxthr = meanflux*thr
+			thridx = flux > fluxthr
+			n_sspp1 = np.sum(thridx)
+			print("->       Number of valid SAs: %d"%n_sspp1, flush=True)
+
+			#indpup1 = [np.copy(subpup) for subpup in indpup]
+			for subpup in indpup:
+				subpup[subpup] *= thridx
+
+		#-> Save pupil registration (GPU memory)		
+		self._indpup = [cp.asarray(subpup) for subpup in indpup]
+		self.n_sspp = int(cp.sum(self._indpup[0])) # number of valid SAs
+
+
+	@property
+	def indpup(self):
+		return [cp.asnumpy(subpup) for subpup in self._indpup]
+
+	@property
+	def ccd_frame(self):
+		return self._ccd_frame.get()
+
+	@property
+	def signal_normalization(self):
+		return self._SUBAP_NORM
+	@signal_normalization.setter
+	def signal_normalization(self, value):
+		assert value == 'QUADCELL' or value == 'MEAN_FLUX_PER_SUBAP', 'Normalization supported: "QUADCELL", "MEAN_FLUX_PER_SUBAP"' 
+		self._SUBAP_NORM = value
+	
+	def process(self):
+		# Flux computation for normalization factors
+		flux_per_SA = cp.zeros(self.n_sspp)
+		for subpup in self._indpup:
+			flux_per_SA += self._ccd_frame[subpup]
+		tot_flux = cp.sum(flux_per_SA)
+	    
+		# If the frame has some photons, compute the signals...
+		if tot_flux > 0:
+
+			# Choose the signal normalization factor:
+			if self._SUBAP_NORM == 'QUADCELL':
+				norm_fact = flux_per_SA       # flux on each SA
+			elif self._SUBAP_NORM == 'MEAN_FLUX_PER_SUBAP':
+				norm_fact = tot_flux / self.n_sspp # mean flux per SA
+		
+			# Compute the signals
+			sx = (self._ccd_frame[self._indpup[3]]+self._ccd_frame[self._indpup[2]]-
+		    	  self._ccd_frame[self._indpup[1]]-self._ccd_frame[self._indpup[0]]) / norm_fact  
+
+			sy = (self._ccd_frame[self._indpup[1]]+self._ccd_frame[self._indpup[3]]-
+		    	  self._ccd_frame[self._indpup[0]]-self._ccd_frame[self._indpup[2]]) / norm_fact 
+
+		else:
+			# If the frame has no photons, provide a zero slope vector!
+			sx = cp.zeros(self.n_sspp)
+			sy = cp.zeros(self.n_sspp)
+
+		self._measurement = (sx,sy)
+
+
+	def get_measurement(self):
+		return cp.asnumpy(cp.concatenate(self._measurement))
+
+	def get_measurement_size(self):
+		return self.n_sspp * 2
+
+	def reset(self):
+		"""
+		Resets the detector frame.
+		"""
+		self.camera.reset()
+
+	def analyze(self, src):
+		"""
+		Propagates the guide star to the Pyramid detector (noiseless) and processes the frame
+
+		Parameters
+		----------
+		src : Source
+			The pyramid's guide star object
+		"""
+		self.reset()
+		self.propagate(src)
+		self.process()
 
 class DispersedFringeSensor(SegmentPistonSensor):
     """

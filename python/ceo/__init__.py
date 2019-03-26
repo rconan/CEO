@@ -1,3 +1,4 @@
+from .tools import ascupy
 from . import constants
 from .utilities import cuFloatArray, cuDoubleArray, cuIntArray, cuFloatComplexArray, MaskAbstract, Mask, Telescope, GMT, StopWatch, SparseMatrix, SparseGradient, wavefrontFiniteDifference, setDevice
 from .source import FreeBundle, Complex_amplitude, Source, JSource
@@ -11,7 +12,7 @@ from .aaStats import AaStats, PaStats
 from .LMMSE import Lmmse, LmmseSH, BilinearInterpolation
 from .atmosphere import AtmosphereAbstract, Atmosphere, GmtAtmosphere, Layer, JGmtAtmosphere
 from .gmtMirrors import BendingModes, KarhunenLoeve, GmtMirrors, GMT_M1, GMT_M2, StereoscopicEdgeSensors, LateralEdgeSensors, DistanceEdgeSensors, Modes
-from .GMTLIB import CalibrationVault, GMT_MX, JGMT_MX, GeometricTT7, IdealSegmentPistonSensor, SegmentTipTiltSensor, EdgeSensors, DispersedFringeSensor, Trace, PSSn
+from .GMTLIB import CalibrationVault, GMT_MX, JGMT_MX, GeometricTT7, IdealSegmentPistonSensor, SegmentTipTiltSensor, EdgeSensors, PyramidWFS, DispersedFringeSensor, Trace, PSSn
 from .mapping import Mapping
 from . import phaseStats
                                 
@@ -42,13 +43,3 @@ def sweetcheat():
     text += ['| Reset the detector frame | `~object` | `object.reset()`|\n']
     #print "".join(text)
     display(Markdown("".join(text)))
-
-def ascupy(ceo_cu_array):
-    from cupy.cuda import UnownedMemory, MemoryPointer
-    from cupy import ndarray
-    ptr = UnownedMemory(ceo_cu_array.dev_ptr,
-                        ceo_cu_array.nbytes,
-                        ceo_cu_array)
-    return ndarray(shape=ceo_cu_array.shape,
-                      dtype=ceo_cu_array.type,
-                      memptr=MemoryPointer(ptr,0))
