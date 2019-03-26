@@ -44,6 +44,7 @@
 <<GMT ray tracing kernel>>
 <<GMT blocking kernel>>
 <<GMT track kernel>>
+<<GMT locate kernel>>
 <<nearest neighbor kernel>>
 <<bilinear kernel>>
 <<stereoscopic edge sensors initialization kernel>>
@@ -94,6 +95,7 @@ void blocking(bundle *rays);
 void global_tiptilt(float tip, float tilt);
 void test_ray_tracing(void);
 void track(float *x, float *y, float *z, int N, int idx);
+void locate(float *x, float *y, float *z, int N, int idx);
 void remove(int *seg_ID, int N_ID);
 void keep(int *seg_ID, int N_ID);
 void update_conic_c(rtd *_conic_c_);
@@ -1491,7 +1493,7 @@ HANDLE_ERROR( cudaMemcpy( d__valid_segments, valid,
 \subsection{Mirror location tracker}
 \label{sec:mirr-locat-track}
 
-The track function transforms the coordinates $(x,y,z)$ in the motion CS of segment [[idx]] to the GCS.
+The [[track]] function transforms the coordinates $(x,y,z)$ in the motion CS of segment [[idx]] to the GCS.
 
 \index{gmtMirrors!gmt\_m1!track}
 <<GMT M1 functions>>=
@@ -1525,17 +1527,65 @@ __global__ void track_kernel(float *x, float *y, float *z, const int N,
      v.z = z[i];
      // MOTION <<<
      backward_transform(&v, &v,
-			d__motion_R+iCoordSys*9, d__motion_origin+iCoordSys);
+                        d__motion_R+iCoordSys*9,
+                        d__motion_origin+iCoordSys);
      // RIGID_BODY <<<
      backward_transform(&v, &v,
-			d__rigid_body_R+iCoordSys*9,
-			d__rigid_body_origin+iCoordSys);
+                        d__rigid_body_R+iCoordSys*9,
+                        d__rigid_body_origin+iCoordSys);
      x[i] = v.x;
      y[i] = v.y;
      z[i] = v.z;
    }
 }
+@
 
+The [[locate]] function transforms the coordinates $(x,y,z)$ in the GCS to the
+motion CS of segment [[idx]]
+
+\index{gmtMirrors!gmt\_m1:locate}
+<<GMT M1 functions>>=
+void gmt_m1::locate(float *d__x, float *d__y, float *d__z, int N, int idx)
+{
+  <<GMT locate common>>
+}
+@  with
+<<GMT locate common>>=
+dim3 blockDim(N_THREAD,1);
+dim3 gridDim(N/N_THREAD+1,1);
+locate_kernel LLL gridDim, blockDim RRR (d__x, d__y, d__z, N,
+					idx,
+					rigid_body_CS.d__R,
+					rigid_body_CS.d__origin,
+					motion_CS.d__R,
+					motion_CS.d__origin);
+@ and
+<<GMT locate kernel>>=
+__global__ void locate_kernel(float *x, float *y, float *z, const int N,
+			     const int iCoordSys,
+			     rtd *d__rigid_body_R, vector *d__rigid_body_origin,
+			     rtd *d__motion_R, vector *d__motion_origin)
+ {
+   int i;
+   vector v;
+   i = blockIdx.x * blockDim.x + threadIdx.x;
+   if (i<N) {
+     v.x = x[i];
+     v.y = y[i];
+     v.z = z[i];
+     // RIGID_BODY >>>
+     forward_transform(&v, &v,
+                       d__rigid_body_R+iCoordSys*9,
+                       d__rigid_body_origin+iCoordSys);
+     // MOTION >>>
+     forward_transform(&v, &v,
+                       d__motion_R+iCoordSys*9,
+                       d__motion_origin+iCoordSys);
+     x[i] = v.x;
+     y[i] = v.y;
+     z[i] = v.z;
+   }
+}
 @
 \subsection{Global tip--tilt}
 \label{sec:global-tip-tilt}
@@ -1877,8 +1927,29 @@ void gmt_m2::keep(int *seg_ID, int N_ID)
   <<GMT keep segments>>
 }
 @
-\subsection{Global motions}
-\label{sec:global-motions}
+\subsection{Mirror location tracker}
+\label{sec:mirr-locat-track}
+
+The [[track]] function transforms the coordinates $(x,y,z)$ in the motion CS of segment [[idx]] to the GCS.
+
+\index{gmtMirrors!gmt\_m2!track}
+<<GMT M2 functions>>=
+void gmt_m2::track(float *d__x, float *d__y, float *d__z, int N, int idx)
+{
+  <<GMT track common>>
+}
+@
+
+The [[locate]] function transforms the coordinates $(x,y,z)$ in the GCS to the
+motion CS of segment [[idx]]
+
+\index{gmtMirrors!gmt\_m2:locate}
+<<GMT M2 functions>>=
+void gmt_m2::locate(float *d__x, float *d__y, float *d__z, int N, int idx)
+{
+  <<GMT locate common>>
+}
+@
 
 \subsection{Global tip--tilt}
 \label{sec:global-tip-tilt-1}
@@ -1890,6 +1961,7 @@ void gmt_m2::global_tiptilt(float tip, float tilt)
   <<GMT global tip-tilt common>>
 }
 @
+
 \subsubsection{Tip--tilt neutral}
 \label{sec:tip-tilt-neutral}
 
