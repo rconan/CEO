@@ -7,12 +7,14 @@
 from imaging cimport imaging, Imaging
 from centroiding cimport centroiding, Centroiding
 from source cimport Source
+from libc.math cimport round, M_PI
 cdef extern from "pyramid.h":
     cdef cppclass pyramid:
         int N_SIDE_LENSLET
         float modulation
+        int modulation_sampling
         imaging camera
-        void setup(int, int, float, int)
+        void setup(int, int, float, int, int)
         void cleanup()
 <<class definitions>>
 @
@@ -74,9 +76,11 @@ cdef class Pyramid:
     def __cinit__(self,int N_SIDE_LENSLET,
                   int N_PX_LENSLET,
                   float modulation = 0.0,
+                  int modulation_sampling = 0,
                   int N_GS=1):
         self._c_pyramid = new pyramid()
-        self._c_pyramid.setup(N_SIDE_LENSLET,N_PX_LENSLET,modulation,N_GS)
+        self._c_pyramid.setup(N_SIDE_LENSLET,N_PX_LENSLET,modulation,modulation_sampling,N_GS)
+        self.modulation = modulation
         self.camera = Imaging(1,N_PX_LENSLET-1,DFT_osf=4,N_PX_IMAGE=4*N_PX_LENSLET,
                               BIN_IMAGE=N_PX_LENSLET/N_SIDE_LENSLET,
                               N_SOURCE=N_GS, isPtr=1)
@@ -98,14 +102,25 @@ cdef class Pyramid:
         --------
         Source : a class for astronomical sources
         """
-        self.camera.propagateThroughPyramid(gs,self._c_pyramid.modulation)
+        self.camera.propagateThroughPyramid(gs,self._c_pyramid.modulation,
+                                            self._c_pyramid.modulation_sampling)
 
     @property
     def modulation(self):
         return self._c_pyramid.modulation
     @modulation.setter
     def modulation(self, value):
+        if self._c_pyramid.modulation_sampling==0:
+            self._c_pyramid.modulation_sampling = <int> round(4*M_PI*value)
+            print('(@CEO)>Pyramid: Set modulation sampling to {}'.format(self._c_pyramid.modulation_sampling))
         self._c_pyramid.modulation = value
+
+    @property
+    def modulation_sampling(self):
+        return self._c_pyramid.modulation_sampling
+    @modulation_sampling.setter
+    def modulation_sampling(self, value):
+        self._c_pyramid.modulation_sampling = value
 
     @property
     def N_SIDE_LENSLET(self):
