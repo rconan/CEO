@@ -688,7 +688,6 @@ cdef class Modes:
         void test_ray_tracing()
         <<python GMT M12 functions>>
         void preset(bundle *, rtd )
-        void track(float *, float *, float *, int, int)
 @  where
 <<python GMT M12 functions>>=
 int M_ID
@@ -713,6 +712,8 @@ void blocking(bundle *)
 void global_tiptilt(float , float )
 void remove(int *, int )
 void keep(int *, int )
+void track(float *, float *, float *, int, int)
+void locate(float *, float *, float *, int, int)
 void update_conic_c(rtd *)
 void update_conic_k(rtd *)
 void set_reflectivity(float *)
@@ -768,22 +769,6 @@ cdef class GMT_M1:
 
     def preset(self, Bundle rays, float margin):
         self._c_gmt_m12.preset(rays._c_bundle, margin)
-
-    def track(self, ndarray x, ndarray y, ndarray z, int segId):
-
-        cdef cuFloatArray gx, gy, gz
-        cdef ndarray out = np.zeros((3,x.size))
-        gx = cuFloatArray( host_data = x )
-        gy = cuFloatArray( host_data = y )
-        gz = cuFloatArray( host_data = z )
-        self._c_gmt_m12.track(gx._c_gpu.dev_data,
-                              gy._c_gpu.dev_data,
-                              gz._c_gpu.dev_data,
-                              x.size, segId-1)
-        out[0,:] = gx.host()
-        out[1,:] = gy.host()
-        out[2,:] = gz.host()
-        return out
 
     def clocking(self,seg_id,theta):
         """
@@ -1031,6 +1016,66 @@ def transform(self,list xyz, list abc, list segId=None):
         self.motion_CS.euler_angles[idx,:] = euler_angles
     self.motion_CS.update()
 
+def track(self, ndarray x, ndarray y, ndarray z, int segId):
+    """
+    Coordinate transformation from motion CS to global CS
+
+    Parameters
+    ----------
+    x : ndarray
+        The X axis coordinate
+    y : ndarray
+        The Y axis coordinate
+    z : ndarray
+        The Z axis coordinate
+    segId : int
+        The ID number of the segment
+    """
+
+    cdef cuFloatArray gx, gy, gz
+    cdef ndarray out = np.zeros((3,x.size))
+    gx = cuFloatArray( host_data = x )
+    gy = cuFloatArray( host_data = y )
+    gz = cuFloatArray( host_data = z )
+    self._c_gmt_m12.track(gx._c_gpu.dev_data,
+                          gy._c_gpu.dev_data,
+                          gz._c_gpu.dev_data,
+                          x.size, segId-1)
+    out[0,:] = gx.host()
+    out[1,:] = gy.host()
+    out[2,:] = gz.host()
+    return out
+
+def locate(self, ndarray x, ndarray y, ndarray z, int segId):
+    """
+    Coordinate transformation from global CS to motion CS
+
+    Parameters
+    ----------
+    x : ndarray
+        The X axis coordinate
+    y : ndarray
+        The Y axis coordinate
+    z : ndarray
+        The Z axis coordinate
+    segId : int
+        The ID number of the segment
+    """
+
+    cdef cuFloatArray gx, gy, gz
+    cdef ndarray out = np.zeros((3,x.size))
+    gx = cuFloatArray( host_data = x )
+    gy = cuFloatArray( host_data = y )
+    gz = cuFloatArray( host_data = z )
+    self._c_gmt_m12.locate(gx._c_gpu.dev_data,
+                           gy._c_gpu.dev_data,
+                           gz._c_gpu.dev_data,
+                           x.size, segId-1)
+    out[0,:] = gx.host()
+    out[1,:] = gy.host()
+    out[2,:] = gz.host()
+    return out
+
 property D_assembly:
     def __get__(self):
         return self._c_gmt_m12.D_assembly
@@ -1214,7 +1259,7 @@ cdef class GMT_M2:
 cdef class GMT_M2:
     <<GMT M12 docstring>>
 
-    def __cinit__(self, unicode mirror_modes=None, int radial_order=0,
+    def __cinit__(self, unicode mirror_modes=u"None", int radial_order=0,
                   int N_MODE=0, dict mirror_modes_data=None, **kwargs):
         self._c_gmt_m12 = new gmt_m2()
         <<GMT M12 constructor>>
