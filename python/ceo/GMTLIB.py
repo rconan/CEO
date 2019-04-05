@@ -345,6 +345,7 @@ class GMT_MX(GmtMirrors):
                 self.propagate(gs)
                 wfs.reset()
                 wfs.analyze(gs)
+                print("slope rms: %2.3f, %2.3f"%wfs.measurement_rms())
                 return wfs.get_measurement()
             s_push = get_slopes(+1)
             s_pull = get_slopes(-1)
@@ -1361,6 +1362,9 @@ class PyramidWFS(Pyramid):
 
 	def get_measurement_size(self):
 		return self.n_sspp * 2
+
+	def measurement_rms(self):
+		return (cp.std(self._measurement[0]), cp.std(self._measurement[1]))
 
 	def reset(self):
 		"""
