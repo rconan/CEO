@@ -13,8 +13,9 @@ cdef extern from "pyramid.h":
         int N_SIDE_LENSLET
         float modulation
         int modulation_sampling
+        float alpha
         imaging camera
-        void setup(int, int, float, int, int)
+        void setup(int, int, float, int, float, int)
         void cleanup()
 <<class definitions>>
 @
@@ -44,6 +45,10 @@ cdef class Pyramid:
        The sampling in pixel of the pupil plane.
     modulation : float, optional
        The modulation at the vertex of the pyramid in lambda/D units, defaults to 0
+    modulation_sampling : int, optional
+       The number of points sampling the modulation at the vertex of the pyramid in lambda/D units, defaults to 0
+    separation : float, optional
+       The distance between left/right and up/down pupil images on the detector in telescope diameter D units, defaults to 2
     N_GS : int, optional
        The number of guide stars, defaults to 1
 
@@ -51,12 +56,18 @@ cdef class Pyramid:
     ----------
     camera : Imaging, readonly
        The detector object
+    N_SIDE_LENSLET : int, readonly
+       The linear size of the equivalent lenslet array (>1).
+    modulation : float
+       The modulation at the vertex of the pyramid in lambda/D units, defaults to 0
+    modulation_sampling : int
+       The number of points sampling the modulation at the vertex of the pyramid in lambda/D units, defaults to 0
+    separation : float
+       The distance between left/right and up/down pupil images on the detector in telescope diameter D units, defaults to 2
 
     See also
     --------
     Imaging : a class for a Fourier propagation model and for a detector model
-    Centroiding : a class for the data processing of wavefront sensor frames
-
 
     Examples
     --------
@@ -77,9 +88,12 @@ cdef class Pyramid:
                   int N_PX_LENSLET,
                   float modulation = 0.0,
                   int modulation_sampling = 0,
+                  float separation = 2,
                   int N_GS=1):
         self._c_pyramid = new pyramid()
-        self._c_pyramid.setup(N_SIDE_LENSLET,N_PX_LENSLET,modulation,modulation_sampling,N_GS)
+        self._c_pyramid.setup(N_SIDE_LENSLET,N_PX_LENSLET,
+                              modulation,modulation_sampling,
+                              0.25*separation,N_GS)
         self.modulation = modulation
         self.camera = Imaging(1,N_PX_LENSLET-1,DFT_osf=4,N_PX_IMAGE=4*N_PX_LENSLET,
                               BIN_IMAGE=N_PX_LENSLET/N_SIDE_LENSLET,
@@ -103,7 +117,8 @@ cdef class Pyramid:
         Source : a class for astronomical sources
         """
         self.camera.propagateThroughPyramid(gs,self._c_pyramid.modulation,
-                                            self._c_pyramid.modulation_sampling)
+                                            self._c_pyramid.modulation_sampling,
+                                            self._c_pyramid.alpha)
 
     @property
     def modulation(self):
@@ -115,6 +130,13 @@ cdef class Pyramid:
             self._c_pyramid.modulation_sampling *= 4
             print('(@CEO)>Pyramid: Set modulation sampling to {}'.format(self._c_pyramid.modulation_sampling))
         self._c_pyramid.modulation = value
+
+    @property
+    def separation(self):
+        return 4*self._c_pyramid.alpha
+    @separation.setter
+    def separation(self, value):
+        self._c_pyramid.alpha = 0.25*value
 
     @property
     def modulation_sampling(self):
