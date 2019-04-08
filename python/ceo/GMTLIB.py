@@ -1360,6 +1360,12 @@ class PyramidWFS(Pyramid):
 	def get_measurement(self):
 		return cp.asnumpy(cp.concatenate(self._measurement))
 
+	def get_sx(self):
+		return cp.asnumpy(self._measurement[0])
+
+	def get_sy(self):
+		return cp.asnumpy(self._measurement[1])
+
 	def get_measurement_size(self):
 		return self.n_sspp * 2
 
