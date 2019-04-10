@@ -345,7 +345,8 @@ class GMT_MX(GmtMirrors):
                 self.propagate(gs)
                 wfs.reset()
                 wfs.analyze(gs)
-                print("slope rms: %2.3f, %2.3f"%wfs.measurement_rms())
+                #print("max abs value: %2.3f"%np.max(np.abs(wfs.get_measurement())))
+                #print("slope rms: %2.3f, %2.3f"%wfs.measurement_rms())
                 return wfs.get_measurement()
             s_push = get_slopes(+1)
             s_pull = get_slopes(-1)
@@ -578,7 +579,8 @@ class GMT_MX(GmtMirrors):
                     sys.stdout.write("Segment #%d: "%kSeg)
                     for kMode in range(first_mode,n_mode):
                         if stroke_scaling==True: stroke = stroke_max / np.sqrt(radord[kMode])
-                        sys.stdout.write("%d, %2.1f [nm]\n"%(kMode+1,stroke*1e9))
+                        #sys.stdout.write("%d, %2.1f [nm]\n"%(kMode+1,stroke*1e9))
+                        sys.stdout.write("%d "%(kMode+1))
                         D[:,idx] = np.ravel( pushpull( M2_zernike_update ) )
                         idx += 1
                     sys.stdout.write("\n")
@@ -1224,7 +1226,7 @@ class PyramidWFS(Pyramid):
 		self._ccd_frame = ascupy(self.camera.frame)
 		self._SUBAP_NORM = 'MEAN_FLUX_PER_SUBAP'
 	
-	def calibrate(self, src, calib_modulation=10.0, percent_extra_subaps=0.0, thr=0.0):
+	def calibrate(self, src, calib_modulation=10.0, calib_modulation_sampling=64, percent_extra_subaps=0.0, thr=0.0):
 		"""
 		Perform the following calibration tasks:
 		1) Acquire a CCD frame using high modulation (default: 10 lambda/D);
@@ -1245,10 +1247,13 @@ class PyramidWFS(Pyramid):
 		#-> Acquire CCD frame applying high modulation:
 		self.reset()
 		cl_modulation = self.modulation # keep track of selected modulation radius
+		cl_modulation_sampling = self.modulation_sampling
 		self.modulation = calib_modulation
+		self.modulation_sampling = calib_modulation_sampling
 		self.propagate(src)
 		ccd_frame = self._ccd_frame.get()
 		self.modulation = cl_modulation
+		self.modulation_sampling = cl_modulation_sampling
 
 		#-> Find center of four sup-pupil images:
 		nx, ny = ccd_frame.shape
