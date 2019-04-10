@@ -51,10 +51,11 @@ struct imaging {
   void propagateTT7(source *src);
   void propagateTT7(source *src, int *d__piston_mask);
   void propagateThroughFieldStop(source *src, float field_stop_diam);
-  void propagateThroughPyramid(source *src);
+  void propagateThroughPyramid(source *src, float alpha);
   void propagateThroughModulatedPyramid(source *src,
                                         float modulation,
-                                        int modulation_sampling);
+                                        int modulation_sampling,
+                                        float alpha);
 
   void readout(float exposureTime, float readOutNoiseRms);
   void noiseless_readout(float exposureTime);
@@ -830,7 +831,7 @@ For a complex amplitude $\Phi$, the camera image $I$ is given by
 
 \index{imaging!imaging!propagateThroughPyramid}
 <<propagation through pyramid>>=
-void imaging::propagateThroughPyramid(source *src) {
+void imaging::propagateThroughPyramid(source *src, float alpha) {
   int M = N_PX_IMAGE/N_PX_CAMERA;
   dim3 gridDim;
   dim3 blockDim(16,16);
@@ -846,13 +847,13 @@ void imaging::propagateThroughPyramid(source *src) {
   <<imaging CUFFT execution>>
 
   gridDim = dim3(1+N_DFT/16,1+N_DFT/16, N_SOURCE);
-  apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL);
+  apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, alpha);
 
   <<propagation (FFT, intensity and binning)>>
 }
 @ with
 <<apply pyramid>>=
-__global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL)
+__global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL, float alpha)
 {
   int i, j, k, w, half, iSource;
   float xi, yj, c, s, phasor, a, b;
@@ -870,7 +871,7 @@ __global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL)
     xi = (float) i;
     yj = (float) j;
     phasor = -2*(i+j)*(N_PX_PUPIL*1.5 + 1 - w*0.5)/N_DFT;
-    phasor -= 0.5*(fabs(xi)+fabs(yj));
+    phasor -= alpha*(fabs(xi)+fabs(yj));
     sincospif(phasor,&s,&c);
     a = d__wave_PUPIL[k].x;
     b = d__wave_PUPIL[k].y;
@@ -884,7 +885,8 @@ In the case of modulation:
 <<propagation through modulated pyramid>>=
 void imaging::propagateThroughModulatedPyramid(source *src,
                                                float modulation,
-                                               int modulation_sampling) {
+                                               int modulation_sampling,
+                                               float alpha) {
   int M, nTheta, kTheta;
   float theta;
   nTheta = modulation_sampling;
@@ -907,7 +909,7 @@ void imaging::propagateThroughModulatedPyramid(source *src,
   <<imaging CUFFT execution>>
 
   gridDim = dim3(1+N_DFT/16,1+N_DFT/16,N_SOURCE);
-  apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL);
+  apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, alpha);
 
   <<propagation (FFT, intensity and binning)>>
       }
