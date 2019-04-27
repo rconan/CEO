@@ -177,6 +177,9 @@ void wavefront_finite_difference(float *sx, float *sy, int NL,
                                  float *phi, int n, float d, 
                                  mask *valid_lenset, int N_GS);
 
+__host__ __device__ int polywind(double Px, double Py, double *Vx, double *Vy, int NV);
+void polywinds(int *W, double *Px, double *Py, int NP, double *Vx, double *Vy, int NV);
+
 #endif  // __UTILITIES_H__
 @
 
@@ -221,6 +224,7 @@ void set_device(int id) {
 <<square pupil>>
 <<GMT pupil>>
 <<GMT segment piston kernel>>
+<<polygon winding number kernel>>
 
 <<Fried geometry masks>>
 <<Fried geometry>>
@@ -246,6 +250,7 @@ void set_device(int id) {
 
 <<sparse matrix methods>>
 
+<<polygon winding number>>
 @
 \section{Functions}
 \label{sec:functions}
@@ -2321,3 +2326,52 @@ void sparseMatrix::add(sparseMatrix *C, sparseMatrix *B)
 @
 \end{itemize}
 
+\subsection{Geometry}
+\label{sec:geometry}
+
+The following routine computes the winding number of a polygon specified by the
+[[NV]] vertex $([[Vx]],[[Vy]])$ coordinates around a given point $([[Px]],[[Py]])$:
+<<polygon winding number>>=
+__host__ __device__ int polywind(double Px, double Py, double *Vx, double *Vy, int NV)
+{
+  int i, np, wind=0;
+  double d0,d1,p0,p1,pt0,pt1;
+  np = NV;
+  pt0 = Px;
+  pt1 = Py;
+  p0 = Vx[np-1];
+  p1 = Vy[np-1];
+  for (i=0;i<np; i++) {
+    d0 = Vx[i];
+    d1 = Vy[i];
+    if (p1 <= pt1) {
+      if (d1 > pt1 && (p0-pt0)*(d1-pt1)-(p1-pt1)*(d0-pt0) > 0 ) wind ++;
+    }
+    else {
+      if (d1 <= pt1 && (p0-pt0)*(d1-pt1)-(p1-pt1)*(d0-pt0) < 0 ) wind --;
+    }
+    p0=d0;
+    p1=d1;
+  }
+  return wind;
+}
+@
+The version of polywind for CUDA is given below:
+<<polygon winding number>>=
+void polywinds(int *W, double *Px, double *Py, int NP, double *Vx, double *Vy, int NV)
+{
+  dim3 blockDim(256);
+  dim3 gridDim(NP/256+1);
+  polywind_kern LLL gridDim,blockDim RRR (W,Px,Py,NP,Vx,Vy,NV);
+}
+@
+with the device kernel
+<<polygon winding number kernel>>=
+__global__ void polywind_kern(int *W, double *Px, double *Py, int NP, double *Vx, double *Vy, int NV)
+{
+  int i;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i<NP) {
+    W[i] = polywind(Px[i],Py[i],Vx,Vy,NV);
+  }
+}

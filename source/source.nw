@@ -107,6 +107,9 @@ struct source {
 <<wavefront differentiation kernel (gradient average)>>
 <<wavefront differentiation kernel (segments gradient average)>>
 
+<<GMT truss on-axis projection kernel>>
+<<GMT M2 baffle kernel>>
+
 <<ray bundle functions>>
 
 <<square geometry>>
@@ -315,6 +318,7 @@ struct bundle {
 				   float const delta_y, int N_y);
   void get_vignetting(double *d__v);
   void get_n_iteration(int *n_iteration);
+  void gmt_truss_onaxis(void);
 };
 @
 A bundle allocates an array of [[N_RAY]] rays on the device
@@ -373,6 +377,14 @@ int *d__piston_mask;
 <<ray bundle parameters>>= 
 rtd refractive_index;
 @
+The on--axis projection of the truss on M1 center segment creates a polygon
+repeated 3 times around the segment center of symmetry.
+[[d__Vx]] and [[d__Vy]] are the x and y coordinates, respectively, of the
+vertices of the first polygon
+<<ray bundle parameters>>=
+double *d__Vx, *d__Vy;
+@
+
 \subsubsection{Setup \& Cleanup}
 \label{sec:bundle-setup--cleanup}
 
@@ -398,8 +410,13 @@ void bundle::setup(rtd RADIUS, int _N_RADIUS_,
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
+  <<truss parameters initialization>>
   <<chief ray allocation>>
 }
+@ with
+<<truss parameters initialization>>=
+d__Vx = NULL;
+d__Vy = NULL;
 @
 The direction cosines $(k,l,m)$ of the rays are defined from the source zenith $\zeta$ and azimuth $\xi$ angles as
 \begin{eqnarray}
@@ -468,6 +485,7 @@ The cartesian coordinates are defined with the sampling of the square box length
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY_TOTAL ) );
+  <<truss parameters initialization>>
   <<chief ray allocation>>
 }
 @
@@ -488,10 +506,11 @@ void bundle::setup(rtd _L_, int _N_L_, vector origin, vector chief_origin, int N
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
                             sizeof(vector), cudaMemcpyHostToDevice ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY_TOTAL ) );
- <<chief ray allocation (common)>>
- HANDLE_ERROR( cudaMalloc((void**)&d__chief_origin, sizeof(vector) ) );
- HANDLE_ERROR( cudaMemcpy( d__chief_origin, &chief_origin,
- sizeof(vector), cudaMemcpyHostToDevice ) );
+  <<truss parameters initialization>>
+  <<chief ray allocation (common)>>
+  HANDLE_ERROR( cudaMalloc((void**)&d__chief_origin, sizeof(vector) ) );
+  HANDLE_ERROR( cudaMemcpy( d__chief_origin, &chief_origin,
+                            sizeof(vector), cudaMemcpyHostToDevice ) );
 }
 @
 The ray bundle can be set to arbitrary coordinates in the entrance puil
@@ -510,6 +529,7 @@ void bundle::setup_free(int _N_RAY_, double *x, double *y, vector origin)
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY_TOTAL ) );
+  <<truss parameters initialization>>
   <<chief ray allocation>>
 
   double *d__x, *d__y;
@@ -588,6 +608,10 @@ void bundle::cleanup(void)
   HANDLE_ERROR( cudaFree( d__sphere_origin ) );
   HANDLE_ERROR( cudaFree( d__sphere_radius ) );
   HANDLE_ERROR( cudaFree( d__sphere_distance ) );
+  if (d__Vx!=NULL) {
+    HANDLE_ERROR( cudaFree( d__Vx ) );
+    HANDLE_ERROR( cudaFree( d__Vy ) );
+  }
 }
 @
 
@@ -1360,6 +1384,78 @@ __global__ void reset_kernel(ray *d__ray, int N_RAY)
   k = j * gridDim.x * blockDim.x + i;
   if ( k<N_RAY )
     d__ray[k].v = 0;
+}
+@
+
+\subsubsection{GMT Truss on--axis projection}
+\label{sec:gmt-truss--oa-proj}
+
+The vignetting of the rays by the on--axis footprint of the truss projected on the GMT M1
+center segment is computed with:
+\index{source!bundle!gmt\_truss\_onaxis}
+<<ray bundle functions>>=
+void bundle::gmt_truss_onaxis(void)
+{
+  int NV = 15, nbyte, k,l;
+  double Vx[] = {-3.011774, -2.446105, -3.011774, -2.799304, -2.33903,  -1.566412, -1.640648,
+                 -1.9445,   -1.640648, -1.566412, -2.347462, -1.597649, -1.725044, -2.392888,
+                 -2.799304};
+  double Vy[] = {-2.902158,  0.,        2.902158,  3.107604,  0.07244,   0.518512,  0.175429,
+                 0.,       -0.175429, -0.518512, -0.067572, -3.865336, -3.810188, -0.427592,
+                 -3.107604};
+  double _Vx_, _Vy_, co, so, o;
+  dim3 blockDim(256);
+  dim3 gridDim(N_RAY_TOTAL/256+1);
+  nbyte = NV*sizeof(double);
+  if (d__Vx==NULL) {
+    HANDLE_ERROR( cudaMalloc((void**)&d__Vx, nbyte ) );
+    HANDLE_ERROR( cudaMalloc((void**)&d__Vy, nbyte ) );    
+  }
+  o = -2*PI/3;
+  for (k=0;k<3;k++) {
+    sincos(o,&so,&co);
+    for (l=0;l<NV;l++) {
+      _Vx_ =  Vx[l]*co + Vy[l]*so;
+      _Vy_ = -Vx[l]*so + Vy[l]*co;
+      Vx[l] = _Vx_;
+      Vy[l] = _Vy_;
+    }
+    HANDLE_ERROR( cudaMemcpy( d__Vx, &Vx, nbyte, cudaMemcpyHostToDevice ) );
+    HANDLE_ERROR( cudaMemcpy( d__Vy, &Vy, nbyte, cudaMemcpyHostToDevice ) );
+    gmt_truss_onaxis_kern LLL gridDim,blockDim RRR (d__ray,N_RAY_TOTAL,d__Vx,d__Vy,NV);
+  }
+  gmt_m2_baffle_kern LLL gridDim,blockDim RRR (d__ray,N_RAY_TOTAL);
+}
+@
+with the device kernels
+<<GMT truss on-axis projection kernel>>=
+__global__ void gmt_truss_onaxis_kern(ray *d__ray, int NP, double *Vx, double *Vy, int NV)
+{
+  int i,w;
+  double rho2, R2;
+  R2 = 1.65*1.65;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i<NP && d__ray[i].v) {
+    w = polywind(d__ray[i].coordinates.x,d__ray[i].coordinates.y,Vx,Vy,NV);
+    rho2 = d__ray[i].coordinates.x*d__ray[i].coordinates.x +
+      d__ray[i].coordinates.y*d__ray[i].coordinates.y;
+    if (w!=0 || rho2<R2)
+      d__ray[i].v = 0;
+  }
+}
+<<GMT M2 baffle kernel>>=
+__global__ void gmt_m2_baffle_kern(ray *d__ray, int NP)
+{
+  int i;
+  double rho2, R2;
+  R2 = 1.65*1.65;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i<NP && d__ray[i].v) {
+    rho2 = d__ray[i].coordinates.x*d__ray[i].coordinates.x +
+      d__ray[i].coordinates.y*d__ray[i].coordinates.y;
+    if (rho2<R2)
+      d__ray[i].v = 0;
+  }
 }
 @
 
