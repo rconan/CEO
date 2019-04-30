@@ -887,32 +887,51 @@ void imaging::propagateThroughModulatedPyramid(source *src,
                                                float modulation,
                                                int modulation_sampling,
                                                float alpha) {
-  int M, nTheta, kTheta;
-  float theta;
+  int M, nTheta, kTheta, N, Nb;
+  float theta, intensity_norm;
   nTheta = modulation_sampling;
   //printf("nTheta=%d\n",nTheta);
   M = N_PX_IMAGE/N_PX_CAMERA;
   dim3 gridDim;
   dim3 blockDim(16,16);
   for (kTheta = 0;kTheta<nTheta;kTheta++) {
-  gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
-  theta = 2*PI*kTheta/nTheta;
-  complexAmplitudeWithModulation LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
-					      src->wavefront.amplitude,
-					      src->wavefront.phase,
-                                              src->wavenumber(),
-					      N_PX_PUPIL, N_PX_IMAGE, M,
-					      N_SIDE_LENSLET, src->dev_ptr,
-                                              pixel_scale, d__theta_x, d__theta_y,
-					      absolute_pointing,0,
-					      modulation,theta);
-  <<imaging CUFFT execution>>
+    gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
+    theta = 2*PI*kTheta/nTheta;
+    complexAmplitudeWithModulation LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
+                                                              src->wavefront.amplitude,
+                                                              src->wavefront.phase,
+                                                              src->wavenumber(),
+                                                              N_PX_PUPIL, N_PX_IMAGE, M,
+                                                              N_SIDE_LENSLET, src->dev_ptr,
+                                                              pixel_scale, d__theta_x, d__theta_y,
+                                                              absolute_pointing,0,
+                                                              modulation,theta);
+    <<imaging CUFFT execution>>
 
-  gridDim = dim3(1+N_DFT/16,1+N_DFT/16,N_SOURCE);
-  apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, alpha);
+    gridDim = dim3(1+N_DFT/16,1+N_DFT/16,N_SOURCE);
+    apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, alpha);
 
-  <<propagation (FFT, intensity and binning)>>
-      }
+    <<imaging CUFFT execution>>
+    N_PHOTON_PER_FRAME = N_PHOTON_PER_SECOND_PER_FRAME = src->n_photon()*src->wavefront.M->area;
+    intensity_norm = src->wavefront.M->area/src->wavefront.M->nnz/nTheta;
+    N = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
+    Nb = (int) ceilf( sqrtf(N)/16.0 );
+    gridDim  = dim3(Nb,Nb);
+    wave2intensity LLL gridDim , blockDim RRR( d__wave_PUPIL, N, intensity_norm);
+    if (src->fwhm>0) {
+      gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
+      <<propagation (convolution)>>
+    }
+    gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
+                    N_SOURCE);
+    binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
+                                       src->dev_ptr,
+                                       pixel_scale, d__theta_x, d__theta_y,
+                                       absolute_pointing,
+                                       N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
+
+  }
+  ++N_FRAME;
 }
 @
 \subsubsection{Imaging numerical model}
