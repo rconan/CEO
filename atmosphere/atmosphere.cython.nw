@@ -39,6 +39,9 @@ cdef extern from "atmosphere.h":
         void get_phase_screen(source *, float )
         void get_phase_screen(float*, float *, float *, int,
                               source *, float )
+        void get_phase_screen_gradient(float *, float *,
+                                       float *, float *, int,
+                                       source *, float)
         void get_phase_screen_gradient(centroiding *, int , float , source *, float )
         void get_phase_screen_gradient_rolling_shutter(
             centroiding *, int , float , source *, float, float )
@@ -522,8 +525,22 @@ def propagate(self, Source src):
     N = src.rays.N_L
     delta = src.rays.L/(N-1)
     self._c_atmosphere.rayTracing(src._c_source,
-				  delta, N, delta, N,
+				                  delta, N, delta, N,
                                   src.timeStamp)
+def get_phase_screen_gradient_values(self, double[:] x, double[:] y,
+                                     Source src, float time):
+    cdef int Nxy
+    Nxy = x.size
+    cdef cuFloatArray sx, sy
+    sx = cuFloatArray(shape=(Nxy,1),dev_malloc=True)
+    sy = cuFloatArray(shape=(Nxy,1),dev_malloc=True)
+    cdef cuFloatArray gx,gy
+    gx = cuFloatArray(host_data=x)
+    gy = cuFloatArray(host_data=y)
+    self._c_atmosphere.get_phase_screen_gradient(sx._c_gpu.dev_data, sy._c_gpu.dev_data,
+                                                 gx._c_gpu.dev_data, gy._c_gpu.dev_data, Nxy,
+                                                 src._c_source, time)
+    return np.asarray(sx.host(),dtype=np.double),np.asarray(sy.host(),dtype=np.double)
 
 def get_phase_screen_gradient(self, Centroiding cog, int NL, float d,
 			      Source src, float time, float delay=0.0):

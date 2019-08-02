@@ -134,6 +134,7 @@ struct atmosphere {
 			float time);
   void get_phase_screen(source *src, float time);
 
+  void get_phase_screen_gradient(float *sx, float *sy, float *x, float *y, int Nxy, source *src, float time);
   void get_phase_screen_gradient(float *sx, float *sy, int NL,
 				 float const d, source *src, float time);
   void get_phase_screen_gradient(float *sx, float *sy, int NL,
@@ -225,6 +226,7 @@ struct atmosphere {
 <<phase screen VI>>
 <<generic phase screen>>
   
+<<phase screen gradient>>
 <<phase screen gradient I>>
 <<phase screen gradient II>>
 <<phase screen gradient III>>
@@ -1597,10 +1599,85 @@ y_{L,l} &=& \gamma_l^\ast (y_L-v_yt) + h_l\theta_{\ast y} \\
 \bkx &=& \bk \cos \phi_j \\
 \bky &=& \bk \sin \phi_j
 \end{eqnarray}
+The phase screen gradient are computed at a set of location given by the $x$ and
+$y$ coordinate arrays $[N_{xy}]$
+\index{atmosphere!atmosphere!get\_phase\_screen\_gradient}
+<<phase screen gradient>>=
+void atmosphere::get_phase_screen_gradient(float *sx, float *sy,
+                                           float *x, float *y, int Nxy,
+                                           source *src, float time)
+{
+  dim3 blockDim(256);
+  dim3 gridDim( 1+Nxy/256);
+  plps_xy_gradient LLL gridDim , blockDim RRR (sx, sy,
+                                               x,y,Nxy,
+                                               d__turbulence, wavelength, r0,
+                                               d__layers, N_LAYER,
+                                               zeta1, eta1, zeta2, eta2,
+                                               src->dev_ptr, time);
+}
+@ with the kernel
+<<phase screen gradient kernel>>=
+__global__ void plps_xy_gradient(float *sx, float *sy,
+                                 float *x, float *y, int Nxy,
+                                 profile *turb, float wavelength, float r0,
+                                 layer *layers, int N_LAYER,
+                                 float *zeta1, float *eta1, float *zeta2, float *eta2,
+                                 source *src, float time)
+{
+  <<declarations (common)>>
+    float sum_x, sum_l_x, sum_y, sum_l_y, red0, red1, red2;
+
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  kl=i;
+
+  sum_x = sum_y = 0;
+  if (i<Nxy)
+    {
+
+      x_kl0 = x[i];
+      y_kl0 = y[i];
+
+      <<variables>>
+
+      for (i=0;i<turb->N_k;i++)
+	{
+	  <<frequency magnitude sum>>
+          for (j=0;j<turb->N_a;j++)
+	    {
+	      <<frequency angle sum (common)>>
+		cos_freq_ang *= freq_mag;
+		sin_freq_ang *= freq_mag;
+		sum_l_x = sum_l_y = 0;
+	      for (l=0;l<N_LAYER;l++)
+		{
+        ijl = ij + l*turb->N_a*turb->N_k;
+      gl = 1 - layers[l].altitude/src[i_source].height;
+      x_kl = gl*x_kl0;
+      y_kl = gl*y_kl0;
+      x_kl += layers[l].altitude*src[i_source].theta_x - layers[l].vx*time;
+      y_kl += layers[l].altitude*src[i_source].theta_y - layers[l].vy*time;
+      red0 = sqrt(layers[l].xi0);
+      red1 = zeta1[ijl]*sin( eta1[ijl] + cos_freq_ang*x_kl + sin_freq_ang*y_kl );
+      red2 = zeta2[ijl]*sin( eta2[ijl] - sin_freq_ang*x_kl + cos_freq_ang*y_kl );
+      sum_l_x += red0*( red1*cos_freq_ang - red2*sin_freq_ang);
+      sum_l_y += red0*( red1*sin_freq_ang + red2*cos_freq_ang);
+		}
+	      sum_x += sqrt_spectrum_kernel*sum_l_x;
+	      sum_y += sqrt_spectrum_kernel*sum_l_y;
+	    }
+	}
+      red0 = 1.4*powf(r0,-5.0/6.0)*wavelength/(2*PI);
+      sx[kl] = red0*sum_x;
+      sy[kl] = red0*sum_y;
+    }
+}
+@
 The phase screen gradient are computed on a $N_L\times N_L$ array with a resolution $d$
 \index{atmosphere!atmosphere!get\_phase\_screen\_gradient}
 <<phase screen gradient I>>=
-void atmosphere::get_phase_screen_gradient(float *sx, float *sy, int NL, float const d, source *src, float time)
+void atmosphere::get_phase_screen_gradient(float *sx, float *sy, int NL,
+                                           float const d, source *src, float time)
 {
   dim3 blockDim(16,16);
   dim3 gridDim( 1+NL/16 , 1+NL/16);
