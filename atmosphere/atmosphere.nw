@@ -134,6 +134,7 @@ struct atmosphere {
 			float time);
   void get_phase_screen(source *src, float time);
 
+  void get_phase_screen_gradient(float *sx, float *sy, float *x, float *y, int Nxy, source *src, float time);
   void get_phase_screen_gradient(float *sx, float *sy, int NL,
 				 float const d, source *src, float time);
   void get_phase_screen_gradient(float *sx, float *sy, int NL,
@@ -225,6 +226,7 @@ struct atmosphere {
 <<phase screen VI>>
 <<generic phase screen>>
   
+<<phase screen gradient>>
 <<phase screen gradient I>>
 <<phase screen gradient II>>
 <<phase screen gradient III>>
@@ -303,8 +305,6 @@ int N_WIDTH_LAYER, N_LENGTH_LAYER;
 @ \item layers phase screen
 <<atmosphere parameters>>=
 float *d__phase_screen_LAYER;
-cublasHandle_t handle;
-float r0_native;
 @ \item the size in memory of all the phase screnn in the layers
 <<atmosphere parameters>>=
 unsigned long N_PHASE_LAYER;
@@ -460,6 +460,17 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
   d__phase_screen_LAYER = NULL;
 }
 @
+
+\paragraph{Ray tracing}
+
+The atmospheric phase screens of each turbulence layer can be pre--computed and
+the phase screen in the aperture is derived by ray tracing (using bi--linear
+interpolation) through the layers.
+
+The additional input parameters are the width [[W]] and the resolution [[N_W]] of the phase screens in the
+direction perpendicular to the winds, the field--of--view [[field_size]] and the
+phase screen time length [[duration]].
+
 \index{atmosphere!atmosphere!setup}
 <<atmosphere setup (ray tracing)>>=
 void atmosphere::setup(float r0_, float L0, int _NLAYER,
@@ -486,6 +497,15 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
   <<layer to device (ray tracing)>>
 }
 @
+The pre--computed phase screens can also be saved in a file
+[[fullpath_to_phasescreens]] for latter use.
+The phase screens are split in [[N_DURATION]] chunks of the same [[duration]].
+The phase screens are loaded one chunk at a time in the device to no overload
+the device memory.
+The total time length of the phase screens are then
+$[[N_DURATION]]\times[[duration]]$.
+If the file already exists, it is instead loaded into the structure.
+
 <<atmosphere setup (ray tracing, precomputed phase screens)>>=
 void atmosphere::setup(float r0_, float L0, int _NLAYER,
 		       float *altitude, float *xi0,
@@ -521,7 +541,8 @@ if (stat(fullpath_to_phasescreens,&sb)==0) {
 } else {
   save_layer_phasescreens(fullpath_to_phasescreens, N_DURATION);
 }
-@ For the GMT simulations, the GMT standard atmosphere model is called with:
+@ %def save_layer_phasescreens
+For the GMT simulations, the GMT standard atmosphere model is called with:
 \index{atmosphere!atmosphere!gmt\_setup}
 <<atmosphere setup (GMT)>>=
 void atmosphere::gmt_setup() {
@@ -701,6 +722,7 @@ void atmosphere::gmt_setup(float r0_, float L0,
   <<layer to device (ray tracing)>>
 }
 @
+The phase screen can be 
 <<atmosphere setup (GMT prm, ray tracing, precomputed phase screens)>>=
 void atmosphere::gmt_setup(float r0_, float L0,
 			     float _W_, int _N_W_,
@@ -876,10 +898,6 @@ HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
                           phase_screen_LAYER,
                           sizeof(float)*N_PHASE_LAYER,
                           cudaMemcpyHostToDevice ) );
-r0_native = powf(0.15,5.0/6.0);
-cublasCreate(&handle);
-CUBLAS_ERROR( cublasSscal(handle, N_PHASE_LAYER, &r0_native, d__phase_screen_LAYER, 1) );
-cublasDestroy(handle);
 tid.toc();
 fclose(layers_fid);
 @
@@ -964,7 +982,7 @@ for (i_LAYER=0;i_LAYER<N_LAYER;i_LAYER++) {
 							     delta_W, N_L,
 							     delta_W, __N_W__,
 							     d__turbulence,
-							     wavenumber*powf(r0,-5.0/6.0),
+                   wavenumber,//*powf(r0,-5.0/6.0),
 							     d__layers, i_LAYER,
 							     zeta1, eta1, zeta2, eta2,
 							     layers_src.dev_ptr, layers_tau0);
@@ -972,7 +990,7 @@ for (i_LAYER=0;i_LAYER<N_LAYER;i_LAYER++) {
  }
 fprintf(stdout,"\b\n");
 tid.toc();
-@
+@ %def square_plps_layers
 The random generator is initialized within the following kernel:
 <<init random variates>>=
 __global__ void setupRandomSequence(curandState *state, int n_state, int seed)
@@ -1581,10 +1599,85 @@ y_{L,l} &=& \gamma_l^\ast (y_L-v_yt) + h_l\theta_{\ast y} \\
 \bkx &=& \bk \cos \phi_j \\
 \bky &=& \bk \sin \phi_j
 \end{eqnarray}
+The phase screen gradient are computed at a set of location given by the $x$ and
+$y$ coordinate arrays $[N_{xy}]$
+\index{atmosphere!atmosphere!get\_phase\_screen\_gradient}
+<<phase screen gradient>>=
+void atmosphere::get_phase_screen_gradient(float *sx, float *sy,
+                                           float *x, float *y, int Nxy,
+                                           source *src, float time)
+{
+  dim3 blockDim(256);
+  dim3 gridDim( 1+Nxy/256);
+  plps_xy_gradient LLL gridDim , blockDim RRR (sx, sy,
+                                               x,y,Nxy,
+                                               d__turbulence, wavelength, r0,
+                                               d__layers, N_LAYER,
+                                               zeta1, eta1, zeta2, eta2,
+                                               src->dev_ptr, time);
+}
+@ with the kernel
+<<phase screen gradient kernel>>=
+__global__ void plps_xy_gradient(float *sx, float *sy,
+                                 float *x, float *y, int Nxy,
+                                 profile *turb, float wavelength, float r0,
+                                 layer *layers, int N_LAYER,
+                                 float *zeta1, float *eta1, float *zeta2, float *eta2,
+                                 source *src, float time)
+{
+  <<declarations (common)>>
+    float sum_x, sum_l_x, sum_y, sum_l_y, red0, red1, red2;
+
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  kl=i;
+
+  sum_x = sum_y = 0;
+  if (i<Nxy)
+    {
+
+      x_kl0 = x[i];
+      y_kl0 = y[i];
+
+      <<variables>>
+
+      for (i=0;i<turb->N_k;i++)
+	{
+	  <<frequency magnitude sum>>
+          for (j=0;j<turb->N_a;j++)
+	    {
+	      <<frequency angle sum (common)>>
+		cos_freq_ang *= freq_mag;
+		sin_freq_ang *= freq_mag;
+		sum_l_x = sum_l_y = 0;
+	      for (l=0;l<N_LAYER;l++)
+		{
+        ijl = ij + l*turb->N_a*turb->N_k;
+      gl = 1 - layers[l].altitude/src[i_source].height;
+      x_kl = gl*x_kl0;
+      y_kl = gl*y_kl0;
+      x_kl += layers[l].altitude*src[i_source].theta_x - layers[l].vx*time;
+      y_kl += layers[l].altitude*src[i_source].theta_y - layers[l].vy*time;
+      red0 = sqrt(layers[l].xi0);
+      red1 = zeta1[ijl]*sin( eta1[ijl] + cos_freq_ang*x_kl + sin_freq_ang*y_kl );
+      red2 = zeta2[ijl]*sin( eta2[ijl] - sin_freq_ang*x_kl + cos_freq_ang*y_kl );
+      sum_l_x += red0*( red1*cos_freq_ang - red2*sin_freq_ang);
+      sum_l_y += red0*( red1*sin_freq_ang + red2*cos_freq_ang);
+		}
+	      sum_x += sqrt_spectrum_kernel*sum_l_x;
+	      sum_y += sqrt_spectrum_kernel*sum_l_y;
+	    }
+	}
+      red0 = 1.4*powf(r0,-5.0/6.0)*wavelength/(2*PI);
+      sx[kl] = red0*sum_x;
+      sy[kl] = red0*sum_y;
+    }
+}
+@
 The phase screen gradient are computed on a $N_L\times N_L$ array with a resolution $d$
 \index{atmosphere!atmosphere!get\_phase\_screen\_gradient}
 <<phase screen gradient I>>=
-void atmosphere::get_phase_screen_gradient(float *sx, float *sy, int NL, float const d, source *src, float time)
+void atmosphere::get_phase_screen_gradient(float *sx, float *sy, int NL,
+                                           float const d, source *src, float time)
 {
   dim3 blockDim(16,16);
   dim3 gridDim( 1+NL/16 , 1+NL/16);
@@ -2330,9 +2423,6 @@ const source *src, const float tau)
 				phase_screen_LAYER + k_DURATION*N_PHASE_LAYER,
 				sizeof(float)*N_PHASE_LAYER,
 				cudaMemcpyHostToDevice ) );
-      cublasCreate(&handle);
-      CUBLAS_ERROR( cublasSscal(handle, N_PHASE_LAYER, &r0_native, d__phase_screen_LAYER, 1) );
-      cublasDestroy(handle);
       tid.toc();
     } else {
       <<layer to device (ray tracing)>>
@@ -2384,9 +2474,6 @@ void atmosphere::rayTracing(source *src,
 				phase_screen_LAYER + k_DURATION*N_PHASE_LAYER,
 				sizeof(float)*N_PHASE_LAYER,
 				cudaMemcpyHostToDevice ) );
-      cublasCreate(&handle);
-      CUBLAS_ERROR( cublasSscal(handle, N_PHASE_LAYER, &r0_native, d__phase_screen_LAYER, 1) );
-      cublasDestroy(handle);
       tid.toc();
     } else {
       <<layer to device (ray tracing)>>
