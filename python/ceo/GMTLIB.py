@@ -1,13 +1,11 @@
 import sys
 import math
 import numpy as np
-import cupy as cp
 import numpy.linalg as LA
 from scipy.optimize import brenth, leastsq
 from scipy.signal import fftconvolve
 from skimage.feature import blob_log
 from scipy.ndimage.interpolation import rotate
-from scipy.ndimage import center_of_mass
 from scipy.interpolate import griddata, LinearNDInterpolator, NearestNDInterpolator
 from scipy.spatial import Delaunay
 import os.path
@@ -18,7 +16,7 @@ from . import phaseStats
 from  ceo.nastran_pch_reader import nastran_pch_reader
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
     TT7,\
-    GmtMirrors, SegmentPistonSensor, Pyramid,\
+    GmtMirrors, SegmentPistonSensor, \
     constants, Telescope, cuFloatArray, cuDoubleArray, Aperture,\
     Transform_to_S, Intersect, Reflect, Refract, Transform_to_R, ZernikeS, ascupy
 
@@ -848,6 +846,109 @@ class GMT_MX(GmtMirrors):
             raise ValueError('"coupled" or "decoupled" must be set to True!')
 
 
+    def NGWS_calibrate(self, wfs, gs, wfs2=None, stroke=25e-9, seg_pist_sig_masked=False, seg_sig_masked=False): 
+        """
+        Calibrate the NGWS interaction matrix to control M2 modes
+
+        Parameters
+        ----------
+        wfs : Pyramid
+            Pyramid wavefront sensor (1st channel of NGWS)
+        gs : Source
+            The guide star
+        wfs2 : Pyramid, IdealSegmentPistonSensor, etc...
+            The WFS for the 2nd channel of NGWS
+        stroke : float
+            Karhunen-Loeve amplitude [m surface] to apply during calibration. Default: 25e-9
+            Note: This amplitude is scaled down with radial order to prevent PWFS saturation.
+        seg_pist_sig_masked : Boolean
+            If True, segment piston signals within the interaction matrix are masked. Default: False
+        seg_sig_masked : Boolean
+            If True, segment signal masks are applied to each segment. Default: False
+        """
+
+        def segment_piston_mask(seg_pist_sig_thr=0.25, seg_pist_stroke=100e-9):
+            """
+            Segment piston PWFS signals are very localized, with most information residing across segment gaps. This function computes a set of PWFS signal masks (one mask per segment) indicating which sub-apertures convey segment piston information  [1: valid sub-apertures].
+
+            Parameters
+            ----------
+            
+            seg_pist_sig_thr: float (0 < thr < 1.0)
+                The segment piston signal threshold for sub-aperture selection. Default: 0.25
+
+            seg_pist_stroke: float
+                The segment piston amplitude applied for mask calibration [m]. Default: 100e-9
+
+            """
+            D_M2_PIST = self.calibrate(wfs, gs, mirror="M2", mode=u"segment piston", \
+                                        stroke=seg_pist_stroke)
+            segment_piston_signal_mask = []
+            for kSeg in range(7):
+                sigpist = np.abs(D_M2_PIST[0:wfs.n_sspp, kSeg]) + \
+                          np.abs(D_M2_PIST[wfs.n_sspp: , kSeg])
+                segment_piston_signal_mask.append(sigpist/np.max(sigpist) > seg_pist_sig_thr)
+            return segment_piston_signal_mask
+
+        def segment_mask(seg_sig_thr=0.15, seg_tilt_stroke=1e-6):
+            """
+            This function computes a set of signal masks (one per segment) identifying sub-apertures over each segment [1: valid sub-apertures]
+            The signal pattern used for the identification is the signal pattern produced by a segment tilt. A large PWFS modulation is required for better flux distribution uniformity. 
+
+            Parameters
+            ----------
+
+            seg_sig_thr: float (0 < thr < 1.0)
+                The segment signal threshold for sub-aperture selection. Default: 0.15
+
+            seg_tilt_stroke: float
+                The TT amplitude applied for mask calibration [rad]. Default: 1e-6
+            """
+            cl_modulation = wfs.modulation
+            cl_mod_sampling = wfs.modulation_sampling
+            wfs.modulation = 10.0  # modulation radius in lambda/D units
+            wfs.modulation_sampling = 64
+            D_M2_TT = self.calibrate(wfs, gs, mirror="M2", mode=u"segment tip-tilt", stroke=seg_tilt_stroke)
+            wfs.modulation = cl_modulation
+            wfs.modulation_sampling = cl_mod_sampling
+            segment_signal_mask = []
+            for kSeg in range(7):
+                sigtt = np.sum(np.abs(D_M2_TT[0:wfs.n_sspp, kSeg*2:kSeg*2+2]), axis=1) + \
+                        np.sum(np.abs(D_M2_TT[wfs.n_sspp: , kSeg*2:kSeg*2+2]), axis=1)
+                segment_signal_mask.append(sigtt/np.max(sigtt) > seg_sig_thr)
+            return segment_signal_mask
+
+        #----- Calibrate the interaction matrix between ASM segment KL modes and PWFS
+        print("Calibrating IntMat between pyramid and segment KL modes")
+        kl_first_mode = 0     # 0: includes segment piston mode
+        stroke_scaling = True # True: amplitude decreases with radial order to prevent PWFS saturation
+        D_M2_MODES = self.calibrate(wfs, gs, mirror="M2", mode=u"Karhunen-Loeve", stroke=stroke, 
+                               first_mode=kl_first_mode, stroke_scaling=stroke_scaling)
+        nall = (D_M2_MODES.shape)[1]  ## number of modes calibrated
+        n_mode = int(nall/7)
+
+        #----- Mask the interaction matrix signals
+        if seg_sig_masked==True:
+            print("\nCalibrating segment signal masks...")
+            segment_signal_mask = segment_mask()
+            for kSeg in range(7):
+                D_M2_MODES[0:wfs.n_sspp, kSeg*n_mode+1:(kSeg+1)*n_mode] *= segment_signal_mask[kSeg][:,np.newaxis]
+                D_M2_MODES[wfs.n_sspp: , kSeg*n_mode+1:(kSeg+1)*n_mode] *= segment_signal_mask[kSeg][:,np.newaxis]
+            wfs.segment_signal_mask = segment_signal_mask
+            print("Segment signal masks applied.")
+
+        if seg_pist_sig_masked==True:
+            print("\nCalibrating segment piston signal masks...")
+            segpist_signal_mask = segment_piston_mask()
+            for kSeg in range(7):
+                D_M2_MODES[0:wfs.n_sspp, kSeg*n_mode] *= segpist_signal_mask[kSeg]
+                D_M2_MODES[wfs.n_sspp: , kSeg*n_mode] *= segpist_signal_mask[kSeg]
+            wfs.segpist_signal_mask = segpist_signal_mask 
+            print("Segment piston signal masks applied.")
+
+        return D_M2_MODES
+
+
     def cloop_calib_init(self, D, nPx, onaxis_wfs_nLenslet=60, sh_thr=0.2, AOtype=None, svd_thr=1e-9, RECdir='./'):
         assert AOtype == 'NGAOish' or AOtype == 'LTAOish', "AOtype should be either 'NGAOish', or 'LTAOish'"
         self.AOtype = AOtype
@@ -1219,182 +1320,6 @@ class GeometricTT7(Sensor):
     def Data(self):
         return self.valid_slopes.reshape(14,1)
 
-
-class PyramidWFS(Pyramid):
-	def __init__(self, N_SIDE_LENSLET, N_PX_LENSLET, modulation=0.0, N_GS=1):
-		Pyramid.__init__(self)
-		self._ccd_frame = ascupy(self.camera.frame)
-		self._SUBAP_NORM = 'MEAN_FLUX_PER_SUBAP'
-	
-	def calibrate(self, src, calib_modulation=10.0, calib_modulation_sampling=64, percent_extra_subaps=0.0, thr=0.0):
-		"""
-		Perform the following calibration tasks:
-		1) Acquire a CCD frame using high modulation (default: 10 lambda/D);
-		2) Estimate center of the four sub-pupil images;
-		3) Calibrate an initial pupil registration assuming a circular pupil.
-
-        Parameters
-        ----------
-        src : Source
-             The Source object used for piston sensing
-        gmt : GMT_MX
-             The GMT object
-		calib_modulation: modulation radius applied during calibration (default 10 lambda/D).
-		percent_extra_subaps: percent of extra subapertures across the pupil for initial pupil registration (default: 0).
-		thr: Threshold for pupil registration refinement: select only SAs with flux percentage above thr.
-		"""
-
-		#-> Acquire CCD frame applying high modulation:
-		self.reset()
-		cl_modulation = self.modulation # keep track of selected modulation radius
-		cl_modulation_sampling = self.modulation_sampling
-		self.modulation = calib_modulation
-		self.modulation_sampling = calib_modulation_sampling
-		self.propagate(src)
-		ccd_frame = self._ccd_frame.get()
-		self.modulation = cl_modulation
-		self.modulation_sampling = cl_modulation_sampling
-
-		#-> Find center of four sup-pupil images:
-		nx, ny = ccd_frame.shape
-		x = np.linspace(0, nx-1, nx)
-		y = np.linspace(0, ny-1, ny)
-		xx, yy = np.meshgrid(x, y)
-
-		mqt1 = np.logical_and(xx<(nx/2), yy<(ny/2)) # First quadrant (lower left)
-		mqt2 = np.logical_and(xx>(nx/2), yy<(ny/2)) # Second quadrant (lower right)
-		mqt3 = np.logical_and(xx<(nx/2), yy>(ny/2)) # Third quadrant (upper left)
-		mqt4 = np.logical_and(xx>(nx/2), yy>(ny/2)) # Fourth quadrant (upper right)
-
-		label = np.zeros((nx,ny)) # labels needed for ndimage.center_of_mass
-		label[mqt1] = 1
-		label[mqt2] = 2
-		label[mqt3] = 3
-		label[mqt4] = 4
-
-		centers = center_of_mass(ccd_frame, labels=label, index=[1,2,3,4])
-		print("Center of subpupil images (pix):")
-		print(np.array_str(np.array(centers), precision=1), end='\n')
-
-		#-> Circular pupil registration
-		n_sub = self.N_SIDE_LENSLET + round(self.N_SIDE_LENSLET*percent_extra_subaps/100)
-		print("Number of SAs across pupil: %d"%n_sub, end="\r", flush=True)
-
-		indpup = []  # list of pupil index vectors
-		n_sspp = []
-		for this_pup in range(4):
-			indpup.append( (xx-centers[this_pup][0])**2 + (yy-centers[this_pup][1])**2 <= round(n_sub/2)**2 )
-			n_sspp.append( np.sum(indpup[this_pup]) )
-		n_sspp = np.unique(n_sspp)
-
-		if n_sspp.size > 1:
-			print('Error!! number of valid SAs per sub-pupil are different!')
-			print(np.array_str(np.array(n_sspp)))
-			return	
-
-		#-> Pupil registration refinement based on SA flux thresholding
-		if thr > 0:
-
-			# Compute the flux per SA 
-			flux = np.zeros(n_sspp)
-			for subpup in indpup:
-				flux += ccd_frame[subpup]
-
-			meanflux = np.mean(flux) 
-			fluxthr = meanflux*thr
-			thridx = flux > fluxthr
-			n_sspp1 = np.sum(thridx)
-			print("->       Number of valid SAs: %d"%n_sspp1, flush=True)
-
-			#indpup1 = [np.copy(subpup) for subpup in indpup]
-			for subpup in indpup:
-				subpup[subpup] *= thridx
-
-		#-> Save pupil registration (GPU memory)		
-		self._indpup = [cp.asarray(subpup) for subpup in indpup]
-		self.n_sspp = int(cp.sum(self._indpup[0])) # number of valid SAs
-
-
-	@property
-	def indpup(self):
-		return [cp.asnumpy(subpup) for subpup in self._indpup]
-
-	@property
-	def ccd_frame(self):
-		return self._ccd_frame.get()
-
-	@property
-	def signal_normalization(self):
-		return self._SUBAP_NORM
-	@signal_normalization.setter
-	def signal_normalization(self, value):
-		assert value == 'QUADCELL' or value == 'MEAN_FLUX_PER_SUBAP', 'Normalization supported: "QUADCELL", "MEAN_FLUX_PER_SUBAP"' 
-		self._SUBAP_NORM = value
-	
-	def process(self):
-		# Flux computation for normalization factors
-		flux_per_SA = cp.zeros(self.n_sspp)
-		for subpup in self._indpup:
-			flux_per_SA += self._ccd_frame[subpup]
-		tot_flux = cp.sum(flux_per_SA)
-	    
-		# If the frame has some photons, compute the signals...
-		if tot_flux > 0:
-
-			# Choose the signal normalization factor:
-			if self._SUBAP_NORM == 'QUADCELL':
-				norm_fact = flux_per_SA       # flux on each SA
-			elif self._SUBAP_NORM == 'MEAN_FLUX_PER_SUBAP':
-				norm_fact = tot_flux / self.n_sspp # mean flux per SA
-		
-			# Compute the signals
-			sx = (self._ccd_frame[self._indpup[3]]+self._ccd_frame[self._indpup[2]]-
-		    	  self._ccd_frame[self._indpup[1]]-self._ccd_frame[self._indpup[0]]) / norm_fact  
-
-			sy = (self._ccd_frame[self._indpup[1]]+self._ccd_frame[self._indpup[3]]-
-		    	  self._ccd_frame[self._indpup[0]]-self._ccd_frame[self._indpup[2]]) / norm_fact 
-
-		else:
-			# If the frame has no photons, provide a zero slope vector!
-			sx = cp.zeros(self.n_sspp)
-			sy = cp.zeros(self.n_sspp)
-
-		self._measurement = (sx,sy)
-
-
-	def get_measurement(self):
-		return cp.asnumpy(cp.concatenate(self._measurement))
-
-	def get_sx(self):
-		return cp.asnumpy(self._measurement[0])
-
-	def get_sy(self):
-		return cp.asnumpy(self._measurement[1])
-
-	def get_measurement_size(self):
-		return self.n_sspp * 2
-
-	def measurement_rms(self):
-		return (cp.std(self._measurement[0]), cp.std(self._measurement[1]))
-
-	def reset(self):
-		"""
-		Resets the detector frame.
-		"""
-		self.camera.reset()
-
-	def analyze(self, src):
-		"""
-		Propagates the guide star to the Pyramid detector (noiseless) and processes the frame
-
-		Parameters
-		----------
-		src : Source
-			The pyramid's guide star object
-		"""
-		self.reset()
-		self.propagate(src)
-		self.process()
 
 class DispersedFringeSensor(SegmentPistonSensor):
     """
