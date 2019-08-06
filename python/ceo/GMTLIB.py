@@ -16,9 +16,9 @@ from . import phaseStats
 from  ceo.nastran_pch_reader import nastran_pch_reader
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
     TT7,\
-    GmtMirrors, SegmentPistonSensor,\
+    GmtMirrors, SegmentPistonSensor, \
     constants, Telescope, cuFloatArray, cuDoubleArray, Aperture,\
-    Transform_to_S, Intersect, Reflect, Refract, Transform_to_R, ZernikeS
+    Transform_to_S, Intersect, Reflect, Refract, Transform_to_R, ZernikeS, ascupy
 
 class CalibrationVault(object):
 
@@ -277,7 +277,7 @@ class GMT_MX(GmtMirrors):
 
     def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None, first_mode=3, 
                   closed_loop_calib=False, minus_M2_TT=False,
-                  calibrationVaultKwargs=None):
+                  calibrationVaultKwargs=None, stroke_scaling=False):
         """
         Calibrate the different degrees of freedom of the  mirrors
 
@@ -343,6 +343,8 @@ class GMT_MX(GmtMirrors):
                 self.propagate(gs)
                 wfs.reset()
                 wfs.analyze(gs)
+                #print("max abs value: %2.3f"%np.max(np.abs(wfs.get_measurement())))
+                #print("slope rms: %2.3f, %2.3f"%wfs.measurement_rms())
                 return wfs.get_measurement()
             s_push = get_slopes(+1)
             s_pull = get_slopes(-1)
@@ -566,10 +568,16 @@ class GMT_MX(GmtMirrors):
                 n_mode = self.M2.modes.n_mode
                 D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
                 idx = 0;
+                if stroke_scaling == True:
+                    stroke_max = stroke
+                    radord = np.floor((np.sqrt(8*np.arange(first_mode+1,n_mode+1)-7)-1)/2)
+                    if first_mode == 0: radord[0] = 1
 
                 for kSeg in range(7):
                     sys.stdout.write("Segment #%d: "%kSeg)
                     for kMode in range(first_mode,n_mode):
+                        if stroke_scaling==True: stroke = stroke_max / np.sqrt(radord[kMode])
+                        #sys.stdout.write("%d, %2.1f [nm]\n"%(kMode+1,stroke*1e9))
                         sys.stdout.write("%d "%(kMode+1))
                         D[:,idx] = np.ravel( pushpull( M2_zernike_update ) )
                         idx += 1
@@ -836,6 +844,109 @@ class GMT_MX(GmtMirrors):
 
         else:
             raise ValueError('"coupled" or "decoupled" must be set to True!')
+
+
+    def NGWS_calibrate(self, wfs, gs, wfs2=None, stroke=25e-9, seg_pist_sig_masked=False, seg_sig_masked=False): 
+        """
+        Calibrate the NGWS interaction matrix to control M2 modes
+
+        Parameters
+        ----------
+        wfs : Pyramid
+            Pyramid wavefront sensor (1st channel of NGWS)
+        gs : Source
+            The guide star
+        wfs2 : Pyramid, IdealSegmentPistonSensor, etc...
+            The WFS for the 2nd channel of NGWS
+        stroke : float
+            Karhunen-Loeve amplitude [m surface] to apply during calibration. Default: 25e-9
+            Note: This amplitude is scaled down with radial order to prevent PWFS saturation.
+        seg_pist_sig_masked : Boolean
+            If True, segment piston signals within the interaction matrix are masked. Default: False
+        seg_sig_masked : Boolean
+            If True, segment signal masks are applied to each segment. Default: False
+        """
+
+        def segment_piston_mask(seg_pist_sig_thr=0.25, seg_pist_stroke=100e-9):
+            """
+            Segment piston PWFS signals are very localized, with most information residing across segment gaps. This function computes a set of PWFS signal masks (one mask per segment) indicating which sub-apertures convey segment piston information  [1: valid sub-apertures].
+
+            Parameters
+            ----------
+            
+            seg_pist_sig_thr: float (0 < thr < 1.0)
+                The segment piston signal threshold for sub-aperture selection. Default: 0.25
+
+            seg_pist_stroke: float
+                The segment piston amplitude applied for mask calibration [m]. Default: 100e-9
+
+            """
+            D_M2_PIST = self.calibrate(wfs, gs, mirror="M2", mode=u"segment piston", \
+                                        stroke=seg_pist_stroke)
+            segment_piston_signal_mask = []
+            for kSeg in range(7):
+                sigpist = np.abs(D_M2_PIST[0:wfs.n_sspp, kSeg]) + \
+                          np.abs(D_M2_PIST[wfs.n_sspp: , kSeg])
+                segment_piston_signal_mask.append(sigpist/np.max(sigpist) > seg_pist_sig_thr)
+            return segment_piston_signal_mask
+
+        def segment_mask(seg_sig_thr=0.15, seg_tilt_stroke=1e-6):
+            """
+            This function computes a set of signal masks (one per segment) identifying sub-apertures over each segment [1: valid sub-apertures]
+            The signal pattern used for the identification is the signal pattern produced by a segment tilt. A large PWFS modulation is required for better flux distribution uniformity. 
+
+            Parameters
+            ----------
+
+            seg_sig_thr: float (0 < thr < 1.0)
+                The segment signal threshold for sub-aperture selection. Default: 0.15
+
+            seg_tilt_stroke: float
+                The TT amplitude applied for mask calibration [rad]. Default: 1e-6
+            """
+            cl_modulation = wfs.modulation
+            cl_mod_sampling = wfs.modulation_sampling
+            wfs.modulation = 10.0  # modulation radius in lambda/D units
+            wfs.modulation_sampling = 64
+            D_M2_TT = self.calibrate(wfs, gs, mirror="M2", mode=u"segment tip-tilt", stroke=seg_tilt_stroke)
+            wfs.modulation = cl_modulation
+            wfs.modulation_sampling = cl_mod_sampling
+            segment_signal_mask = []
+            for kSeg in range(7):
+                sigtt = np.sum(np.abs(D_M2_TT[0:wfs.n_sspp, kSeg*2:kSeg*2+2]), axis=1) + \
+                        np.sum(np.abs(D_M2_TT[wfs.n_sspp: , kSeg*2:kSeg*2+2]), axis=1)
+                segment_signal_mask.append(sigtt/np.max(sigtt) > seg_sig_thr)
+            return segment_signal_mask
+
+        #----- Calibrate the interaction matrix between ASM segment KL modes and PWFS
+        print("Calibrating IntMat between pyramid and segment KL modes")
+        kl_first_mode = 0     # 0: includes segment piston mode
+        stroke_scaling = True # True: amplitude decreases with radial order to prevent PWFS saturation
+        D_M2_MODES = self.calibrate(wfs, gs, mirror="M2", mode=u"Karhunen-Loeve", stroke=stroke, 
+                               first_mode=kl_first_mode, stroke_scaling=stroke_scaling)
+        nall = (D_M2_MODES.shape)[1]  ## number of modes calibrated
+        n_mode = int(nall/7)
+
+        #----- Mask the interaction matrix signals
+        if seg_sig_masked==True:
+            print("\nCalibrating segment signal masks...")
+            segment_signal_mask = segment_mask()
+            for kSeg in range(7):
+                D_M2_MODES[0:wfs.n_sspp, kSeg*n_mode+1:(kSeg+1)*n_mode] *= segment_signal_mask[kSeg][:,np.newaxis]
+                D_M2_MODES[wfs.n_sspp: , kSeg*n_mode+1:(kSeg+1)*n_mode] *= segment_signal_mask[kSeg][:,np.newaxis]
+            wfs.segment_signal_mask = segment_signal_mask
+            print("Segment signal masks applied.")
+
+        if seg_pist_sig_masked==True:
+            print("\nCalibrating segment piston signal masks...")
+            segpist_signal_mask = segment_piston_mask()
+            for kSeg in range(7):
+                D_M2_MODES[0:wfs.n_sspp, kSeg*n_mode] *= segpist_signal_mask[kSeg]
+                D_M2_MODES[wfs.n_sspp: , kSeg*n_mode] *= segpist_signal_mask[kSeg]
+            wfs.segpist_signal_mask = segpist_signal_mask 
+            print("Segment piston signal masks applied.")
+
+        return D_M2_MODES
 
 
     def cloop_calib_init(self, D, nPx, onaxis_wfs_nLenslet=60, sh_thr=0.2, AOtype=None, svd_thr=1e-9, RECdir='./'):
@@ -1208,6 +1319,7 @@ class GeometricTT7(Sensor):
     @property 
     def Data(self):
         return self.valid_slopes.reshape(14,1)
+
 
 class DispersedFringeSensor(SegmentPistonSensor):
     """
