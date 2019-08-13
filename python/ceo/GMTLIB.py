@@ -22,42 +22,44 @@ from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
 
 class CalibrationVault(object):
 
-    def __init__(self,D,valid=None,nThreshold=None,insertZeros = None):
+    def __init__(self,D,valid=None,n_threshold=None,threshold=None,insert_zeros = None,remove_modes=None):
         self.D = D
-        if nThreshold is None:
-            self._nThreshold_ = [0]*len(D)
+        if n_threshold is None:
+            self._n_threshold_ = [0]*len(D)
         else:
-            self._nThreshold_ = nThreshold
+            self._n_threshold_ = n_threshold
         self._threshold_ = None
-        if valid is None:
-            self.valid = [ np.ones(X.shape[0],dtype=np.bool) for X in self.D]
-        else:
-            self.valid = valid
-        if insertZeros is None:
+        #if valid is None:
+        #    self.valid = [ np.ones(X.shape[0],dtype=np.bool) for X in self.D]
+        #else:
+        self.valid = valid
+        if insert_zeros is None:
             self.zeroIdx = [None]*len(self.D)
         else:
-            self.zeroIdx = insertZeros
+            self.zeroIdx = insert_zeros
+        if remove_modes is not None:
+            self.D = [np.delete(X,Y,axis=1) for X,Y in zip(self.D,remove_modes)]
         self.UsVT = [LA.svd(X,full_matrices=False) for X in self.D]
-        self.M = [ self.__recon__(X,Y,Z) for X,Y,Z in zip(self.UsVT,self._nThreshold_,self.zeroIdx) ]
+        self.M = [ self.__recon__(X,Y,Z) for X,Y,Z in zip(self.UsVT,self._n_threshold_,self.zeroIdx) ]
             
-    def __recon__(self,_UsVT_,_nThreshold_,zeroIdx):
+    def __recon__(self,_UsVT_,_n_threshold_,zeroIdx):
         iS = 1./_UsVT_[1]
-        if _nThreshold_>0:
-            iS[-_nThreshold_:] = 0
+        if _n_threshold_>0:
+            iS[-_n_threshold_:] = 0
         _M_ = np.dot(_UsVT_[2].T,np.dot(np.diag(iS),_UsVT_[0].T))
         if zeroIdx is not None:
             _M_ =  np.insert(_M_,zeroIdx,0,axis=0)
         return _M_
 
     @property
-    def nThreshold(self):
+    def n_threshold(self):
         "# of discarded eigen values"
-        return self._nThreshold_
-    @nThreshold.setter
-    def nThreshold(self, value):
+        return self._n_threshold_
+    @n_threshold.setter
+    def n_threshold(self, value):
         print("@(CalibrationMatrix)> Updating the pseudo-inverse...")
-        self._nThreshold_ = value
-        self.M = [ self.__recon__(X,Y,Z) for X,Y,Z in zip(self.UsVT,self._nThreshold_,self.zeroIdx) ]
+        self._n_threshold_ = value
+        self.M = [ self.__recon__(X,Y,Z) for X,Y,Z in zip(self.UsVT,self._n_threshold_,self.zeroIdx) ]
 
     @property
     def threshold(self):
@@ -65,14 +67,17 @@ class CalibrationVault(object):
     @threshold.setter
     def threshold(self,value):
         self._threshold_ = value
-        selfqq.nThreshold = [ np.sum(X[1]<X[1][0]*value) for X in  self.UsVT ]
+        selfqq.n_threshold = [ np.sum(X[1]<X[1][0]*value) for X in  self.UsVT ]
 
     @property
     def eigenValues(self):
         return [ X[1] for X in self.UsVT ]
 
     def dot( self, s ):
-        return np.concatenate([ np.dot(X,s[Y.ravel()]) for X,Y in zip(self.M,self.valid) ])
+        if self.valid is None:
+            return np.concatenate([ np.dot(X,s) for X in self.M ])
+        else:
+            return np.concatenate([ np.dot(X,s[Y.ravel()]) for X,Y in zip(self.M,self.valid) ])
 
 class GMT_MX(GmtMirrors):
     """
@@ -749,11 +754,11 @@ class GMT_MX(GmtMirrors):
             flux = wfs.valid_lenslet.f.host()
             D = []
             if withM1:
-                D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
                 D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
+                D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
             if withM2:
-                D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
                 D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
+                D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
             if includeBM:
                 D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=stroke[4]) )
             if includeMount:
@@ -765,13 +770,13 @@ class GMT_MX(GmtMirrors):
             flux = wfs.valid_lenslet.f.host()
             D = []
             if withM1:
-                D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
-            if withM2:
-                D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
-            if withM1:
                 D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
             if withM2:
                 D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
+            if withM1:
+                D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
+            if withM2:
+                D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
             if includeBM:
                 D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=stroke[4]) )
                 if not withM1 and withM2:
