@@ -846,7 +846,7 @@ class GMT_MX(GmtMirrors):
             raise ValueError('"coupled" or "decoupled" must be set to True!')
 
 
-    def NGWS_calibrate(self, wfs, gs, wfs2=None, stroke=25e-9, seg_pist_sig_masked=False, seg_sig_masked=False): 
+    def NGWS_calibrate(self, wfs, gs, wfs2=None, stroke=25e-9, seg_pist_sig_masked=False, seg_sig_masked=False, **kwargs): 
         """
         Calibrate the NGWS interaction matrix to control M2 modes
 

@@ -5,10 +5,11 @@ import cupy as cp
 from scipy.ndimage import center_of_mass
 
 class PyramidWFS(Pyramid):
-    def __init__(self, N_SIDE_LENSLET, N_PX_LENSLET, modulation=0.0, N_GS=1):
+    def __init__(self, N_SIDE_LENSLET, N_PX_LENSLET, modulation=0.0, N_GS=1, throughput=1.0):
         Pyramid.__init__(self)
         self._ccd_frame = ascupy(self.camera.frame)
         self._SUBAP_NORM = 'MEAN_FLUX_PER_SUBAP'
+        self.camera.photoelectron_gain = throughput
 	
     def calibrate(self, src, calib_modulation=10.0, calib_modulation_sampling=64, percent_extra_subaps=0.0, thr=0.0):
         """
@@ -153,6 +154,9 @@ class PyramidWFS(Pyramid):
 
         self._measurement = (sx,sy)
 
+    @property
+    def data(self):
+        return get_measurement(self)
 
     def get_measurement(self):
         """
