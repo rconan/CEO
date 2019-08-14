@@ -91,7 +91,7 @@ class PyramidWFS(Pyramid):
             fluxthr = meanflux*thr
             thridx = flux > fluxthr
             n_sspp1 = np.sum(thridx)
-            print("->   Number of valid SAs: %d"%n_sspp1, flush=True)
+            print("->     Number of valid SAs: %d"%n_sspp1, flush=True)
 
             #indpup1 = [np.copy(subpup) for subpup in indpup]
             for subpup in indpup:
@@ -155,8 +155,8 @@ class PyramidWFS(Pyramid):
         self._measurement = (sx,sy)
 
     @property
-    def data(self):
-        return get_measurement(self)
+    def Data(self):
+        return self.get_measurement()
 
     def get_measurement(self):
         """
