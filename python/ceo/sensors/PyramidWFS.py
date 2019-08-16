@@ -19,11 +19,12 @@ class PyramidWFS(Pyramid):
         3) Calibrate an initial pupil registration assuming a circular pupil.
         4) Refines pupil registration by selecting only sub-apertures with flux above threshold thr.
         5) Stores pupil registration in self._indpup
+        6) Computes and stores the reference slope null vector for a flat WF
 
         Parameters
         ----------
         src : Source
-             The Source object used for piston sensing
+             The Source object used for Pyramid sensing
         gmt : GMT_MX
              The GMT object
         calib_modulation: modulation radius applied during calibration (default 10 lambda/D).
@@ -101,6 +102,10 @@ class PyramidWFS(Pyramid):
         self._indpup = [cp.asarray(subpup) for subpup in indpup]
         self.n_sspp = int(cp.sum(self._indpup[0])) # number of valid SAs
 
+        #-> Compute reference vector
+        self.analyze(src)
+        self._ref_measurement = self._measurement.copy()
+
 
     @property
     def indpup(self):
@@ -152,29 +157,48 @@ class PyramidWFS(Pyramid):
             sx = cp.zeros(self.n_sspp)
             sy = cp.zeros(self.n_sspp)
 
-        self._measurement = (sx,sy)
+        self._measurement = [sx,sy]
 
     @property
     def Data(self):
         return self.get_measurement()
 
-    def get_measurement(self):
+    def get_measurement(self, out_format='vector'):
         """
-        Returns the measurement vector [Sx,Sy].
+        Returns the measurement vector minus reference vector.
+        Parameters:
+          out_format: if "vector" return a 1D vector (default). If "list" return [sx,sy].
         """
-        return cp.asnumpy(cp.concatenate(self._measurement))
+        assert out_format == 'vector' or out_format == 'list', 'output format supported: "vector", "list [sx,sy]"'
+        meas = [m - n for (m,n) in zip(self._measurement, self._ref_measurement)]
+        if out_format == 'vector':
+            return cp.asnumpy(cp.concatenate(meas))
+        else:
+            return cp.asnumpy(meas)
+
+    def get_ref_measurement(self, out_format='vector'):
+        """
+        Returns the reference measurement vector.
+        Parameters:
+          out_format: if "vector" return a 1D vector (default). If "list" return [sx,sy].
+        """
+        assert out_format == 'vector' or out_format == 'list', 'output format supported: "vector", "list [sx,sy]"'
+        if out_format == 'vector':
+            return cp.asnumpy(cp.concatenate(self._ref_measurement))
+        else:
+            return cp.asnumpy(self._ref_measurement)
 
     def get_sx(self):
         """
         Returns Sx in vector format.
         """
-        return cp.asnumpy(self._measurement[0])
+        return self.get_measurement(out_format='list')[0] 
 
     def get_sy(self):
         """
         Returns Sy in vector format.
         """
-        return cp.asnumpy(self._measurement[1])
+        return self.get_measurement(out_format='list')[1]
 
     def get_sx2d(self, this_sx=None):
         """
@@ -212,7 +236,7 @@ class PyramidWFS(Pyramid):
         """
         Returns the slope RMS (Sx and Sy).
         """
-        return (cp.std(self._measurement[0]), cp.std(self._measurement[1]))
+        return (np.std(self.get_sx()), np.std(self.get_sy()))
 
     def reset(self):
         """
