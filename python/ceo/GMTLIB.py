@@ -851,7 +851,10 @@ class GMT_MX(GmtMirrors):
             raise ValueError('"coupled" or "decoupled" must be set to True!')
 
 
-    def NGWS_calibrate(self, wfs, gs, wfs2=None, stroke=25e-9, seg_pist_sig_masked=False, seg_sig_masked=False, **kwargs): 
+    def NGWS_calibrate(self,wfs,gs,stroke=25e-9, 
+            seg_pist_sig_masked=False,seg_pist_sig_thr=0.25,seg_pist_stroke=100e-9,
+            seg_sig_masked=False,seg_sig_thr=0.15,seg_tilt_stroke=1e-6, 
+            **kwargs): 
         """
         Calibrate the NGWS interaction matrix to control M2 modes
 
@@ -861,8 +864,6 @@ class GMT_MX(GmtMirrors):
             Pyramid wavefront sensor (1st channel of NGWS)
         gs : Source
             The guide star
-        wfs2 : Pyramid, IdealSegmentPistonSensor, etc...
-            The WFS for the 2nd channel of NGWS
         stroke : float
             Karhunen-Loeve amplitude [m surface] to apply during calibration. Default: 25e-9
             Note: This amplitude is scaled down with radial order to prevent PWFS saturation.
@@ -870,21 +871,27 @@ class GMT_MX(GmtMirrors):
             If True, segment piston signals within the interaction matrix are masked. Default: False
         seg_sig_masked : Boolean
             If True, segment signal masks are applied to each segment. Default: False
+        seg_pist_sig_thr: float (0 < thr < 1.0)
+            If seg_pist_sig_masked==True, this parameter sets the segment piston signal threshold for sub-aperture selection. Default: 0.25
+        seg_pist_stroke: float
+            If seg_pist_sig_masked==True, this parameters sets the segment piston amplitude applied for mask calibration [m]. Default: 100e-9
+        seg_sig_thr: float (0 < thr < 1.0)
+            If seg_sig_masked==True, this parameter sets the segment signal threshold for sub-aperture selection. Default: 0.15
+        seg_tilt_stroke: float
+            If seg_sig_masked==True, this parameter sets the TT amplitude applied for mask calibration [rad]. Default: 1e-6
         """
 
-        def segment_piston_mask(seg_pist_sig_thr=0.25, seg_pist_stroke=100e-9):
+        def segment_piston_mask(seg_pist_sig_thr, seg_pist_stroke):
             """
             Segment piston PWFS signals are very localized, with most information residing across segment gaps. This function computes a set of PWFS signal masks (one mask per segment) indicating which sub-apertures convey segment piston information  [1: valid sub-apertures].
 
             Parameters
             ----------
-            
             seg_pist_sig_thr: float (0 < thr < 1.0)
-                The segment piston signal threshold for sub-aperture selection. Default: 0.25
+                The segment piston signal threshold for sub-aperture selection
 
             seg_pist_stroke: float
-                The segment piston amplitude applied for mask calibration [m]. Default: 100e-9
-
+                The segment piston amplitude applied for mask calibration [m].
             """
             D_M2_PIST = self.calibrate(wfs, gs, mirror="M2", mode=u"segment piston", \
                                         stroke=seg_pist_stroke)
@@ -895,19 +902,18 @@ class GMT_MX(GmtMirrors):
                 segment_piston_signal_mask.append(sigpist/np.max(sigpist) > seg_pist_sig_thr)
             return segment_piston_signal_mask
 
-        def segment_mask(seg_sig_thr=0.15, seg_tilt_stroke=1e-6):
+        def segment_mask(seg_sig_thr, seg_tilt_stroke):
             """
             This function computes a set of signal masks (one per segment) identifying sub-apertures over each segment [1: valid sub-apertures]
             The signal pattern used for the identification is the signal pattern produced by a segment tilt. A large PWFS modulation is required for better flux distribution uniformity. 
 
             Parameters
             ----------
-
             seg_sig_thr: float (0 < thr < 1.0)
-                The segment signal threshold for sub-aperture selection. Default: 0.15
+                The segment signal threshold for sub-aperture selection
 
             seg_tilt_stroke: float
-                The TT amplitude applied for mask calibration [rad]. Default: 1e-6
+                The TT amplitude applied for mask calibration [rad].
             """
             cl_modulation = wfs.modulation
             cl_mod_sampling = wfs.modulation_sampling
@@ -935,20 +941,22 @@ class GMT_MX(GmtMirrors):
         #----- Mask the interaction matrix signals
         if seg_sig_masked==True:
             print("\nCalibrating segment signal masks...")
-            segment_signal_mask = segment_mask()
+            segment_signal_mask = segment_mask(seg_sig_thr, seg_tilt_stroke)
             for kSeg in range(7):
                 D_M2_MODES[0:wfs.n_sspp, kSeg*n_mode+1:(kSeg+1)*n_mode] *= segment_signal_mask[kSeg][:,np.newaxis]
                 D_M2_MODES[wfs.n_sspp: , kSeg*n_mode+1:(kSeg+1)*n_mode] *= segment_signal_mask[kSeg][:,np.newaxis]
-            wfs.segment_signal_mask = segment_signal_mask
+            wfs.segment_signal_mask = {'mask':segment_signal_mask, 'thr':seg_sig_thr,
+                        'stroke':seg_tilt_stroke}
             print("Segment signal masks applied.")
 
         if seg_pist_sig_masked==True:
             print("\nCalibrating segment piston signal masks...")
-            segpist_signal_mask = segment_piston_mask()
+            segpist_signal_mask = segment_piston_mask(seg_pist_sig_thr, seg_pist_stroke)
             for kSeg in range(7):
                 D_M2_MODES[0:wfs.n_sspp, kSeg*n_mode] *= segpist_signal_mask[kSeg]
                 D_M2_MODES[wfs.n_sspp: , kSeg*n_mode] *= segpist_signal_mask[kSeg]
-            wfs.segpist_signal_mask = segpist_signal_mask 
+            wfs.segpist_signal_mask = {'mask':segpist_signal_mask, 'thr':seg_pist_sig_thr,
+                        'stroke':seg_pist_stroke} 
             print("Segment piston signal masks applied.")
 
         return D_M2_MODES
