@@ -851,7 +851,10 @@ class GMT_MX(GmtMirrors):
             raise ValueError('"coupled" or "decoupled" must be set to True!')
 
 
-    def NGWS_calibrate(self, wfs, gs, wfs2=None, stroke=25e-9, seg_pist_sig_masked=False, seg_sig_masked=False): 
+    def NGWS_calibrate(self,wfs,gs,stroke=25e-9, 
+            seg_pist_sig_masked=False,seg_pist_sig_thr=0.25,seg_pist_stroke=100e-9,
+            seg_sig_masked=False,seg_sig_thr=0.15,seg_tilt_stroke=1e-6, 
+            **kwargs): 
         """
         Calibrate the NGWS interaction matrix to control M2 modes
 
@@ -861,8 +864,6 @@ class GMT_MX(GmtMirrors):
             Pyramid wavefront sensor (1st channel of NGWS)
         gs : Source
             The guide star
-        wfs2 : Pyramid, IdealSegmentPistonSensor, etc...
-            The WFS for the 2nd channel of NGWS
         stroke : float
             Karhunen-Loeve amplitude [m surface] to apply during calibration. Default: 25e-9
             Note: This amplitude is scaled down with radial order to prevent PWFS saturation.
@@ -870,21 +871,27 @@ class GMT_MX(GmtMirrors):
             If True, segment piston signals within the interaction matrix are masked. Default: False
         seg_sig_masked : Boolean
             If True, segment signal masks are applied to each segment. Default: False
+        seg_pist_sig_thr: float (0 < thr < 1.0)
+            If seg_pist_sig_masked==True, this parameter sets the segment piston signal threshold for sub-aperture selection. Default: 0.25
+        seg_pist_stroke: float
+            If seg_pist_sig_masked==True, this parameters sets the segment piston amplitude applied for mask calibration [m]. Default: 100e-9
+        seg_sig_thr: float (0 < thr < 1.0)
+            If seg_sig_masked==True, this parameter sets the segment signal threshold for sub-aperture selection. Default: 0.15
+        seg_tilt_stroke: float
+            If seg_sig_masked==True, this parameter sets the TT amplitude applied for mask calibration [rad]. Default: 1e-6
         """
 
-        def segment_piston_mask(seg_pist_sig_thr=0.25, seg_pist_stroke=100e-9):
+        def segment_piston_mask(seg_pist_sig_thr, seg_pist_stroke):
             """
             Segment piston PWFS signals are very localized, with most information residing across segment gaps. This function computes a set of PWFS signal masks (one mask per segment) indicating which sub-apertures convey segment piston information  [1: valid sub-apertures].
 
             Parameters
             ----------
-            
             seg_pist_sig_thr: float (0 < thr < 1.0)
-                The segment piston signal threshold for sub-aperture selection. Default: 0.25
+                The segment piston signal threshold for sub-aperture selection
 
             seg_pist_stroke: float
-                The segment piston amplitude applied for mask calibration [m]. Default: 100e-9
-
+                The segment piston amplitude applied for mask calibration [m].
             """
             D_M2_PIST = self.calibrate(wfs, gs, mirror="M2", mode=u"segment piston", \
                                         stroke=seg_pist_stroke)
@@ -895,19 +902,18 @@ class GMT_MX(GmtMirrors):
                 segment_piston_signal_mask.append(sigpist/np.max(sigpist) > seg_pist_sig_thr)
             return segment_piston_signal_mask
 
-        def segment_mask(seg_sig_thr=0.15, seg_tilt_stroke=1e-6):
+        def segment_mask(seg_sig_thr, seg_tilt_stroke):
             """
             This function computes a set of signal masks (one per segment) identifying sub-apertures over each segment [1: valid sub-apertures]
             The signal pattern used for the identification is the signal pattern produced by a segment tilt. A large PWFS modulation is required for better flux distribution uniformity. 
 
             Parameters
             ----------
-
             seg_sig_thr: float (0 < thr < 1.0)
-                The segment signal threshold for sub-aperture selection. Default: 0.15
+                The segment signal threshold for sub-aperture selection
 
             seg_tilt_stroke: float
-                The TT amplitude applied for mask calibration [rad]. Default: 1e-6
+                The TT amplitude applied for mask calibration [rad].
             """
             cl_modulation = wfs.modulation
             cl_mod_sampling = wfs.modulation_sampling
@@ -935,20 +941,22 @@ class GMT_MX(GmtMirrors):
         #----- Mask the interaction matrix signals
         if seg_sig_masked==True:
             print("\nCalibrating segment signal masks...")
-            segment_signal_mask = segment_mask()
+            segment_signal_mask = segment_mask(seg_sig_thr, seg_tilt_stroke)
             for kSeg in range(7):
                 D_M2_MODES[0:wfs.n_sspp, kSeg*n_mode+1:(kSeg+1)*n_mode] *= segment_signal_mask[kSeg][:,np.newaxis]
                 D_M2_MODES[wfs.n_sspp: , kSeg*n_mode+1:(kSeg+1)*n_mode] *= segment_signal_mask[kSeg][:,np.newaxis]
-            wfs.segment_signal_mask = segment_signal_mask
+            wfs.segment_signal_mask = {'mask':segment_signal_mask, 'thr':seg_sig_thr,
+                        'stroke':seg_tilt_stroke}
             print("Segment signal masks applied.")
 
         if seg_pist_sig_masked==True:
             print("\nCalibrating segment piston signal masks...")
-            segpist_signal_mask = segment_piston_mask()
+            segpist_signal_mask = segment_piston_mask(seg_pist_sig_thr, seg_pist_stroke)
             for kSeg in range(7):
                 D_M2_MODES[0:wfs.n_sspp, kSeg*n_mode] *= segpist_signal_mask[kSeg]
                 D_M2_MODES[wfs.n_sspp: , kSeg*n_mode] *= segpist_signal_mask[kSeg]
-            wfs.segpist_signal_mask = segpist_signal_mask 
+            wfs.segpist_signal_mask = {'mask':segpist_signal_mask, 'thr':seg_pist_sig_thr,
+                        'stroke':seg_pist_stroke} 
             print("Segment piston signal masks applied.")
 
         return D_M2_MODES
@@ -1674,8 +1682,6 @@ class IdealSegmentPistonSensor:
 
     Parameters
     ----------
-    src : Source
-        The Source object used for piston sensing
     D :  float
         Telescope diameter (m)
     nPx : integer
@@ -1686,7 +1692,9 @@ class IdealSegmentPistonSensor:
         The length of the lenslet; default: 1.5m
     segment : string
         "full" for piston on the entire segments or "edge" for the differential piston between segment.
-
+    zenith : list
+    azimuth: list
+        List of coordinates of source(s) coupled with sensors; default: [0.], [0.]
     Attributes
     ----------
     P : numpy ndarray
@@ -1707,7 +1715,6 @@ class IdealSegmentPistonSensor:
     See also
     --------
     GMT_MX : a class for GMT M1 and M2 mirrors
-    Source : a class for astronomical sources
 
     Examples
     --------
@@ -1715,23 +1722,23 @@ class IdealSegmentPistonSensor:
     >>> nPx = 256
     >>> D = 25.5
     >>> src = ceo.Source("R",rays_box_size=D,rays_box_sampling=nPx,rays_origin=[0.0,0.0,25])
-    >>> gmt = ceo.GMT_MX(D,nPx)
+    >>> gmt = ceo.GMT_MX()
     >>> src.reset()
     >>> gmt.propagate(src)
 
     The piston per M1 segment is obtained with
-    >>> SPS = ceo.IdealSegmentPistonSensor(src,D,nPx,segment='full')
+    >>> SPS = ceo.IdealSegmentPistonSensor(D,nPx,segment='full')
     >>> SPS.piston(src)
 
     The 12 differential pistons are given by
-    >>> SPS = ceo.IdealSegmentPistonSensor(src,D,nPx,segment='edge')
+    >>> SPS = ceo.IdealSegmentPistonSensor(D,nPx,segment='edge')
     >>> SPS.piston(src)
     """
 
-    def __init__(self, src, D, D_px, W=1.5, L=1.5, segment=None):
+    def __init__(self, D, D_px, W=1.5, L=1.5, segment=None, zenith=[0.], azimuth=[0.]):
         assert segment=="full" or segment=="edge", "segment parameter is either ""full"" or ""edge"""
         self.segment = segment
-        self._N_SRC = src.N_SRC
+        self._N_SRC = len(zenith)
         def ROT(o):
             return np.array([ [ math.cos(o), math.sin(o)], [-math.sin(o),math.cos(o)] ])
         n = D_px
@@ -1748,9 +1755,9 @@ class IdealSegmentPistonSensor:
         self.W = W
         self.L = L
         self.M = []
-        for k_SRC in range(src.N_SRC):
-            xySrc = 82.5*np.array( [[src.zenith[k_SRC]*math.cos(src.azimuth[k_SRC])],
-                                      [src.zenith[k_SRC]*math.sin(src.azimuth[k_SRC])]] )
+        for k_SRC in range(self._N_SRC):
+            xySrc = 82.5*np.array( [[zenith[k_SRC]*math.cos(azimuth[k_SRC])],
+                                      [zenith[k_SRC]*math.sin(azimuth[k_SRC])]] )
             _M_ = []
             for k in range(6):
                 theta = -k*math.pi/3
@@ -1766,6 +1773,9 @@ class IdealSegmentPistonSensor:
         #print self.M.shape
 
     def reset(self):
+        pass
+
+    def process(self):
         pass
 
     def piston(self,src):
@@ -1787,8 +1797,8 @@ class IdealSegmentPistonSensor:
             p = src.piston(where='segments')
         elif self.segment=="edge":
             W = src.wavefront.phase.host()
-            p = np.zeros((src.N_SRC,12))
-            for k_SRC in range(src.N_SRC):
+            p = np.zeros((self._N_SRC,12))
+            for k_SRC in range(self._N_SRC):
                 _P_ = src.rays.piston_mask[k_SRC]
                 _M_ = self.M[k_SRC]
                 for k in range(6):
@@ -1799,18 +1809,30 @@ class IdealSegmentPistonSensor:
                                np.sum( W[k_SRC,:]*_P_[(k+1)%6,:]*_M_[k+6,:] )/np.sum( _P_[(k+1)%6,:]*_M_[k+6,:] )
         return p
 
-    def analyze(self, src):
+    def calibrate(self,src):
         """
-        Computes either M1 segment piston or M1 differential piston (calling the "piston" method), and stores the result in the "measurement" property.
+        Calibrates the reference slope vector.
+        """
+        p = self.piston(src)
+        self.ref_measurement = p.ravel()
+
+    def propagate(self,src):
+        """
+        Computes the segment piston vector.
         """
         p = self.piston(src)
         self.measurement = p.ravel()
+        
+    def analyze(self, src):
+        self.reset()
+        self.propagate(src)
+        self.process()
 
     def get_measurement(self):
         """
         Returns the measurement vector
         """
-        return self.measurement
+        return self.measurement - self.ref_measurement
 
     def get_measurement_size(self):
         """
@@ -1821,6 +1843,10 @@ class IdealSegmentPistonSensor:
         elif self.segment=="full":
             n_meas = 7
         return n_meas*self._N_SRC
+
+    @property
+    def Data(self):
+        return self.get_measurement()
 
 class SegmentTipTiltSensor:
     """
