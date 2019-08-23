@@ -1682,8 +1682,6 @@ class IdealSegmentPistonSensor:
 
     Parameters
     ----------
-    src : Source
-        The Source object used for piston sensing
     D :  float
         Telescope diameter (m)
     nPx : integer
@@ -1694,7 +1692,9 @@ class IdealSegmentPistonSensor:
         The length of the lenslet; default: 1.5m
     segment : string
         "full" for piston on the entire segments or "edge" for the differential piston between segment.
-
+    zenith : list
+    azimuth: list
+        List of coordinates of source(s) coupled with sensors; default: [0.], [0.]
     Attributes
     ----------
     P : numpy ndarray
@@ -1715,7 +1715,6 @@ class IdealSegmentPistonSensor:
     See also
     --------
     GMT_MX : a class for GMT M1 and M2 mirrors
-    Source : a class for astronomical sources
 
     Examples
     --------
@@ -1723,23 +1722,23 @@ class IdealSegmentPistonSensor:
     >>> nPx = 256
     >>> D = 25.5
     >>> src = ceo.Source("R",rays_box_size=D,rays_box_sampling=nPx,rays_origin=[0.0,0.0,25])
-    >>> gmt = ceo.GMT_MX(D,nPx)
+    >>> gmt = ceo.GMT_MX()
     >>> src.reset()
     >>> gmt.propagate(src)
 
     The piston per M1 segment is obtained with
-    >>> SPS = ceo.IdealSegmentPistonSensor(src,D,nPx,segment='full')
+    >>> SPS = ceo.IdealSegmentPistonSensor(D,nPx,segment='full')
     >>> SPS.piston(src)
 
     The 12 differential pistons are given by
-    >>> SPS = ceo.IdealSegmentPistonSensor(src,D,nPx,segment='edge')
+    >>> SPS = ceo.IdealSegmentPistonSensor(D,nPx,segment='edge')
     >>> SPS.piston(src)
     """
 
-    def __init__(self, src, D, D_px, W=1.5, L=1.5, segment=None):
+    def __init__(self, D, D_px, W=1.5, L=1.5, segment=None, zenith=[0.], azimuth=[0.]):
         assert segment=="full" or segment=="edge", "segment parameter is either ""full"" or ""edge"""
         self.segment = segment
-        self._N_SRC = src.N_SRC
+        self._N_SRC = len(zenith)
         def ROT(o):
             return np.array([ [ math.cos(o), math.sin(o)], [-math.sin(o),math.cos(o)] ])
         n = D_px
@@ -1756,9 +1755,9 @@ class IdealSegmentPistonSensor:
         self.W = W
         self.L = L
         self.M = []
-        for k_SRC in range(src.N_SRC):
-            xySrc = 82.5*np.array( [[src.zenith[k_SRC]*math.cos(src.azimuth[k_SRC])],
-                                      [src.zenith[k_SRC]*math.sin(src.azimuth[k_SRC])]] )
+        for k_SRC in range(self._N_SRC):
+            xySrc = 82.5*np.array( [[zenith[k_SRC]*math.cos(azimuth[k_SRC])],
+                                      [zenith[k_SRC]*math.sin(azimuth[k_SRC])]] )
             _M_ = []
             for k in range(6):
                 theta = -k*math.pi/3
@@ -1774,6 +1773,9 @@ class IdealSegmentPistonSensor:
         #print self.M.shape
 
     def reset(self):
+        pass
+
+    def process(self):
         pass
 
     def piston(self,src):
@@ -1795,8 +1797,8 @@ class IdealSegmentPistonSensor:
             p = src.piston(where='segments')
         elif self.segment=="edge":
             W = src.wavefront.phase.host()
-            p = np.zeros((src.N_SRC,12))
-            for k_SRC in range(src.N_SRC):
+            p = np.zeros((self._N_SRC,12))
+            for k_SRC in range(self._N_SRC):
                 _P_ = src.rays.piston_mask[k_SRC]
                 _M_ = self.M[k_SRC]
                 for k in range(6):
@@ -1807,18 +1809,30 @@ class IdealSegmentPistonSensor:
                                np.sum( W[k_SRC,:]*_P_[(k+1)%6,:]*_M_[k+6,:] )/np.sum( _P_[(k+1)%6,:]*_M_[k+6,:] )
         return p
 
-    def analyze(self, src):
+    def calibrate(self,src):
         """
-        Computes either M1 segment piston or M1 differential piston (calling the "piston" method), and stores the result in the "measurement" property.
+        Calibrates the reference slope vector.
+        """
+        p = self.piston(src)
+        self.ref_measurement = p.ravel()
+
+    def propagate(self,src):
+        """
+        Computes the segment piston vector.
         """
         p = self.piston(src)
         self.measurement = p.ravel()
+        
+    def analyze(self, src):
+        self.reset()
+        self.propagate(src)
+        self.process()
 
     def get_measurement(self):
         """
         Returns the measurement vector
         """
-        return self.measurement
+        return self.measurement - self.ref_measurement
 
     def get_measurement_size(self):
         """
@@ -1829,6 +1843,10 @@ class IdealSegmentPistonSensor:
         elif self.segment=="full":
             n_meas = 7
         return n_meas*self._N_SRC
+
+    @property
+    def Data(self):
+        return self.get_measurement()
 
 class SegmentTipTiltSensor:
     """
