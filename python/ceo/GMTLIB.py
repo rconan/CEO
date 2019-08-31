@@ -743,7 +743,7 @@ class GMT_MX(GmtMirrors):
                        withM1=True,withM2=True,
                        fluxThreshold=0.0, filterMirrorRotation=True,
                        includeBM=True, includeMount=False,
-                       calibrationVaultKwargs={'nThreshold':None,'insertZeros': None}):
+                       calibrationVaultKwargs={'n_threshold':None,'insert_zeros': None}):
         gs.reset()
         self.reset()
         self.propagate(gs)
@@ -840,10 +840,11 @@ class GMT_MX(GmtMirrors):
                     s[-1]   = 0
                     D_sr[k][:,:6] = np.dot(U,np.dot(np.diag(s),VT))
 
-                    U,s,VT = LA.svd(D_sr[k][:,6:12],full_matrices=False)
-                    U[:,-1] = 0
-                    s[-1]   = 0
-                    D_sr[k][:,6:12] = np.dot(U,np.dot(np.diag(s),VT))
+                    if D_sr[k].shape[1]>6:
+                        U,s,VT = LA.svd(D_sr[k][:,6:12],full_matrices=False)
+                        U[:,-1] = 0
+                        s[-1]   = 0
+                        D_sr[k][:,6:12] = np.dot(U,np.dot(np.diag(s),VT))
     
             return CalibrationVault(D_sr, valid=VLs,**calibrationVaultKwargs)
 
