@@ -14,7 +14,7 @@ cdef extern from "cuda.h":
 cdef extern from "imaging.h":
     cdef cppclass imaging:
         int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_PX_CAMERA, N_SOURCE, N_FRAME
-        float photoelectron_gain, N_PHOTON_PER_FRAME, N_PHOTON_TOTAL
+        float photoelectron_gain, N_PHOTON_PER_FRAME, N_PHOTON_TOTAL, pixel_scale
         float *d__frame
         float2 *d__wave_PUPIL
         char absolute_pointing
@@ -319,13 +319,28 @@ cdef class Imaging(Sensor):
         """
         Returns the pixel scale in radian
         """
-        return (src.wavelength/src.rays.L)*self.N_SIDE_LENSLET*self.BIN_IMAGE/self.DFT_osf
+        self._c_imaging.pixel_scale = (src.wavelength/src.rays.L)*self.N_SIDE_LENSLET*self.BIN_IMAGE/self.DFT_osf
+        return self._c_imaging.pixel_scale
 
     def pixelScaleArcsec(self,Source src):
         """
         Returns the pixel scale in arcsecond
         """
         return self.pixelScale(src)*180.0*3600.0/np.pi
+
+    def pointing(self, float zen, float azi):
+        """
+        Points the imager away from the source direction
+
+        Parameters
+        ----------
+        zen : float
+            The zenith angle offset with respect to the source zenith angle
+        azi : float
+            The azimuth angle offset with respect to the source azimuth angle
+        """
+        assert self._c_imaging.pixel_scale>0, "Imager pixel scale is not set, set it with <Imaging object>.pixelScale(<Source object>)"
+        self._c_imaging.set_pointing_direction(&zen,&azi)
 
     def ee80(self,double units=1.0, bint from_ghost=0):
         """
@@ -422,19 +437,24 @@ cdef class Imaging(Sensor):
                 q[k] = np.float('inf')
         return np.asarray(q)*units
 
-    property photoelectron_gain:
-        def __get__(self):
-            return self._c_imaging.photoelectron_gain
-        def __set__(self,float value):
-            self._c_imaging.photoelectron_gain = value
+    @property
+    def pixel_scale(self):
+        return self._c_imaging.pixel_scale
 
-    property N_FRAME:
-        def __get__(self):
-            return self._c_imaging.N_FRAME
+    @property
+    def photoelectron_gain(self):
+        return self._c_imaging.photoelectron_gain
+    @photoelectron_gain.setter
+    def photoelectron_gain(self,float value):
+        self._c_imaging.photoelectron_gain = value
 
-    property N_PHOTON_PER_FRAME:
-        def __get__(self):
-            return self._c_imaging.N_PHOTON_PER_FRAME
+    @property
+    def N_FRAME(self):
+        return self._c_imaging.N_FRAME
+
+    @property
+    def N_PHOTON_PER_FRAME(self):
+        return self._c_imaging.N_PHOTON_PER_FRAME
 @
 \index{imaging!python!JImaging}
 <<imaging.pyx>>=
