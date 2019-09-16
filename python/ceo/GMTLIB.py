@@ -1386,14 +1386,17 @@ class DispersedFringeSensor(SegmentPistonSensor):
     Source : a class for astronomical sources
     cuFloatArray : an interface class between GPU host and device data for floats
     """
-    def __init__(self, M1, src, dispersion=5.0, field_of_view=3.0,nyquist_factor=1.0):
+    def __init__(self, M1, src, dispersion=5.0, field_of_view=3.0,nyquist_factor=1.0,BIN_IMAGE=2,MALLOC_DFT=True):
         SegmentPistonSensor.__init__(self, M1, src,
                                      dispersion=dispersion,
                                      field_of_view=field_of_view,
-                                     nyquist_factor=nyquist_factor)
-        self._N_SRC = src.N_SRC
-        self.INIT_ALL_ATTRIBUTES = False
-        self.lobe_detection = 'gaussfit'
+                                     nyquist_factor=nyquist_factor,
+				     BIN_IMAGE=BIN_IMAGE,
+				     MALLOC_DFT=MALLOC_DFT)
+
+	self._N_SRC = src.N_SRC
+	self.INIT_ALL_ATTRIBUTES = False
+	self.lobe_detection = 'gaussfit'
 
     def init_detector_mask(self, mask_size):
         """
@@ -1472,32 +1475,38 @@ class DispersedFringeSensor(SegmentPistonSensor):
         return p
 
     def get_data_cube(self, data_type='fftlet'):
-        """
-        Returns the DFS data (either fringe or fftlet images) in cube format
+	"""
+	Returns the DFS data (either fringe or fftlet images) in cube format
 
-        Parameters
-        ----------
-        data_type : string
-                Set to "camera" to return fringes; set to "fftlet" to return fftlet images; default: fftlet
-        """
+	Parameters
+	----------
+	data_type : string.  (default: fftlet)
+		Set to "camera" to return fringes; 
+		Set to "fftlet" to return fftlet images;
+		Set to "pupil_masks" to return the sub-aperture masks;
+		Set to "phase" to return the phase on each sub-aperture.
+	"""
 
-        assert data_type == 'fftlet' or data_type == 'camera' or data_type == 'pupil_masks', "data_type should be either 'fftlet', 'camera', or 'pupil_masks'"
+	assert data_type=='fftlet' or data_type=='camera' or data_type=='pupil_masks' or data_type=='phase', "data_type should be either 'fftlet', 'camera', or 'pupil_masks', or 'phase'"
 
-        n_lenslet = self.camera.N_SIDE_LENSLET
+	n_lenslet = self.camera.N_SIDE_LENSLET
 
-        if data_type == 'fftlet':
-            data = self.fftlet.host()
-            n_px = self.camera.N_PX_IMAGE
-        elif data_type == 'camera':
-            data = self.camera.frame.host()
-            n_px = self.camera.N_PX_IMAGE/2
-        elif data_type == 'pupil_masks':
-            data = self.W.amplitude.host()
-            n_px = (data.shape)[0] / n_lenslet
+	if data_type == 'fftlet':
+	    data = self.fftlet.host()
+	    n_px = self.camera.N_PX_IMAGE
+	elif data_type == 'camera':
+	    data = self.camera.frame.host()
+ 	    n_px = self.camera.N_PX_IMAGE/2
+	elif data_type == 'pupil_masks':
+	    data = self.W.amplitude.host()
+	    n_px = (data.shape)[0] / n_lenslet
+	elif data_type == 'phase':
+	    data = self.W.phase.host()
+	    n_px = (data.shape)[0] / n_lenslet
 
-        dataCube = np.zeros((n_px, n_px, self._N_SRC*12))
-        k = 0
-        for j in range(n_lenslet):
+    	dataCube = np.zeros((n_px, n_px, self._N_SRC*12))
+    	k = 0
+    	for j in range(n_lenslet):
             for i in range(n_lenslet):
                 dataCube[:,:,k] = data[i*n_px:(i+1)*n_px, j*n_px:(j+1)*n_px]
                 k += 1
