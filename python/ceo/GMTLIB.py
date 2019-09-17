@@ -1387,16 +1387,10 @@ class DispersedFringeSensor(SegmentPistonSensor):
     cuFloatArray : an interface class between GPU host and device data for floats
     """
     def __init__(self, M1, src, dispersion=5.0, field_of_view=3.0,nyquist_factor=1.0,BIN_IMAGE=2,MALLOC_DFT=True):
-        SegmentPistonSensor.__init__(self, M1, src,
-                                     dispersion=dispersion,
-                                     field_of_view=field_of_view,
-                                     nyquist_factor=nyquist_factor,
-				     BIN_IMAGE=BIN_IMAGE,
-				     MALLOC_DFT=MALLOC_DFT)
-
-	self._N_SRC = src.N_SRC
-	self.INIT_ALL_ATTRIBUTES = False
-	self.lobe_detection = 'gaussfit'
+        SegmentPistonSensor.__init__(self)
+        self._N_SRC = src.N_SRC
+        self.INIT_ALL_ATTRIBUTES = False
+        self.lobe_detection = 'gaussfit'
 
     def init_detector_mask(self, mask_size):
         """
@@ -1409,7 +1403,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
         """
         mask_size_px = mask_size / (self.pixel_scale * constants.RAD2ARCSEC)
         print("Size of DFS detector mask [pix]: %d"%(np.round(mask_size_px)) )
-        N_PX_FRINGE_IMAGE = self.camera.N_PX_IMAGE / self.camera.BIN_IMAGE
+        N_PX_FRINGE_IMAGE = int(self.camera.N_PX_IMAGE / self.camera.BIN_IMAGE)
         scale = mask_size_px / N_PX_FRINGE_IMAGE
         circ = Telescope(N_PX_FRINGE_IMAGE, 1, scale=scale)
         circ_m = circ.f.host(shape=(N_PX_FRINGE_IMAGE,N_PX_FRINGE_IMAGE))
@@ -1475,8 +1469,8 @@ class DispersedFringeSensor(SegmentPistonSensor):
         return p
 
     def get_data_cube(self, data_type='fftlet'):
-	"""
-	Returns the DFS data (either fringe or fftlet images) in cube format
+        """
+        Returns the DFS data (either fringe or fftlet images) in cube format
 
 	Parameters
 	----------
@@ -1487,26 +1481,26 @@ class DispersedFringeSensor(SegmentPistonSensor):
 		Set to "phase" to return the phase on each sub-aperture.
 	"""
 
-	assert data_type=='fftlet' or data_type=='camera' or data_type=='pupil_masks' or data_type=='phase', "data_type should be either 'fftlet', 'camera', or 'pupil_masks', or 'phase'"
+        assert data_type=='fftlet' or data_type=='camera' or data_type=='pupil_masks' or data_type=='phase', "data_type should be either 'fftlet', 'camera', or 'pupil_masks', or 'phase'"
 
-	n_lenslet = self.camera.N_SIDE_LENSLET
+        n_lenslet = self.camera.N_SIDE_LENSLET
 
-	if data_type == 'fftlet':
-	    data = self.fftlet.host()
-	    n_px = self.camera.N_PX_IMAGE
-	elif data_type == 'camera':
-	    data = self.camera.frame.host()
- 	    n_px = self.camera.N_PX_IMAGE/2
-	elif data_type == 'pupil_masks':
-	    data = self.W.amplitude.host()
-	    n_px = (data.shape)[0] / n_lenslet
-	elif data_type == 'phase':
-	    data = self.W.phase.host()
-	    n_px = (data.shape)[0] / n_lenslet
+        if data_type == 'fftlet':
+            data = self.fftlet.host()
+            n_px = self.camera.N_PX_IMAGE
+        elif data_type == 'camera':
+            data = self.camera.frame.host()
+            n_px = int(self.camera.N_PX_IMAGE/2)
+        elif data_type == 'pupil_masks':
+            data = self.W.amplitude.host()
+            n_px = int( (data.shape)[0] / n_lenslet)
+        elif data_type == 'phase':
+            data = self.W.phase.host()
+            n_px = int( (data.shape)[0] / n_lenslet)
 
-    	dataCube = np.zeros((n_px, n_px, self._N_SRC*12))
-    	k = 0
-    	for j in range(n_lenslet):
+        dataCube = np.zeros((n_px, n_px, self._N_SRC*12))
+        k = 0
+        for j in range(n_lenslet):
             for i in range(n_lenslet):
                 dataCube[:,:,k] = data[i*n_px:(i+1)*n_px, j*n_px:(j+1)*n_px]
                 k += 1
@@ -1514,21 +1508,18 @@ class DispersedFringeSensor(SegmentPistonSensor):
             if k == self._N_SRC*12: break
         return dataCube
 
-    def calibrate(self, src, gmt):
+    def calibrate(self, src):
         """
-        Calibrates the lobe detection masks (spsmask).
+        Perform the following calibrations tasks:
+        1) Calibrates the lobe detection masks (spsmask).
+        2) Computes and stores the reference slopen null vector for a flat WF
 
         Parameters
         ----------
         src : Source
              The Source object used for piston sensing
-        gmt : GMT_MX
-             The GMT object
         """
-        gmt.reset()
-        src.reset()
         self.reset()
-        gmt.propagate(src)
         self.propagate(src)
         self.fft()
         dataCube = self.get_data_cube(data_type='fftlet')
@@ -1591,6 +1582,10 @@ class DispersedFringeSensor(SegmentPistonSensor):
                 self.pl_b[k] = pl_b
                 self.pp_m[k] = pp_m
                 self.pp_b[k] = pp_b
+
+        ### Compute reference slope vector (for flat WF)
+        self.analyze(src)
+        self._ref_measurement = self.measurement.copy()
 
     def reset(self):
         """
@@ -1671,20 +1666,27 @@ class DispersedFringeSensor(SegmentPistonSensor):
             A 12 element differential piston vector
         """
         self.analyze(src)
-        p = self.measurement.reshape(-1,12)
-        return p
+        p = self.get_measurement()
+        return p.reshape(-1,12)
+
+    @property
+    def Data(self):
+        return self.get_measurement()
 
     def get_measurement(self):
         """
-        Returns the measurement vector
+        Returns the measurement vector minus reference vector.
         """
-        return self.measurement.ravel()
+        return self.measurement - self._ref_measurement
 
     def get_measurement_size(self):
         """
         Returns the size of the measurement vector
         """
         return self._N_SRC*12
+
+    def get_ref_measurement(self):
+        return self._ref_measurement
 
 class IdealSegmentPistonSensor:
     """
