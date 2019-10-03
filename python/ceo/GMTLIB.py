@@ -313,7 +313,8 @@ class GMT_MX(GmtMirrors):
                 self.onps.reset()
                 self.cl_wfs.analyze(self.cl_gs)
                 slopevec = self.cl_wfs.get_measurement()
-                onpsvec =  self.onps.piston(self.cl_gs).ravel() - self.onps_signal_ref
+                self.onps.analyze(self.cl_gs)
+                onpsvec =  self.onps.get_measurement()
                 AOmeasvec = np.concatenate((slopevec, onpsvec))
                 myAOest1 = 0.7*np.dot(self.R_AO, AOmeasvec)
                 self.M2.modes.a[:,1:] -= myAOest1[0:nzernall].reshape((7,-1))
@@ -963,15 +964,15 @@ class GMT_MX(GmtMirrors):
         return D_M2_MODES
 
 
-    def cloop_calib_init(self, D, nPx, onaxis_wfs_nLenslet=60, sh_thr=0.2, AOtype=None, svd_thr=1e-9, RECdir='./'):
+    def cloop_calib_init(self, Diam, nPx, onaxis_wfs_nLenslet=60, sh_thr=0.2, AOtype=None, svd_thr=1e-9, RECdir='./'):
         assert AOtype == 'NGAOish' or AOtype == 'LTAOish', "AOtype should be either 'NGAOish', or 'LTAOish'"
         self.AOtype = AOtype
 
         #----> ON-AXIS AO SH WFS:
-        d = D/onaxis_wfs_nLenslet
+        d = Diam/onaxis_wfs_nLenslet
         self.cl_wfs = GeometricShackHartmann(onaxis_wfs_nLenslet, d, N_GS=1)
         self.cl_gs = Source("R",zenith=0.,azimuth=0.,
-                rays_box_size=D, rays_box_sampling=nPx, rays_origin=[0.0,0.0,25])
+                rays_box_size=Diam, rays_box_sampling=nPx, rays_origin=[0.0,0.0,25])
 
         # Calibrate SH (valid SAs, slope null vector)
         self.cl_gs.reset()
@@ -981,11 +982,11 @@ class GMT_MX(GmtMirrors):
 
         #----> ON-AXIS SEGMENT PISTON SENSOR:
         if AOtype=='NGAOish':
-            self.onps = IdealSegmentPistonSensor(self.cl_gs, D, nPx, segment='full')
+            self.onps = IdealSegmentPistonSensor(Diam, nPx, segment='full')
             self.cl_gs.reset()
             self.reset()
             self.propagate(self.cl_gs)
-            self.onps_signal_ref = self.onps.piston(self.cl_gs).ravel() #[0:6] # reference signal
+            self.onps.calibrate(self.cl_gs)
 
         #-----> ON-AXIS AO SYSTEM INTERACTION MATRIX CALIBRATIONS
         # 1. SH  - M2 Zernike modes
@@ -997,15 +998,17 @@ class GMT_MX(GmtMirrors):
         print("\n--> on-axis SH:")
         # 1. SH - M2 segment Zernikes IM
         fname = 'IM_SHgeom'+\
-        '_'+self.M2.mirror_modes_type+'_nmode'+str(self.M2.modes.n_mode)+'_SHthr%1.1f.npz'%sh_thr
+        '_'+self.M2.mirror_modes_type.decode()+'_ortho'+str(self.M2.modes.n_mode)+'_S7OC0.344'+\
+        '_SHthr%1.1f.npz'%sh_thr
         fnameFull = os.path.normpath(os.path.join(RECdir,fname))
 
         Zstroke = 20e-9 #m rms
         z_first_mode = 1  # to skip piston
 
         if os.path.isfile(fnameFull) == False:
-            D_M2_Z = self.calibrate(self.cl_wfs, self.cl_gs, mirror="M2", mode=self.M2.mirror_modes_type, stroke=Zstroke,
+            D_M2_Z = self.calibrate(self.cl_wfs, self.cl_gs, mirror="M2", mode=self.M2.mirror_modes_type.decode(), stroke=Zstroke,
                            first_mode=z_first_mode)
+            np.savez(fnameFull, D_M2=D_M2_Z, first_mode=z_first_mode, Stroke=Zstroke)
         else:
             print('Reading file: '+fnameFull)
             ftemp = np.load(fnameFull)
@@ -1036,7 +1039,7 @@ class GMT_MX(GmtMirrors):
             D_M2_Z_PSideal = np.zeros((7,nzernall))
             #Zstroke = 20e-9 #m rms
             #z_first_mode = 1  # to skip some low-order modes
-            #D_M2_Z_PSideal = self.calibrate(self.onps, self.cl_gs, mirror="M2", mode=self.M2.mirror_modes_type, stroke=Zstroke, first_mode=z_first_mode)
+            #D_M2_Z_PSideal = self.calibrate(self.onps, self.cl_gs, mirror="M2", mode=self.M2.mirror_modes_type.decode(), stroke=Zstroke, first_mode=z_first_mode)
             
             print('AO SPS - M2 Segment Zernike IM:')
             print(D_M2_Z_PSideal.shape)
