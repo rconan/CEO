@@ -1406,7 +1406,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
         """
         mask_size_px = mask_size / (self.pixel_scale * constants.RAD2ARCSEC)
         print("Size of DFS detector mask [pix]: %d"%(np.round(mask_size_px)) )
-        N_PX_FRINGE_IMAGE = int(self.camera.N_PX_IMAGE / self.camera.BIN_IMAGE)
+        N_PX_FRINGE_IMAGE = self.camera.N_PX_IMAGE // self.camera.BIN_IMAGE
         scale = mask_size_px / N_PX_FRINGE_IMAGE
         circ = Telescope(N_PX_FRINGE_IMAGE, 1, scale=scale)
         circ_m = circ.f.host(shape=(N_PX_FRINGE_IMAGE,N_PX_FRINGE_IMAGE))
@@ -1493,13 +1493,13 @@ class DispersedFringeSensor(SegmentPistonSensor):
             n_px = self.camera.N_PX_IMAGE
         elif data_type == 'camera':
             data = self.camera.frame.host()
-            n_px = int(self.camera.N_PX_IMAGE/2)
+            n_px = self.camera.N_PX_IMAGE//2
         elif data_type == 'pupil_masks':
             data = self.W.amplitude.host()
-            n_px = int( (data.shape)[0] / n_lenslet)
+            n_px = (data.shape)[0] // n_lenslet
         elif data_type == 'phase':
             data = self.W.phase.host()
-            n_px = int( (data.shape)[0] / n_lenslet)
+            n_px = (data.shape)[0] // n_lenslet
 
         dataCube = np.zeros((n_px, n_px, self._N_SRC*12))
         k = 0
