@@ -313,7 +313,8 @@ class GMT_MX(GmtMirrors):
                 self.onps.reset()
                 self.cl_wfs.analyze(self.cl_gs)
                 slopevec = self.cl_wfs.get_measurement()
-                onpsvec =  self.onps.piston(self.cl_gs).ravel() - self.onps_signal_ref
+                self.onps.analyze(self.cl_gs)
+                onpsvec =  self.onps.get_measurement()
                 AOmeasvec = np.concatenate((slopevec, onpsvec))
                 myAOest1 = 0.7*np.dot(self.R_AO, AOmeasvec)
                 self.M2.modes.a[:,1:] -= myAOest1[0:nzernall].reshape((7,-1))
@@ -963,15 +964,15 @@ class GMT_MX(GmtMirrors):
         return D_M2_MODES
 
 
-    def cloop_calib_init(self, D, nPx, onaxis_wfs_nLenslet=60, sh_thr=0.2, AOtype=None, svd_thr=1e-9, RECdir='./'):
+    def cloop_calib_init(self, Diam, nPx, onaxis_wfs_nLenslet=60, sh_thr=0.2, AOtype=None, svd_thr=1e-9, RECdir='./'):
         assert AOtype == 'NGAOish' or AOtype == 'LTAOish', "AOtype should be either 'NGAOish', or 'LTAOish'"
         self.AOtype = AOtype
 
         #----> ON-AXIS AO SH WFS:
-        d = D/onaxis_wfs_nLenslet
+        d = Diam/onaxis_wfs_nLenslet
         self.cl_wfs = GeometricShackHartmann(onaxis_wfs_nLenslet, d, N_GS=1)
         self.cl_gs = Source("R",zenith=0.,azimuth=0.,
-                rays_box_size=D, rays_box_sampling=nPx, rays_origin=[0.0,0.0,25])
+                rays_box_size=Diam, rays_box_sampling=nPx, rays_origin=[0.0,0.0,25])
 
         # Calibrate SH (valid SAs, slope null vector)
         self.cl_gs.reset()
@@ -981,11 +982,11 @@ class GMT_MX(GmtMirrors):
 
         #----> ON-AXIS SEGMENT PISTON SENSOR:
         if AOtype=='NGAOish':
-            self.onps = IdealSegmentPistonSensor(self.cl_gs, D, nPx, segment='full')
+            self.onps = IdealSegmentPistonSensor(Diam, nPx, segment='full')
             self.cl_gs.reset()
             self.reset()
             self.propagate(self.cl_gs)
-            self.onps_signal_ref = self.onps.piston(self.cl_gs).ravel() #[0:6] # reference signal
+            self.onps.calibrate(self.cl_gs)
 
         #-----> ON-AXIS AO SYSTEM INTERACTION MATRIX CALIBRATIONS
         # 1. SH  - M2 Zernike modes
@@ -997,15 +998,17 @@ class GMT_MX(GmtMirrors):
         print("\n--> on-axis SH:")
         # 1. SH - M2 segment Zernikes IM
         fname = 'IM_SHgeom'+\
-        '_'+self.M2.mirror_modes_type+'_nmode'+str(self.M2.modes.n_mode)+'_SHthr%1.1f.npz'%sh_thr
+        '_'+self.M2.mirror_modes_type.decode()+'_ortho'+str(self.M2.modes.n_mode)+'_S7OC0.344'+\
+        '_SHthr%1.1f.npz'%sh_thr
         fnameFull = os.path.normpath(os.path.join(RECdir,fname))
 
         Zstroke = 20e-9 #m rms
         z_first_mode = 1  # to skip piston
 
         if os.path.isfile(fnameFull) == False:
-            D_M2_Z = self.calibrate(self.cl_wfs, self.cl_gs, mirror="M2", mode=self.M2.mirror_modes_type, stroke=Zstroke,
+            D_M2_Z = self.calibrate(self.cl_wfs, self.cl_gs, mirror="M2", mode=self.M2.mirror_modes_type.decode(), stroke=Zstroke,
                            first_mode=z_first_mode)
+            np.savez(fnameFull, D_M2=D_M2_Z, first_mode=z_first_mode, Stroke=Zstroke)
         else:
             print('Reading file: '+fnameFull)
             ftemp = np.load(fnameFull)
@@ -1036,7 +1039,7 @@ class GMT_MX(GmtMirrors):
             D_M2_Z_PSideal = np.zeros((7,nzernall))
             #Zstroke = 20e-9 #m rms
             #z_first_mode = 1  # to skip some low-order modes
-            #D_M2_Z_PSideal = self.calibrate(self.onps, self.cl_gs, mirror="M2", mode=self.M2.mirror_modes_type, stroke=Zstroke, first_mode=z_first_mode)
+            #D_M2_Z_PSideal = self.calibrate(self.onps, self.cl_gs, mirror="M2", mode=self.M2.mirror_modes_type.decode(), stroke=Zstroke, first_mode=z_first_mode)
             
             print('AO SPS - M2 Segment Zernike IM:')
             print(D_M2_Z_PSideal.shape)
@@ -1386,11 +1389,8 @@ class DispersedFringeSensor(SegmentPistonSensor):
     Source : a class for astronomical sources
     cuFloatArray : an interface class between GPU host and device data for floats
     """
-    def __init__(self, M1, src, dispersion=5.0, field_of_view=3.0,nyquist_factor=1.0):
-        SegmentPistonSensor.__init__(self, M1, src,
-                                     dispersion=dispersion,
-                                     field_of_view=field_of_view,
-                                     nyquist_factor=nyquist_factor)
+    def __init__(self, M1, src, dispersion=5.0, field_of_view=3.0,nyquist_factor=1.0,BIN_IMAGE=2,MALLOC_DFT=True):
+        SegmentPistonSensor.__init__(self)
         self._N_SRC = src.N_SRC
         self.INIT_ALL_ATTRIBUTES = False
         self.lobe_detection = 'gaussfit'
@@ -1406,7 +1406,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
         """
         mask_size_px = mask_size / (self.pixel_scale * constants.RAD2ARCSEC)
         print("Size of DFS detector mask [pix]: %d"%(np.round(mask_size_px)) )
-        N_PX_FRINGE_IMAGE = self.camera.N_PX_IMAGE / self.camera.BIN_IMAGE
+        N_PX_FRINGE_IMAGE = int(self.camera.N_PX_IMAGE / self.camera.BIN_IMAGE)
         scale = mask_size_px / N_PX_FRINGE_IMAGE
         circ = Telescope(N_PX_FRINGE_IMAGE, 1, scale=scale)
         circ_m = circ.f.host(shape=(N_PX_FRINGE_IMAGE,N_PX_FRINGE_IMAGE))
@@ -1475,13 +1475,16 @@ class DispersedFringeSensor(SegmentPistonSensor):
         """
         Returns the DFS data (either fringe or fftlet images) in cube format
 
-        Parameters
-        ----------
-        data_type : string
-                Set to "camera" to return fringes; set to "fftlet" to return fftlet images; default: fftlet
-        """
+	Parameters
+	----------
+	data_type : string.  (default: fftlet)
+		Set to "camera" to return fringes; 
+		Set to "fftlet" to return fftlet images;
+		Set to "pupil_masks" to return the sub-aperture masks;
+		Set to "phase" to return the phase on each sub-aperture.
+	"""
 
-        assert data_type == 'fftlet' or data_type == 'camera' or data_type == 'pupil_masks', "data_type should be either 'fftlet', 'camera', or 'pupil_masks'"
+        assert data_type=='fftlet' or data_type=='camera' or data_type=='pupil_masks' or data_type=='phase', "data_type should be either 'fftlet', 'camera', or 'pupil_masks', or 'phase'"
 
         n_lenslet = self.camera.N_SIDE_LENSLET
 
@@ -1490,10 +1493,13 @@ class DispersedFringeSensor(SegmentPistonSensor):
             n_px = self.camera.N_PX_IMAGE
         elif data_type == 'camera':
             data = self.camera.frame.host()
-            n_px = self.camera.N_PX_IMAGE/2
+            n_px = int(self.camera.N_PX_IMAGE/2)
         elif data_type == 'pupil_masks':
             data = self.W.amplitude.host()
-            n_px = (data.shape)[0] / n_lenslet
+            n_px = int( (data.shape)[0] / n_lenslet)
+        elif data_type == 'phase':
+            data = self.W.phase.host()
+            n_px = int( (data.shape)[0] / n_lenslet)
 
         dataCube = np.zeros((n_px, n_px, self._N_SRC*12))
         k = 0
@@ -1505,21 +1511,18 @@ class DispersedFringeSensor(SegmentPistonSensor):
             if k == self._N_SRC*12: break
         return dataCube
 
-    def calibrate(self, src, gmt):
+    def calibrate(self, src):
         """
-        Calibrates the lobe detection masks (spsmask).
+        Perform the following calibrations tasks:
+        1) Calibrates the lobe detection masks (spsmask).
+        2) Computes and stores the reference slopen null vector for a flat WF
 
         Parameters
         ----------
         src : Source
              The Source object used for piston sensing
-        gmt : GMT_MX
-             The GMT object
         """
-        gmt.reset()
-        src.reset()
         self.reset()
-        gmt.propagate(src)
         self.propagate(src)
         self.fft()
         dataCube = self.get_data_cube(data_type='fftlet')
@@ -1582,6 +1585,10 @@ class DispersedFringeSensor(SegmentPistonSensor):
                 self.pl_b[k] = pl_b
                 self.pp_m[k] = pp_m
                 self.pp_b[k] = pp_b
+
+        ### Compute reference slope vector (for flat WF)
+        self.analyze(src)
+        self._ref_measurement = self.measurement.copy()
 
     def reset(self):
         """
@@ -1662,20 +1669,27 @@ class DispersedFringeSensor(SegmentPistonSensor):
             A 12 element differential piston vector
         """
         self.analyze(src)
-        p = self.measurement.reshape(-1,12)
-        return p
+        p = self.get_measurement()
+        return p.reshape(-1,12)
+
+    @property
+    def Data(self):
+        return self.get_measurement()
 
     def get_measurement(self):
         """
-        Returns the measurement vector
+        Returns the measurement vector minus reference vector.
         """
-        return self.measurement.ravel()
+        return self.measurement - self._ref_measurement
 
     def get_measurement_size(self):
         """
         Returns the size of the measurement vector
         """
         return self._N_SRC*12
+
+    def get_ref_measurement(self):
+        return self._ref_measurement
 
 class IdealSegmentPistonSensor:
     """
