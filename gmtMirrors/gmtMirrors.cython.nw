@@ -1524,6 +1524,7 @@ cdef class DistanceEdgeSensors(LateralEdgeSensors):
     cdef:
         cuDoubleArray _d_
         readonly double[:,::1] d0
+        public float error_1sig_per_m
 @
 \subsection{PYX file}
 \label{sec:pyx-file-5}
@@ -1552,11 +1553,12 @@ cdef class DistanceEdgeSensors(LateralEdgeSensors):
     --------
     cuDoubleArray : an interface class between GPU host and device data for doubles
     """
-    def __init__(self,GMT_M1 mirror, rtd height=0.25):
+    def __init__(self,GMT_M1 mirror, rtd height=0.25, float error_1sig_per_m=0.0):
         super().__init__(mirror, height)
         self._d_ = cuDoubleArray(shape=(self._c_lateral_edge_sensors.N_DATA,1),dev_malloc=False)
         self._d_._c_gpu.dev_data = self._c_lateral_edge_sensors.d__d
         self.d0 = np.zeros((self._c_lateral_edge_sensors.N_DATA,1))
+        self.error_1sig_per_m = error_1sig_per_m
 
     def calibration(self):
         self.data()
@@ -1564,9 +1566,12 @@ cdef class DistanceEdgeSensors(LateralEdgeSensors):
 
     property d:
         def __get__(self):
-            self.data()
-            return self._d_.host()-self.d0
-
+            #self.data()
+            if self.error_1sig_per_m>0:
+                return self._d_.host()-self.d0 + \
+                    np.random.randn(self._c_lateral_edge_sensors.N_DATA,1)*self.error_1sig_per_m*self._d_.host()
+            else:
+                return self._d_.host()-self.d0
 @ 
 
 \subsection{TT7}
