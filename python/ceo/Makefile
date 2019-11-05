@@ -1,8 +1,10 @@
 include ../../common.mk
 
+PYV=$(shell python -c "import sys;t='{v[0]}.{v[1]}'.format(v=list(sys.version_info[:2]));sys.stdout.write(t)")
+
 .pyx.so:
-	cython --directive embedsignature=True --cplus $< -o  $<.cu
-	$(NVCC) -w $(INCS) -I$(PYTHONPATH)/include/python3.6m -I$(PYTHONPATH)/lib/python3.6/site-packages/numpy/core/include -lineinfo -Xcompiler '-fPIC,-pthread,-O3' -o  $<.o -c  $<.cu
+	cython -2 --directive embedsignature=True --cplus $< -o  $<.cu
+	$(NVCC) -w $(INCS) -I$(PYTHONPATH)/include/python$(PYV)m -I$(PYTHONPATH)/lib/python$(PYV)/site-packages/numpy/core/include -lineinfo -Xcompiler '-fPIC,-pthread,-O3' -o  $<.o -c  $<.cu
 	$(NVCC) -shared $<.o -o $@ $(LIBS)
 
 aco:
