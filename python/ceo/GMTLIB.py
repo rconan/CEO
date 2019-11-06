@@ -410,8 +410,8 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                     D[:,idx] = pushpull( Ty )
                     idx += 1
-                    #if kSeg<7:
-                    D[:,idx] = pushpull( Tz )
+                    if kSeg<7:
+                        D[:,idx] = pushpull( Tz )
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="Rxyz":
