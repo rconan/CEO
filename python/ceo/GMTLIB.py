@@ -398,7 +398,7 @@ class GMT_MX(GmtMirrors):
                 D[:,0] = pushpull( lambda x : self.M1.global_tiptilt(x,0) )
                 D[:,1] = pushpull( lambda x : self.M1.global_tiptilt(0,x) )
             if mode=="Txyz":
-                D = np.zeros((wfs.get_measurement_size(),3*7))
+                D = np.zeros((wfs.get_measurement_size(),3*6+2))
                 idx = 0
                 Tx = lambda x : self.M1.update(origin=[x,0,0],euler_angles=[0,0,0],idx=kSeg)
                 Ty = lambda x : self.M1.update(origin=[0,x,0],euler_angles=[0,0,0],idx=kSeg)
@@ -412,7 +412,7 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                     if kSeg<7:
                         D[:,idx] = pushpull( Tz )
-                    idx += 1
+                        idx += 1
                 sys.stdout.write("\n")
             if mode=="Rxyz":
                 D = np.zeros((wfs.get_measurement_size(),3*7-1))
@@ -841,7 +841,7 @@ class GMT_MX(GmtMirrors):
             Q3clps = np.sum(Q3,axis=2)
             Q3clps = Q3clps>1
             
-            VLs = [ np.logical_and(X,~Q3clps) for X in Q]
+            VLs = [ np.logical_and(X,~Q3clps).reshape(-1,1) for X in Q]
             n_valids = [_.sum() for _ in VLs]
             print(f"# of WFS valid & decoupled slopes: sum{n_valids}={np.sum(n_valids)}")
             D_sr = [ D_s[k][VLs[k].ravel(),:] for k in range(7) ]
