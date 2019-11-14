@@ -398,7 +398,7 @@ class GMT_MX(GmtMirrors):
                 D[:,0] = pushpull( lambda x : self.M1.global_tiptilt(x,0) )
                 D[:,1] = pushpull( lambda x : self.M1.global_tiptilt(0,x) )
             if mode=="Txyz":
-                D = np.zeros((wfs.get_measurement_size(),3*6+2))
+                D = np.zeros((wfs.get_measurement_size(),3*7))
                 idx = 0
                 Tx = lambda x : self.M1.update(origin=[x,0,0],euler_angles=[0,0,0],idx=kSeg)
                 Ty = lambda x : self.M1.update(origin=[0,x,0],euler_angles=[0,0,0],idx=kSeg)
@@ -410,9 +410,9 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                     D[:,idx] = pushpull( Ty )
                     idx += 1
-                    if kSeg<7:
-                        D[:,idx] = pushpull( Tz )
-                        idx += 1
+                    #if kSeg<7:
+                    D[:,idx] = pushpull( Tz )
+                    idx += 1
                 sys.stdout.write("\n")
             if mode=="Rxyz":
                 D = np.zeros((wfs.get_measurement_size(),3*7-1))
