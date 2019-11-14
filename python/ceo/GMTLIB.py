@@ -746,6 +746,7 @@ class GMT_MX(GmtMirrors):
                        calibrationVaultKwargs={'n_threshold':None,'insert_zeros': None}):
         gs.reset()
         self.reset()
+        wfs.reset()
         self.propagate(gs)
         if stroke is None:
             stroke = [1e-6]*5
@@ -767,7 +768,15 @@ class GMT_MX(GmtMirrors):
             return CalibrationVault([D],**calibrationVaultKwargs)
         elif decoupled:
             wfs.calibrate(gs,0.0)
-            flux = wfs.valid_lenslet.f.host()
+            try:
+                gs.reset()
+                self.reset()
+                wfs.reset()
+                self.propagate(gs)
+                wfs.analyze(gs)
+                flux = wfs.flux.host()
+            except AttributeError:
+                flux = wfs.valid_lenslet.f.host()
             D = []
             if withM1:
                 D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
@@ -817,7 +826,9 @@ class GMT_MX(GmtMirrors):
                             for k in range(7)]
 
             max_flux = flux.max()
+            print(f'Max. flux: {max_flux}')
             flux_filter = flux>fluxThreshold*max_flux
+            print(f"# of WFS valid lenslet based on flux threshold ({fluxThreshold:.2f}): {flux_filter.sum()}")
             flux_filter2 = np.tile(flux_filter,(2,1))
 
             Qxy = [ np.reshape( np.sum(np.abs(D_s[k])>1e-2*np.max(np.abs(D_s[k])),axis=1)!=0 ,flux_filter2.shape ) for k in range(7) ]
@@ -829,7 +840,9 @@ class GMT_MX(GmtMirrors):
             Q3clps = np.sum(Q3,axis=2)
             Q3clps = Q3clps>1
             
-            VLs = [ np.logical_and(X,~Q3clps) for X in Q]
+            VLs = [ np.logical_and(X,~Q3clps).reshape(-1,1) for X in Q]
+            n_valids = [_.sum() for _ in VLs]
+            print(f"# of WFS valid & decoupled slopes: sum{n_valids}={np.sum(n_valids)}")
             D_sr = [ D_s[k][VLs[k].ravel(),:] for k in range(7) ]
 
             if filterMirrorRotation:

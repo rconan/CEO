@@ -352,13 +352,13 @@ void imaging::propagate_cpx(source *src) {
   dim3 blockDim(16,16);
   gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
   complexAmplitude LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
-					      src->wavefront.amplitude,
-					      src->wavefront.phase,
+                                              src->wavefront.amplitude,
+                                              src->wavefront.phase,
                                               src->wavenumber(),
-					      N_PX_PUPIL, N_PX_IMAGE, M,
-					      N_SIDE_LENSLET, src->dev_ptr,
+                                              N_PX_PUPIL, N_PX_IMAGE, M,
+                                              N_SIDE_LENSLET, src->dev_ptr,
                                               pixel_scale, d__theta_x, d__theta_y,
-					      absolute_pointing,1);
+                                              absolute_pointing,1);
 
   HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_FORWARD),
                       "Unable to execute plan forward FT");
@@ -372,29 +372,33 @@ void imaging::propagate(source *src) {
   int M = N_PX_IMAGE/N_PX_CAMERA;
   /* if ( (pixel_scale>0) && (zenith<0) ) */
   /*   set_pointing_direction(0.0,0.0); */
-  /*
+
   if (pixel_scale>0 ) {
-      printf(" pixel scale: %.2E\n",pixel_scale);
-  float dx, dy, dx_int, dy_int;
-  <<angular offset>>
-  printf("ANGULAR OFFSET:\n");
-  printf(" . x: %3.0f + %4.3f\n",dx_int,dx);
-  printf(" . y: %3.0f + %4.3f\n",dy_int,dy);
+      pixel_scale /= BIN_IMAGE;
+      //printf(" pixel scale: %.2E\n",pixel_scale);
+      /*
+      float dx, dy, dx_int, dy_int;
+      int iSource=0;
+      <<angular offset>>
+      printf("ANGULAR OFFSET:\n");
+      printf(" . x: %3.0f + %4.3f\n",dx_int,dx);
+      printf(" . y: %3.0f + %4.3f\n",dy_int,dy);
+      */
     }
-  */
+
   //absolute_pointing = 1;
   //fprintf(stdout,"Absolute pointing: %d\n",absolute_pointing);
   dim3 gridDim;
   dim3 blockDim(16,16);
   gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
   complexAmplitude LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
-					      src->wavefront.amplitude,
-					      src->wavefront.phase,
+                                              src->wavefront.amplitude,
+                                              src->wavefront.phase,
                                               src->wavenumber(),
-					      N_PX_PUPIL, N_PX_IMAGE, M,
-					      N_SIDE_LENSLET, src->dev_ptr,
+                                              N_PX_PUPIL, N_PX_IMAGE, M,
+                                              N_SIDE_LENSLET, src->dev_ptr,
                                               pixel_scale, d__theta_x, d__theta_y,
-					      absolute_pointing,1);
+                                              absolute_pointing,1);
   <<propagation (FFT, intensity and binning)>>
 }
 @ or, in the case of no overlapping lenslet, the [[propagateNoOverlap]] routine:
@@ -406,13 +410,13 @@ void imaging::propagateNoOverlap(source *src) {
   dim3 blockDim(16,16);
   gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
   complexAmplitudeNoOverlap LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
-					      src->wavefront.amplitude,
-					      src->wavefront.phase,
-                                              src->wavenumber(),
-					      N_PX_PUPIL, N_PX_IMAGE, M,
-					      N_SIDE_LENSLET, src->dev_ptr,
-                                              pixel_scale, d__theta_x, d__theta_y,
-					      absolute_pointing,1);
+                                                       src->wavefront.amplitude,
+                                                       src->wavefront.phase,
+                                                       src->wavenumber(),
+                                                       N_PX_PUPIL, N_PX_IMAGE, M,
+                                                       N_SIDE_LENSLET, src->dev_ptr,
+                                                       pixel_scale, d__theta_x, d__theta_y,
+                                                       absolute_pointing,1);
 <<imaging CUFFT execution>>
 <<intensity normalization>>
 int N, Nb;
@@ -424,11 +428,11 @@ gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
                 N_SOURCE);
 binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
                                    src->dev_ptr,
-				   pixel_scale, d__theta_x, d__theta_y,
-				   absolute_pointing,
+                                   pixel_scale, d__theta_x, d__theta_y,
+                                   absolute_pointing,
                                    N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
-    ++N_FRAME;
- }
+++N_FRAME;
+}
 @ or, in the case of no overlapping lenslet and no intensity normalization, the [[propagateNoOverlap]] routine:
 \index{imaging!imaging!propagateNoOverlapBare}
 <<propagation>>=
@@ -455,11 +459,11 @@ gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
                 N_SOURCE);
 binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
                                    src->dev_ptr,
-				   pixel_scale, d__theta_x, d__theta_y,
-				   absolute_pointing,
+                                   pixel_scale, d__theta_x, d__theta_y,
+                                   absolute_pointing,
                                    N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
-    ++N_FRAME;
- }
+++N_FRAME;
+}
 @ a special case is the dispersed segment piston sensor:
 \index{imaging!imaging!propagateNoOverlapSPS}
 <<propagation>>=
@@ -494,11 +498,11 @@ if (src->fwhm>0) {
 }
 binning LLL gridDim , blockDim RRR(d__frame, d__wave_PUPIL, N_DFT,
                                    src->dev_ptr,
-				   pixel_scale, d__theta_x, d__theta_y,
-				   absolute_pointing,
+                                   pixel_scale, d__theta_x, d__theta_y,
+                                   absolute_pointing,
                                    N_PX_IMAGE, N_PX_CAMERA, N_SIDE_LENSLET);
-    ++N_FRAME;
- }
+++N_FRAME;
+}
 @ another one is the TT7
 \index{imaging!imaging!propagateTT7}
 <<propagation>>=
