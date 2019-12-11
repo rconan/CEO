@@ -1078,7 +1078,7 @@ class GMT_MX(GmtMirrors):
 ### PSSN
 class PSSn(object):
 
-    def __init__(self,r0=16e-2,L0=25.0,zenith_distance=30):
+    def __init__(self,r0=16e-2,L0=25.0,zenith_distance=30,pssn_ref='on-axis'):
         self.r0 = r0
         self.r0_wavelength = 0.5e-6
         self.L0 = L0
@@ -1087,8 +1087,9 @@ class PSSn(object):
         self.AW0 = None
         self.AW = None
         self.N = 0
+        self.pssn_ref = pssn_ref
     
-    def __call__(self, gmt, src, sigma=0, full_opd=False, reset=True):
+    def __call__(self, gmt, src, sigma=0, full_opd=False, reset=True, reset_AW0=False):
         """
         Computes the PSSn corresponding to the current state of the telescope
 
@@ -1128,11 +1129,19 @@ class PSSn(object):
             rho = np.hypot(x,y)
             self.C = phaseStats.atmOTF(rho,_r0_,self.L0)
 
-        if self.AW0 is None:
-            _src_ = Source(src.band.decode(),
-                           rays_box_size=src.rays.L,
-                           rays_box_sampling=src.rays.N_L,
-                           rays_origin=[0,0,25])
+        if self.AW0 is None or reset_AW0:
+            if self.pssn_ref=='on-axis':
+                _src_ = Source(src.band.decode(),
+                               rays_box_size=src.rays.L,
+                               rays_box_sampling=src.rays.N_L,
+                               rays_origin=[0,0,25])
+            if self.pssn_ref=='off-axis':
+                _src_ = Source(src.band.decode(),
+                               zenith = src.zenith,
+                               azimuth = src.azimuth,
+                               rays_box_size=src.rays.L,
+                               rays_box_sampling=src.rays.N_L,
+                               rays_origin=[0,0,25])
             state = gmt.state
             pez = gmt.pointing_error_zenith
             pea = gmt.pointing_error_azimuth
