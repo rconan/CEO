@@ -4,6 +4,7 @@ import numpy as np
 import numpy.linalg as LA
 from scipy.optimize import brenth, leastsq
 from scipy.signal import fftconvolve
+from scipy.linalg import block_diag
 from skimage.feature import blob_log
 from scipy.ndimage.interpolation import rotate
 from scipy.interpolate import griddata, LinearNDInterpolator, NearestNDInterpolator
@@ -20,10 +21,46 @@ from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
     constants, Telescope, cuFloatArray, cuDoubleArray, Aperture,\
     Transform_to_S, Intersect, Reflect, Refract, Transform_to_R, ZernikeS, ascupy
 
+
+def __mean_slope_removal__(valid):
+    f = np.hstack(valid)
+    NN = 0
+    n = []
+    for k in range(7):
+        n += [np.array([_.sum() for _ in np.split(f[:,k],6)])]
+        N = n[-1].sum()
+        NN+=N
+    n = np.vstack(n)
+    N = n.sum(1)
+    Hx = []
+    Hy = []
+    for k in range(3):
+        _Hx = []
+        _Hy = []
+        for l in range(7):
+            __Hx = np.split(np.zeros(N[l]),np.cumsum(n[l,:])[:-1])
+            __Hy = np.split(np.zeros(N[l]),np.cumsum(n[l,:])[:-1])
+            __Hx[k] = __Hx[k]+1 
+            __Hy[k+3] = __Hy[k+3]+1 
+            _Hx += [np.hstack(__Hx)]
+            _Hy += [np.hstack(__Hy)]
+        Hx += [np.hstack(_Hx)]
+        Hy += [np.hstack(_Hy)]
+    H = np.vstack([block_diag(Hx),block_diag(Hy)]).T
+    L = H@np.diag(1/n.sum(0))@H.T
+    R = np.eye(L.shape[0])-L
+    return R
+
 class CalibrationVault(object):
 
-    def __init__(self,D,valid=None,n_threshold=None,threshold=None,insert_zeros = None,remove_modes=None):
+    def __init__(self,D,valid=None,R=None,
+                 n_threshold=None,threshold=None,
+                 insert_zeros = None,remove_modes=None,
+                 mean_slope_removal=False):
         self.D = D
+        if mean_slope_removal:
+            self.R = __mean_slope_removal__(valid)
+            self.D[0] = self.R@D[0]
         if n_threshold is None:
             self._n_threshold_ = [0]*len(D)
         else:
@@ -41,6 +78,8 @@ class CalibrationVault(object):
             self.D = [np.delete(X,Y,axis=1) for X,Y in zip(self.D,remove_modes)]
         self.UsVT = [LA.svd(X,full_matrices=False) for X in self.D]
         self.M = [ self.__recon__(X,Y,Z) for X,Y,Z in zip(self.UsVT,self._n_threshold_,self.zeroIdx) ]
+        if mean_slope_removal:
+            self.M[0] = self.M[0]@self.R
             
     def __recon__(self,_UsVT_,_n_threshold_,zeroIdx):
         iS = 1./_UsVT_[1]
@@ -77,7 +116,10 @@ class CalibrationVault(object):
         if self.valid is None:
             return np.concatenate([ np.dot(X,s) for X in self.M ])
         else:
-            return np.concatenate([ np.dot(X,s[Y.ravel()]) for X,Y in zip(self.M,self.valid) ])
+            if len(self.M)==1 and len(self.valid)==7:
+                return np.dot(self.M[0],np.hstack([s[Y.ravel()] for Y in self.valid]))
+            else:
+                return np.concatenate([ np.dot(X,s[Y.ravel()]) for X,Y in zip(self.M,self.valid) ])
 
 class GMT_MX(GmtMirrors):
     """
@@ -743,7 +785,7 @@ class GMT_MX(GmtMirrors):
     def AGWS_calibrate(self,wfs,gs,stroke=None,coupled=False,decoupled=False,
                        withM1=True,withM2=True,
                        fluxThreshold=0.0, filterMirrorRotation=True,
-                       includeBM=True, includeMount=False,
+                       includeBM=True, includeMount=False, R=None,
                        calibrationVaultKwargs={'n_threshold':None,'insert_zeros': None}):
         gs.reset()
         self.reset()
@@ -751,117 +793,112 @@ class GMT_MX(GmtMirrors):
         self.propagate(gs)
         if stroke is None:
             stroke = [1e-6]*5
-        if coupled:
-            wfs.calibrate(gs,fluxThreshold)
+
+        wfs.calibrate(gs,0.0)
+        try:
+            gs.reset()
+            self.reset()
+            wfs.reset()
+            self.propagate(gs)
+            wfs.analyze(gs)
+            flux = wfs.flux.host()
+        except AttributeError:
             flux = wfs.valid_lenslet.f.host()
-            D = []
-            if withM1:
-                D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
-                D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
-            if withM2:
-                D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
-                D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
-            if includeBM:
-                D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=stroke[4]) )
-            if includeMount:
-                D.append( self.calibrate(gwfs,gs,mirror='MOUNT',mode='pointing',stroke=ceo.constants.ARCSEC2RAD) )
-            D  = np.concatenate(D,axis=1)
-            return CalibrationVault([D],**calibrationVaultKwargs)
-        elif decoupled:
-            wfs.calibrate(gs,0.0)
-            try:
-                gs.reset()
-                self.reset()
-                wfs.reset()
-                self.propagate(gs)
-                wfs.analyze(gs)
-                flux = wfs.flux.host()
-            except AttributeError:
-                flux = wfs.valid_lenslet.f.host()
-            D = []
-            if withM1:
-                D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
-            if withM2:
-                D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
-            if withM1:
-                D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
-            if withM2:
-                D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
-            if includeBM:
-                D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=stroke[4]) )
-                if not withM1 and withM2:
-                    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
-                                            D[1][:,k*3:k*3+3],
-                                            D[2][:,k*self.M1.modes.n_mode:(k+1)*self.M1.modes.n_mode]],axis=1) 
-                            for k in range(7)]
-                elif not withM2 and withM1:
-                    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
-                                            D[1][:,k*3:k*3+3],
-                                            D[2][:,k*self.M1.modes.n_mode:(k+1)*self.M1.modes.n_mode]],axis=1) 
-                            for k in range(7)]
-                elif withM1 and withM2:
-                    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
-                                            D[2][:,k*3:k*3+3],
-                                            D[1][:,k*3:k*3+3],
-                                            D[3][:,k*3:k*3+3],
-                                            D[4][:,k*self.M1.modes.n_mode:(k+1)*self.M1.modes.n_mode]],axis=1) 
-                            for k in range(7)]
-                else:
-                    D_s = [ np.concatenate([D[0][:,k*self.M1.modes.n_mode:(k+1)*self.M1.modes.n_mode]],axis=1) 
-                            for k in range(7)]
-                    
+        D = []
+        if withM1:
+            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Txyz',stroke=stroke[2]) )
+        if withM2:
+            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Txyz',stroke=stroke[3]) )
+        if withM1:
+            D.append( self.calibrate(wfs,gs,mirror='M1',mode='Rxyz',stroke=stroke[0]) )
+        if withM2:
+            D.append( self.calibrate(wfs,gs,mirror='M2',mode='Rxyz',stroke=stroke[1]) )
+        #if includeBM:
+        #    D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=stroke[4]) )
+        #if includeMount:
+        #    D.append( self.calibrate(gwfs,gs,mirror='MOUNT',mode='pointing',stroke=ceo.constants.ARCSEC2RAD) )
+        if includeBM:
+            D.append( self.calibrate(wfs,gs,mirror='M1',mode='bending modes',stroke=stroke[4]) )
+            if R is not None:
+                D = [R@_ for _ in D]
+            if not withM1 and withM2:
+                D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                        D[1][:,k*3:k*3+3],
+                                        D[2][:,k*self.M1.modes.n_mode:(k+1)*self.M1.modes.n_mode]],axis=1) 
+                        for k in range(7)]
+            elif not withM2 and withM1:
+                D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                        D[1][:,k*3:k*3+3],
+                                        D[2][:,k*self.M1.modes.n_mode:(k+1)*self.M1.modes.n_mode]],axis=1) 
+                        for k in range(7)]
+            elif withM1 and withM2:
+                D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                        D[2][:,k*3:k*3+3],
+                                        D[1][:,k*3:k*3+3],
+                                        D[3][:,k*3:k*3+3],
+                                        D[4][:,k*self.M1.modes.n_mode:(k+1)*self.M1.modes.n_mode]],axis=1) 
+                        for k in range(7)]
             else:
-                if not withM1:
-                    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
-                                            D[1][:,k*3:k*3+3]],axis=1) 
-                            for k in range(7)]
-                elif not withM2:
-                    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
-                                            D[1][:,k*3:k*3+3]],axis=1) 
-                            for k in range(7)]
-                else:
-                    D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
-                                            D[2][:,k*3:k*3+3],
-                                            D[1][:,k*3:k*3+3],
-                                            D[3][:,k*3:k*3+3]],axis=1) 
-                            for k in range(7)]
+                D_s = [ np.concatenate([D[0][:,k*self.M1.modes.n_mode:(k+1)*self.M1.modes.n_mode]],axis=1) 
+                        for k in range(7)]
+                
+        else:
+            if R is not None:
+                D = [R@_ for _ in D]
+            if not withM1:
+                D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                        D[1][:,k*3:k*3+3]],axis=1) 
+                        for k in range(7)]
+            elif not withM2:
+                D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                        D[1][:,k*3:k*3+3]],axis=1) 
+                        for k in range(7)]
+            else:
+                D_s = [ np.concatenate([D[0][:,k*3:k*3+3],
+                                        D[2][:,k*3:k*3+3],
+                                        D[1][:,k*3:k*3+3],
+                                        D[3][:,k*3:k*3+3]],axis=1) 
+                        for k in range(7)]
+        max_flux = flux.max()
+        print(f'Max. flux: {max_flux}')
+        flux_filter = flux>fluxThreshold*max_flux
+        print(f"# of WFS valid lenslet based on flux threshold ({fluxThreshold:.2f}): {flux_filter.sum()}")
+        flux_filter2 = np.tile(flux_filter,(2,1))
 
-            max_flux = flux.max()
-            print(f'Max. flux: {max_flux}')
-            flux_filter = flux>fluxThreshold*max_flux
-            print(f"# of WFS valid lenslet based on flux threshold ({fluxThreshold:.2f}): {flux_filter.sum()}")
-            flux_filter2 = np.tile(flux_filter,(2,1))
-
-            Qxy = [ np.reshape( np.sum(np.abs(D_s[k])>1e-2*np.max(np.abs(D_s[k])),axis=1)!=0 ,flux_filter2.shape ) for k in range(7) ]
+        Qxy = [ np.reshape( np.sum(np.abs(D_s[k])>1e-2*np.max(np.abs(D_s[k])),axis=1)!=0 ,flux_filter2.shape ) for k in range(7) ]
  
 
-            Q = [ np.logical_and(X,flux_filter2) for X in Qxy ]
+        Q = [ np.logical_and(X,flux_filter2) for X in Qxy ]
 
-            Q3 = np.dstack(Q).reshape(flux_filter2.shape + (7,))
-            Q3clps = np.sum(Q3,axis=2)
-            Q3clps = Q3clps>1
-            
-            VLs = [ np.logical_and(X,~Q3clps).reshape(-1,1) for X in Q]
-            n_valids = [_.sum() for _ in VLs]
-            print(f"# of WFS valid & decoupled slopes: sum{n_valids}={np.sum(n_valids)}")
-            D_sr = [ D_s[k][VLs[k].ravel(),:] for k in range(7) ]
+        Q3 = np.dstack(Q).reshape(flux_filter2.shape + (7,))
+        Q3clps = np.sum(Q3,axis=2)
+        Q3clps = Q3clps>1
+        
+        VLs = [ np.logical_and(X,~Q3clps).reshape(-1,1)  for X in Q]
+        n_valids = [_.sum() for _ in VLs]
+        print(f"# of WFS valid & decoupled slopes: sum{n_valids}={np.sum(n_valids)}")
+        D_sr = [ D_s[k][VLs[k].ravel(),:] for k in range(7) ]
 
-            if filterMirrorRotation:
-                for k in range(6):
 
-                    U,s,VT = LA.svd(D_sr[k][:,:6],full_matrices=False)
+        if filterMirrorRotation:
+            for k in range(6):
+
+                U,s,VT = LA.svd(D_sr[k][:,:6],full_matrices=False)
+                U[:,-1] = 0
+                s[-1]   = 0
+                D_sr[k][:,:6] = np.dot(U,np.dot(np.diag(s),VT))
+
+                if D_sr[k].shape[1]>6:
+                    U,s,VT = LA.svd(D_sr[k][:,6:12],full_matrices=False)
                     U[:,-1] = 0
                     s[-1]   = 0
-                    D_sr[k][:,:6] = np.dot(U,np.dot(np.diag(s),VT))
+                    D_sr[k][:,6:12] = np.dot(U,np.dot(np.diag(s),VT))
 
-                    if D_sr[k].shape[1]>6:
-                        U,s,VT = LA.svd(D_sr[k][:,6:12],full_matrices=False)
-                        U[:,-1] = 0
-                        s[-1]   = 0
-                        D_sr[k][:,6:12] = np.dot(U,np.dot(np.diag(s),VT))
-    
-            return CalibrationVault(D_sr, valid=VLs,**calibrationVaultKwargs)
 
+        if coupled:
+            return CalibrationVault([block_diag(*D_sr)],valid=VLs,**calibrationVaultKwargs)
+        elif decoupled:
+            return CalibrationVault(D_sr, valid=VLs,R=R,**calibrationVaultKwargs)
         else:
             raise ValueError('"coupled" or "decoupled" must be set to True!')
 
