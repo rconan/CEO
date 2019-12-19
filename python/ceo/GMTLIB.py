@@ -19,7 +19,7 @@ from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
     TT7,\
     GmtMirrors, SegmentPistonSensor, \
     constants, Telescope, cuFloatArray, cuDoubleArray, Aperture,\
-    Transform_to_S, Intersect, Reflect, Refract, Transform_to_R, ZernikeS, ascupy
+    Transform_to_S, Intersect, Reflect, Refract, Transform_to_R, ZernikeS #, ascupy
 
 
 def __mean_slope_removal__(valid):

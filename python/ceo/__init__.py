@@ -1,4 +1,4 @@
-from .tools import ascupy
+#from .tools import ascupy
 from . import constants
 from .utilities import cuFloatArray, cuDoubleArray, cuIntArray, cuFloatComplexArray, MaskAbstract, Mask, Telescope, GMT, StopWatch, SparseMatrix, SparseGradient, wavefrontFiniteDifference, setDevice, polyWind, polyWinds
 from .source import FreeBundle, Complex_amplitude, Source, JSource
@@ -14,7 +14,7 @@ from .gmtMirrors import BendingModes, KarhunenLoeve, GmtMirrors, GMT_M1, GMT_M2,
 from .GMTLIB import CalibrationVault, GMT_MX, JGMT_MX, GeometricTT7, IdealSegmentPistonSensor, SegmentTipTiltSensor, EdgeSensors, DispersedFringeSensor, Trace, PSSn
 from .mapping import Mapping
 from . import phaseStats
-from .sensors import PyramidWFS as Pyramid                               
+#from .sensors import PyramidWFS as Pyramid                               
 from IPython.display import Markdown, display
 def sweetcheat():
     def printmd(string):
