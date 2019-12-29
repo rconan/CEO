@@ -7,7 +7,7 @@ import os
 
 class Mapping(object):
 
-    def __init__(self,xy=None,z=None,method='CloughTocher'):
+    def __init__(self,xy=None,z=None,method='CloughTocher',filename=None):
 
         self.suit = OrderedDict()
         self.suit['Ni']     = np.array( 0,     dtype=np.int32)
@@ -16,7 +16,23 @@ class Mapping(object):
         self.suit['N_MODE'] = np.array( 1,     dtype=np.int32)
         self.suit['s2b']    = np.array( [0]*7, dtype=np.int32)
 
+        if filename is not None:
+            self.load(filename)
+            u = np.linspace(-1,1,self.suit['Ni'])*self.suit['L']*0.5
+            x,y = np.meshgrid(u,u)
+            xy = np.vstack([x.flatten(),y.flatten()]).T
+            z = self.suit['M'].reshape(-1,self.suit['Ni']**2).T
+
         if xy is not None:
+
+            assert xy.shape[0]==z.shape[0], "The first dimension of the first and second arguments must be the same!"
+
+            m = np.isnan(z[:,0])
+            if any(m):
+                m = ~m
+                xy = xy[m]
+                z = z[m]
+
             #print("Setting up interpolant: ")
             self.datatri   = Delaunay(xy)
             self.__ct_itpr__ = []
@@ -45,6 +61,7 @@ class Mapping(object):
             idx = np.isnan(zi[:,0])
             if any(idx):
                 zi[idx,:] = self.__near_itpr__(x[idx],y[idx])
+            idx = np.isnan(zi[:,0])
             self.zi = zi#.reshape(N_L,N_L).flatten(order='F')
         else:
             zi = self.__ct_itpr__(x,y)
@@ -108,12 +125,13 @@ class Mapping(object):
         z.suit['s2b'] = y.suit['s2b']
 
         N  = int(z.suit['Ni']**2)
-        xM = x.suit['M'].reshape(-1,N)
-        yM = np.vsplit(y.suit['M'].reshape(-1,N),y.suit['N_SET'][0])
+        #xM = x.suit['M'].reshape(-1,N)
+        xM = np.vsplit(x.suit['M'].reshape(-1,N),x.suit['N_SET'])
+        yM = np.vsplit(y.suit['M'].reshape(-1,N),y.suit['N_SET'])
         N_mode = y.suit['N_MODE']
-        M = np.vstack([np.vstack([xM.copy(),_.copy()]) for _ in yM])
+        M = np.vstack([np.vstack([x.copy(),y.copy()]) for x,y in zip(xM,yM)])
 
-        z.suit['M'] = M.flatten(order='F')
+        z.suit['M'] = M.flatten()
         return z
 
     @property
@@ -124,6 +142,19 @@ class Mapping(object):
                     N_MODE=int(self.suit['N_MODE']),
                     s2b=self.suit['s2b'],
                     M=self.suit['M'])
+
+    @property
+    def N_MODE(self):
+        return int(self.suit['N_MODE'])
+    @N_MODE.setter
+    def N_MODE(self,value):
+        Ni2  = int(self.suit['Ni']**2)
+        M = np.vsplit(self.suit['M'].reshape(-1,Ni2),self.suit['N_SET'])
+        self.suit['N_MODE'] = np.array( value,     dtype=np.int32)
+        Mr = np.vstack([_[:self.suit['N_MODE'],:] for _ in M])
+        self.suit['M'] = Mr.flatten()
+
+
 
 def cat(x,y,s2b=[]):
     assert (x.suit['Ni']==y.suit['Ni']),"Both mapping must have the sampling!"

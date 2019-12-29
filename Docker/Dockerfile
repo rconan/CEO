@@ -29,6 +29,7 @@ RUN conda install --yes \
 
 RUN pip install awscli --upgrade --user
 RUN pip install --no-cache-dir cupy-cuda91
+#RUN pip install cupy
 
 ENV HOME /home
 ENV PYTHONPATH /home/CEO/python
@@ -38,4 +39,4 @@ RUN cd /home/CEO &&  make all cython
 
 ADD docker_test /home/docker_test
 
-CMD ["/home/anaconda/bin/python","/home/docker_test"]
+#CMD ["/home/anaconda/bin/python","/home/docker_test"]
