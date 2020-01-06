@@ -83,6 +83,7 @@ struct source {
   void update_directions(double *zenith, double *azimuth, int N_DIR);
   void update_magnitude(float *magnitude, int N_MAG);
   void copy_magnitude(source *other_src);
+  void optical_transfer_function(float2 *d__otf);
 };
 #endif // __SOURCE_H__
 @
@@ -101,6 +102,8 @@ struct source {
 <<bundle free coordinates kernel>>
 <<ray bundle kernels>>
 <<bundle reset kernel>>
+<<wavefront padding kernel>>
+<<square modulus kernel>>
 <<wavefront differentiation kernel (partial illumination identification)>>
 <<wavefront differentiation kernel (slope estimates)>>
 <<wavefront differentiation kernel (gradient)>>
@@ -157,6 +160,7 @@ struct source {
 <<number of photons>>
 <<number of background photons>>
 <<wavenumber>>
+<<optical transfer function>>
 <<plot phase>>
 <<plot amplitude I>>
 <<plot amplitude II>>
@@ -2974,7 +2978,108 @@ __global__ void segments_gradient_average_kernel(float *sx, float *sy,
         else
            sy[kL] = 0.0;
 }
-@ 
+@
+\subsubsection{Optical transfer function}
+\label{sec:otf}
+
+The optical transfer function is given by the auto--correlation of the wavefront
+complex amplitude $Phi(\vec r)$:
+\begin{eqnarray}
+  \label{eq:10}
+  O(\vec\rho) &=& \iint {\mathrm d}\vec r \Phi(\vec r) \Phi(\vec r +
+                  \vec\rho) \\
+  &=& {\mathcal F}^{-1} \left[ \left| {\mathcal F} \left[ \Phi(\vec r) \right]
+      \left( \vec f \right)\right|^2 \right] \left( \vec\rho \right) 
+\end{eqnarray}
+
+@
+<<optical transfer function>>=
+void source::optical_transfer_function(float2 *d__otf) {
+  int _N_PX_, N_OTF, n_byte;
+  float2 * d__wavefront;
+  cufftHandle plan;
+  _N_PX_ = (int) sqrt(wavefront.N_PX/wavefront.N);
+  N_OTF = 2*_N_PX_-1;
+  fprintf(stdout,"W: %d ; O: %d\n",_N_PX_,N_OTF);
+  n_byte = sizeof(float2)*N_OTF*N_OTF*wavefront.N;
+  HANDLE_ERROR( cudaMalloc((void**)&d__wavefront, n_byte) );  
+  HANDLE_ERROR( cudaMemset(d__otf, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(d__wavefront, 0, n_byte ) );
+  int n_DFT[2] = {N_OTF, N_OTF};
+  int iodist = N_OTF*N_OTF;
+  int BATCH = wavefront.N;
+  HANDLE_ERROR_CUFFT( cufftPlanMany(&plan, 2, n_DFT,
+                                    NULL, 1, iodist,
+                                    NULL, 1, iodist,
+                                    CUFFT_C2C,BATCH),
+                      "Unable to create plan");
+  dim3 blockDim(16,16);
+  dim3 gridDim(_N_PX_/16+1,_N_PX_/16+1,wavefront.N);
+  wavefront_padding LLL gridDim,blockDim RRR (d__wavefront,
+                                              N_OTF,
+                                              wavefront.amplitude,
+                                              wavefront.phase,
+                                              _N_PX_,
+                                              wavenumber());
+  //HANDLE_ERROR( cudaMemcpy( d__otf, d__wavefront, n_byte, cudaMemcpyDeviceToDevice ) );
+  HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wavefront, d__otf, CUFFT_FORWARD),
+                      "Unable to execute plan forward FT");
+  gridDim = dim3(N_OTF/16+1,N_OTF/16+1,wavefront.N);
+  square_modulus LLL gridDim,blockDim RRR (d__wavefront, d__otf, N_OTF);
+  HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wavefront, d__otf, CUFFT_INVERSE),
+                      "Unable to execute plan forward FT");
+  HANDLE_ERROR(cudaFree(d__wavefront));
+  cufftDestroy(plan);
+}
+@
+<<wavefront padding kernel>>=
+__global__ void wavefront_padding(float2 *wavefront,
+                                  const int N_OTF,
+                                  const float *amplitude,
+                                  const float *phase,
+                                  const int N_PX,
+                                  const float wavenumber)
+{
+  int i,j,k,kw,iSource,ii,jj;
+  float so,co;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  k = i*N_PX+j;
+  k += iSource*N_PX*N_PX;
+  if ( (i<N_PX) && (j<N_PX)) {
+    ii = i-N_PX/2;
+    if (ii<0)
+      ii += N_OTF;
+    jj = j-N_PX/2;
+    if (jj<0)
+      jj += N_OTF;
+    kw = ii*N_OTF + jj;
+    kw += iSource*N_OTF*N_OTF;
+    sincos(wavenumber*phase[k],&so,&co);
+    wavefront[kw].x = amplitude[k]*co;
+    wavefront[kw].y = amplitude[k]*so;
+  }
+}
+@
+<<square modulus kernel>>=
+__global__ void square_modulus(float2 *wavefront,
+                               float2 *otf,
+                               const int N_OTF)
+{
+  int i,j,k,iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  if ( (i<N_OTF) && (j<N_OTF)) {
+    k = i*N_OTF + j;
+    k += iSource*N_OTF*N_OTF;
+    wavefront[k].x = otf[k].x*otf[k].x + otf[k].y*otf[k].y;
+    wavefront[k].y = 0.0;
+  }
+}
+@
+
 \subsubsection{Input/Output}
 \label{sec:inputoutput-1}
 The wavefront phase is save to a file with

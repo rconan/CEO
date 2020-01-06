@@ -1,4 +1,4 @@
-FROM nvidia/cuda:9.1-devel
+FROM nvidia/cuda:10.1-devel
 
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
@@ -28,13 +28,15 @@ RUN conda install --yes \
     s3fs
 
 RUN pip install awscli --upgrade --user
-RUN pip install --no-cache-dir cupy-cuda91
+RUN pip install --no-cache-dir cupy-cuda101
 #RUN pip install cupy
 
 ENV HOME /home
 ENV PYTHONPATH /home/CEO/python
 
-RUN cd /home && git clone -b devel_cuda9.1_python3.6 https://github.com/rconan/CEO.git
+RUN mkdir /home/CEO
+ADD ceo.tar.gz /home/CEO
+#RUN cd /home && git clone -b devel_cuda10.1 https://github.com/rconan/CEO.git
 RUN cd /home/CEO &&  make all cython
 
 ADD docker_test /home/docker_test

@@ -1,5 +1,6 @@
 ceo: Dockerfile
-	sudo docker build -t gmto.im/ceo:devel_cuda9.1 .
+	cd ../; git archive --format=tar.gz HEAD > Docker/ceo.tar.gz
+	sudo docker build -t gmto.im/ceo:devel_cuda10.1 .
 
 cluster:
 	eksctl create cluster --name DOS --region us-west-2 --nodegroup-name DOSlet --node-type p3.2xlarge --nodes 1 --nodes-min 0 --nodes-max 4 --node-ami ami-0ca5998dc2c88e64b

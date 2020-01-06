@@ -174,22 +174,22 @@ int BATCH = M*N;
 fprintf(stdout,"\n@(CEO)>BTBT: Creating a 1D covariance FFT plan\n");
 HANDLE_ERROR_CUFFT( cufftPlan1d(&raster_plan, NDFT, CUFFT_R2C, BATCH),
 		    "Unable to create plan");
-HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(raster_plan, CUFFT_COMPATIBILITY_FFTW_PADDING),
-		    "Unable to set compatibility mode to native");
+/*HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(raster_plan, CUFFT_COMPATIBILITY_FFTW_PADDING),
+  "Unable to set compatibility mode to native");*/
 
 fprintf(stdout,"\n@(CEO)>BTBT: Creating a 1D MVM input FFT plan\n");
 BATCH = N;
 HANDLE_ERROR_CUFFT( cufftPlan1d(&MVM_input_plan, NDFT, CUFFT_R2C, BATCH),
 		    "Unable to create plan");
-HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(MVM_input_plan, CUFFT_COMPATIBILITY_FFTW_PADDING),
-		    "Unable to set compatibility mode to native");
+/*HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(MVM_input_plan, CUFFT_COMPATIBILITY_FFTW_PADDING),
+  "Unable to set compatibility mode to native");*/
 
 fprintf(stdout,"\n@(CEO)>BTBT: Creating a 1D MVM output FFT plan\n");
 BATCH = M;
 HANDLE_ERROR_CUFFT( cufftPlan1d(&MVM_output_plan, NDFT, CUFFT_C2R, BATCH),
 		    "Unable to create plan");
-HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(MVM_output_plan, CUFFT_COMPATIBILITY_FFTW_PADDING),
-		    "Unable to set compatibility mode to native");
+/*HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(MVM_output_plan, CUFFT_COMPATIBILITY_FFTW_PADDING),
+  "Unable to set compatibility mode to native");*/
 //cublasCreate(&handle);
 @ 
 <<allocation (matrix)>>=
@@ -276,7 +276,7 @@ for (int k=0;k<NDFT;k++) {
 <<raster covariance FT>>=
 HANDLE_ERROR_CUFFT( cufftExecR2C(raster_plan, (cufftReal*)d__cov, d__cov),
 		    "Unable to execute plan!");
-HANDLE_ERROR( cudaThreadSynchronize() );
+//HANDLE_ERROR( cudaThreadSynchronize() );
 
 @ Memory is freed with:
 \index{BTBT!BTBT!cleanup}
@@ -427,7 +427,7 @@ __global__ void mvm_input_order(float *x_out, int n_x_out,
 <<MVM STEP 2: input FT>>=
 HANDLE_ERROR_CUFFT( cufftExecR2C(MVM_input_plan, (cufftReal*)d__b, d__b),
                     "Unable to execute plan forward FT with MVM plan");
-HANDLE_ERROR( cudaThreadSynchronize() );
+//HANDLE_ERROR( cudaThreadSynchronize() );
 @
 \item $\tilde b$ and $\tilde T$ are multiplied element wise i.e. 
 $$\tilde c = \tilde b\tilde T =
@@ -483,7 +483,7 @@ cublasCgemmBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N,
 <<MVM STEP 4: output FT>>=
 HANDLE_ERROR_CUFFT( cufftExecC2R(MVM_output_plan, d__c, (cufftReal*)d__c),
                     "Unable to execute inverse FT with MVM plan");
-HANDLE_ERROR( cudaThreadSynchronize() );
+//HANDLE_ERROR( cudaThreadSynchronize() );
 @
 \item the real part of $c$ is affected into vector $y$ according to the ordering in vector $\xi$ i.e. $y=c[\xi].x$.
 <<MVM STEP 5: output ordering>>=
