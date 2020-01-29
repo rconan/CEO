@@ -48,7 +48,19 @@ __host__ __device__ void zernike_surface_and_partials(rtd *ZS, rtd *dZSdx, rtd *
 int zern_dx_coef(rtd *b, int j, int n, int m, int jp, int np, int mp);
 int zern_dy_coef(rtd *b,int j, int n, int m, int jp, int np, int mp);
 
-<<conic equations>>
+__host__ __device__ rtd conic_equation(vector *v, vector *v0, 
+                                       const rtd k, const rtd c,
+                                       const int N, rtd *a);
+__device__ rtd  conic_surface(vector *v, vector *v0, 
+                              const rtd k, const rtd c,
+                              const int N, rtd *a);
+__device__ rtd partial_x_conic_surface(vector *v, vector *v0,
+                                       const rtd k, const rtd c,
+                                       const int N, rtd *a);
+__device__ rtd partial_y_conic_surface(vector *v, vector *v0,
+                                       const rtd k, const rtd c,
+                                       const int N, rtd *a);
+__device__ rtd partial_z_conic_surface(void);
 
 <<aperture structure>>
 __global__ void intersection(char *mask, ray *d__ray, int N_RAY);
@@ -61,6 +73,28 @@ __host__ __device__  void backward_transform(vector *v_out, vector *v_in,
                                     rtd *d__R, vector *d__origin);
 __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_in,
 					     rtd *d__R);
+__device__ rtd aspheric_surface(vector *v, vector *v0,
+                                const rtd k, const rtd c,
+                                const int max_n, rtd *a, const rtd R);
+__device__ rtd zernike_surface(vector *v, vector *v0,
+                               const int max_n, rtd *a, const rtd R);
+__device__ rtd partial_x_aspheric_surface(vector *v, vector *v0,
+                                          const rtd k, const rtd c,
+                                          const int max_n, rtd *cx,
+                                          const rtd R);
+__device__ rtd partial_x_zernike_surface(vector *v, vector *v0,
+                                         const int max_n, rtd *cx,
+                                         const rtd R);
+__device__ rtd partial_y_aspheric_surface(vector *v, vector *v0,
+                                          const rtd k, const rtd c,
+                                          const int max_n, rtd *cy,
+                                          const rtd R);
+__device__ rtd partial_y_zernike_surface(vector *v, vector *v0,
+                                         const int max_n, rtd *cy,
+                                         const rtd R);
+__device__ rtd partial_z_aspheric_surface(void);
+__device__ rtd partial_z_zernike_surface(void);
+
 
 void transform_to_S(bundle *rays, conic *F);
 void transform_to_S(bundle *rays, aperture *A);
@@ -86,6 +120,7 @@ void refract(bundle *rays, rtd mu);
 <<coordinates forward transform>>
 <<coordinates backward transform>>
 
+<<conic equations>>
 <<even asphere equations>>
 
 <<zernike surface kernel>>
@@ -443,7 +478,7 @@ The conic surface is defined with
 The conic expression is computed with
 \index{rayTracing!conic!conic\_equation}
 <<conic equations>>=
-__host__ __device__ inline rtd conic_equation(vector *v, vector *v0, 
+__host__ __device__ rtd conic_equation(vector *v, vector *v0, 
 					      const rtd k, const rtd c,
 					      const int N, rtd *a)
 {
@@ -464,7 +499,7 @@ __host__ __device__ inline rtd conic_equation(vector *v, vector *v0,
 and the surface equation with
 \index{rayTracing!conic!conic\_surface}
 <<conic equations>>=
-__device__ inline rtd  conic_surface(vector *v, vector *v0, 
+__device__ rtd  conic_surface(vector *v, vector *v0, 
 				     const rtd k, const rtd c,
 				     const int N, rtd *a)
 {
@@ -480,7 +515,7 @@ The partial derivative of the conic equation are written
   \end{equation}
 \index{rayTracing!conic!partial\_x\_conic\_surface}
 <<conic equations>>=
- __device__ inline rtd partial_x_conic_surface(vector *v, vector *v0,
+ __device__ rtd partial_x_conic_surface(vector *v, vector *v0,
 					       const rtd k, const rtd c,
 					       const int N, rtd *a)
 {
@@ -504,7 +539,7 @@ The partial derivative of the conic equation are written
   \end{equation}
 \index{rayTracing!conic!partial\_y\_conic\_surface}
 <<conic equations>>=
-__device__ inline rtd partial_y_conic_surface(vector *v, vector *v0,
+__device__ rtd partial_y_conic_surface(vector *v, vector *v0,
 					      const rtd k, const rtd c,
 					      const int N, rtd *a)
 {
@@ -528,7 +563,7 @@ __device__ inline rtd partial_y_conic_surface(vector *v, vector *v0,
   \end{equation}
 \index{rayTracing!conic!partial\_z\_conic\_surface}
 <<conic equations>>=
-__device__ inline rtd partial_z_conic_surface(void)
+__device__ rtd partial_z_conic_surface(void)
 {
   return 1.0;
 }
@@ -545,7 +580,7 @@ The generic expression for aspheric surface is given by
 \end{equation}
 \index{rayTracing!conic!aspheric\_surface}
 <<conic equations>>=
-__device__ inline rtd aspheric_surface(vector *v, vector *v0,
+__device__ rtd aspheric_surface(vector *v, vector *v0,
                                        const rtd k, const rtd c,
 				       const int max_n, rtd *a, const rtd R)
 {
@@ -555,7 +590,7 @@ __device__ inline rtd aspheric_surface(vector *v, vector *v0,
 @ The Zernike surface (Eq.~(\ref{eq:51}) and Sec.~\ref{sec:zern-surf-equat}) of the asphere is given by: 
 \index{rayTracing!conic!zernike\_surface}
 <<conic equations>>=
-__device__ inline rtd zernike_surface(vector *v, vector *v0,
+__device__ rtd zernike_surface(vector *v, vector *v0,
 				       const int max_n, rtd *a, const rtd R)
 {
   return -zernike_surface(v->mag(R), v->angle(), max_n, a);
@@ -569,7 +604,7 @@ The partial derivatives of the aspheric equation are written
   \end{equation}
 \index{rayTracing!conic!partial\_x\_aspheric\_surface}
 <<conic equations>>=
-__device__ inline rtd partial_x_aspheric_surface(vector *v, vector *v0,
+__device__ rtd partial_x_aspheric_surface(vector *v, vector *v0,
 					       const rtd k, const rtd c,
 					       const int max_n, rtd *cx,
 					       const rtd R)
@@ -580,7 +615,7 @@ __device__ inline rtd partial_x_aspheric_surface(vector *v, vector *v0,
 @ the Zernike x--derivative (Eq.~(\ref{eq:57}) and Sec.~\ref{sec:zern-surf-deriv}) is computed with: 
 \index{rayTracing!conic!partial\_x\_zernike\_surface}
 <<conic equations>>=
-__device__ inline rtd partial_x_zernike_surface(vector *v, vector *v0,
+__device__ rtd partial_x_zernike_surface(vector *v, vector *v0,
 					       const int max_n, rtd *cx,
 					       const rtd R)
 {
@@ -593,7 +628,7 @@ __device__ inline rtd partial_x_zernike_surface(vector *v, vector *v0,
   \end{equation}
 \index{rayTracing!conic!partial\_y\_aspheric\_surface}
 <<conic equations>>=
-__device__ inline rtd partial_y_aspheric_surface(vector *v, vector *v0,
+__device__ rtd partial_y_aspheric_surface(vector *v, vector *v0,
 					      const rtd k, const rtd c,
 					      const int max_n, rtd *cy,
 					      const rtd R)
@@ -604,7 +639,7 @@ __device__ inline rtd partial_y_aspheric_surface(vector *v, vector *v0,
 @ the Zernike y--derivative (Eq.~(\ref{eq:57}) and Sec.~\ref{sec:zern-surf-deriv}) is computed with: 
 \index{rayTracing!conic!partial\_y\_zernike\_surface}
 <<conic equations>>=
-__device__ inline rtd partial_y_zernike_surface(vector *v, vector *v0,
+__device__ rtd partial_y_zernike_surface(vector *v, vector *v0,
 					      const int max_n, rtd *cy,
 					      const rtd R)
 {
@@ -617,14 +652,14 @@ __device__ inline rtd partial_y_zernike_surface(vector *v, vector *v0,
   \end{equation}
 \index{rayTracing!conic!partial\_z\_aspheric\_surface}
 <<conic equations>>=
-__device__ inline rtd partial_z_aspheric_surface(void)
+__device__ rtd partial_z_aspheric_surface(void)
 {
   return 1.0;
 }
 @ the Zernike z--derivative is computed with: 
 \index{rayTracing!conic!partial\_z\_zernike\_surface}
 <<conic equations>>=
-__device__ inline rtd partial_z_zernike_surface(void)
+__device__ rtd partial_z_zernike_surface(void)
 {
   return 0.0;
 }
