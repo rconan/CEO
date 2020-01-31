@@ -85,6 +85,9 @@ struct source {
   void copy_magnitude(source *other_src);
   void optical_transfer_function(float2 *d__otf);
 };
+
+<<pssn structure>>
+
 #endif // __SOURCE_H__
 @
 \subsection{Source}
@@ -164,6 +167,10 @@ struct source {
 <<plot phase>>
 <<plot amplitude I>>
 <<plot amplitude II>>
+
+<<atmosphere otf kernel>>
+<<pssn OC product kernel>>
+<<pssn methods>>
 @
 
 \section{Parameters}
@@ -3067,14 +3074,16 @@ __global__ void square_modulus(float2 *wavefront,
                                float2 *otf,
                                const int N_OTF)
 {
-  int i,j,k,iSource;
+  int i,j,k,iSource,N2;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
+  N2 = N_OTF;
+  N2 *= N2;
   if ( (i<N_OTF) && (j<N_OTF)) {
     k = i*N_OTF + j;
     k += iSource*N_OTF*N_OTF;
-    wavefront[k].x = otf[k].x*otf[k].x + otf[k].y*otf[k].y;
+    wavefront[k].x = (otf[k].x*otf[k].x + otf[k].y*otf[k].y)/N2;
     wavefront[k].y = 0.0;
   }
 }
@@ -3205,3 +3214,243 @@ void complex_amplitude::show_amplitude(char *filename)
   HANDLE_ERROR( cudaFreeHost( data ) );
 }
 @
+
+\subsection{PSSn}
+\label{sec:PSSn}
+
+\index{source!pssn}
+
+The optical transfer function is given by the auto--correlation of the wavefront
+complex amplitude $Phi(\vec r)$:
+\begin{eqnarray}
+  \label{eq:10}
+  O(\vec\rho) &=& \iint {\mathrm d}\vec r \Phi(\vec r) \Phi(\vec r +
+                  \vec\rho) \\
+  &=& {\mathcal F}^{-1} \left[ \left| {\mathcal F} \left[ \Phi(\vec r) \right]
+      \left( \vec f \right)\right|^2 \right] \left( \vec\rho \right) 
+\end{eqnarray}
+
+
+The PSSn is a structure with the following parameters:
+\begin{itemize}
+\item the telescope optical transfer functions (OTF), both current [[O]] et reference [[O0]],
+  the structure may contain [[N_O]] current OTF and $[[N_O0=1]]$ or [[N_O]]
+  reference OTF:
+<<pssn parameters>>=
+int N_O, N_O0, n_byte;
+float2 *d__O, *d__O0, *buffer;
+@
+\item the atmosphere optical transfer function [[C]]:
+<<pssn parameters>>=
+float2 *d__C;
+@
+\item the wavefront complex amplitude [[W]] of size $[[N_PX]]\times
+  [[N_PX]]\times [[N]]$:
+<<pssn parameters>>=
+int N_PX, N;  
+float2 *d__W;
+@
+\item the discrete Fourier transform (DFT) plan handle [[plan]], the size of
+  each DFT is $[[N_OTF]]\times [[N_OTF]]$ where $[[N_OTF]]=2[[N_PX]]-1$ and
+  there as may DFT as wavefront i.e. [[N]]:
+<<pssn parameters>>=
+int N_OTF, NN;
+cufftHandle plan;
+@
+\item algebraic operator handle and results:
+<<pssn parameters>>=
+cublasHandle_t handle;
+float num,denom;
+@
+\end{itemize}
+
+The PPSn structure is:
+<<pssn structure>>=
+struct pssn {
+  <<pssn parameters>>
+  void setup(source *src, const float r0, const float L0);
+  void cleanup();
+  void __otf__(source *src, float2 *_d__O_);
+  void otf(source *src);
+  void atm_otf(float d, float r0, float L0);
+  float eval(void);
+};
+@
+The pssn methods are:
+\begin{description}
+\item[[[setup]]]
+<<pssn methods>>=
+void pssn::setup(source *src, const float r0, const float L0)
+{
+  N_O = 0;
+  N = src->wavefront.N;
+  N_PX = (int) sqrt(src->wavefront.N_PX/N);
+  N_OTF = 2*N_PX-1;
+  NN = N_OTF*N_OTF*N;
+  fprintf(stdout,"(W: %d ; O: %d)x%d\n",N_PX,N_OTF,N);
+  n_byte = sizeof(float2)*NN;
+  HANDLE_ERROR( cudaMalloc((void**)&d__W, n_byte) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__O, n_byte) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__O0, n_byte) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__C, n_byte) );
+  HANDLE_ERROR( cudaMalloc((void**)&buffer, n_byte) );
+  HANDLE_ERROR( cudaMemset(d__O, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(d__O0, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(d__W, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(d__C, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(buffer, 0, n_byte ) );
+  int n_DFT[2] = {N_OTF, N_OTF};
+  int iodist = N_OTF*N_OTF;
+  int BATCH = N;
+  HANDLE_ERROR_CUFFT( cufftPlanMany(&plan, 2, n_DFT,
+                                    NULL, 1, iodist,
+                                    NULL, 1, iodist,
+                                    CUFFT_C2C,BATCH),
+                      "Unable to create plan");
+  CUBLAS_ERROR( cublasCreate(&handle) );
+  __otf__(src, d__O0);
+  CUBLAS_ERROR( cublasScnrm2( handle , NN, d__O0, 1 , &denom) );
+  fprintf(stdout,"||O0||=%g\n",denom);
+  float d = src->rays.L/(src->rays.N_L-1);
+  atm_otf(d,r0,L0);
+  CUBLAS_ERROR( cublasScnrm2( handle , NN, d__C, 1 , &denom) );
+  fprintf(stdout,"||C||=%g\n",denom);
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_OTF/16+1,N_OTF/16+1,N);
+  OC_times LLL gridDim,blockDim RRR (buffer,d__O0,d__C,N_OTF);
+  CUBLAS_ERROR( cublasScnrm2( handle , NN, buffer, 1 , &denom) );
+  fprintf(stdout,"||O0.C||=%g\n",denom);
+}
+@
+\item[[[cleanup]]]
+<<pssn methods>>=
+void pssn::cleanup()
+{
+  fprintf(stdout,"@(CEO)>%s: freeing memory!\n","PSSn");
+  CUBLAS_ERROR(cublasDestroy(handle));
+  cufftDestroy(plan);
+  HANDLE_ERROR(cudaFree(d__C));
+  HANDLE_ERROR(cudaFree(d__W));
+  HANDLE_ERROR(cudaFree(d__O0));
+  HANDLE_ERROR(cudaFree(d__O));
+  HANDLE_ERROR(cudaFree(buffer));
+}
+@
+\item[[[otf]]] 
+<<pssn methods>>=
+void pssn::__otf__(source *src, float2 *_d__O_)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_PX/16+1,N_PX/16+1,N);
+  wavefront_padding LLL gridDim,blockDim RRR (d__W,
+                                              N_OTF,
+                                              src->wavefront.amplitude,
+                                              src->wavefront.phase,
+                                              N_PX,
+                                              src->wavenumber());
+  HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__W, _d__O_, CUFFT_FORWARD),
+                      "Unable to execute plan forward FT");
+  gridDim = dim3(N_OTF/16+1,N_OTF/16+1,N);
+  square_modulus LLL gridDim,blockDim RRR (d__W, _d__O_, N_OTF);
+  HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__W, _d__O_, CUFFT_INVERSE),
+                      "Unable to execute plan forward FT");
+}
+void pssn::otf(source *src)
+{
+  float2 a;
+  HANDLE_ERROR( cudaMemset(d__W, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(buffer, 0, n_byte ) );
+  __otf__(src, buffer);
+  ++N_O;
+  a.x= (N_O-1.0)/N_O;
+  a.y = 0.0;
+  CUBLAS_ERROR( cublasCsscal(handle,NN,&a.x,d__O,1) );
+  a.x= 1.0/N_O;
+  CUBLAS_ERROR( cublasCaxpy(handle,NN,&a,buffer,1,d__O,1) );
+}
+@
+\item[[[atm_otf]]]
+<<pssn methods>>=
+void pssn::atm_otf(float d, float r0, float L0)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_OTF/16+1,N_OTF/16+1,N);
+  atm_otf_kernel LLL gridDim,blockDim RRR (d__C,N_OTF,d,r0,L0);
+}
+@
+<<atmosphere otf kernel>>=
+__global__ void atm_otf_kernel(float2 *C,
+                               const int N,
+                               const float d,
+                               const float r0,
+                               const float L0)
+{
+  int i,j,k,kw,iSource,ii,jj;
+  float x,y,r,sf,red,a,b;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  k = i*N+j;
+  k += iSource*N*N;
+  if ( (i<N) && (j<N)) {
+    ii = i-N/2;
+    jj = j-N/2;
+    if ((ii==0) && (jj==0)) {
+      sf = 0.0;
+    } else {
+      x = ii*d;
+      y = jj*d;
+      r = hypot(x,y);
+      red = 2*PI*r/L0;
+      a = tgammaf(11./6.)*
+        powf(24.*tgammaf(6./5.)/5.,5./6.)*
+        powf(2.,-5./6)*powf(PI,-8./3.)*
+        powf(L0/r0,5./3.);
+      b = tgammaf(5./6.)*powf(2.,-1./6.) - powf(red,5./6.)*_K_nu_(5./6.,red);
+      sf = a*b;
+    }
+    if (ii<0)
+      ii += N;
+    if (jj<0)
+      jj += N;
+    kw = ii*N + jj;
+    kw += iSource*N*N;
+    C[kw].x = expf(-sf);
+    C[kw].y = 0.0;
+  }
+}
+@
+<<pssn OC product kernel>>=
+__global__ void OC_times(float2 *buffer,
+                         float2 *_O_,
+                         float2 *_C_,
+                         const int N)
+{
+  int i,j,k,iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  k = i*N+j;
+  k += iSource*N*N;
+  if ( (i<N) && (j<N)) {
+    buffer[k].x = _O_[k].x*_C_[k].x;
+    buffer[k].y = _O_[k].y*_C_[k].x;
+  }
+}
+@
+\item[[[eval]]]
+<<pssn methods>>=
+float pssn::eval(void)
+{
+  float result;
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_OTF/16+1,N_OTF/16+1,N);
+  OC_times LLL gridDim,blockDim RRR (buffer,d__O,d__C,N_OTF);
+  CUBLAS_ERROR( cublasScnrm2( handle , NN, buffer, 1 , &num) );
+  fprintf(stdout,"||O.C||=%g\n",num);
+  result = num/denom;
+  result *= result;
+  return result;
+}
+@  
+\end{description}
