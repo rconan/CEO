@@ -28,14 +28,14 @@ RUN conda install --yes \
     s3fs
 
 RUN pip install awscli --upgrade --user
-RUN pip install --no-cache-dir cupy-cuda91
+#RUN pip install --no-cache-dir cupy-cuda91
 
 ENV HOME /home
 ENV PYTHONPATH /home/CEO/python
 
-RUN cd /home && git clone -b devel_cuda9.1_python3.6 https://github.com/rconan/CEO.git
+RUN cd /home && git clone -b devel_cuda9.1_wocupy https://github.com/rconan/CEO.git
 RUN cd /home/CEO &&  make all cython
 
 ADD docker_test /home/docker_test
 
-CMD ["/home/anaconda/bin/python","/home/docker_test"]
+#CMD ["/home/anaconda/bin/python","/home/docker_test"]

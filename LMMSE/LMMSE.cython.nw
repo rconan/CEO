@@ -14,7 +14,7 @@ from aaStats cimport aaStats, paStats, AaStats
 from BTBT cimport BTBT, BT2
 cdef extern from "LMMSE.h":
     cdef cppclass LMMSE:
-        int NP
+        int NP, N_SIDE_LENSLET_, N_guide_star, N_mmse_star
         float *d__phase_est
         float *d__x
         iterativeSolvers iSolve
@@ -40,6 +40,7 @@ cdef extern from "LMMSE.h":
 cdef class Lmmse:
     cdef LMMSE *_c_LMMSE
     cdef int N_phase
+    cdef int N_slope
     cdef public IterativeSolvers iSolve
     cdef public AaStats aa
     cdef public BT2 aaCov
@@ -102,7 +103,8 @@ cdef class Lmmse:
         self.aaCov = BT2()
         self.aaCov.init(&(self._c_LMMSE.aaCov))
         self.N_phase = self._c_LMMSE.NP
-
+        self.N_slope = 2*self._c_LMMSE.N_SIDE_LENSLET_*self._c_LMMSE.N_SIDE_LENSLET_*self._c_LMMSE.N_guide_star
+        
     def __dealloc__(self):
         self._c_LMMSE.cleanup()
 
@@ -126,6 +128,17 @@ cdef class Lmmse:
             x = cuFloatArray(shape=(self.N_phase,self.N_phase))
             x._c_gpu.dev_data = self._c_LMMSE.d__phase_est
             return x
+
+    property solve:
+        def __get__(self):
+            """
+            Return the solver solution
+            """
+            x = cuFloatArray(shape=(self.N_slope,1))
+            x._c_gpu.dev_data = self._c_LMMSE.d__x
+            return x
+
+
 @
 \subsection{LmmseSH}
 \label{sec:lmmsesh}

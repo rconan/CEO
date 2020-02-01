@@ -174,22 +174,28 @@ int BATCH = M*N;
 fprintf(stdout,"\n@(CEO)>BTBT: Creating a 1D covariance FFT plan\n");
 HANDLE_ERROR_CUFFT( cufftPlan1d(&raster_plan, NDFT, CUFFT_R2C, BATCH),
 		    "Unable to create plan");
+/*
 HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(raster_plan, CUFFT_COMPATIBILITY_FFTW_PADDING),
 		    "Unable to set compatibility mode to native");
+*/
 
 fprintf(stdout,"\n@(CEO)>BTBT: Creating a 1D MVM input FFT plan\n");
 BATCH = N;
 HANDLE_ERROR_CUFFT( cufftPlan1d(&MVM_input_plan, NDFT, CUFFT_R2C, BATCH),
 		    "Unable to create plan");
+/*
 HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(MVM_input_plan, CUFFT_COMPATIBILITY_FFTW_PADDING),
 		    "Unable to set compatibility mode to native");
+*/
 
 fprintf(stdout,"\n@(CEO)>BTBT: Creating a 1D MVM output FFT plan\n");
 BATCH = M;
 HANDLE_ERROR_CUFFT( cufftPlan1d(&MVM_output_plan, NDFT, CUFFT_C2R, BATCH),
 		    "Unable to create plan");
+/*
 HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(MVM_output_plan, CUFFT_COMPATIBILITY_FFTW_PADDING),
 		    "Unable to set compatibility mode to native");
+*/
 //cublasCreate(&handle);
 @ 
 <<allocation (matrix)>>=
@@ -274,8 +280,14 @@ for (int k=0;k<NDFT;k++) {
  }
 #endif
 <<raster covariance FT>>=
-HANDLE_ERROR_CUFFT( cufftExecR2C(raster_plan, (cufftReal*)d__cov, d__cov),
+float2 *buf;
+HANDLE_ERROR( cudaMalloc((void**)&buf, M*N*sizeof(float2)*NDFT ) );
+HANDLE_ERROR_CUFFT( cufftExecR2C(raster_plan, (cufftReal*)d__cov, buf),
 		    "Unable to execute plan!");
+HANDLE_ERROR( cudaMemcpy( d__cov, buf,
+			  M*N*sizeof(float2)*NDFT , cudaMemcpyDeviceToDevice) );
+
+HANDLE_ERROR( cudaFree(buf) );
 HANDLE_ERROR( cudaThreadSynchronize() );
 
 @ Memory is freed with:
@@ -342,9 +354,39 @@ The MVM routine computes the matrix--to--vector multiplication $y=C_{\vec\alpha\
 << MVM >>=
 void BTBT::MVM(float *y, float *x)
 {
+  <<MVM STEP 1: input ordering>>
+  <<MVM STEP 2: input FT>>
+  <<MVM STEP 3: Fourier domain multiplication>>
+    HANDLE_ERROR( cudaThreadSynchronize() );
+  float2 *c;
+  c = (float2*)malloc(N*sizeof(float2)*NDFT);
+  HANDLE_ERROR( cudaMemcpy( c, d__c, M*sizeof(float2)*NDFT, cudaMemcpyDeviceToHost) );
+  for (int i=0;i<10;i++) {
+    fprintf(stdout,"|(%3d) [%+6.4E;%+6.4E]\n",i,c[i].x,c[i].y);
+  }
+  free(c);
+  <<MVM STEP 4: output FT>>
+    if (mask==NULL) {
+  <<MVM STEP 5: output ordering>>
+	}
+    else {
+	<<MVM STEP 5: output ordering (masked)>>
+	}
+}
+<< MVM (opt-out) >>=
+void BTBT::MVM(float *y, float *x)
+{
 /* stopwatch tid;  */
   /* tid.tic(); */
-  <<MVM STEP 1: input ordering>>
+  <<MVM STEP 1: input ordering>> 
+    HANDLE_ERROR( cudaThreadSynchronize() );  
+    float2 *b;  
+    b = (float2*)malloc(M*sizeof(float2)*NDFT);  
+    HANDLE_ERROR( cudaMemcpy( b, d__c, M*sizeof(float2)*NDFT, cudaMemcpyDeviceToHost) );  
+    for (int i=0;i<(10);i++) {  
+      fprintf(stdout,"|(%3d) [%+6.4E;%+6.4E]\n",i,b[i].x,b[i].y);  
+    }  
+    free(b);  
   /* tid.toc("STEP 1"); */
   /* tid.tic(); */
   <<MVM STEP 2: input FT>>
@@ -352,14 +394,6 @@ void BTBT::MVM(float *y, float *x)
  /* tid.tic();  */
      <<MVM STEP 3: Fourier domain multiplication>>
  /* tid.toc("STEP 3");  */
-   /*  HANDLE_ERROR( cudaThreadSynchronize() );  */
-   /* float2 *b;  */
-   /* b = (float2*)malloc(M*sizeof(float2)*NDFT);  */
-   /* HANDLE_ERROR( cudaMemcpy( b, d__c, M*sizeof(float2)*NDFT, cudaMemcpyDeviceToHost) );  */
-   /* for (int i=0;i<(10);i++) {  */
-   /*   fprintf(stdout,"|(%3d) [%+6.4E;%+6.4E]\n",i,b[i].x,b[i].y);  */
-   /* }  */
-   /* free(b);  */
   /* tid.tic(); */
   <<MVM STEP 4: output FT>>
   /* float2 *c; */

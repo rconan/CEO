@@ -86,7 +86,7 @@ int main(int argc, char **argv)
 	  cudaMemGetInfo(&freeDevMem, &totalDevMem);
 	  if (i != 0)
 	    stream << " : ";
-	  stream << "Dev " << i << " (" << (freeDevMem/1024) << " KB of " << (totalDevMem/1048576) << " MB free)";
+	  stream << "Dev " << i << " (" << (freeDevMem/1024) << " KB of " << (totalDevMem/1048576) << " MB free)\n";
 	}
       }
     }
