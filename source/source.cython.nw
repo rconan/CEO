@@ -1207,7 +1207,7 @@ cdef class Source:
         Computes the average angle of arrival (tip and tilt) of each segment
 
         Returns
-        -------
+        
         cuFloatArray
             The average angle of arrival of each segment in an array of size [N_SRCx7x2,1] as [cx,cy]
         """
@@ -1268,6 +1268,85 @@ class JSource(JSONAbstract,Source):
                         rays_box_sampling = self.jprms["pupil sampling"],
                         rays_origin       = self.jprms["rays origin"])
 @
+\section{PSSn}
+\label{sec:source-pssn}
+
+\index{source!python!PSSn}
+
+<<source.pxd contents>>=
+    cdef cppclass pssn:
+        int N_OTF
+        int N_O
+        float2 *d__W
+        float2 *d__O
+        float2 *d__O0
+        float2 *d__C
+        float2 *buffer
+        void setup(source *, float, float)
+        void cleanup()
+        void otf(source *)
+        float eval()
+@
+\subsubsection{Class definition}
+\label{sec:class-definition-pssn}
+
+<<class definitions>>=
+# PSSn
+cdef class PSSn:
+    cdef:
+        pssn *_c_pssn
+        public cuFloatComplexArray W
+        public cuFloatComplexArray O0
+        public cuFloatComplexArray O
+        public cuFloatComplexArray C
+        public cuFloatComplexArray buffer
+@
+\subsection{PYX file}
+\label{sec:pyx-file-pssn}
+
+<<source.pyx>>=
+#PSSn
+cdef class PSSn:
+    def __cinit__(self, Source src, float r0, float L0):
+        self._c_pssn = new pssn()
+        self._c_pssn.setup(src._c_source,r0,L0)
+        self.W = cuFloatComplexArray(
+            shape=(self._c_pssn.N_OTF,self._c_pssn.N_OTF),
+            dev_malloc=False)
+        self.W._c_gpu.dev_data = self._c_pssn.d__W
+        self.O0 = cuFloatComplexArray(
+            shape=(self._c_pssn.N_OTF,self._c_pssn.N_OTF),
+            dev_malloc=False)
+        self.O0._c_gpu.dev_data = self._c_pssn.d__O0
+        self.O = cuFloatComplexArray(
+            shape=(self._c_pssn.N_OTF,self._c_pssn.N_OTF),
+            dev_malloc=False)
+        self.O._c_gpu.dev_data = self._c_pssn.d__O
+        self.C = cuFloatComplexArray(
+            shape=(self._c_pssn.N_OTF,self._c_pssn.N_OTF),
+            dev_malloc=False)
+        self.C._c_gpu.dev_data = self._c_pssn.d__C
+        self.buffer = cuFloatComplexArray(
+            shape=(self._c_pssn.N_OTF,self._c_pssn.N_OTF),
+            dev_malloc=False)
+        self.buffer._c_gpu.dev_data = self._c_pssn.buffer
+    def __dealloc__(self):
+        self._c_pssn.cleanup()
+    def otf(self,Source src):
+        self._c_pssn.otf(src._c_source)
+    def eval(self):
+        return self._c_pssn.eval()
+    @property
+    def N_O(self):
+        return self._c_pssn.N_O
+    @N_O.setter
+    def N_O(self,int value):
+        self._c_pssn.N_O = value
+@
+
+\subsection{PXD file}
+\label{sec:pxd-file-10}
+
 \section{Ray tracing routines}
 \label{sec:ray-tracing-routines-1}
 
