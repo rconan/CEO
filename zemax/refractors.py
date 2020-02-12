@@ -4,7 +4,7 @@ from math import sqrt, pow
 P0 = 1.0
 T0 = 20.0
 
-Schott	    =   1
+Schott      =   1
 Sellmeier1  =   2 
 Herzberger  =   3 
 Sellmeier2  =   4 

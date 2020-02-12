@@ -70,7 +70,7 @@ class ZemaxModel():
                 glassfiles.append(agf.AGFFile(file))
             else:
                 pass
-                # print "Could not load catelogue in " + file
+                # print ("Could not load catelogue in " + file)
 
         self.GlassIndex = agf.GlassIndex(glassfiles)
 
@@ -278,7 +278,7 @@ class ZemaxModel():
         phi   = math.atan2(m, l)
         theta = math.asin(math.sqrt(l**2 + m**2))
 
-        # print "phi: {}, theta: {}".format(phi, theta)
+        # print ("phi: {}, theta: {}".format(phi, theta))
 
         self.azimuth = np.array(phi,   dtype=np.float32, ndmin=1)
         self.zenith  = np.array(theta, dtype=np.float32, ndmin=1)
@@ -324,9 +324,9 @@ class ZmxSurf2CEO:
         self.conic = self.CEOCreateConic()
 
     def CEOCreateConic(self):
-        # print self.kwargs
+        # print (self.kwargs)
         conic = ceo.Conic(*self.args, **self.kwargs)
-        # print conic.origin
+        # print (conic.origin)
         return conic
 
     def DISZ(self, z):
