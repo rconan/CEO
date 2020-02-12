@@ -1,6 +1,7 @@
-% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+% -*- mode: Noweb; noweb-code-mode: python-mode -*-
 @
 [[aaStats]] contains a structure and the routines to compute the covariance matrix of the angle--of--arrival.
+\index{aaStats}
 
 \section{The files}
 
@@ -107,7 +108,90 @@ struct paStats {
 <<paStats info>>
 
 <<aaStats variance>>
+@ 
 
+\subsection{Python}
+\label{sec:python}
+
+\index{aaStats!python}
+<<aaStats.pxd>>=
+from utilities cimport cuFloatArray
+from atmosphere cimport atmosphere, AtmosphereAbstract
+from source cimport source, Source
+# aaStats
+cdef extern from "aaStats.h":
+    cdef cppclass aaStats:
+        int NU, N_SRC2
+        float *d__cov
+        void setup(int, atmosphere *, float, source *, int)
+        void cleanup()
+# paStats
+cdef extern from "aaStats.h":
+    cdef cppclass paStats:
+        int NU2, N_SRC2
+        int *M_LAYER
+        float *d__cov
+        void setup(int, int, int , atmosphere *, float,
+                   source *, int, source *, int) 
+        void cleanup()
+<<class definitions>>
+@ 
+<<class definitions>>=
+cdef class AaStats:
+    cdef aaStats *_c_aaStats
+    cdef cuFloatArray cov
+cdef class PaStats:
+    cdef paStats *_c_paStats
+    cdef cuFloatArray cov
+@
+\index{aaStats!python!AaStats}
+<<aaStats.pyx>>=
+# aaStats
+cdef class AaStats:
+    """
+    Slopes covariance matrix class
+
+    Parameters
+    ----------
+    N_SIDE_LENSLET : int
+        The size of the lenslet array
+    atm : Atmosphere
+        The atmosphere model
+    lenslet pitch : float
+        The lenslet array pitch
+    src : Source
+        The guide stars
+    """
+
+    def __cinit__(self, int N_SIDE_LENSLET, AtmosphereAbstract atm, float lenslet_pitch, Source src):
+        self._c_aaStats = new aaStats()
+        self._c_aaStats.setup(N_SIDE_LENSLET, atm._c_atmosphere, lenslet_pitch, 
+                              src._c_source, src._c_source.N_SRC)
+        self.cov = cuFloatArray(shape=(self._c_aaStats.N_SRC2*4*self._c_aaStats.NU,self._c_aaStats.NU))
+        self.cov._c_gpu.dev_data = self._c_aaStats.d__cov
+    def __dealloc__(self):
+        self._c_aaStats.cleanup()
+@
+\index{aaStats!python!PaStats}
+<<aaStats.pyx>>=
+# paStats
+cdef class PaStats:
+    """
+    Phase/Slope covariance matrix class
+    """
+
+    def __cinit__(self, int M, int N, int osf, 
+                  AtmosphereAbstract atm, float lenslet_pitch,
+                  Source phase_src, Source slopes_src):
+        self._c_paStats = new paStats()
+        self._c_paStats.setup(M, N, osf, atm._c_atmosphere, lenslet_pitch,
+                              phase_src._c_source, phase_src._c_source.N_SRC,
+                              slopes_src._c_source, slopes_src._c_source.N_SRC )
+        self.cov = cuFloatArray(shape=(self._c_paStats.N_SRC2*2*self._c_paStats.NU2,1))
+        self.cov._c_gpu.dev_data = self._c_paStats.d__cov
+
+    def __dealloc__(self):
+        self._c_paStats.cleanup() 
 @
 \section{The theory}
 
@@ -181,7 +265,7 @@ float2 *psd, *cov;
 int N_SRC2;
 @ The parameters of the [[paStats]] structure are:
 <<paStats parameters>>=
-int osf, M;
+int osf, M, shift;
 int *M_LAYER;
 <<aaStats parameters>>
 
@@ -189,6 +273,7 @@ int *M_LAYER;
 \section{Angle--of--arrival covariance matrix functions}
 \label{sec:aa-functions}
 
+\index{aaStats!aaStats}
 The covariance matrix is computed for a square lenslet array of size $[[N]]\times[[N]]$ and of pitch [[sampling]].
 The covariance matrix depends on the atmosphere parameters and altitude profile.
 The covariance matrix is computed for a vector of [[N_SRC]] sources.
@@ -231,6 +316,7 @@ Finally the Toeplitz compressed version of the matrix $\Theta$ is written:
 \subsection{Setup \& Cleanup}
 \label{sec:setup--cleanup}
 
+\index{aaStats!aaStats!setup}
 <<aaStats setup>>=
 void aaStats::setup(int N_, const atmosphere *atm, float lenslet_pitch, 
 		    const source *src, int N_SRC)
@@ -361,7 +447,7 @@ for (i_SRC=0;i_SRC<N_SRC;i_SRC++) {
     aaPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (
                     d__psd, NF, lenslet_pitch, 
                     atm->wavelength, atm->r0, atm->turbulence.L0,
-                    atm->layers, atm->N_LAYER,
+                    atm->d__layers, atm->N_LAYER,
 		    (src->dev_ptr) + i_SRC, (src->dev_ptr) + j_SRC,
                     d__alpha, d__alpha, kappa);
     <<AA covariance with Wiener-Khinchin>>
@@ -372,7 +458,7 @@ for (i_SRC=0;i_SRC<N_SRC;i_SRC++) {
     aaPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (
                     d__psd, NF, lenslet_pitch, 
                     atm->wavelength, atm->r0, atm->turbulence.L0,
-                    atm->layers, atm->N_LAYER,
+                    atm->d__layers, atm->N_LAYER,
 		    (src->dev_ptr) + i_SRC, (src->dev_ptr) + j_SRC,
                     d__alpha, d__beta, kappa);
     <<AA covariance with Wiener-Khinchin>>
@@ -383,7 +469,7 @@ for (i_SRC=0;i_SRC<N_SRC;i_SRC++) {
     aaPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (
                     d__psd, NF, lenslet_pitch, 
                     atm->wavelength, atm->r0, atm->turbulence.L0,
-                    atm->layers, atm->N_LAYER,
+                    atm->d__layers, atm->N_LAYER,
 		    (src->dev_ptr) + i_SRC, (src->dev_ptr) + j_SRC,
                     d__beta, d__alpha, kappa);
     <<AA covariance with Wiener-Khinchin>>
@@ -394,7 +480,7 @@ for (i_SRC=0;i_SRC<N_SRC;i_SRC++) {
     aaPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (
                     d__psd, NF, lenslet_pitch, 
                     atm->wavelength, atm->r0, atm->turbulence.L0,
-                    atm->layers, atm->N_LAYER,
+                    atm->d__layers, atm->N_LAYER,
 		    (src->dev_ptr) + i_SRC, (src->dev_ptr) + j_SRC,
                     d__beta, d__beta, kappa);
     <<AA covariance with Wiener-Khinchin>>
@@ -506,6 +592,7 @@ __global__ void covariance_extraction(float *cov_out, int NC_out,
 }
 
 @ The memory is freed with the following routine: 
+\index{aaStats!aaStats!cleanup}
 <<aaStats cleanup>>=
 void aaStats::cleanup(void)
 {
@@ -528,6 +615,7 @@ free(cov);
 \label{sec:inputoutput}
 
 The main parameters of [[aaStats]] are displayed with the [[info]] routine:
+\index{aaStats!aaStats!info}
 <<aaStats info>>=
 void aaStats::info(int kappa, float d)
 {
@@ -543,6 +631,7 @@ fprintf(stdout," . covariance oversampling factor : %d\n",kappa);
 fprintf(stdout," . spectrum highest frequency     : %4.2E\n",(2.0/NF)*(kappa/(2*d)));
 
 @ The covariance can be written to a file with:
+\index{aaStats!aaStats!toFile}
 <<save aa covariance to file>>=
 void aaStats::toFile(char *filename)
 {
@@ -554,6 +643,7 @@ void aaStats::toFile(char *filename)
 \label{sec:miscellaneous}
 
 From the power spectrum, once can derive the variance:
+\index{aaStats!aaStats!variance}
 <<aaStats variance>>=
 float aaStats::variance(void) {
   float res;
@@ -566,8 +656,9 @@ float aaStats::variance(void) {
 \section{Phase and Angle--of--arrival covariance matrix functions}
 \label{sec:pa-functions}
 
+\index{aaStats!paStats}
 The covariance matrix is defined for a square lenslet array of size $N_L\times N_L$ and of pitch [[sampling]].
-The covariance sampling is set with the over--sampling factor [[osf]]. 
+%The covariance sampling is set with the over--sampling factor [[osf]]. 
 The covariance matrix depends on the atmosphere parameters and altitude profile.
 The covariance matrix is computed for vectors of [[N_P_SRC]] estimation sources and [[N_S_SRC]] guide star sources.
 The covariance matrix is written:
@@ -590,9 +681,9 @@ with
     \end{array}
 \right].
 \end{eqnarray}
-Each matrix $\Xi_{{\phi_i}{x_j}}$ is a two--level recursive block Toeplitz (2RBT) $[[N]]^2\times[[N]]^2$ matrix with $[[N]]=N_L$ if $[[osf]]=1$ or $[[N]]=[[osf]] \times N_L+1$ if $[[osf]]\ge 1$.
+Each matrix $\Xi_{{\phi_i}{x_j}}$ is a two--level recursive block Toeplitz (2RBT) $[[M]]^2\times[[N]]^2$ matrix.% with $[[N]]=N_L$ if $[[osf]]=1$ or $[[N]]=[[osf]] \times N_L+1$ if $[[osf]]\ge 1$.
 Toeplitz matrices \cite{GolubVanLoan} are fully defined with their first row and column. 
-So the matrix $\Xi_{{phi_i}{x_j}}$ is reduced to a $[[NU]]=(2[[N]]-1)^2$ elements vector $t_\Xi^{{\phi_i}{x_j}}$ and the matrix $\Xi_{ij}$ becomes the matrix
+So the matrix $\Xi_{{phi_i}{x_j}}$ is reduced to a $[[NU]]=([[M]][[N]]-1)^2$ elements vector $t_\Xi^{{\phi_i}{x_j}}$ and the matrix $\Xi_{ij}$ becomes the matrix
 \begin{equation}
   \label{eq:29}
   T_{ij} = \left[ t_\Xi^{{\phi_i}{x_j}} t_\Xi^{{\phi_i}{y_j}} \right].
@@ -608,6 +699,7 @@ Finally the Toeplitz compressed version of the matrix $\Xi$ is written:
 \subsection{Setup \& Cleanup}
 \label{sec:setup--cleanup-1}
 
+\index{aaStats!paStats!setup}
 <<paStats setup>>=
 void paStats::setup(int M_, int N_, int osf_, 
 		      const atmosphere *atm, float lenslet_pitch, 
@@ -619,6 +711,7 @@ void paStats::setup(int M_, int N_, int osf_,
   osf = osf_;
   N = N_;
   M = M_;
+  shift = (N==M) ? 0 : 1;  
   N2 = M*N;
   NU = M+N-1;
   NU2 = NU*NU;
@@ -650,7 +743,6 @@ void paStats::setup(int M_, int N_, int osf_,
   } else {
      <<paStats setup (multilayers)>>
   }
-
   info(kappa,sampling);
 }
 @ The phase source is duplicated and set to the same height than the slope source:
@@ -817,10 +909,10 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
     //fprintf(stdout,"(%2d",offset);
     paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch, 
 						    atm->wavelength, atm->r0, 
-						    atm->turbulence.L0, atm->layers, atm->N_LAYER,
+						    atm->turbulence.L0, atm->d__layers, atm->N_LAYER,
 						    (phase_src->dev_ptr) + i_P_SRC, 
 						    (slopes_src->dev_ptr) + j_S_SRC,
-						    d__alpha, kappa);
+						    d__alpha, kappa, shift);
     <<AA covariance with Wiener-Khinchin>>
     <<PA covariance reduction>>
 
@@ -828,10 +920,10 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
     //fprintf(stdout,",%2d)",offset);
     paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch,
 						    atm->wavelength, atm->r0, 
-						    atm->turbulence.L0, atm->layers, atm->N_LAYER,
+						    atm->turbulence.L0, atm->d__layers, atm->N_LAYER,
 						    (phase_src->dev_ptr) + i_P_SRC, 
 						    (slopes_src->dev_ptr) + j_S_SRC,
-						    d__beta, kappa);
+						    d__beta, kappa, shift);
     <<AA covariance with Wiener-Khinchin>>
     <<PA covariance reduction>>
 }
@@ -843,7 +935,7 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
 				float wavelength, float r0, float L0,
                                 layer *turb, int N_LAYER,
 				source *src1, source *src2,
-				float *alpha, float kappa)
+				float *alpha, float kappa, int shift)
 {
   int i, j, k;
   float fx, fy, f_square, fs, gl, red, c_red, s_red, wavenumber, src_x, src_y;
@@ -873,7 +965,7 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
       fy *= fs;
       f_square = fx*fx + fy*fy;
       fs *= fs;
-      red *= fx*(src_x + 0.5*d) + fy*(src_y + 0.5*d);
+      red *= fx*(src_x + 0.5*d*shift) + fy*(src_y + 0.5*d*shift);
       sincosf( red, &s_red, &c_red);
       red = -wavenumber*turb[k_LAYER].xi0*fs*wavelength*(fx*alpha[0] + fy*alpha[1])*
       powf(r0,-5.0/3.0)*
@@ -922,7 +1014,7 @@ dim3 gridDimCov( 1+NU/16 , 1+NU/16 );
 
 int i_P_SRC, j_S_SRC, k_LAYER;
 fprintf(stdout,"Covariance %dx%d block:\n",N_P_SRC*atm->N_LAYER,N_S_SRC);
-NU2 = 0;
+int CNU2 = 0;
 for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 
   for (k_LAYER=0;k_LAYER<atm->N_LAYER;k_LAYER++) {
@@ -933,31 +1025,31 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 
       fprintf(stdout," [%d,%d]",i_P_SRC+k_LAYER*N_P_SRC,j_S_SRC);
 
-      //fprintf(stdout,"(%2d",NU2);
+      //fprintf(stdout,"(%2d",CNU2);
       paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (
 			       d__psd, NF, osf, lenslet_pitch, 
 			       atm->wavelength, atm->r0, atm->turbulence.L0, 
-			       atm->layers, atm->N_LAYER, k_LAYER,
+			       atm->d__layers, atm->N_LAYER, k_LAYER,
 			       (phase_src->dev_ptr) + i_P_SRC, 
 			       (slopes_src->dev_ptr) + j_S_SRC,
-			       d__alpha, kappa);
+			       d__alpha, kappa,shift);
       <<AA covariance with Wiener-Khinchin>>
-      pa_covariance_extraction LLL gridDimCov,blockDimCov RRR( d__cov + NU2, NU,
+      pa_covariance_extraction LLL gridDimCov,blockDimCov RRR( d__cov + CNU2, NU,
 							       d__psd, NF, kappa);
-      NU2 += NU*NU;      
+      CNU2 += NU*NU;      
 
-      //fprintf(stdout,",%2d)",NU2);
+      //fprintf(stdout,",%2d)",CNU2);
       paPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (
                                d__psd, NF, osf, lenslet_pitch,
 			       atm->wavelength, atm->r0, atm->turbulence.L0, 
-			       atm->layers, atm->N_LAYER, k_LAYER,
+			       atm->d__layers, atm->N_LAYER, k_LAYER,
 			       (phase_src->dev_ptr) + i_P_SRC, 
 			       (slopes_src->dev_ptr) + j_S_SRC,
-			       d__beta, kappa);
+			       d__beta, kappa,shift);
       <<AA covariance with Wiener-Khinchin>>
-      pa_covariance_extraction LLL gridDimCov,blockDimCov RRR( d__cov +  NU2, NU,
+      pa_covariance_extraction LLL gridDimCov,blockDimCov RRR( d__cov +  CNU2, NU,
 							       d__psd, NF, kappa);
-      NU2 += NU*NU;      
+      CNU2 += NU*NU;      
     }
   fprintf(stdout,"\n");
   }
@@ -967,7 +1059,7 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
 				float wavelength, float r0, float L0,
 				layer *turb, int N_LAYER, int k_LAYER,
 				source *src1, source *src2,
-				float *alpha, float kappa)
+				float *alpha, float kappa, int shift)
 {
   int i, j, k;
   float fx, fy, f_square, fs, gl, red, c_red, s_red, wavenumber, src_x, src_y;
@@ -997,7 +1089,7 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
       fy *= fs;
       f_square = fx*fx + fy*fy;
       fs *= fs;
-      red *= fx*(src_x + 0.5*d) + fy*(src_y + 0.5*d);
+      red *= fx*(src_x + 0.5*d*shift) + fy*(src_y + 0.5*d*shift);
       sincosf( red, &s_red, &c_red);
       red = -wavenumber*turb[k_LAYER].xi0*fs*wavelength*(fx*alpha[0] + fy*alpha[1])*
       powf(r0,-5.0/3.0)*
@@ -1010,6 +1102,7 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
 }
 @ 
 The memory is freed with the following routine:
+\index{aaStats!paStats!cleanup}
 <<paStats cleanup>>=
 void paStats::cleanup(void)
 {
@@ -1022,6 +1115,7 @@ free(M_LAYER);
 \label{sec:inputoutput-1}
 
 The main parameters of [[paStats]] are displayed with the info routine: 
+\index{aaStats!paStats!info}
 <<paStats info>>=
 void paStats::info(int kappa, float d)
 {
@@ -1032,6 +1126,7 @@ void paStats::info(int kappa, float d)
 }
 @
 The [[paStats]] covariance can be written to a file with:
+\index{aaStats!paStats!toFile}
 <<save pa covariance to file>>=
 void paStats::toFile(char *filename)
 {
@@ -1096,7 +1191,7 @@ The test routine is written:
 using namespace std;
 
 #include "cublas_v2.h"
-#include "ceo.h"
+#include "h"
 #include "aaStats.h"
 #include "BTBT.h"
 using namespace std;

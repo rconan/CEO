@@ -49,5 +49,13 @@
 #include "plotly.h"
 #endif
 
+#ifndef __RAYTRACING_H__
+#include "rayTracing.h"
+#endif
+
+#ifndef ___GMTMIRRORS_H__
+#include "gmtMirrors.h"
+#endif
+
 #endif  // __CEO_H__
 

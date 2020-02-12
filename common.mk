@@ -1,32 +1,39 @@
-CEOPATH	        = /home/rconan/CEO
-CUDAPATH	= /opt/local/cuda
-PYTHONPATH      = /home/rconan/anaconda
+CEOPATH 	= $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+CUDAPATH	= /usr/local/cuda
+PYTHONPATH      = $(HOME)/anaconda
 CEOPYPATH	= $(CEOPATH)/python/ceo
 NVCC          	= $(CUDAPATH)/bin/nvcc
 CUDALIBPATH   	= $(CUDAPATH)/lib64
+CUDAINCPATH   	= $(CUDAPATH)/include
 MATLABINCS	= -I/priv/monarcas1/rconan/MATLAB/R2013a/extern/include \
 	-I/export/monarcas1/rconan/MATLAB/R2013a/toolbox/distcomp/gpu/extern/include
-CUDALIBS	= cusparse cufft cublas cudart cuda 
-NOWEBPATH	= /opt/local/noweb
+CUDALIBS	= cusparse cufft cublas cudart
+NOWEBPATH	= /usr
 WEAVE   	= $(NOWEBPATH)/bin/noweave
 TANGLE    	= $(NOWEBPATH)/bin/notangle
 CPIF	    	= $(NOWEBPATH)/bin/cpif
 TEXTOPDF  	= pdflatex
-NVCCFLAGS	= -gencode=arch=compute_20,code=\"sm_20,compute_20\" \
-		--compiler-options=-ansi,-D_GNU_SOURCE,-fwrapv,-fPIC,-fno-omit-frame-pointer,-pthread,-fno-strict-aliasing -O2
-LIBS 		= -L$(CEOPATH)/lib $(CUDALIBPATH:%=-L%) $(CUDALIBS:%=-l%)
-INCS		= -I. -I$(CEOPATH)/include #$(MATLABINCS)
+NVCCFLAGS	= -arch=sm_20 -lineinfo -Xcompiler '-ansi,-D_GNU_SOURCE,-fwrapv,-fPIC,-fno-omit-frame-pointer,-pthread,-fno-strict-aliasing,-O3'
+LIBS 		= -L$(CEOPATH)/lib $(CUDALIBPATH:%=-L%) -lceo -lcurl -ljsmn $(CUDALIBS:%=-l%)
+INCS		= -I. -I$(CEOPATH)/include $(CUDAINCPATH:%=-I%) -I$(PYTHONPATH)/include #$(MATLABINCS)
+SHELL		= /bin/bash
+
+-include $(CEOPATH)/user.mk
 
 texsrc = $(nwsrc:%.nw=%.tex)
 header = $(nwsrc:%.nw=%.h)
 obj    = $(nwsrc:%.nw=%.o)
-cusrc  = $(nwsrc:.%nw=%.cu)
+sobj    = $(nwsrc:%.nw=%.so)
+cusrc  = $(nwsrc:%.nw=%.cu)
+pxdsrc  = $(nwsrc:%.nw=%.pxd)
+pyxsrc  = $(nwsrc:%.nw=%.pyx)
 libsrc = $(CEOPATH)/lib/libceo.a 
 
-.SUFFIXES: .nw .tex .cu .mex .bin .py
+.SUFFIXES: .nw .tex .cu .mex .bin .py .pxd .pyx .so
 
 .cu.o: 
-	$(NVCC) $(INCS) $(NVCCFLAGS) -o $@ -c $<
+	$(NVCC) $(INCS) $(NVCCFLAGS) --device-c -o $@ $<
+	cp $@ ../lib/
 
 .nw.tex:
 	$(WEAVE) -delay -index $< > $@
@@ -53,7 +60,16 @@ libsrc = $(CEOPATH)/lib/libceo.a
 	sed -i -e 's/LLL/<<</g' -e 's/RRR/>>>/g' $@
 	mv $@ $@.cu
 	make -C $(CEOPATH) all
-	$(NVCC) $(INCS) $(LIBS) $@.cu -lceo -lcurl -ljsmn
+	$(NVCC) $(NVCCFLAGS) -lineinfo $(INCS) $(LIBS) $@.cu
 
 .nw.py:
 	$(TANGLE) -R$@ $< > $@
+
+.nw.pxd:
+	$(TANGLE) -R$@ $< > $@
+	cp $@ $(CEOPYPATH)/
+
+.nw.pyx:
+	$(TANGLE) -R$@ $< > $@
+	cp $@ $(CEOPYPATH)/
+

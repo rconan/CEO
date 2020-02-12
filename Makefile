@@ -1,35 +1,51 @@
 include common.mk
 
 #ls -d */ | sed -e 's,//$,,' -e 's,doc,,' -e 's,lib,,'  -e 's,include,,' | xargs
-SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE plotly
+SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE plotly rayTracing gmtMirrors segmentPistonSensor pyramid
 TUTORIAL	= ngsao lgsao ltao ltaoVsAst geaos
-PYTHON_DIR	= utilities source atmosphere centroiding imaging shackHartmann LMMSE
+CYTHON_DIR	= utilities source imaging centroiding shackHartmann atmosphere LMMSE aaStats rayTracing gmtMirrors segmentPistonSensor pyramid
 
 all: makefile jsmnlib
+ifeq ($(wildcard include/plotly.credentials), )
+	echo "plotly.credentials doesn't exist!"
+	cp include/plotly.credentials.sample include/plotly.credentials
+else
+	echo "plotly.credentials does exist!"
+endif
 	mkdir -p include lib
-	for i in $(SOURCE_DIR); do (make -C $$i all);echo -e "\n"; done
+	for i in $(SOURCE_DIR); do (make -C $$i src);echo -e "\n"; done
+	for i in $(SOURCE_DIR); do (make -C $$i lib);echo -e "\n"; done
+	make -C lib all
 
 tex: makefile $(texsrc)
 	for i in $(SOURCE_DIR); do (make -C $$i tex); done
 	for i in $(TUTORIAL); do (make -C TUTORIAL $$i.tex); done
 	rm -f doc/ceo.manual.main.tex
-	for i in $(SOURCE_DIR); do (echo -e "\input{ceo.manual.$$i}\n">>doc/ceo.manual.main.tex); done
+	for i in $(SOURCE_DIR); do (echo -e "\include{ceo.manual.$$i}\n">>doc/ceo.manual.main.tex); done
 	for i in $(SOURCE_DIR); do (echo -n "\chapter" >doc/ceo.manual.$$i.tex; echo -e "{$$i}\n\label{sec:$$i}\n\n\input{../$$i/$$i}">>doc/ceo.manual.$$i.tex); done
 
-cython: all 
-	mkdir -p $(CEOPYPATH)
-	rm -f $(CEOPYPATH)/ceo.pxd $(CEOPYPATH)/ceo.pyx
-	cp $(CEOPATH)/etc/ceo.pxd $(CEOPYPATH)/ceo.pxd
-	cp $(CEOPATH)/etc/ceo.pyx $(CEOPYPATH)/ceo.pyx
-	for i in $(PYTHON_DIR); do (echo -e "\n# $$i.nw">>$(CEOPYPATH)/ceo.pxd;echo -e "\n# $$i.nw">>$(CEOPYPATH)/ceo.pyx;make -C $$i python);echo -e "\n"; done
-	cython --cplus $(CEOPYPATH)/ceo.pyx -o $(CEOPYPATH)/ceo.cu
-	$(NVCC) $(INCS) -I$(PYTHONPATH)/include/python2.7/ -I$(PYTHONPATH)/lib/python2.7/site-packages/numpy/core/include $(NVCCFLAGS) -o $(CEOPYPATH)/ceo.o -c $(CEOPYPATH)/ceo.cu
-	$(NVCC) $(LIBS) -shared $(CEOPYPATH)/ceo.o -o $(CEOPYPATH)/ceo.so -lceo -lcurl -ljsmn
-	rm -f $(CEOPYPATH)/ceo.cu $(CEOPYPATH)/ceo.o
-	set PYTHONPATH=$(CEOPYPATH)
+
+cython: makefile
+	for i in $(CYTHON_DIR); do (make -C $$i cysrc);echo -e "\n"; done
+	for i in $(CYTHON_DIR); do (make -C $$i cylib);echo -e "\n"; done
 
 doc: tex
 	make -C doc all
+
+pydoc: cython
+	make -C python/docs html 
+
+test:
+	make -C test all
+
+rjupyter:
+	env PYTHONPATH="$(CEOPATH)/python" jupyter notebook --no-browser
+
+jupyterserver:
+	env PYTHONPATH="$(CEOPATH)/python" jupyter notebook --profile=nbserver
+
+ipython:
+	env PYTHONPATH="$(CEOPATH)/python" ipython
 
 touch: 
 	find . -name \*.nw -exec touch {} \;
@@ -47,11 +63,20 @@ jsmnlib:
 clean_makefile:
 	for i in $(SOURCE_DIR); do (rm -f $$i/Makefile); done
 
+cleanpython:
+	for i in $(SOURCE_DIR); do (make -C $$i cleanpython); done
+	rm -f python/ceo/*.so
+	rm -f python/ceo/*.pxd
+	rm -f python/ceo/*.pyx*
+
 clean:
 	for i in $(SOURCE_DIR); do (make -C $$i clean); done
 	rm -f *.*~
 	rm -f lib/libceo.a
-	rm -f TUTORIAL/*.tex
+	rm -f python/ceo/*.so
+	rm -f python/ceo/*.pxd
+	rm -f python/ceo/*.pyx*
+	rm -f python/ceo/*.pyc
 
 cleanbins: makefile
 	for i in $(SOURCE_DIR); do (make -C $$i cleanbins); done

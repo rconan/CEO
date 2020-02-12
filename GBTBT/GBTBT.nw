@@ -1,6 +1,7 @@
 % -*- mode: Noweb; noweb-code-mode: c-mode -*-
 @
 [[GBTBT]] contains a structure and the routines to implement a block matrix with Toeplitz--Block--Toeplitz blocks.
+\index{GBTBT}
 
 \section{The files}
 
@@ -62,6 +63,48 @@ struct GBTBT {
 <<info>>
 
 << MVM >>
+@ 
+
+\subsection{Python}
+\label{sec:python}
+
+\index{GBTBT!python}
+
+<<ceo.pxd>>=
+cdef extern from "GBTBT.h":
+    cdef cppclass GBTBT:
+        int MT2_TOTAL
+        char *mask
+        void setup(int, int, int *, int, float *)
+        void cleanup()
+        void MVM(float *, float *)
+@
+\index{GBTBT!python!Gbtbt}
+<<ceo.pyx>>=
+cdef class Gbtbt:
+    """
+    Generalized block matrix with 2RBT blocks
+    """
+    cdef ceo.GBTBT *_c_GBTBT
+
+    def __cinit__(self, int M_block, int N_block, int N_SIDE_LENSLET, PaStats pa, pupil=None):
+        self._c_GBTBT = new ceo.GBTBT()
+        self._c_GBTBT.setup(M_block,N_block,pa._c_paStats.M_LAYER,
+                            N_SIDE_LENSLET,pa._c_paStats.d__cov)
+        if pupil is not None:
+            self._c_GBTBT.mask = pupil._c_mask.m
+
+    def __dealloc__(self):
+        self._c_GBTBT.cleanup()
+
+    def MVM(self, cuFloatArray x):
+        y = cuFloatArray(shape=(self._c_GBTBT.MT2_TOTAL,1),dev_malloc=True)
+        self._c_GBTBT.MVM(y._c_gpu.dev_data,x._c_gpu.dev_data)
+        return y
+
+    property mask:
+        def __set__(self,MaskAbstract M):
+            self._c_GBTBT.mask = M._c_mask.m
 @
 
 A GBTBT matrix is a $M\times N$ block matrix with $M$ and $N$ the number of block rows and columns respectively.
@@ -73,6 +116,7 @@ The matrix is entirely defined with $M$, $N$, $M_{T,i}$ and $N_T$ and the $(M_{T
 \section{Parameters}
 \label{sec:parameters}
 
+\index{GBTBT!GBTBT}
 The parameters of the [[GBTBT]] structure are:
 <<GBTBT parameters>>=
 int M, N, NT, NT2, NDFT, HALF_NDFT, NU_TOTAL, NF, NF2, 
@@ -99,6 +143,7 @@ unsigned int *mu, *xi;
 A [[GBTBT]] structure is initialized with the number of blocks $[[M]]\times[[N]]$, the size of each block $[[MT]]\times[[NT]]$ and the covariance:
 \begin{itemize}
 \item here we pass the vector $M_{T,i}$
+\index{GBTBT!GBTBT!setup}
 <<setup (multilayers)>>=
 void GBTBT::setup(int M_, int N_, int *MT_, int NT_, const float *d__cov_)
 {
@@ -122,6 +167,7 @@ void GBTBT::setup(int M_, int N_, int *MT_, int NT_, const float *d__cov_)
   tid.toc(&cov_eval_et,"Covariance raster DFT");
 }
 @ \item all the blocks have the same size $M_{T,i} \equiv M_T, \forall i \in [0,M-1]$:
+\index{GBTBT!GBTBT!setup}
 <<setup>>=
   void GBTBT::setup(int M_, int N_, int MT_, int NT_, const float *d__cov_)
 {
@@ -145,6 +191,7 @@ void GBTBT::setup(int M_, int N_, int *MT_, int NT_, const float *d__cov_)
   tid.toc(&cov_eval_et,"Covariance raster DFT");
 }
 @ \item all the blocks are square $M_{T,i} \equiv M_T \equiv N_T, \forall i \in [0,M-1]$:
+\index{GBTBT!GBTBT!setup}
 <<setup (square blocks)>>=
   void GBTBT::setup(int M_, int N_, int NT_, const float *d__cov_)
 {
@@ -296,6 +343,7 @@ HANDLE_ERROR_CUFFT( cufftExecR2C(raster_plan, (cufftReal*)d__cov, d__cov),
 HANDLE_ERROR( cudaThreadSynchronize() );
 
 @ Memory is freed with:
+\index{GBTBT!GBTBT!cleanup}
 <<cleanup>>=
 void GBTBT::cleanup(void)
 {
@@ -328,6 +376,7 @@ void GBTBT::cleanup(void)
 \label{sec:inputoutput}
 
 The main parameters of [[GBTBT]] are displayed with the [[info]] routine:
+\index{GBTBT!GBTBT!info}
 <<info>>=
 void GBTBT::info(void)
 {
@@ -362,6 +411,7 @@ b_comp = n_comp*sizeof(float2);
 \label{sec:matr-vect-prod}
 
 The MVM routine computes the matrix--to--vector multiplication $y=C_{\vec\alpha\cdot\vec\beta}s$.
+\index{GBTBT!GBTBT!MVM}
 << MVM >>=
 void GBTBT::MVM(float *y, float *x)
 {

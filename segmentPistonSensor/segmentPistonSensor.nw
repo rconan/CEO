@@ -1,0 +1,688 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+@
+\index{segmentPistonSensor}
+\section{The files}
+\label{sec:files}
+
+\subsection{Header}
+\label{sec:header}
+
+<<segmentPistonSensor.h>>=
+#ifndef __SEGMENTPISTONSENSOR_H__
+#define __SEGMENTPISTONSENSOR_H__
+
+#ifndef __SOURCE_H__
+#include "source.h"
+#endif
+
+#ifndef __IMAGING_H__
+#include "imaging.h"
+#endif
+
+#ifndef __RAYTRACING_H__
+#include "rayTracing.h"
+#endif 
+
+#ifndef __GMTMIRRORS_H__
+#include "gmtMirrors.h"
+#endif
+
+struct segmentPistonSensor {
+
+  <<parameters>>
+  void setup(gmt_m1 *M1, source *src, 
+	     float dispersion,
+	     float field_of_view,
+	     float _nyquist_factor_);
+  void cleanup(void);
+  void propagate(source *src);
+  void readout(float exposureTime, float readoutNoiseRms, 
+	       float nBackgroundPhoton);
+  void fft(void);
+  void info(void);
+};
+
+#endif // __SEGMENTPISTONSENSOR_H__
+@ 
+\subsection{Source}
+\label{sec:source}
+
+<<segmentPistonSensor.cu>>=
+#include "segmentPistonSensor.h"
+
+<<lenslet trimming kernel>>
+
+<<setup>>
+<<cleanup>>
+<<propagation>>
+<<read-out>>
+<<Fourier>>
+<<info>>
+@
+\subsection{Python}
+\label{sec:python}
+
+\index{segmentPistonSensor!python}
+<<segmentPistonSensor.pxd>>=
+from utilities cimport cuFloatArray, mask, MaskAbstract
+from gmtMirrors cimport gmt_m1, GMT_M1
+from source cimport complex_amplitude, Complex_amplitude, source, Source
+from imaging cimport imaging, Imaging
+cdef extern from "segmentPistonSensor.h":
+    cdef cppclass segmentPistonSensor:
+        int N_LENSLET, N_PX_LENSLET, N_PX, N_PX2, N_PX_IMAGE, N_LAMBDA
+        float pixel_scale
+        mask lenslet_mask, fft_mask
+        complex_amplitude lenslet
+        imaging camera, FFT
+        void setup(gmt_m1 *, source *, float, float, float)
+        void cleanup()
+        void propagate(source *)
+        void readout(float, float, float)
+        void fft()
+<<class definition>>
+@ 
+\index{segmentPistonSensor!python!SegmentPistonSensor}
+<<class definition>>=
+cdef class SegmentPistonSensor:
+    cdef:
+        segmentPistonSensor *_c_segmentPistonSensor
+        readonly MaskAbstract lenslet_mask, fft_mask
+        readonly Complex_amplitude W
+        readonly Imaging camera
+        readonly cuFloatArray fftlet
+@ 
+<<segmentPistonSensor.pyx>>=
+from constants import ARCSEC2RAD
+cdef class SegmentPistonSensor:
+    """
+    The segment piston sensor model
+
+    Parameters
+    ----------
+    M1 : GMT_M1
+        The GMT M1 model class
+    gs : Source
+        The guide star(s) of the segment piston sensor
+    dispersion : float, optional
+        The grism dispersion; default: 5arcsec/micron
+    field_of_view : float, optional
+        The segment piston sensor field-of-view; default: 3 arcsec
+    nyquist_factor : float, optional
+        The Nyquist sampling factor; default: 1, meaning Nyquist sampling
+
+    Attributes
+    ----------
+    W : Complex_amplitude, read-only
+        The piecewise wavefront on the 12 lenslets
+    camera : Imaging, read-only
+        The detector of the segment piston sensor
+    fftlet : cuFloatArray
+        The Fourier trasform of the detector framelet
+    N_LAMBDA : int
+        The number of spectral element
+    pixel_Scale : float
+        The detector pixel scale
+
+    See also
+    --------
+    Imaging : the lenslet and detector class
+    """
+    def __cinit__(self,GMT_M1 M1, Source gs,
+                  float dispersion=5.0,
+                  float field_of_view=3.0,
+                  float nyquist_factor=1.0):
+        self._c_segmentPistonSensor = new segmentPistonSensor()
+        self._c_segmentPistonSensor.setup(M1._c_gmt_m12,
+                                          gs._c_source,
+                                          dispersion*ARCSEC2RAD*1e6,
+                                          field_of_view*ARCSEC2RAD,
+                                          nyquist_factor)
+
+        self.lenslet_mask = MaskAbstract(self._c_segmentPistonSensor.N_PX2)
+        self.lenslet_mask._c_mask = &(self._c_segmentPistonSensor.lenslet_mask)
+        self.lenslet_mask.f._c_gpu.dev_data = self.lenslet_mask._c_mask.f
+
+        self.W = Complex_amplitude()
+        self.W._c_complex_amplitude = &(self._c_segmentPistonSensor.lenslet)
+        self.W.__alloc__((self._c_segmentPistonSensor.N_PX,
+                          self._c_segmentPistonSensor.N_PX))
+        self.camera = Imaging(self._c_segmentPistonSensor.N_LENSLET,
+                              self._c_segmentPistonSensor.N_PX_LENSLET,
+                              N_PX_IMAGE = self._c_segmentPistonSensor.N_PX_IMAGE,
+                              BIN_IMAGE = 2, sps=self)
+
+        self.fft_mask = MaskAbstract( self.camera.N_PX_FRAME**2)
+        self.fft_mask._c_mask = &(self._c_segmentPistonSensor.fft_mask)
+        self.fft_mask.f._c_gpu.dev_data = self.fft_mask._c_mask.f
+
+        cdef int n
+        n = self._c_segmentPistonSensor.FFT.N_SIDE_LENSLET*self._c_segmentPistonSensor.FFT.N_PX_CAMERA
+        self.fftlet = cuFloatArray(shape=(n,n))
+        self.fftlet._c_gpu.dev_data = self._c_segmentPistonSensor.FFT.d__frame
+
+    def __dealloc__(self):
+        self._c_segmentPistonSensor.cleanup()
+
+    def propagate(self, Source gs):
+        """
+        Propagates the guide star wavefront from the segment piston sensor pupil plane to the detector in the focal plane
+
+        Parameters
+        ----------
+        gs : Source
+            The segment piston sensor guide star(s)
+        """
+        self._c_segmentPistonSensor.propagate(gs._c_source)
+     
+    def readOut(self, float exposureTime, float readOutNoiseRms, 
+                float backgroundMagnitude):
+        """
+        Reads-out the detector applying photon noise, read-out noise and background noise
+
+        Parameters
+        ----------
+        exposureTime : float
+            The detector exposure time
+        readOutNoiseRms : float
+            The number of photon-electron rms per pixel
+        backgroundMagnitude : float
+            The background magnitude per arcsec square
+        """
+        self._c_segmentPistonSensor.readout(exposureTime, readOutNoiseRms, 
+                                            backgroundMagnitude)
+
+    def fft(self):
+        """
+        Fourier transforms the detector framelets
+        """
+        self._c_segmentPistonSensor.fft();
+
+    property N_LAMBDA:
+        def __get__(self):
+            return self._c_segmentPistonSensor.N_LAMBDA
+
+    property N_PX:
+        def __get__(self):
+            return self._c_segmentPistonSensor.N_PX
+
+    property pixel_scale:
+        def __get__(self):
+            return self._c_segmentPistonSensor.pixel_scale*2
+@
+
+\section{The model}
+\label{sec:model}
+
+The segment piston sensor consists in 12 lenslets across the segment gaps as show in the figure below
+\begin{tikzpicture}
+  \coordinate (O) at (0,0);
+  \fill[black!10] (O) circle [radius=10mm] node {7};
+  \foreach \x in {1,...,6} {
+    \coordinate (O) at (150-\x*60:22mm);
+     \fill[black!10] (O) circle [radius=10mm] node {\x};
+  }
+  \foreach \x in {1,...,6} {
+    \coordinate (O) at (150-\x*60:11mm);
+    \fill[blue!30,fill opacity=0.5,draw=black,very thin,rotate=60-\x*60] ($(O)-(2mm,2mm)$) rectangle ($(O)+(2mm,2mm)$);
+    \coordinate (O) at (120-\x*60:19mm);
+    \fill[green!30,fill opacity=0.5,draw=black,thin,rotate=30-\x*60] ($(O)-(2mm,2mm)$) rectangle ($(O)+(2mm,2mm)$);
+  }
+  \draw[dotted] circle[radius=11mm];
+  \draw[dotted] circle[radius=19mm];
+\end{tikzpicture}
+
+Projected onto M1, the inner six (blue) and outer six (green) lenslets are centered on circles of radius $ri=4.387$m and $ro=7.543$m, respectively.
+The lenslet size is $L=1.5$m.
+The lenslets are conjugated to an height of 82.5m above M1, hence shifting the lenslet location according to the guide star locations.
+
+Each lenslet is cropped out of the pupil plane and embedded into a zero--padded array twice the size of the lenslet.
+The 12 resulting arrays are arranged into a $4\times 4$ square zero--padded block array as if each block is a new lenslet twice the size of the original lenslet.
+There are as many of these block arrays as there are guide stars.
+
+\newcommand{\croppedLenslet}[5]{
+  \coordinate (O) at (#3:#4mm);
+  \begin{scope}[shift={($(#1mm,#2mm)-(O)$)}]
+    \coordinate (O) at (#3:#4mm);
+    \clip ($(O)-(4mm,4mm)$) rectangle ($(O)+(4mm,4mm)$);
+    \coordinate (O) at (0,0);
+    \fill[black!10] (O) circle [radius=10mm] node {7};
+    \foreach \x in {1,...,6} {
+      \coordinate (O) at (150-\x*60:22mm);
+      \fill[black!10] (O) circle [radius=10mm] node {\x};
+    }
+    \coordinate (O) at (#3:#4mm);
+    \fill[#5!30,fill opacity=0.5,draw=black,very thin,rotate=#3-90] ($(O)-(2mm,2mm)$) rectangle ($(O)+(2mm,2mm)$);  
+  \end{scope}
+}
+
+\begin{tikzpicture}
+  \croppedLenslet{-12}{12}{90}{11}{blue}
+  \croppedLenslet{-4}{12}{30}{11}{blue}
+  \croppedLenslet{4}{12}{-30}{11}{blue}
+  \croppedLenslet{12}{12}{-90}{11}{blue}
+
+  \croppedLenslet{-12}{4}{-150}{11}{blue}
+  \croppedLenslet{-4}{4}{-210}{11}{blue}
+
+  \croppedLenslet{4}{4}{120}{19}{green}
+  \croppedLenslet{12}{4}{60}{19}{green}
+
+  \croppedLenslet{-12}{-4}{0}{19}{green}
+  \croppedLenslet{-4}{-4}{-60}{19}{green}
+  \croppedLenslet{4}{-4}{-120}{19}{green}
+  \croppedLenslet{12}{-4}{-180}{19}{green}
+
+  \draw[step=8mm] (-16mm,-16mm) grid (16mm,16mm);
+\end{tikzpicture}
+
+\section{Parameters}
+\label{sec:parameters}
+
+\index{segmentPistonSensor!segmentPistonSensor}
+The parameters for the segment piston sensor models are:
+\begin{itemize}
+\item the inner and outer radius of the lenslet locations:
+<<parameters>>=
+float ri, ro;
+@
+\item the conjugation height of the lenslet in meter:
+<<parameters>>=
+float lenslet_height;
+@
+\item the size of the lenslet in meter:
+<<parameters>>=
+float lenslet_size;
+@
+\item the re--ordered wavefront on the 12 lenslets:
+<<parameters>>=
+complex_amplitude lenslet;
+@
+\item the wavefront mask:
+<<parameters>>=
+mask lenslet_mask;
+@
+\item the lenslet source containing the lenslet wavefront:
+<<parameters>>=
+source lenslet_src;
+@ 
+\item the grism dispersion in radian per meter:
+<<parameters>>=
+float dispersion;
+@ 
+\item the number of spectral element:
+<<parameters>>=
+int N_LAMBDA;
+@ 
+\item the number of guide star:
+<<parameters>>=
+int N_GS;
+@
+\item the camera pixel scale:
+<<parameters>>=
+float pixel_scale;
+@
+\item the lenslet field--of--view in radian:
+<<parameters>>=
+float field_of_view;
+@ 
+\item the detector:
+<<parameters>>=
+imaging camera;
+imaging *camera_array;
+@
+\item the Nyquist factor, a value of 1 meaning Nyquist sampling, higher value increases the resolution of the image; sampling is always defined for the shortest wavelength
+<<parameters>>=
+float nyquist_factor;
+@ 
+\item the pixel size of one [[lenslet]]:
+<<parameters>>=
+int N_PX_LENSLET, N_PX_LENSLET2;
+@
+\item the size in pixel of the [[lenslet]] array:
+<<parameters>>=
+int N_PX, N_PX2;
+@
+\item the size of the imagelet:
+<<parameters>>=
+int N_PX_IMAGE;
+@ 
+\item the number of [[masklet]] and [[lenslet]]:
+<<parameters>>=
+int N_LENSLET, N_LENSLET2;
+@
+\item the Fourier analyzer
+<<parameters>>=
+imaging FFT;
+source fft_src;
+float *fft_phase;
+mask fft_mask;
+@
+\item some internal variables:
+<<parameters>>=
+int D_px, D_px2;
+float m2px, R, lambda0, spectral_bandwidth;
+@
+\end{itemize}
+
+\section{Functions}
+\label{sec:functions}
+
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
+\index{segmentPistonSensor!segmentPistonSensor!setup}
+<<setup>>=
+void segmentPistonSensor::setup(gmt_m1 *M1, source *src, 
+				float _dispersion_,
+				float _field_of_view_,
+				float _nyquist_factor_)
+{
+  int k, N_DFT, DFT_osf;
+  <<setup content>>
+  info();
+}
+@ 
+The lenslet size, height and location as well as the sensor spectral dispersion, field--of--view and Nyquist factor are set with
+<<setup content>>=
+lenslet_size   = 1.5;
+lenslet_height = 82.5;
+ri             = (M1->D_full+0.357)*0.5 ;
+ro             = M1->L*sqrt(3)*0.5;
+m2px           = M1->D_px/M1->D;
+R              = M1->D*0.5;
+D_px2          = D_px = M1->D_px;
+D_px2         *= D_px;
+dispersion     = _dispersion_;
+field_of_view  = _field_of_view_;
+nyquist_factor = _nyquist_factor_;
+N_GS           = src->N_SRC;
+@
+The guide stars wavefront are cropped on areas centered on the segment piston sensor lenslet and twice their size.
+<<setup content>>=
+N_PX_LENSLET2 =  N_PX_LENSLET = 2*ceil(lenslet_size*m2px);;
+N_PX_LENSLET2 *= N_PX_LENSLET;
+@
+All the images corresponding to the cropped areas will be assembled on a square camera with [[N_LENSLET]]$\times$[[N_LENSLET]] lenslets.
+<<setup content>>=
+N_LENSLET2 =  N_LENSLET = ceil(sqrt(12*N_GS));
+N_LENSLET2 *= N_LENSLET;
+@
+A new \verb|complex_amplitude| object [[lenslet]] is instanciated to hold all the cropped wavefronts of all the guide stars.
+<<setup content>>=
+N_PX2 =  N_PX = N_PX_LENSLET*N_LENSLET;
+N_PX2 *= N_PX;
+lenslet.setup(N_PX2, 1);
+lenslet_mask.setup(N_PX2);
+HANDLE_ERROR( cudaMemset(lenslet_mask.m,  0, sizeof(char)*N_PX2 ) );
+lenslet.M = &lenslet_mask;
+HANDLE_ERROR( cudaMemset( lenslet.amplitude, 0 , sizeof(float)*lenslet.N_PX) );
+@
+The spectral resolution is derived from the pixel scale at the shortest wavelength and the grism dispersion power.
+<<setup content>>=
+spectral_bandwidth = src[0].spectral_bandwidth();
+lambda0            = src[0].wavelength() - spectral_bandwidth*0.5;
+DFT_osf            = (int) rint(2*nyquist_factor);
+pixel_scale = lambda0/(DFT_osf*2*lenslet_size);
+N_LAMBDA    = (int) 2*dispersion*spectral_bandwidth/pixel_scale;
+@ 
+The detector [[camera]] of the segment piston sensor is defined such as the image corresponding to the shortest wavelength is Nyquist sampled.
+A shadow imaging object [[FFT]] is also created to perform the Fourier transform of all the sensor images.
+<<setup content>>=
+N_PX_IMAGE  = (int) ceil(field_of_view/pixel_scale);
+N_PX_IMAGE += N_PX_IMAGE%2;
+camera.setup(N_PX_LENSLET-1,N_LENSLET,DFT_osf,N_PX_IMAGE,2,1);
+FFT.setup(camera.N_PX_CAMERA-1,N_LENSLET,2,camera.N_PX_CAMERA*2,1,1);
+@
+An array of imaging object [[camera_array]] is used to compute an image at each wavelength.
+The image are co--added in the [[camera]] object.
+<<setup content>>=
+camera_array = (imaging *) malloc( sizeof(imaging)*N_LAMBDA) ;
+fprintf(stdout,"@(CEO)>segmentPistonSensor: camera array setup!");
+for (k=0;k<N_LAMBDA;k++) {
+  N_DFT = (int) DFT_osf*N_PX_LENSLET*(1 + k*(spectral_bandwidth/lambda0)/(N_LAMBDA-1));
+  camera_array[k].setupSegmentPistonSensor(N_PX_LENSLET-1,N_LENSLET,N_DFT,N_PX_IMAGE,2,1);
+}
+@
+A pretend source object [[lenslet_src]] is embedding the \verb|complex_amplitude|  [[lenslet]] object.
+This is the source that is propagated through the [[camera_array]].
+<<setup content>>=
+lenslet_src.setup(src[0].photometric_band,0.0,0.0,INFINITY);
+lenslet_src.wavefront.N         = lenslet.N;
+lenslet_src.wavefront.N_PX      = lenslet.N_PX;
+lenslet_src.wavefront.amplitude = lenslet.amplitude;
+lenslet_src.wavefront.phase     = lenslet.phase;
+lenslet_src.wavefront.M         = lenslet.M;
+@
+Another source object is created for the [[FFT]] object.
+The wavefront of this source has no phase and its amplitude is set to the [[camera]] object frame.
+<<setup content>>=
+fft_src.setup("V",0.0,0.0,INFINITY);
+fft_src.wavefront.N         = 1;
+fft_src.wavefront.N_PX      = camera.N_PX_CAMERA*camera.N_SIDE_LENSLET;
+fft_src.wavefront.N_PX     *= fft_src.wavefront.N_PX;
+fft_src.wavefront.amplitude = camera.d__frame;
+
+HANDLE_ERROR( cudaMalloc( (void**)&fft_phase, sizeof(float)*fft_src.wavefront.N_PX ) );
+HANDLE_ERROR( cudaMemset( fft_phase, 0 , sizeof(float)*fft_src.wavefront.N_PX ) );
+fft_src.wavefront.phase     = fft_phase;
+
+fft_mask.setup(fft_src.wavefront.N_PX);
+fft_mask.area               = 1.0/N_LAMBDA;
+fft_src.wavefront.M         = &fft_mask;
+@ 
+The memory is freed with:
+\index{segmentPistonSensor!segmentPistonSensor!cleanup}
+<<cleanup>>=
+void segmentPistonSensor::cleanup(void)
+{
+  fprintf(stdout,"@(CEO)>segmentPistonSensor: freeing memory!\n");
+  lenslet.cleanup();
+  lenslet_mask.cleanup();
+  camera.cleanup();
+  for (int k=0;k<N_LAMBDA;k++) {
+    camera_array[k].cleanupSegmentPistonSensor();
+  }
+  free( camera_array );
+  FFT.cleanup();
+  fft_mask.cleanup();
+  HANDLE_ERROR( cudaFree( fft_phase ) );
+}
+@
+
+\subsection{Propagation}
+\label{sec:propagation}
+
+\index{segmentPistonSensor!segmentPistonSensor!propagate}
+<<propagation>>=
+void segmentPistonSensor::propagate(source *gs)
+{
+  int k;
+  float d, wavenumber;
+  <<propagation content>>
+}
+@
+The propagation through the segment piston sensor is done in 2 steps.
+First, the incoming wavefront is cut into square pieces twice the size of the sensor lenslets and also centered on the lenslets.
+<<propagation content>>=
+dim3 blockDim(16,16);
+dim3 gridDim(N_PX_LENSLET/16+1,N_PX_LENSLET/16+1,N_GS);
+lenslet_trim LLL gridDim, blockDim RRR (lenslet.phase, 
+					lenslet.amplitude, 
+					lenslet_mask.m,
+					N_PX_LENSLET,
+					gs->wavefront.phase, 
+					gs->wavefront.amplitude, 
+					D_px, ri, ro, N_LENSLET,
+					lenslet_size, 
+					lenslet_height, R,
+					gs->dev_ptr, m2px);
+lenslet_mask.set_filter_quiet();
+lenslet_mask.area = N_GS*lenslet_mask.nnz*
+  gs->wavefront.M->area/gs->wavefront.M->nnz/N_LAMBDA;
+@ 
+Second, the piecewise wavefront are propagated through the lenslets and to the focal plane on the detector, one wavelength at a time.
+<<propagation content>>= 
+lenslet_src.magnitude = gs[0].magnitude;
+for (k=0;k<N_LAMBDA;k++) {
+  camera_array[k].d__frame = camera.d__frame;
+  d = spectral_bandwidth*( k - 0.5*(N_LAMBDA-1))/(N_LAMBDA-1);
+  wavenumber = 2*PI/(gs[0].wavelength() + d);
+  d *= (dispersion/pixel_scale);
+  camera_array[k].propagateNoOverlapSPS(&lenslet_src, d, wavenumber);
+}
+  camera.N_FRAME++;
+@
+
+\subsubsection{Propagation kernel}
+\label{sec:propagation-kernel}
+
+
+<<lenslet trimming kernel>>=
+__global__ void lenslet_trim(float *piecewise_phase, 
+                             float *piecewise_amplitude, 
+			     char *m,
+                             const int n_px_lenslet, 
+			     float *pupil_phase, 
+			     float *pupil_amplitude, 
+                             const int n_in, 
+			     const float ri, const float ro,
+			     const int N_LENSLET,
+			     const float lenslet_size,
+			     const float lenslet_height,
+			     const float R,
+			     source *src,
+			     const float m2px)
+{
+  int i, j, k_out, k_in, iSource, k_LA,
+    i_lenslet, j_lenslet, k_lenslet, 
+    i_in, j_in;
+  float theta, xc, yc, x0, y0, O, 
+    s, c, h, x, y, xr, yr, pupil;
+
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  if ( (i<n_px_lenslet) && (j<n_px_lenslet) ) {
+
+    <<lenslet trimming kernel origin>>
+
+    k_lenslet = 12*iSource;
+
+    for (k_LA=0;k_LA<6;k_LA++) {
+
+      <<lenslet trimming kernel (inner)>>
+      <<lenslet trimming kernel block>>
+
+      <<lenslet trimming kernel (outer)>>
+      <<lenslet trimming kernel block>>
+
+      ++k_lenslet;
+    }
+  }
+}
+@ 
+The cropped wavefront origin ([[x0]],[[y0]])  is set a the lower left corner in a coordinate system which origin is at the lower left corner of the telescope pupil array.
+The origin is also shifted according to the lenslet height and source direction.
+<<lenslet trimming kernel origin>>=
+O = R - lenslet_size;
+x0 = lenslet_height*src[iSource].zenith*cos(src[iSource].azimuth) + O;
+y0 = lenslet_height*src[iSource].zenith*sin(src[iSource].azimuth) + O;
+@
+The indices of the next lenslet is derived along with the bottom left coordinates ([[xc,yc]]) of the cropping area for both, the inner set of lensets
+@
+<<lenslet trimming kernel (inner)>>=
+theta = k_LA*PI/3.0;
+j_lenslet = k_lenslet/N_LENSLET;
+i_lenslet = k_lenslet - N_LENSLET*j_lenslet;
+sincosf(theta,&s,&c);
+xc = ri*c + y0;
+yc = ri*s + x0;
+@
+and the outer set of lenslets
+<<lenslet trimming kernel (outer)>>=
+theta = (k_LA-0.5)*PI/3.0;
+j_lenslet = (k_lenslet+6)/N_LENSLET;
+i_lenslet = (k_lenslet+6) - N_LENSLET*j_lenslet;
+sincosf(theta,&s,&c);
+xc = ro*c + y0;
+yc = ro*s + x0;
+
+@  
+The cropping is performed by computing the indices [[k_in]] of the cropped areas and affecting the cropped arrays to the corresponding lenslet wavefront areas with the indices [[k_out]].
+In addition, a pupil the size of the lenslet and properly aligned with the segment gaps is defined and applied to the cropped wavefronts.
+<<lenslet trimming kernel block>>=
+i_in = (int) floor(yc*m2px);
+j_in = (int) floor(xc*m2px);
+
+k_out = lenslet2array( i,  j,  n_px_lenslet,
+  		     i_lenslet,  j_lenslet,  N_LENSLET,  0);
+k_in = j + i_in;
+k_in += (i + j_in + iSource*n_in)*n_in;
+
+h = lenslet_size*0.5;
+x = 2*lenslet_size*(i - (n_px_lenslet-1)*0.5)/(n_px_lenslet-1);
+y = 2*lenslet_size*(j - (n_px_lenslet-1)*0.5)/(n_px_lenslet-1);
+xr = c*x + y*s;
+yr = -s*x + y*c;
+
+pupil = ( ( (xr>=-h) && (xr<=h) ) && ( (yr>=-h) && (yr<=h) ) ) ? 1.0 : 0.0;
+
+piecewise_phase[k_out]     = pupil*pupil_phase[k_in];
+piecewise_amplitude[k_out] = pupil*pupil_amplitude[k_in];
+m[k_out]                   = (piecewise_amplitude[k_out]==1) ? 1 : 0;
+@
+\subsection{Read--out}
+\label{sec:read-out}
+
+The detector readout routine adds photon, read--out and background noise to the frame using the [[exposureTime]] in second, the [[readOutNoiseRms]] in photo--electron per pixel and the [[backgroundMagnitude]] in arcsec$^2$:
+\index{segmentPistonSensor!segmentPistonSensor!readout}
+<<read-out>>=
+void segmentPistonSensor::readout(float exposureTime, float readOutNoiseRms, 
+				  float backgroundMagnitude)
+{
+  float p2, nBackgroundPhoton;
+  p2 = pixel_scale*camera.BIN_IMAGE/ARCSEC(1);
+  p2 *= p2;
+  lenslet_src.magnitude = backgroundMagnitude;
+  nBackgroundPhoton = p2*lenslet_src.n_photon();
+  nBackgroundPhoton *= lenslet_mask.area*N_LAMBDA/N_GS/12;
+  //fprintf(stdout,"nBackgroundPhoton=%g\n",exposureTime*nBackgroundPhoton);
+  camera.readout(exposureTime, readOutNoiseRms, nBackgroundPhoton);
+}
+@ 
+
+\subsection{Fourier analysis}
+\label{sec:fourier-analysis}
+
+\index{segmentPistonSensor!segmentPistonSensor!fft}
+<<Fourier>>=
+void segmentPistonSensor::fft(void)
+{
+  fft_src.wavefront.masked();
+  FFT.propagateNoOverlapBare( &fft_src );
+}
+@ 
+\subsection{Input/Output}
+\label{sec:inputoutput}
+
+The main parameters are displayed with:
+\index{segmentPistonSensor!segmentPistonSensor!info}
+<<info>>=
+void segmentPistonSensor::info(void)
+{
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>segmentPistonSensor:\x1B[;42m\n");
+  fprintf(stdout," . lenslet size and conjugation height: %3.1fm and %4.1fm\n",
+	  lenslet_size, lenslet_height);
+  fprintf(stdout," . center wavelength, spectral bandwidth and resolution: %6.3fmicron, %6.3fmicron, %d\n",
+	  (lambda0+spectral_bandwidth*0.5)*1e6,
+	  spectral_bandwidth*1e6, N_LAMBDA);
+  fprintf(stdout," . pixel scale       : %6.3farcsec\n",pixel_scale*camera.BIN_IMAGE/ARCSEC(1));
+  fprintf(stdout," . field-of-view     : %6.3farcsec\n",N_PX_IMAGE*pixel_scale/ARCSEC(1));
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n"); 
+}
+@ 
+
+\section{Tests}
+\label{sec:tests}
+

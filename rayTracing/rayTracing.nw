@@ -1,0 +1,3752 @@
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+
+\index{rayTracing}
+The ray tracing method involves 4 steps \cite{}:
+\begin{enumerate}
+\item the ray coordinates are transformed into the coordinate system of the surface their interact with,
+\item he intersection of the ray with the surface is found,
+\item the directions of the ray after the surface is computed according to Snell''s law,
+\item the coordinates and directions of the ray is transformed back into its original coordinate systems
+\end{enumerate}
+
+\section{The files}
+\label{sec:files}
+
+\subsection{Header}
+\label{sec:header}
+
+<<rayTracing.h>>=
+#ifndef __RAYTRACING_H__
+#define __RAYTRACING_H__
+
+#ifndef __UTILITIES_H__
+#include "utilities.h"
+#endif
+
+#ifndef __SOURCE_H__
+#include "source.h"
+#endif
+
+#define SNELL_N_ITERATION 100
+#define TOL 1E-9
+
+<<coordinate system data type>>
+
+<<conic structure>>
+
+__host__ __device__ rtd even_asphere(rtd r, int N, rtd *a);
+__host__ __device__ rtd partial_x_or_y_even_asphere(rtd x_or_y, rtd r2, int N, rtd *a);
+
+<<zernikeS structure>>
+
+__host__ __device__  rtd zernike_surface(rtd r, rtd o, int max_n, rtd *a);
+__host__ __device__  rtd zernike_surface_x_derivative(rtd r, rtd o, int max_n, rtd *a);
+__host__ __device__  rtd zernike_surface_y_derivative(rtd r, rtd o, int max_n, rtd *a);
+__host__ __device__ void zernike_surface_and_partials(rtd *ZS, rtd *dZSdx, rtd *dZSdy,
+						      rtd r, rtd o, int max_n,
+						      rtd *a, rtd *ax, rtd *ay);
+int zern_dx_coef(rtd *b, int j, int n, int m, int jp, int np, int mp);
+int zern_dy_coef(rtd *b,int j, int n, int m, int jp, int np, int mp);
+
+<<conic equations>>
+
+<<aperture structure>>
+__global__ void intersection(char *mask, ray *d__ray, int N_RAY);
+
+__host__ __device__  void forward_transform(vector *v_out, vector *v_in,
+				   rtd *d__R, vector *d__origin);
+__host__ __device__  void forward_transform_centered(vector *v_out, vector *v_in,
+					    rtd *d__R);
+__host__ __device__  void backward_transform(vector *v_out, vector *v_in,
+                                    rtd *d__R, vector *d__origin);
+__host__ __device__  void backward_transform_centered(vector *v_out, vector *v_in,
+					     rtd *d__R);
+
+void transform_to_S(bundle *rays, conic *F);
+void transform_to_S(bundle *rays, aperture *A);
+void transform_to_R(bundle *rays, conic *F);
+void transform_to_R(bundle *rays, aperture *A);
+void intersect(bundle *rays, conic *F);
+void reflect(bundle *rays);
+void refract(bundle *rays, rtd mu);
+#endif // __RAYTRACING_H__
+@
+\subsection{Source}
+\label{sec:source}
+
+<<rayTracing.cu>>=
+#include "rayTracing.h"
+
+<<transformation to surface system kernel>>
+<<transformation to rays system kernel>>
+<<intersection with surface kernel>>
+<<reflection kernel>>
+<<refraction kernel>>
+
+<<coordinates forward transform>>
+<<coordinates backward transform>>
+
+<<even asphere equations>>
+
+<<zernike surface kernel>>
+<<zernike surface and derivatives kernel>>
+<<zernike projection kernel>>
+<<aperture intersection>>
+
+<<coordinate system functions>>
+
+<<conic functions>>
+
+<<zernikeS functions>>
+
+<<zernike surface equation>>
+<<zernike derivative x coefficient>>
+<<zernike derivative y coefficient>>
+<<zernike surface and partial derivatives equation>>
+
+<<vignetting kernel>>
+<<aperture functions>>
+
+<<transformation to surface system>>
+<<transformation to rays system>>
+<<intersection with surface>>
+<<reflection>>
+<<refraction>>
+@
+\subsection{Python}
+\label{sec:python}
+
+\index{rayTracing!python}
+
+<<rayTracing.pxd>>=
+cimport numpy as np
+from utilities cimport rtd, vector, cuFloatArray, cuDoubleArray
+from source cimport source, bundle, Bundle, Source
+cdef extern from "rayTracing.h":
+<<rayTracing.pxd contents>>
+<<class definitions>>
+@
+<<rayTracing.pyx>>=
+import numpy as np
+@
+\subsubsection{Coordinate system}
+\label{sec:coordinate-system-1}
+
+\index{rayTracing!python!Coordinate\_system}
+
+<<rayTracing.pxd contents>>=
+    cdef cppclass coordinate_system:
+        vector *origin
+        vector *euler_angles
+        rtd *R
+        char *tag
+        void update()
+<<class definitions>>=
+cimport numpy as np
+cdef class Quaternion:
+    cdef:
+        public np.ndarray qw, qx, qy, qz
+cdef class Coordinates:
+    cdef:
+        double[:,:] data
+        vector *v
+cdef class Coordinate_system:
+    cdef:
+        coordinate_system *_c_coordinate_system
+        double[:,:,::1] _R_
+        int N
+        public Coordinates origin, euler_angles
+        public bytes tag
+        <<log variables>>
+    cdef void init(Coordinate_system, coordinate_system *)
+@ with
+<<log variables>>=
+double[:,:,:] __data_log__
+int __log__, __log_idx__
+@
+<<rayTracing.pyx>>=
+# coordinate_system
+cdef class Coordinate_system:
+    """
+    A class for the coordinate system origins and euler angles
+
+    Attributes
+    ----------
+    N : int
+        The number of coordinate systems
+    origin : Coordinates
+        The origin of the coordinate system(s)
+    euler_angles : Coordinates
+        The euler angles of the coordinates system(s)
+    R : ndarray
+        The rotation natrix of the coordinate systems as a [N,3,3] array
+    """
+
+    def __cinit__(self, int N=1):
+        self.N = N
+        self._c_coordinate_system = new coordinate_system()
+        self.origin = Coordinates((self.N,3))
+        self.euler_angles = Coordinates((self.N,3))
+        <<log init>>
+
+    cdef void init(self, coordinate_system *cs):
+        self._c_coordinate_system = cs
+        self.origin.v = cs.origin
+        self.euler_angles.v = cs.euler_angles
+        self.tag = cs.tag
+
+    def update(self):
+        """
+        Updates the coordinate systems on the device
+        """
+        self._c_coordinate_system.update()
+        if self.__log__>0:
+            k = self.__log_idx__%self.__log__
+            self.__log_idx__ += 1
+            self.__data_log__[:,:3,k] = self.origin.data
+	    self.__data_log__[:,3:,k] = self.euler_angles.data
+
+    def reset(self):
+        """
+        Resets the coordinate systems to its nominal position
+        """
+        self.origin[:] = 0.0
+        self.euler_angles[:] = 0.0
+        self._c_coordinate_system.update()
+
+    property R:
+        def __get__(self):
+            self._R_ = <double[:self.N,:3,:3]>self._c_coordinate_system.R
+            return np.array(self._R_)
+
+    <<log properties (Coordinate system)>>
+@ with
+<<log init>>=
+self.__log__      = 0
+self.__log_idx__  = 0
+self.__data_log__ = np.empty((0,0,0))
+@ and
+<<log properties (Coordinate system)>>= 
+<<log properties (start)>>
+        self.__data_log__ = np.zeros((self.N,6,self.__log__))
+<<log properties (end)>>
+@ 
+<<log properties (start)>>= 
+property log:
+    def __get__(self):
+        return self.__log__
+    def __set__(self,value):
+        self.__log__      = value
+        self.__log_idx__  = 0
+@ 
+<<log properties (end)>>= 
+
+property data_log:
+    def __get__(self):
+        return np.asarray(self.__data_log__)
+@
+\paragraph{Coordinates}
+\label{sec:coordinates}
+
+\index{rayTracing!python!Coordinates}
+
+<<rayTracing.pyx>>=
+# Coordinates
+cdef class Coordinates:
+    """
+    An interface between an array of device vectors and an array of host coordinates
+
+    Examples
+    --------
+    >>> import ceo
+    >>> gmt = ceo.GMT_MX(25.5,256, M1_radial_order=8, M2_radial_order=14)
+
+    The origin of M1 segment in the motion coordinate system is a Coordinates object
+
+    >>> print gmt.M1.motion_CS.origin
+
+    to retrieve the origin values:
+
+    >>> print gmt.M1.motion_CS.origin[:]
+
+    Segment 1 is moved along the y-axis of 1mm:
+
+    >>> gmt.M1.motion_CS.origin[0,1] = 1e-3
+
+    All the segments are resetted to their nominal position with
+
+    gmt.M1.motion_CS.origin[:] = 0
+    """
+    def __cinit__(self,tuple shape):
+        self.data =  np.zeros(shape, dtype=np.float64)
+
+    def __getitem__(self,index):
+        cdef int k
+        for k in range(self.data.shape[0]):
+            self.data[k,0] = self.v[k].x
+            self.data[k,1] = self.v[k].y
+            self.data[k,2] = self.v[k].z
+        return np.array( self.data.__getitem__(index) )
+
+    def __setitem__(self,index,value):
+        self.data.__setitem__(index,np.array(value))
+        cdef int k
+        for k in range(self.data.shape[0]):
+            self.v[k].x = self.data[k,0]
+            self.v[k].y = self.data[k,1]
+            self.v[k].z = self.data[k,2]
+
+    def __repr__(self):
+        data = np.array(self.data)
+        return data.__repr__()
+
+    def __str__(self):
+        max_abs_data = np.max(np.abs(self[:]))
+        if  max_abs_data!=0:
+            exp = np.floor(np.log10(max_abs_data))
+        else:
+            exp = 0
+        s = np.array_str(np.array(self.data)*(10**-exp),precision=3,suppress_small=True)
+        return "10^%dX"%exp + s
+        #return "@(CEO)>Coordinates:\nX,Y,Z coordinates in meter: 10^%dX\n"%exp + s
+
+    property shape:
+        def __get__(self):
+            return self.data.shape
+
+    property size:
+        def __get__(self):
+            return self.data.size
+@
+\paragraph{Quaternions}
+\label{sec:quaternions}
+
+\index{rayTracing!python!Quaternions}
+
+<<rayTracing.pyx>>=
+# Quaternion
+cdef class Quaternion:
+    def __cinit__(self, qw=np.array(0.0,ndmin=1),
+                  qx=np.array(0.0,ndmin=1),
+                  qy=np.array(0.0,ndmin=1),
+                  qz=np.array(0.0,ndmin=1),
+                  np.ndarray origins = None,
+                  np.ndarray euler_angles = None):
+        self.qw = np.array(qw)
+        self.qx = np.array(qx)
+        self.qy = np.array(qy)
+        self.qz = np.array(qz)
+        if origins is not None:
+            self.from_origins(origins)
+        if euler_angles is not None:
+            self.from_euler_angles(euler_angles)
+
+    def from_euler_angles(self, np.ndarray euler_angles):
+        if euler_angles.ndim==1:
+            euler_angles = euler_angles[None,:]
+        ca = np.cos(euler_angles[:,0]*0.5)
+        sa = np.sin(euler_angles[:,0]*0.5)
+        cb = np.cos(euler_angles[:,1]*0.5)
+        sb = np.sin(euler_angles[:,1]*0.5)
+        cc = np.cos(euler_angles[:,2]*0.5)
+        sc = np.sin(euler_angles[:,2]*0.5)
+        self.qw = ca*cb*cc + sa*sb*sc
+        self.qx = sa*cb*cc - ca*sb*sc
+        self.qy = ca*sb*cc + sa*cb*sc
+        self.qz = ca*cb*sc - sa*sb*cc
+
+    def from_origins(self, np.ndarray origins):
+        if origins.ndim==1:
+            origins = origins[None,:]
+        self.qx = origins[:,0]
+        self.qy = origins[:,1]
+        self.qz = origins[:,2]
+        self.qw = np.zeros_like(self.qx)
+
+    def norm(self):
+        red = self.qw**2 + self.qx**2 + self.qy**2 + self.qz**2
+        return np.sqrt(red)
+
+    def conj(self):
+        Q = Quaternion(self.qw,-self.qx,-self.qy,-self.qz)
+        return Q
+
+    def __add__(x,y):
+        if isinstance(x,Quaternion) and isinstance(y,Quaternion):
+            Q1 = <Quaternion>x
+            Q2 = <Quaternion>y
+            return Quaternion(Q1.qw+Q2.qw,Q1.qx+Q2.qx,Q1.qy+Q2.qy,Q1.qz+Q2.qz)
+        else:
+            return NotImplemented
+
+    def __sub__(x,y):
+        if isinstance(x,Quaternion) and isinstance(y,Quaternion):
+            Q1 = <Quaternion>x
+            Q2 = <Quaternion>y
+            return Quaternion(Q1.qw-Q2.qw,Q1.qx-Q2.qx,Q1.qy-Q2.qy,Q1.qz-Q2.qz)
+        else:
+            return NotImplemented
+
+    def __mul__(x,y):
+        if isinstance(x,Quaternion) and isinstance(y,Quaternion):
+            Q1 = <Quaternion>x
+            Q2 = <Quaternion>y
+            a1 = Q1.qw
+            b1 = Q1.qx
+            c1 = Q1.qy
+            d1 = Q1.qz
+            a2 = Q2.qw
+            b2 = Q2.qx
+            c2 = Q2.qy
+            d2 = Q2.qz
+            return Quaternion(
+                a1*a2-b1*b2-c1*c2-d1*d2,
+                a1*b2+b1*a2+c1*d2-d1*c2,
+                a1*c2-b1*d2+c1*a2+d1*b2,
+                a1*d2+b1*c2-c1*b2+d1*a2)
+        else:
+            return NotImplemented
+
+    def to_euler_angles(self):
+        q0 = self.qw
+        q1 = self.qx
+        q2 = self.qy
+        q3 = self.qz
+        a = np.arctan2(2.0*(q0*q1+q2*q3),1-2.0*(q1*q1+q2*q2))
+        b = np.arcsin(2.0*(q0*q2-q3*q1))
+        c = np.arctan2(2.0*(q0*q3+q1*q2),1-2.0*(q2*q2+q3*q3))
+        return np.concatenate((a[:,None],b[:,None],c[:,None]),axis=1)
+
+    def __getitem__(self,index):
+        wxyz = np.zeros((self.qw.size,4))
+        wxyz[:,0] = self.qw
+        wxyz[:,1] = self.qx
+        wxyz[:,2] = self.qy
+        wxyz[:,3] = self.qz
+        return wxyz.__getitem__(index)
+
+    def __setitem__(self,index,value):
+        wxyz = np.zeros((self.qw.size,4))
+        wxyz[:,0] = self.qw
+        wxyz[:,1] = self.qx
+        wxyz[:,2] = self.qy
+        wxyz[:,3] = self.qz
+        wxyz[index] = value
+        self.qw = wxyz[:,0]
+        self.qx = wxyz[:,1]
+        self.qy = wxyz[:,2]
+        self.qz = wxyz[:,3]
+
+    def __repr__(self):
+        return [self.qw,self.qx,self.qy,self.qz].__repr__()
+
+    def __str__(self):
+        return "@(CEO)>Quaternion:" + \
+            "\nqw:" + np.array_str(self.qw,precision=3,suppress_small=True) + \
+            "\nqx:" + np.array_str(self.qx,precision=3,suppress_small=True) + \
+            "\nqy:" + np.array_str(self.qy,precision=3,suppress_small=True) + \
+            "\nqz:" + np.array_str(self.qz,precision=3,suppress_small=True)
+@
+\subsubsection{Conic surface}
+\label{sec:surface-1}
+
+\index{rayTracing!python!Conic}
+<<rayTracing.pxd contents>>=
+    cdef cppclass conic:
+        rtd refractive_index, c, k
+        vector origin
+        coordinate_system ref_frame
+        void setup(rtd , rtd , vector , vector , vector, rtd)
+        void setup(rtd , rtd , vector , vector , vector, rtd, int, rtd *)
+        void reverse_setup(rtd , rtd , vector , vector , vector, rtd, int, rtd *)
+        void cleanup()
+        void trace(bundle *)
+@ 
+<<class definitions>>=
+# conic
+cdef class Conic:
+    cdef:
+        conic *_c_conic
+        public Coordinate_system ref_frame
+        readonly Coordinates origin
+        public bint coord_break
+        public int  rotation_order
+        public dict material
+@
+<<rayTracing.pyx>>=
+from cython cimport boundscheck, wraparound
+from refractors import glass_index
+# conic
+cdef class Conic:
+    """
+    A class defining a conic surface
+
+    Parameters
+    ----------
+    c : rtd
+        The vertex curvature
+    k : rtd
+        The conic constant
+    origin : list, optional
+        The location of the conic surface [m]; default: [0.0,0.0,0.0]
+    euler_angles : list, optional
+        The rotation along the x,y and z axis [rd]; default: [0.0,0.0,0.0]  
+    conic_origin : list, optional
+        The coordinates of the center of the conic surface; default: [0.0,0.0,0.0]
+    refractive_index : rtd, optional
+        The refractive index of the surface, either 0 for a dummy surface, -1 for a reflective surface, >0 for a refractive surface; default: 0.0
+    coord_break : bint, optional
+        The coordinate break surface type flag, True of False; default: False
+
+    Attributes
+    ----------
+    ref_frame : Coordinate_system, read only 
+        The coordinate system of the surface
+    origin : Coordinates, read only
+        The location of the origin of the conic surface within the surface coordinate system
+    refractive_index : rtd, optional
+        The refractive index of the surface, either 0 for a dummy surface, -1 for a reflective surface, >0 for a refractive surface; default: 0.0
+    coord_break : bint, optional
+        The coordinate break surface type flag, True of False; default: False
+    """
+
+    def __cinit__(self,rtd c, rtd k,
+                  list origin       = [0.0,0.0,0.0], 
+                  list euler_angles = [0.0,0.0,0.0],
+                  list conic_origin = [0.0,0.0,0.0],
+                  str material = '',
+                  rtd refractive_index = 0.0,
+                  bint coord_break = False,
+                  int rotation_order = 1,
+		  rtd[:] asphere_a = np.empty(0)):
+        self._c_conic = new conic()
+        cdef vector __origin
+        __origin.x = <rtd>origin[0]
+        __origin.y = <rtd>origin[1]
+        __origin.z = <rtd>origin[2]
+        cdef vector __euler_angles
+        __euler_angles.x = <rtd>euler_angles[0]
+        __euler_angles.y = <rtd>euler_angles[1]
+        __euler_angles.z = <rtd>euler_angles[2]
+        cdef vector __conic_origin
+        __conic_origin.x = <rtd>conic_origin[0]
+        __conic_origin.y = <rtd>conic_origin[1]
+        __conic_origin.z = <rtd>conic_origin[2]
+        with boundscheck(False), wraparound(False):
+            if rotation_order == 1:
+                self._c_conic.setup(c, k, __origin, __euler_angles, 
+                                    __conic_origin, refractive_index,
+                                    asphere_a.size, &asphere_a[0])
+            else:
+                self._c_conic.reverse_setup(c, k, __origin, __euler_angles, 
+                                    __conic_origin, refractive_index,
+                                    asphere_a.size, &asphere_a[0])
+        self.ref_frame = Coordinate_system(1)
+        self.ref_frame.init( &(self._c_conic.ref_frame) )
+        self.origin = Coordinates((1,3))
+        self.origin.v = &(self._c_conic.origin)
+        self.coord_break = coord_break
+        self.material = {'name': material, 'formula': 15, 'c': [], 'temp': 20.0, 'pres': 1.0}
+
+    def __dealloc__(self):
+        self._c_conic.cleanup()
+
+    def __str__(self):
+        origin       = "\n   . Origin: "+self.ref_frame.origin.__str__()
+        euler_angles = "\n   . Euler angles: "+self.ref_frame.euler_angles.__str__()
+        if self.coord_break:
+            return ". coordinate break"+origin+euler_angles
+        else:
+            return ". material: "+self.material["name"]+\
+            " [c=%g,k=%g]"%(self._c_conic.c,self._c_conic.k)+\
+            origin+euler_angles
+
+    def trace(self, Source src):
+        """
+        Traces the rays of the source to the conic optical surface
+
+        Parameters
+        ----------
+        src : Source
+            A Source object
+
+        See also
+        --------
+        Source : the celestial source class
+        """
+        self._c_conic.trace(&(src._c_source.rays))
+
+    def refractive_index(self, Source src = None):
+        # if self.material["name"] == "BK7":
+        #     return 1.5149229764
+        # elif self.material["name"] == "LLF6":
+        #     return 1.5292052002
+        # elif self.material["name"] == "SILICA":
+        #     return 1.4568110443
+        # elif self.material is None:
+        #     return self._c_conic.refractive_index
+        # else:
+
+        print self.material['name']
+        return glass_index(self.material['formula'],
+                               round(src.wavelength*1e6, 2),
+                               self.material['temp'],self.material['pres'],
+                               self.material['c'],
+                               self.material['D0'],
+                               self.material['D1'],
+                               self.material['D2'],
+                               self.material['E0'],
+                               self.material['E1'],
+                               self.material['Ltk'])
+@
+\subsubsection{Aperture}
+\label{sec:aperture-1}
+
+\index{rayTracing!python!Aperture}
+
+<<rayTracing.pxd contents>>=
+    cdef cppclass aperture:
+        coordinate_system ref_frame
+        void setup(rtd, rtd, int, vector , vector)
+        void setup_GMT_M1(rtd, int)
+        void cleanup()
+        void vignetting(bundle *)
+@
+<<rayTracing.pyx>>=
+# aperture
+cdef class Aperture:
+    """
+    A class defining a circular aperture for ray tracing
+
+    Parameters
+    ----------
+    D : rtd
+        The aperture diameter [m]
+    ri : rtd
+        The central obscuration ratio
+    D_px : int
+        The sampling of the diameter [pixel]
+    origin : list, optional
+        The location of the aperture [m]; default: [0.0,0.0,0.0]
+    euler_angles : list, optional
+        The rotation along the x,y and z axis [rd]; default: [0.0,0.0,0.0]  
+
+    Attributes
+    ----------
+    ref_frame : Coordinate_system, read only 
+        The coordinate system of the aperture
+    """
+    cdef:
+        aperture *_c_aperture
+        public Coordinate_system ref_frame
+
+    def __cinit__(self, rtd D, rtd ri, int D_px, origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0]):
+        self._c_aperture = new aperture()
+        cdef vector __origin
+        __origin.x = <rtd>origin[0]
+        __origin.y = <rtd>origin[1]
+        __origin.z = <rtd>origin[2]
+        cdef vector __euler_angles
+        __euler_angles.x = <rtd>euler_angles[0]
+        __euler_angles.y = <rtd>euler_angles[1]
+        __euler_angles.z = <rtd>euler_angles[2]
+        self._c_aperture.setup(D, ri, D_px, __origin, __euler_angles)
+        self.ref_frame = Coordinate_system(1)
+        self.ref_frame.init( &(self._c_aperture.ref_frame) )
+
+    def __dealloc__(self):
+        self._c_aperture.cleanup()
+
+    def vignetting(self, Source src):
+        """
+        Vignets the rays of the source according to the aperture geometry
+
+        Parameters
+        ----------
+        src : Source
+            A Source object
+
+        See also
+        --------
+        Source : the celestial source class
+        """
+        self._c_aperture.vignetting(src.rays._c_bundle)
+@
+\subsubsection{Zernike}
+\label{sec:zernike}
+
+\index{rayTracing!python!ZernikeS}
+
+<<rayTracing.pxd contents>>=
+    cdef cppclass zernikeS:
+          rtd *a
+          void setup(int , rtd *, vector , vector , int)
+          void cleanup()
+          void surface(rtd *, rtd *, rtd *, int , int)
+          void update(rtd *)
+          void surface_derivatives(rtd *, rtd *,
+                                   rtd *, rtd *, int )
+          void surface_and_derivatives(rtd *, rtd *, rtd *,
+                                       rtd *, rtd *, int);
+          void projection(float *, rtd *, rtd *, int)
+
+    rtd zernike_surface(rtd , rtd , unsigned int , rtd *)
+
+@
+<<class definitions>>=
+from numpy cimport ndarray
+from utilities cimport cuDoubleArray
+cdef class ZernikeS:
+    cdef:
+        zernikeS *_c_zernikeS
+        public int max_n, n_mode, N_SURF
+        public ndarray a
+        double [:,::1] _a_
+        <<log variables>>
+@
+<<rayTracing.pyx>>=
+# Zernike surface
+cdef class ZernikeS:
+    """
+    A class to represent a surface as the weighted sum of Zernike polynomials
+
+    Parameters
+    ----------
+    max_n : int
+        The largest of the radial orders
+    a : ndarray, optional
+        The Zernike polynomial coefficients as a N_SURFxn_modes array; default to all 0
+    N_SURF : int, optional
+        The number of Zernike surfaces; default: 1
+    origin : list, optional
+        Origin of the coordinate system of the Zernike polynomials; default: [0,0,0]
+    euler_angles : list, optional
+        Euler angles of the coordinate system of the Zernike polynomials; default: [0,0,0]
+
+    Attributes
+    ----------
+    max_n : int
+        The largest of the radial orders
+    n_mode : int
+        The total number of Zernike modes
+    N_SURF : int
+        The number of Zernike surfaces
+    a : ndarray
+        The Zernike polynomial coefficients as a N_SURFxn_modes array
+
+    Examples
+    --------
+    >>> import ceo
+    >>> import numpy as np
+    >>> import matplotlib as plt
+
+    Lets define a Zernike surface made of the first 15 Zernike polynomials (4th radial order)
+
+    >>> Z = ceo.ZernikeS(4)
+
+    and setting it to be a pure focus mode:
+
+    >>> Z.a[3] = 1.0
+    >>> Z.update()
+
+    The surface is computed with
+
+    >>> npx = 512
+    >>> u = np.linspace(-1,1,npx)
+    >>> x,y = np.meshgrid(u,u, indexing='xy')
+    >>> r = np.hypot(x,y)
+    >>> o = np.arctan2(y,x)
+    >>> cuo = ceo.cuDoubleArray(host_data=o)
+    >>> cur = ceo.cuDoubleArray(host_data=r)
+    >>> S = Z.surface(cur,cuo)
+
+    and its derivative with
+
+    >>> (dSdx,dSdy) = Z.surface_derivatives(cur,cuo)
+    >>> fig, (ax1,ax2,ax3) = plt.subplots(ncols=3,sharey=True)
+    >>> fig.set_size_inches(20,4.5)
+    >>> h1 = ax1.imshow(S.host(),interpolation=None,origin='lower')
+    >>> plt.colorbar(h1,ax=ax1)
+    >>> h2 = ax2.imshow(dSdx.host(),interpolation=None,origin='lower')
+    >>> plt.colorbar(h2,ax=ax2)
+    >>> h3 = ax3.imshow(dSdy.host(),interpolation=None,origin='lower')
+    >>> plt.colorbar(h3,ax=ax3)
+    """
+
+    def __cinit__(self, int _max_n_, ndarray _a_=None,
+                  origin=[0.0,0.0,0.0], euler_angles=[0.0,0.0,0.0],
+                  int N_SURF=1):
+        self._c_zernikeS = new zernikeS()
+        self.max_n = _max_n_
+        self.n_mode = (_max_n_+1)*(_max_n_+2)/2
+        self.N_SURF = N_SURF
+        if _a_ is None:
+            self.a = np.zeros((self.N_SURF,self.n_mode), dtype=np.float64)
+        else:
+            self.a = _a_
+        cdef vector __origin
+        __origin.x = <float>origin[0]
+        __origin.y = <float>origin[1]
+        __origin.z = <float>origin[2]
+        cdef vector __euler_angles
+        __euler_angles.x = <float>euler_angles[0]
+        __euler_angles.y = <float>euler_angles[1]
+        __euler_angles.z = <float>euler_angles[2]
+        self._c_zernikeS.setup( self.max_n, <rtd *>self.a.data,
+                                __origin, __euler_angles,
+                                self.N_SURF)
+        <<log init>>
+
+    def __dealloc__(self):
+        self._c_zernikeS.cleanup();
+
+    def update(self):
+        """
+        Updates the Zernike surface based on the Zernike coefficients
+        """
+        cdef:
+            double[:,:] __a__
+        self._c_zernikeS.update(<rtd *>self.a.data)
+        if self.__log__>0:
+            k = self.__log_idx__%self.__log__
+            self.__log_idx__ += 1
+            __a__ = self.a
+            self.__data_log__[:,:,k] = __a__
+
+    def reset(self):
+        """
+        Resets the Zernike coefficients to zero and update the Zernike surface
+        """
+        self.a = np.zeros((self.N_SURF,self.n_mode))
+        self._c_zernikeS.update(<rtd *>self.a.data)
+
+    def surface(self, cuDoubleArray r, cuDoubleArray o, int surf_id=0):
+        """
+        Computes the Zernike surface in polar coordinates
+
+        Parameters
+        ----------
+        r : cuDoubleArray
+            The normalized radius
+        o : cuDoubleArray
+            The azimuth
+        surf_id : int, optional
+            The surface index; default: 0
+
+        Returns
+        -------
+        S : cuDoubleArray
+            The Zernike surface
+        """
+        cdef cuDoubleArray S
+        S = cuDoubleArray(shape=r.shape, dev_malloc = True)
+        self._c_zernikeS.surface(S._c_gpu.dev_data,
+                                 r._c_gpu.dev_data, o._c_gpu.dev_data,
+                                 r._c_gpu.N, surf_id)
+        return S
+
+    def surface_derivatives(self, cuDoubleArray r, cuDoubleArray o):
+        """
+        Computes the Zernike surface x and y derivatives in polar coordinates
+
+        Parameters
+        ----------
+        r : cuDoubleArray
+            The normalized radius
+        o : cuDoubleArray
+            The azimuth
+
+        Returns
+        -------
+        dSdx : cuDoubleArray
+            The Zernike surface x derivative
+        dSdy : cuDoubleArray
+            The Zernike surface y derivative
+        """
+        cdef cuDoubleArray dSdx, dSdy
+        dSdx = cuDoubleArray(shape=r.shape, dev_malloc = True)
+        dSdy = cuDoubleArray(shape=r.shape, dev_malloc = True)
+        self._c_zernikeS.surface_derivatives(dSdx._c_gpu.dev_data,
+                                             dSdy._c_gpu.dev_data,
+                                             r._c_gpu.dev_data, o._c_gpu.dev_data,
+                                             r._c_gpu.N)
+        return dSdx,dSdy
+
+    def surface_and_derivatives(self, cuDoubleArray r, cuDoubleArray o):
+        """
+        Computes the Zernike surface x and y derivatives in polar coordinates
+
+        Parameters
+        ----------
+        r : cuDoubleArray
+            The normalized radius
+        o : cuDoubleArray
+            The azimuth
+
+        Returns
+        -------
+        S : cuDoubleArray
+            The Zernike surface
+        dSdx : cuDoubleArray
+            The Zernike surface x derivative
+        dSdy : cuDoubleArray
+            The Zernike surface y derivative
+        """
+        cdef cuDoubleArray S, dSdx, dSdy
+        S    = cuDoubleArray(shape=r.shape, dev_malloc = True)
+        dSdx = cuDoubleArray(shape=r.shape, dev_malloc = True)
+        dSdy = cuDoubleArray(shape=r.shape, dev_malloc = True)
+        self._c_zernikeS.surface_and_derivatives(S._c_gpu.dev_data,
+                                                 dSdx._c_gpu.dev_data,
+                                                 dSdy._c_gpu.dev_data,
+                                                 r._c_gpu.dev_data,
+                                                 o._c_gpu.dev_data,
+                                                 r._c_gpu.N)
+        return S,dSdx,dSdy
+
+    def projection(self, cuFloatArray phase, cuDoubleArray r, cuDoubleArray o):
+        """
+        Projects the phase onto a set on Zernike polynomials
+
+        Parameters
+        ----------
+        phase : cuFloatArray
+            The wavefront phase
+        r : cuDoubleArray
+            The radius of the coordinates
+        o : cuDoubleArray
+            The azimuth of the coordinates
+        """
+        self._c_zernikeS.projection(phase._c_gpu.dev_data,
+                                    r._c_gpu.dev_data, o._c_gpu.dev_data, r.size)
+        self._a_ = <double[:self.N_SURF,:self.n_mode]>self._c_zernikeS.a
+        self.a   = np.asarray(self._a_)
+
+    <<log properties (ZernikeS)>>
+
+def Zernike_Surface(rtd r, rtd o, int max_n, np.ndarray a):
+    return zernike_surface(r, o, max_n, <rtd *>a.data)
+
+@ with
+@ and
+<<log properties (ZernikeS)>>= 
+<<log properties (start)>>
+        self.__data_log__ = np.zeros((self.N_SURF,self.n_mode,self.__log__), dtype=np.float64)
+<<log properties (end)>>
+@
+\subsubsection{Ray tracing routines}
+\label{sec:ray-tracing-routines}
+
+\index{rayTracing!python!Transform\_to\_S}
+\index{rayTracing!python!Transform\_to\_R}
+\index{rayTracing!python!Intersect}
+\index{rayTracing!python!Reflect}
+
+<<rayTracing.pxd contents>>=
+    cdef void transform_to_S(bundle *, conic *)
+    cdef void transform_to_S(bundle *, aperture *)
+    cdef void transform_to_R(bundle *, conic *)
+    cdef void transform_to_R(bundle *, aperture *)
+    cdef void intersect(bundle *, conic *)
+    cdef void reflect(bundle *)
+    cdef void refract(bundle *, rtd)
+    cdef void thin_lens(bundle *)
+@
+<<rayTracing.pyx>>=
+# ray tracing
+def Transform_to_S(Source src, Conic F):
+    """
+    Transforms the rays of the source into the coordinate system of the conic object
+
+    Parameters
+    ----------
+    src : Source
+        A Source object
+    F : Conic
+        A Conic object
+
+    See also
+    --------
+    Source : the celestial source class
+    Conic : the optics conic surface class
+    """
+    transform_to_S(src.rays._c_bundle, F._c_conic)
+#def Transform_to_S_from_A(Source src, Aperture A):
+#    transform_to_S(src.rays._c_bundle, A._c_aperture)
+def Transform_to_R(Source src, Conic F):
+    """
+    Transforms the rays of the source into the coordinate system of the rays
+    This is the inverse of Transform_to_S
+
+    Parameters
+    ----------
+    src : Source
+        A Source object
+    F : Conic
+        A Conic object
+
+    See also
+    --------
+    Source : the celestial source class
+    Conic : the optics conic surface class
+    """
+    transform_to_R(src.rays._c_bundle, F._c_conic)
+#def Transform_to_R_from_A(Source src, Aperture A):
+#    transform_to_R(src.rays._c_bundle, A._c_aperture)
+def Intersect(Source src, Conic F):
+    """
+    Intersection of the rays of the source with the surface represented by the conic object
+
+    Parameters
+    ----------
+    src : Source
+        A Source object
+    F : Conic
+        A Conic object
+
+    See also
+    --------
+    Source : the celestial source class
+    Conic : the optics conic surface class
+    """
+    intersect(src.rays._c_bundle, F._c_conic)
+def Reflect(Source src):
+    """
+    Reflection of the rays of the source from the surface represented by the conic object
+
+    Parameters
+    ----------
+    src : Source
+        A Source object
+
+    See also
+    --------
+    Source : the celestial source class
+    """
+    reflect(src.rays._c_bundle)
+def Refract(Source src, rtd mu):
+    """
+    Refraction of the rays of the source through the surface represented by the conic object
+
+    Parameters
+    ----------
+    src : Source
+        A Source object
+    mu : rtd
+        The ratio of the index of refraction associated to the incident and refracted rays
+
+    See also
+    --------
+    Source : the celestial source class
+    """
+    refract(src.rays._c_bundle, mu)
+def Trace(Source src, list S, bint global_CS=True):
+    cdef: 
+        int k, n
+        rtd n_S, mu
+        list xyz
+        Conic _S_
+    n = len(S)
+    xyz = [ src.rays.coordinates.host() ]
+    for k in range(n):
+        print 'Material refractive index: %f'%src.rays.refractive_index
+        _S_ = S[k]
+        Transform_to_S(src,_S_)
+        if not _S_.coord_break: 
+            Intersect(src,_S_)
+            n_S = _S_.refractive_index(src)
+            if n_S==-1:
+                Reflect(src)
+            else:
+                mu = src.rays.refractive_index/n_S
+                if mu!=1.0:
+                    Refract(src,mu)
+                src.rays.refractive_index = n_S
+        if global_CS:
+            Transform_to_R(src,_S_)
+        xyz.append( src.rays.coordinates.host() )
+    return xyz
+    #chief()
+@ 
+<<orphan>>=
+    _S_ = S[idx-1]
+    ceo.Transform_to_S(src,_S_)
+    if not _S_.coord_break: 
+        ceo.Intersect(src,_S_)
+        n_S = _S_.refractive_index
+        if n_S!=0:
+            if n_S==-1:
+                ceo.Reflect(src)
+            else:
+                _mu_ = src.rays.refractive_index/n_S
+                ceo.Refract(src,_mu_)
+                src.rays.refractive_index = n_S
+@ 
+\section{Coordinate system}
+\label{sec:coordinate-system}
+
+\index{rayTracing!coordinate\_system}
+The surface location and orientation with respect to the GCS is specified with a coordinate vector:
+<<coordinate system data>>=
+vector *origin;
+@ and with 3 Euler angles with respected to the x, y and z axis.
+<<coordinate system data>>=
+vector *euler_angles;
+@ The surface can be made of [[N]] identical segments
+<<coordinate system data>>=
+int N;
+@
+The rotation matrix [[R]] used to transform the ray coordinates into the surface coordinates (and back!) is defined with
+<<coordinate system data>>=
+rtd *R, *d__R;
+float *float_R;
+vector *d__origin;
+@
+Coordinate systems can be tagged:
+<<coordinate system data>>=
+char tag[32];
+@
+They are gathered in a new coordinate system data type
+<<coordinate system data type>>=
+struct coordinate_system{
+  <<coordinate system data>>
+  void setup(void);
+  void setup(vector _origin_, vector _euler_angles_);
+  void reverse_setup(vector _origin_, vector _euler_angles_);
+  void setup(vector *_origin_, vector *_euler_angles_, int _N_);
+  void setup(vector *_origin_, vector *_euler_angles_, int _N_, char *_tag_);
+  void cleanup(void);
+  void info(void);
+  void info_details(void);
+  void update(void);
+  void update(vector _origin_, vector _euler_angles_,int idx);
+};
+@
+
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup}
+
+A coordinate system structure is initialized with
+\begin{itemize}
+\item a single origin and orientation,
+\index{rayTracing!coordinate\_system!setup}
+<<coordinate system functions>>=
+void coordinate_system::setup(vector _origin_, vector _euler_angles_)
+{
+  N = 1;
+  HANDLE_ERROR( cudaMalloc((void**)&d__R, sizeof(rtd)*9*N ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector)*N ) );
+  int n_byte = sizeof(vector)*N;
+  origin = (vector *)malloc( n_byte );
+  euler_angles = (vector *)malloc( n_byte );
+  memcpy( origin , &_origin_ , n_byte);
+  memcpy(euler_angles,  &_euler_angles_, n_byte);
+  <<rotation matrix eval>>
+  strcpy(tag,"coordinate_system");
+  info();
+}
+@
+\item a single origin and backward orientation,
+\index{rayTracing!coordinate\_system!setup}
+<<coordinate system functions>>=
+void coordinate_system::reverse_setup(vector _origin_, vector _euler_angles_)
+{
+  N = 1;
+  HANDLE_ERROR( cudaMalloc((void**)&d__R, sizeof(rtd)*9*N ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector)*N ) );
+  int n_byte = sizeof(vector)*N;
+  origin = (vector *)malloc( n_byte );
+  euler_angles = (vector *)malloc( n_byte );
+  memcpy( origin , &_origin_ , n_byte);
+  memcpy(euler_angles,  &_euler_angles_, n_byte);
+  <<reverse rotation matrix eval>>
+  strcpy(tag,"coordinate_system");
+  info();
+}
+@
+\item origin and orientation align to the main coordinate system,
+\index{rayTracing!coordinate\_system!setup}
+<<coordinate system functions>>=
+void coordinate_system::setup(void)
+{
+  N = 1;
+  HANDLE_ERROR( cudaMalloc((void**)&d__R, sizeof(rtd)*9*N ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector)*N ) );
+  int n_byte = sizeof(vector)*N;
+  origin = (vector *)malloc( n_byte );
+  euler_angles = (vector *)malloc( n_byte );
+  origin[0].x = 0;
+  origin[0].y = 0;
+  origin[0].z = 0;
+  euler_angles[0].x = 0;
+  euler_angles[0].y = 0;
+  euler_angles[0].z = 0;
+  <<rotation matrix eval>>
+  strcpy(tag,"coordinate_system");
+  info();
+}
+@
+\item an array of [[N]] origins and orientations:
+  \begin{itemize}
+  \item without a tag:
+\index{rayTracing!coordinate\_system!setup}
+<<coordinate system functions>>=
+void coordinate_system::setup(vector *_origin_, vector *_euler_angles_, int _N_)
+{
+  strcpy(tag,"coordinate_system");
+  <<coordinate system setup common>>
+}
+@
+\item or with a tag:
+\index{rayTracing!coordinate\_system!setup}
+<<coordinate system functions>>=
+void coordinate_system::setup(vector *_origin_, vector *_euler_angles_,
+                              int _N_, char *_tag_)
+{
+  strcpy(tag,_tag_);
+  <<coordinate system setup common>>
+}
+@
+\end{itemize}
+where
+<<coordinate system setup common>>=
+N = _N_;
+HANDLE_ERROR( cudaMalloc((void**)&d__R, sizeof(rtd)*9*N ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector)*N ) );
+int n_byte = sizeof(vector)*N;
+origin = (vector *)malloc( n_byte );
+euler_angles = (vector *)malloc( n_byte );
+memcpy( origin , _origin_ , n_byte);
+memcpy(euler_angles,  _euler_angles_, n_byte);
+<<rotation matrix eval>>
+info();
+@
+\end{itemize}
+
+The rotation matrix to transform the ray coordinates in the GCS is given by
+\begin{eqnarray}
+R &=& \left[
+  \begin{array}{ccc}
+    c\gamma & -s\gamma & 0 \\
+    s\gamma &  c\gamma & 0 \\
+    0       &  0       & 1
+  \end{array}
+  \right] \left[
+  \begin{array}{ccc}
+    c\beta & 0 & s\beta \\
+    0      & 1 &  0 \\
+    -s\beta & 0 &  c\beta
+  \end{array}
+  \right] \left[
+    \begin{array}{ccc}
+      1       &  0       & 0 \\
+      0       &  c\alpha & -s\alpha \\
+      0       &  s\alpha &  c\alpha
+    \end{array}
+\right] \\
+&=& \left[
+  \begin{array}{ccc}
+    c\beta c\gamma &  s\alpha s\beta c\gamma - c\alpha s\gamma & c\alpha s\beta c\gamma + s\alpha s\gamma \\
+    c\beta s\gamma &  s\alpha s\beta s\gamma + c\alpha c\gamma & c\alpha s\beta s\gamma - s\alpha c\gamma \\
+    -s\beta         &  s\alpha c\beta                           &  c\alpha c\beta
+  \end{array}
+\right]
+\end{eqnarray}
+where $cx$ and $sx$ stands for $\sin(x)$ and $\cos(x)$, respectively.
+$\alpha$, $\beta$ and $\gamma$ are the Euler angles along the x, y and z axis respectively.
+The matrix is computed with
+<<rotation matrix eval>>=
+R = (rtd *)malloc( sizeof(rtd)*9*N );
+rtd ca, sa, cb, sb, cg, sg;
+int k, idx;
+for (k=0; k<N; k++)
+  {
+    idx = k;
+    <<rotation matrix definition>>
+  }
+<<CS from host to device>>
+/* for (k=0;k<9*N;k++) */
+/*    *(float_R+k) = (float) R[k]; */
+@ with
+<<rotation matrix definition>>=
+ca = cos(euler_angles[idx].x);
+sa = sin(euler_angles[idx].x);
+cb = cos(euler_angles[idx].y);
+sb = sin(euler_angles[idx].y);
+cg = cos(euler_angles[idx].z);
+sg = sin(euler_angles[idx].z);
+idx *= 9;
+R[idx++] = cb*cg;
+R[idx++] = sa*sb*cg - ca*sg;
+R[idx++] = ca*sb*cg + sa*sg;
+R[idx++] = cb*sg;
+R[idx++] = sa*sb*sg + ca*cg;
+R[idx++] = ca*sb*sg - sa*cg;
+R[idx++] = -sb;
+R[idx++] = sa*cb;
+R[idx++] = ca*cb;
+@ and
+<<CS from host to device>>=
+HANDLE_ERROR( cudaMemcpy( d__R, R,
+			    sizeof(rtd)*9*N, cudaMemcpyHostToDevice ) );
+HANDLE_ERROR( cudaMemcpy( d__origin, origin,
+			    sizeof(vector)*N, cudaMemcpyHostToDevice ) );
+@ where the elements of $R$ are stored in the row major format.
+<<reverse rotation matrix eval>>=
+R = (rtd *)malloc( sizeof(rtd)*9*N );
+rtd ca, sa, cb, sb, cg, sg;
+int k, idx;
+for (k=0; k<N; k++)
+  {
+    idx = k;
+    <<reverse rotation matrix definition>>
+  }
+<<CS from host to device>>
+/* for (k=0;k<9*N;k++) */
+/*    *(float_R+k) = (float) R[k]; */
+@ with
+<<reverse rotation matrix definition>>=
+ca = cos(euler_angles[idx].x);
+sa = sin(euler_angles[idx].x);
+cb = cos(euler_angles[idx].y);
+sb = sin(euler_angles[idx].y);
+cg = cos(euler_angles[idx].z);
+sg = sin(euler_angles[idx].z);
+idx *= 9;
+R[idx++] = cg*cb;
+R[idx++] = -sg*cb;
+R[idx++] = sb;
+R[idx++] = cg*sa*sb + ca*sg;
+R[idx++] = -sa*sb*sg + ca*cg;
+R[idx++] = -cb*sa;
+R[idx++] = -ca*cg*sb + sa*sg;
+R[idx++] = ca*sb*sg + cg*sa;
+R[idx++] = cb*ca;
+@
+\index{rayTracing!coordinate\_system!cleanup}
+<<coordinate system functions>>=
+void coordinate_system::cleanup(void)
+{
+  fprintf(stdout,"@(CEO)>coordinate_system: freeing memory!\n");
+  free( origin );
+  free( euler_angles );
+  free(R);
+  HANDLE_ERROR( cudaFree( d__R ) );
+  HANDLE_ERROR( cudaFree( d__origin ) );
+}
+@
+The coordinate system is updated with
+\index{rayTracing!coordinate\_system!update}
+<<coordinate system functions>>=
+void coordinate_system::update(void)
+{
+  int k, idx;
+  rtd ca, sa, cb, sb, cg, sg;
+  for (k=0; k<N; k++)
+    {
+      idx = k;
+      <<reverse rotation matrix definition>>
+    }
+  <<CS from host to device>>
+}
+@ or with the origin [[_origin_]] and euler angles [[_euler_angles_]] vectors of a single segment identified with its index [[idx]]
+<<coordinate system functions>>=
+void coordinate_system::update(vector _origin_, vector _euler_angles_,int idx)
+{
+  int n_byte = sizeof(vector);
+  memcpy( origin + idx , &_origin_ , n_byte);
+  memcpy(euler_angles + idx,  &_euler_angles_, n_byte);
+  rtd ca, sa, cb, sb, cg, sg;
+  <<rotation matrix definition>>
+  <<CS from host to device>>
+}
+@
+\subsection{Input/Output}
+\label{sec:inputoutput}
+
+The main parameters of the coordinate systems are displayed with the [[info]] routine:
+\index{rayTracing!coordinate\_system!info\_details}
+<<coordinate system functions>>=
+void coordinate_system::info_details(void)
+{
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  fprintf(stdout," ID (Tx          Ty        Tz)[m]  (Ox         Oy         Oz)[deg]\n");
+  float c = 180.0/PI;
+  int k;//, i, j, idx;
+  for (k=0; k<N; k++)
+    {
+      fprintf(stdout," %2d  %+.3e   %+.3e   %+.3e      %+.3e   %+.3e   %+.3e\n", k,
+	      origin[k].x, origin[k].y, origin[k].z,
+	      euler_angles[k].x*c, euler_angles[k].y*c, euler_angles[k].z*c);
+      /*
+      fprintf(stdout,"Direction cosine matrix:\n");
+      for (i=0;i<3;i++)
+	{
+	  fprintf(stdout,"||  ");
+	  for (j=0;j<3;j++)
+	    {
+	      idx = j + i*3 + k*9;
+	      fprintf(stdout,"%+.3e  ",R[idx]);
+	    }
+	  fprintf(stdout,"||\n");
+	}
+      */
+    }
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+}
+@
+\index{rayTracing!coordinate\_system!info}
+<<coordinate system functions>>=
+void coordinate_system::info(void)
+{
+  info_details();
+/*
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  fprintf(stdout," %d coordinate systems\n",N);
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+*/
+}
+@
+
+\section{Conic surface}
+\label{sec:surface}
+
+\index{rayTracing!conic}
+
+A conic surface is represented with the [[conic]] structure:
+<<conic structure>>=
+struct conic {
+
+  <<conic parameters>>
+
+  void setup(rtd _c_, rtd _k_);
+  void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_);
+  void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
+             vector conic_origin);
+  void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
+             vector conic_origin, rtd _refractive_index_);
+  void setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
+             vector conic_origin, rtd _refractive_index_,
+	     int asphere_N, rtd *asphere_a);
+  void reverse_setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
+             vector conic_origin, rtd _refractive_index_,
+	     int asphere_N, rtd *asphere_a);
+  void cleanup(void);
+  void trace(bundle *src);
+  void info(void);
+};
+@
+A conic surface is defined at a given location within a given coordinate system:
+<<conic parameters>>=
+coordinate_system ref_frame;
+vector origin, *d__origin;
+@
+The conic is specified with three parameters:
+<<conic parameters>>=
+rtd c, k, refractive_index;
+@
+where [[c]] is the vertex curvature, [[k]] is the conic parameter and [[refractive_index]] is the index of refraction.
+@
+An even asphere surface can be added to the conic surface. It is defined with the number of even polynomials [[even_asphere_N]] and their coefficients [[even_asphere_a]].
+<<conic parameters>>=
+int even_asphere_N;
+rtd *d__even_asphere_a;
+@
+
+\subsection{Conic definition}
+\label{sec:conic-definition}
+
+The conic surface is defined with
+\begin{equation}
+ \label{eq:4}
+  F(x,y,z) = z - {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} } = 0.
+\end{equation}
+The conic expression is computed with
+\index{rayTracing!conic!conic\_equation}
+<<conic equations>>=
+__host__ __device__ inline rtd conic_equation(vector *v, vector *v0, 
+					      const rtd k, const rtd c,
+					      const int N, rtd *a)
+{
+  rtd rho2, asphere;
+  rho2    = v->rho2_shift(v0->x,v0->y);
+  asphere = even_asphere(rho2, N, a);
+  // printf("asphere: %f\n", asphere);
+  rho2   *= c;
+  if (c==0)
+    return 0.0 + asphere;
+  else {
+    if (k==0)
+      return rho2*0.5 + asphere;
+    else
+      return rho2/( 1 + sqrt(1 - k*c*rho2) ) + asphere;
+  }
+}
+@
+and the surface equation with
+\index{rayTracing!conic!conic\_surface}
+<<conic equations>>=
+__device__ inline rtd  conic_surface(vector *v, vector *v0, 
+				     const rtd k, const rtd c,
+				     const int N, rtd *a)
+{
+  return v->z - v0->z - conic_equation(v, v0, k, c, N, a);
+}
+@
+@
+The partial derivative of the conic equation are written
+\begin{itemize}
+\item
+  \begin{equation}
+    { \partial F(x,y,z) \over \partial x } = -x {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
+  \end{equation}
+\index{rayTracing!conic!partial\_x\_conic\_surface}
+<<conic equations>>=
+ __device__ inline rtd partial_x_conic_surface(vector *v, vector *v0,
+					       const rtd k, const rtd c,
+					       const int N, rtd *a)
+{
+  rtd rho2, asphere;
+  rho2    = v->rho2_shift(v0->x,v0->y);
+  asphere = partial_x_or_y_even_asphere(v->x - v0->x, rho2, N, a);
+  rho2   *= c;
+  if (c==0)
+    return 0.0 - asphere;
+  else
+    if (k==0)
+      return -(v->x - v0->x)*c - asphere;
+    else {
+      return -(v->x - v0->x)*c*rsqrt(1 - k*c*rho2) - asphere;
+    }
+}
+@
+\item
+  \begin{equation}
+    { \partial F(x,y,z) \over \partial y } = -y {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
+  \end{equation}
+\index{rayTracing!conic!partial\_y\_conic\_surface}
+<<conic equations>>=
+__device__ inline rtd partial_y_conic_surface(vector *v, vector *v0,
+					      const rtd k, const rtd c,
+					      const int N, rtd *a)
+{
+  rtd rho2, asphere;
+  rho2    = v->rho2_shift(v0->x,v0->y);
+  asphere = partial_x_or_y_even_asphere(v->y - v0->y, rho2, N, a);
+  rho2   *= c;
+  if (c==0)
+    return 0.0 - asphere;
+  else
+    if (k==0)
+      return -(v->y - v0->y)*c - asphere;
+    else {
+      return -(v->y - v0->y)*c*rsqrt(1 - k*c*rho2) - asphere;
+    }
+}
+@
+\item
+  \begin{equation}
+    { \partial F(x,y,z) \over \partial z } = 1
+  \end{equation}
+\index{rayTracing!conic!partial\_z\_conic\_surface}
+<<conic equations>>=
+__device__ inline rtd partial_z_conic_surface(void)
+{
+  return 1.0;
+}
+@
+\end{itemize}
+
+\subsection{Zernike aspheric definition}
+\label{sec:zern-asph-defin}
+
+The generic expression for aspheric surface is given by
+\begin{equation}
+  \label{eq:69}
+  F(x,y,z) = z - {c\rho^2 \over 1 + \sqrt{1 - \kappa c^2 \rho^2} } - \sum_{i=1}^N a_i Z_i(\rho,\theta) = 0.
+\end{equation}
+\index{rayTracing!conic!aspheric\_surface}
+<<conic equations>>=
+__device__ inline rtd aspheric_surface(vector *v, vector *v0,
+                                       const rtd k, const rtd c,
+				       const int max_n, rtd *a, const rtd R)
+{
+  return conic_surface(v, v0, k, c, 0, a) -
+         zernike_surface(v->mag(R), v->angle(), max_n, a);
+}
+@
+The partial derivatives of the aspheric equation are written
+\begin{itemize}
+\item
+  \begin{equation}
+    { \partial F(x,y,z) \over \partial x } = -x {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
+  \end{equation}
+\index{rayTracing!conic!partial\_x\_aspheric\_surface}
+<<conic equations>>=
+__device__ inline rtd partial_x_aspheric_surface(vector *v, vector *v0,
+					       const rtd k, const rtd c,
+					       const int max_n, rtd *cx,
+					       const rtd R)
+{
+  return partial_x_conic_surface(v, v0,	k, c, 0, cx) -
+         zernike_surface(v->mag(R), v->angle(), max_n-1, cx);
+}
+@
+\item
+  \begin{equation}
+    { \partial F(x,y,z) \over \partial y } = -y {c \over \sqrt{ 1 - \kappa c^2 \rho^2 } }
+  \end{equation}
+\index{rayTracing!conic!partial\_y\_aspheric\_surface}
+<<conic equations>>=
+__device__ inline rtd partial_y_aspheric_surface(vector *v, vector *v0,
+					      const rtd k, const rtd c,
+					      const int max_n, rtd *cy,
+					      const rtd R)
+{
+  return partial_y_conic_surface(v, v0,	k, c, 0, cy) -
+         zernike_surface(v->mag(R), v->angle(), max_n-1, cy);
+}
+@
+\item
+  \begin{equation}
+    { \partial F(x,y,z) \over \partial z } = 1
+  \end{equation}
+\index{rayTracing!conic!partial\_z\_aspheric\_surface}
+<<conic equations>>=
+__device__ inline rtd partial_z_aspheric_surface(void)
+{
+  return 1.0;
+}
+@
+\end{itemize}
+@
+Aspheric surface and partial derivatives:
+<<conic equations (opt-out)>>=
+__device__ void aspheric_surface_and_partials(rtd *S, rtd *dSdx, rtd *dSdy, rtd *dSdz,
+						       vector *v, vector *v0,
+						       const rtd k, const rtd c,
+						       const int max_n,
+						       rtd *a, rtd *cx, rtd *cy,
+						       const rtd R)
+{
+  zernike_surface_and_partials(S, dSdx, dSdy,
+  			       v->mag(R), v->angle(), max_n,
+  			       a, cx, cy);
+  S[0] = v->z - v0->z - S[0];
+  dSdx[0] = -dSdx[0];
+  dSdy[0] = -dSdy[0];
+  dSdz[0] = 1.0;
+  if (c!=0) {
+    rtd rho2;
+    rho2 = c*v->rho2_shift(v0->x,v0->y);
+    if (k==0) {
+      S[0]    -= rho2*0.5;
+      dSdx[0] -= (v->x - v0->x)*c;
+      dSdy[0] -= (v->y - v0->y)*c;
+    } else {
+      rtd red,rsqrt_red;
+      red = 1 - k*c*rho2;
+      rsqrt_red = rsqrt(red);
+      S[0]    -= rho2/( 1 + sqrt(red) );
+      dSdx[0] -= (v->x - v0->x)*c*rsqrt_red;
+      dSdy[0] -= (v->y - v0->y)*c*rsqrt_red;
+    }
+  }
+}
+@
+\subsection{Even asphere definition}
+\label{sec:even-asph-defin}
+
+An even asphere is defined by
+\begin{equation}
+  \label{eq:2}
+  A(\rho) = \sum_{n=1}^8 \alpha_n \rho^{2n}.
+\end{equation}
+\index{rayTracing!conic!even\_asphere}
+<<even asphere equations>>=
+__host__ __device__ rtd even_asphere(rtd r2, int N, rtd *a)
+{
+  int k;
+  rtd A, _r2_;
+  if (N==0)
+    return 0.0;
+  else {
+    _r2_ = r2;
+    A = a[0]*_r2_;
+    for (k=1;k<N;k++) {
+      _r2_ *= r2;
+      A += a[k]*_r2_;
+    }
+    return A;
+  }
+}
+@ 
+The partial derivatives of the even asphere equation are:
+\begin{itemize}
+\item for $x$:
+  \begin{equation}
+    \label{eq:26}
+    {\partial A(\rho) \over \partial x} = 2x\sum_{n=1}^8 n \alpha_n \rho^{2n-2}
+  \end{equation}
+\item for $y$:
+  \begin{equation}
+    \label{eq:26}
+    {\partial A(\rho) \over \partial y} = 2y\sum_{n=1}^8 n \alpha_n \rho^{2n-2}
+  \end{equation}
+\end{itemize}
+\index{rayTracing!conic!partial\_x\_even\_asphere}
+<<even asphere equations>>=
+__host__ __device__ rtd partial_x_or_y_even_asphere(rtd x_or_y, rtd r2, int N, rtd *a)
+{
+  <<even asphere partials>>
+  return A;
+}
+@
+with
+<<even asphere partials>>=
+int k;
+rtd A, _r2_;
+if (N==0)
+  A = 0.0;
+else {
+  _r2_ = 1;
+  A = a[0];
+  for (k=1;k<N;k++) {
+    _r2_ *= r2;
+    A += (k+1)*a[k]*_r2_;
+  }
+  A *= 2*x_or_y;
+}
+@
+\subsection{Setup \& Cleanup}
+\label{sec:surf-setup--cleanup}
+
+A conic surface is initialized with the [[setup]] routine:
+\index{rayTracing!conic!setup}
+<<conic functions>>=
+void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_)
+{
+  c = _c_;
+  k = _k_;
+  origin.x = 0;
+  origin.y = 0;
+  origin.z = 0;
+  ref_frame.setup(_origin_, _euler_angles_);
+  <<conic allocation>>
+}
+@ or with a surface centered on [[origin]]
+\index{rayTracing!conic!setup}
+<<conic functions>>=
+void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, vector conic_origin)
+{
+  c = _c_;
+  k = _k_;
+  origin.x = conic_origin.x;
+  origin.y = conic_origin.y;
+  origin.z = conic_origin.z;
+  ref_frame.setup(_origin_, _euler_angles_);
+  <<conic allocation>>
+  info();
+}
+@ and with the refractive index
+<<conic functions>>=
+void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
+                  vector conic_origin, rtd _refractive_index_)
+{
+  c = _c_;
+  k = _k_;
+  origin.x = conic_origin.x;
+  origin.y = conic_origin.y;
+  origin.z = conic_origin.z;
+  ref_frame.setup(_origin_, _euler_angles_);
+  <<conic allocation>>
+  refractive_index = _refractive_index_;
+}
+@ The parameters of an even asphere surface are set with
+<<conic functions>>=
+void conic::setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
+                  vector conic_origin, rtd _refractive_index_,
+                  int asphere_N, rtd *asphere_a)
+{
+  c = _c_;
+  k = _k_;
+  origin.x = conic_origin.x;
+  origin.y = conic_origin.y;
+  origin.z = conic_origin.z;
+  ref_frame.setup(_origin_, _euler_angles_);
+  <<conic allocation>>
+  refractive_index = _refractive_index_;
+  even_asphere_N = asphere_N;
+  HANDLE_ERROR( cudaMalloc((void**)&d__even_asphere_a, sizeof(rtd)*even_asphere_N ) );
+  HANDLE_ERROR( cudaMemcpy( d__even_asphere_a, asphere_a,
+			    sizeof(rtd)*even_asphere_N, cudaMemcpyHostToDevice ) );
+}
+@ The parameters of an even asphere surface with a backward rotation are set with
+<<conic functions>>=
+void conic::reverse_setup(rtd _c_, rtd _k_, vector _origin_, vector _euler_angles_, 
+                  vector conic_origin, rtd _refractive_index_,
+                  int asphere_N, rtd *asphere_a)
+{
+  c = _c_;
+  k = _k_;
+  origin.x = conic_origin.x;
+  origin.y = conic_origin.y;
+  origin.z = conic_origin.z;
+  ref_frame.reverse_setup(_origin_, _euler_angles_);
+  <<conic allocation>>
+  refractive_index = _refractive_index_;
+  even_asphere_N = asphere_N;
+  HANDLE_ERROR( cudaMalloc((void**)&d__even_asphere_a, sizeof(rtd)*even_asphere_N ) );
+  HANDLE_ERROR( cudaMemcpy( d__even_asphere_a, asphere_a,
+			    sizeof(rtd)*even_asphere_N, cudaMemcpyHostToDevice ) );
+}
+
+@
+A conic surface that sets in the GCS is simply defined with
+\index{rayTracing!conic!setup}
+<<conic functions>>=
+void conic::setup(rtd _c_, rtd _k_)
+{
+  c = _c_;
+  k = _k_;
+  origin.x = 0;
+  origin.y = 0;
+  origin.z = 0;
+  ref_frame.setup();
+  <<conic allocation>>
+}
+@ 
+Some common variables are initialized with:
+<<conic allocation>>=
+refractive_index = 1.0;
+HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
+HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
+			    sizeof(vector), cudaMemcpyHostToDevice ) );
+even_asphere_N = 0;
+d__even_asphere_a = NULL;
+@
+The GMT M1 segmented conic is defined with
+<<conic functions (opt-out)>>=
+void conic::setup_GMT_M1(void)
+{
+  c = 1./36.0;
+  k = 1 - 0.9982857;
+  D_seg = 8.365;
+  ri    = 2.4412/8.365;
+  N = 7;
+  vector origin[7];
+  vector euler_angles[7];
+  origin[0].x = origin[0].y = origin[0].z = 0.0;
+  euler_angles[0].x = euler_angles[0].y = euler_angles[0].z = 0.0;
+  rtd D_c, o, zo, sa;
+  sa = sin(13.522*PI/180);
+  D_c = 8.710 - (0.691-0.445)*sa;
+  zo = 8.417*sa*0.5 + 0.691 - 0.445;
+  int k;
+  for (k=1; k<N; k++)
+  {
+    o = PI*(2*k-1)/6.0;
+    origin[k].x = D_c*cos(o);
+    origin[k].y = D_c*sin(o);
+    origin[k].z = zo;
+    euler_angles[k].x = 0.0;
+    euler_angles[k].y = 0.0
+    euler_angles[k].z = 0.0;
+  }
+  ref_frame.setup(origin, euler_angles, N);
+}
+@
+Memory is freed with
+\index{rayTracing!conic!cleanup}
+<<conic functions>>=
+void conic::cleanup(void)
+{
+  fprintf(stdout,"@(CEO)>conic: freeing memory!\n");
+  ref_frame.cleanup();
+  HANDLE_ERROR( cudaFree( d__origin ) );
+  if (d__even_asphere_a!=NULL)
+    HANDLE_ERROR( cudaFree( d__even_asphere_a ) );
+}
+@
+
+Ray tracing, to and through the surface, is computed with
+<<conic functions>>=
+void conic::trace(bundle *rays)
+{
+  transform_to_S_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+                                       ref_frame.d__R, ref_frame.d__origin);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
+  transform_to_S_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+					            ref_frame.d__R, ref_frame.d__origin);
+  intersect_chief_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+                                        k, c, d__origin,
+					even_asphere_N, d__even_asphere_a);
+  intersect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+					       k, c, d__origin,
+					       rays->d__chief_ray,
+					       even_asphere_N, d__even_asphere_a);
+  if (rays->refractive_index==refractive_index) 
+     reflect(rays);
+   else { 
+     refract(rays, rays->refractive_index/refractive_index);
+     rays->refractive_index = refractive_index;
+   }
+   transform_to_R_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+				       ref_frame.d__R, ref_frame.d__origin);
+  transform_to_R_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+        	 				    ref_frame.d__R, ref_frame.d__origin);
+}
+@ 
+<<conic functions>>=
+void conic::info(void)
+{
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>conic:\x1B[;42m\n");
+  fprintf(stdout," . curvature       : %g\n",c);
+  fprintf(stdout," . conic constant  : %g\n",k);
+  fprintf(stdout," . refractive index: %g\n",refractive_index);
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");  
+  ref_frame.info();
+}
+@
+\section{Zernike surface}
+\label{sec:zernike-surface}
+
+\index{rayTracing!zernikeS}
+
+A Zernike surface is defined as the weighted sum of Zernike polynomials and it is represented with the [[zernikeS]] structure:
+<<zernikeS structure>>=
+struct zernikeS {
+  <<zernikeS parameters>>
+  void setup(int max_n, rtd *a);
+  void setup(int _max_n_, rtd *_a_, int _N_);
+  void setup(int max_n, rtd *a, vector _origin_, vector _euler_angles_);
+  void setup(int max_n, rtd *a, vector _origin_, vector _euler_angles_, int _N_);
+  void cleanup(void);
+  void surface(rtd *S, rtd *r, rtd *o, const int N);
+  void surface(rtd *S, rtd *r, rtd *o, const int N, int surf_id);
+  void update(rtd *a);
+  void surface_derivative_coefs(void);
+  void surface_derivatives(rtd *d__dSdx, rtd *d__dSdy, rtd *d__r, rtd *d__o, const int N);
+  void surface_and_derivatives(rtd *d__S, rtd *d__dSdx, rtd *d__dSdy,
+			       rtd *d__r, rtd *d__o, const int N);
+  void surface_and_derivatives(rtd *d__S, rtd *d__dSdx, rtd *d__dSdy,
+			       rtd *d__r, rtd *d__o, const int N, int surf_id);
+  void projection(float *d__phase, rtd *d__r, rtd *d__o, const int N);
+};
+@
+A Zernike surface is given by
+\begin{equation}
+  \label{eq:43}
+  \varphi\left( \vec r \right) = \sum_{j=1}^J a_j Z_j\left(\vec r\right),
+\end{equation}
+where $a_j$ is the Zernike coefficients corresponding to the Zernike polynomials $Z_j\left(\vec r\right)$ and $\vec r$ is a vector defined such as $0\leq r \geq 1$.
+Zernike polynomials are defined as:
+\begin{equation}
+  \label{eq:44}
+  Z_j\left(\vec r\right) = \sqrt{n+1} R_{nm}(r) A_{jm}(\theta),
+\end{equation}
+where
+\begin{equation}
+  \label{eq:45}
+  R_{nm}(r) = \sum_{k=0}^{n-m\over 2}(-1)^k{(n-k)! \over k!\left( {n+|m|\over 2} -k \right)!\left( {n-|m|\over 2} -k \right)!}r^{n-2k},
+\end{equation}
+and
+\begin{equation}
+  \label{eq:46}
+  A_{jm}(\theta) = 2^{1-\delta_{m0}\over 2}\cos\left( m\theta + (1-\delta_{m0})((-1)^j-1){\pi\over 4} \right),
+\end{equation}
+with $\delta_{m0}$ the Kronecker symbol.
+
+The parameters of the [[zernikeS]] structure are
+\begin{itemize}
+\item the Zernike mode [[j]], radial order [[n]] and azimuthal order [[m]]
+<<zernikeS parameters>>=
+int max_n;
+unsigned int j, n, m, n_mode;
+@
+\item the Zernike coeffcients [[a]]
+<<zernikeS parameters>>=
+rtd *a, *d__a;
+@
+\item the Zernike derivative coefficients [[bx]] and [[by]]
+<<zernikeS parameters>>=
+rtd *bx, *by, *d__bx, *d__by;
+@
+\item the arrays for the sparse column format storage of [[bx]] and [[by]]
+<<zernikeS parameters>>=
+unsigned int *bx_row_idx, *bx_col_ptr,
+             *by_row_idx, *by_col_ptr,
+             bx_nnz, by_nnz;
+@
+\item the Zernike surface derivative coefficients [[c]]
+<<zernikeS parameters>>=
+rtd *cx, *d__cx, *cy, *d__cy;
+@
+\item the number of Zernike surfaces [[N]]
+<<zernikeS parameters>>=
+int N;
+@
+\end{itemize}
+Eq.~(\ref{eq:43}) is re--written
+\begin{equation}
+  \label{eq:51}
+  \varphi\left( \vec r \right) = \sum_{n=0}^N \sqrt{n+1} \sum_{m=n}^{
+    \begin{array}{c}
+m=m-2\\
+ m\geq 0
+\end{array}
+} R_{nm}(r) \left\{
+    \begin{array}{l}
+      \sqrt{2} \left[ a_j \cos(m\theta) + a_j\sin(m\theta) \right] \\
+      a_j
+    \end{array}
+\right\}
+\end{equation}
+
+The Zernike surface is defined in a given coordinate system:
+<<zernikeS parameters>>=
+coordinate_system ref_frame;
+@
+
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup-3}
+
+A [[zernikeS]] structure is initialized with the largest radial order in the surface and the series of Zernike coefficients for all the modes up to that radial order:
+\index{rayTracing!zernikeS!setup}
+<<zernikeS functions>>=
+void zernikeS::setup(int _max_n_, rtd *_a_)
+{
+  N = 1;
+  max_n = _max_n_;
+  n_mode = (max_n+1.0)*(max_n+2.0)*0.5;
+  int n_byte = sizeof(rtd)*n_mode;
+  a = (rtd *)malloc( n_byte );
+  memcpy( a, _a_,  n_byte);
+  HANDLE_ERROR( cudaMalloc((void**)&d__a, n_byte ) );
+  HANDLE_ERROR( cudaMemcpy( d__a, a,
+			    n_byte, cudaMemcpyHostToDevice ) );
+
+  ref_frame.setup();
+
+  <<zernikeS setup common>>
+}
+@
+The origin vector and Euler angles of the coordinate systems where the Zernike polynomials are defined can be passed as arguments:
+\index{rayTracing!zernikeS!setup}
+<<zernikeS functions>>=
+void zernikeS::setup(int _max_n_, rtd *_a_, vector _origin_, vector _euler_angles_)
+{
+  N = 1;
+  max_n = _max_n_;
+  n_mode = (max_n+1.0)*(max_n+2.0)*0.5;
+  int n_byte = sizeof(rtd)*n_mode;
+  a = (rtd *)malloc( n_byte );
+  memcpy( a, _a_,  n_byte);
+  HANDLE_ERROR( cudaMalloc((void**)&d__a, n_byte ) );
+  HANDLE_ERROR( cudaMemcpy( d__a, a,
+			    n_byte, cudaMemcpyHostToDevice ) );
+
+  ref_frame.setup(_origin_, _euler_angles_);
+
+  <<zernikeS setup common>>
+}
+@
+An array of [[N]] Zernike surface is created with
+\index{rayTracing!zernikeS!setup}
+<<zernikeS functions>>=
+void zernikeS::setup(int _max_n_, rtd *_a_, int _N_)
+{
+  N = _N_;
+  max_n = _max_n_;
+  n_mode = (max_n+1.0)*(max_n+2.0)*0.5;
+  int n_byte = sizeof(rtd)*n_mode*N;
+  a = (rtd *)malloc( n_byte );
+  memcpy( a, _a_,  n_byte);
+  HANDLE_ERROR( cudaMalloc((void**)&d__a, n_byte ) );
+  HANDLE_ERROR( cudaMemcpy( d__a, a,
+			    n_byte, cudaMemcpyHostToDevice ) );
+
+  ref_frame.setup();
+
+  <<zernikeS setup common>>
+}
+@ or with
+\index{rayTracing!zernikeS!setup}
+<<zernikeS functions>>=
+void zernikeS::setup(int _max_n_, rtd *_a_,
+		     vector _origin_, vector _euler_angles_, int _N_)
+{
+  N = _N_;
+  max_n = _max_n_;
+  n_mode = (max_n+1.0)*(max_n+2.0)*0.5;
+  int n_byte = sizeof(rtd)*n_mode*N;
+  a = (rtd *)malloc( n_byte );
+  memcpy( a, _a_,  n_byte);
+  HANDLE_ERROR( cudaMalloc((void**)&d__a, n_byte ) );
+  HANDLE_ERROR( cudaMemcpy( d__a, a,
+			    n_byte, cudaMemcpyHostToDevice ) );
+
+  ref_frame.setup(_origin_, _euler_angles_);
+
+  <<zernikeS setup common>>
+}
+@ where
+<<zernikeS setup common>>=
+if (max_n==0)
+  return;
+
+fprintf(stdout,"Computing Zernike derivative coefficients: ....");
+
+int nel = n_mode*n_mode/2;
+int n_col_ptr = (max_n+1.0)*max_n*0.5 + 1;
+
+bx = (rtd *) malloc( sizeof(rtd)*nel);
+bx_row_idx = (unsigned int *) malloc( sizeof(unsigned int)*nel);
+bx_col_ptr = (unsigned int *) malloc( sizeof(unsigned int)*n_col_ptr);
+memset( bx_col_ptr, 0 , sizeof(unsigned int)*n_col_ptr );
+
+by = (rtd *) malloc( sizeof(rtd)*nel);
+by_row_idx = (unsigned int *) malloc( sizeof(unsigned int)*nel);
+by_col_ptr = (unsigned int *) malloc( sizeof(unsigned int)*n_col_ptr);
+memset( by_col_ptr, 0 , sizeof(unsigned int)*n_col_ptr );
+
+<<Zernike derivative coefficients>>
+fprintf(stdout,"\b\b");
+/*
+fprintf(stdout,"bx_nnz=%d\n",bx_nnz);
+fprintf(stdout,"b ; row_idx ; col_ptr\n");
+for (int k=0;k<bx_nnz;k++) {
+  if (k<n_col_ptr)
+  fprintf(stdout,"b=%+4.2f ; %2d ; %2d\n",bx[k],bx_row_idx[k],bx_col_ptr[k]);
+  else
+  fprintf(stdout,"b=%+4.2f ; %2d\n",bx[k],bx_row_idx[k]);
+}
+fprintf(stdout,"by_nnz=%d\n",by_nnz);
+fprintf(stdout,"b ; row_idy ; col_ptr\n");
+for (int k=0;k<by_nnz;k++) {
+  if (k<n_col_ptr)
+  fprintf(stdout,"b=%+4.2f ; %2d ; %2d\n",by[k],by_row_idx[k],by_col_ptr[k]);
+  else
+  fprintf(stdout,"b=%+4.2f ; %2d\n",by[k],by_row_idx[k]);
+}
+*/
+
+n_byte = N*sizeof(rtd)*(n_col_ptr-1);
+cx = (rtd *) malloc( n_byte );
+HANDLE_ERROR( cudaMalloc((void**)&d__cx, n_byte ) );
+
+cy = (rtd *) malloc( n_byte );
+HANDLE_ERROR( cudaMalloc((void**)&d__cy, n_byte ) );
+
+surface_derivative_coefs();
+fprintf(stdout,"\b\b");
+
+HANDLE_ERROR( cudaMemcpy( d__cx, cx,
+			  n_byte, cudaMemcpyHostToDevice ) );
+HANDLE_ERROR( cudaMemcpy( d__cy, cy,
+			  n_byte, cudaMemcpyHostToDevice ) );
+fprintf(stdout,"\b\b!\n");
+@
+The Zernike derivative coefficients are saved into a sparse matrix using the compressed column storage:
+<<Zernike derivative coefficients>>=
+int j, n, m, jp, np, mp, kx=0, ky=0;
+for (np=0;np<max_n;np++) {
+  jp = np*(np+1)/2 + 1;
+  mp = np%2;
+  while (mp<=np) {
+    <<Zernike derivative coefficients: part 2>>
+      ++jp;
+    if (mp>0) {
+       <<Zernike derivative coefficients: part 2>>
+	++jp;
+    }
+    mp += 2;
+  }
+ }
+bx_col_ptr[jp-1] = kx;
+bx_nnz = kx;
+by_col_ptr[jp-1] = ky;
+by_nnz = ky;
+@
+<<Zernike derivative coefficients: part 2>>=
+for (n=np+1;n<=max_n;n++) {
+  j = n*(n+1)/2 + 1;
+  m = n%2;
+  while (m<=n) {
+    <<Zernike derivative coefficients: part 2a>>
+    ++j;
+    if (m>0) {
+      <<Zernike derivative coefficients: part 2a>>
+      ++j;
+    }
+    m += 2;
+  }
+ }
+bx_col_ptr[jp] = kx;
+by_col_ptr[jp] = ky;
+@
+<<Zernike derivative coefficients: part 2a>>=
+  if (zern_dx_coef(bx+kx,j,n,m,jp,np,mp)) {
+    bx_row_idx[kx] = j-1;
+    ++kx;
+  }
+  if (zern_dy_coef(by+ky,j,n,m,jp,np,mp)) {
+    by_row_idx[ky] = j-1;
+    ++ky;
+  }
+@
+From the Zernike derivative coefficients, the coefficients of the Zernike surface derivative are computed:
+\index{rayTracing!zernikeS!surface\_derivative\_coefs}
+<<zernikeS functions>>=
+void zernikeS::surface_derivative_coefs(void)
+{
+  int k,l,n,p, idx_a, idx_c;
+  n = (max_n+1.0)*max_n*0.5;
+  for (p=0;p<N;p++) {
+    idx_a = p*n_mode;
+    idx_c = p*n;
+    for (k=0;k<n;k++) {
+      cx[idx_c] = 0.0;
+      for (l=bx_col_ptr[k];l<bx_col_ptr[k+1];l++)
+	cx[idx_c] += a[ bx_row_idx[l] + idx_a ] * bx[l];
+      /* fprintf(stdout,"cx = %4.2f\n",cx[k]); */
+      cy[idx_c] = 0.0;
+      for (l=by_col_ptr[k];l<by_col_ptr[k+1];l++)
+	cy[idx_c] += a[ by_row_idx[l] + idx_a ] * by[l];
+      /* fprintf(stdout,"cy = %4.2f\n",cy[k]); */
+      idx_c++;
+    }
+  }
+}
+@
+The Zernike coefficients are updated with
+\index{rayTracing!zernikeS!update}
+<<zernikeS functions>>=
+void zernikeS::update(rtd *_a_)
+{
+  int n_byte = sizeof(rtd)*n_mode*N;
+  memcpy( a, _a_,  n_byte);
+  HANDLE_ERROR( cudaMemcpy( d__a, a,
+			    n_byte, cudaMemcpyHostToDevice ) );
+  surface_derivative_coefs();
+
+  int n_col_ptr = (max_n+1.0)*max_n*0.5 + 1;
+  n_byte = N*sizeof(rtd)*(n_col_ptr-1);
+  HANDLE_ERROR( cudaMemcpy( d__cx, cx,
+			    n_byte, cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMemcpy( d__cy, cy,
+			    n_byte, cudaMemcpyHostToDevice ) );
+}
+@
+Memory is freed with:
+\index{rayTracing!zernikeS!cleanup}
+<<zernikeS functions>>=
+void zernikeS::cleanup(void)
+{
+  fprintf(stdout,"@(CEO)>zernikeS: freeing memory!\n");
+  free( a );
+  HANDLE_ERROR( cudaFree( d__a) );
+  if (max_n>0) {
+    free( bx );
+    free( bx_row_idx );
+    free( bx_col_ptr );
+    free( by );
+    free( by_row_idx );
+    free( by_col_ptr );
+    free( cx );
+    free( cy );
+    HANDLE_ERROR( cudaFree( d__cx) );
+    HANDLE_ERROR( cudaFree( d__cy) );
+  }
+}
+@
+\subsection{Zernike surface equation}
+\label{sec:zern-surf-equat}
+
+\index{rayTracing!zernikeS!surface}
+<<zernikeS functions>>=
+void zernikeS::surface(rtd *d__S, rtd *d__r, rtd *d__o, const int N)
+{
+    dim3 blockDim(N_THREAD,N_THREAD);
+    dim3 gridDim(N/N_THREAD2+1,1);
+    surface_kern LLL gridDim, blockDim RRR (d__S, d__r, d__o, N, max_n, d__a);
+}
+@
+\index{rayTracing!zernikeS!surface}
+<<zernikeS functions>>=
+void zernikeS::surface(rtd *d__S, rtd *d__r, rtd *d__o, const int N, int surf_id)
+{
+  //fprintf(stdout,"a offset = %d\n",surf_id*n_mode);
+    dim3 blockDim(N_THREAD,N_THREAD);
+    dim3 gridDim(N/N_THREAD2+1,1);
+    surface_kern LLL gridDim, blockDim RRR (d__S, d__r, d__o, N, max_n, d__a + surf_id*n_mode);
+
+}
+@ with
+<<zernike surface kernel>>=
+__global__ void surface_kern(rtd *S, rtd *r, rtd *o, const int N,
+			     int max_n, rtd *a)
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if (k<N) {
+    S[k] = zernike_surface(r[k], o[k], max_n, a);
+  }
+}
+@ where
+\index{rayTracing!zernikeS!zernike\_surface}
+<<zernike surface equation>>=
+__host__ __device__ rtd zernike_surface(rtd r, rtd o, int max_n, rtd *a)
+{
+  int n, m, mH, a_idx,j;
+  rtd R, R2, R4, A, S_n, S,
+    H1, H2, H3, sm, cm, s2, c2, s ,c, sqrt2;
+  if (max_n<0)//( (r>1.0) || (max_n<0) )
+    S = 0.0;
+  else {
+    R = 1.0;
+    S = a[0]*R;
+    <<zernike surface: radial order sum>>
+    }
+  return S;
+}
+@
+The Zernike surface and its partial derivatives with respect to x and y can be computed simultaneously with
+<<zernike surface and partial derivatives equation>>=
+__host__ __device__ void zernike_surface_and_partials(rtd *ZS, rtd *dZSdx, rtd *dZSdy,
+						     rtd r, rtd o, int max_n,
+						     rtd *a, rtd *ax, rtd *ay)
+{
+  int n, m, mH, a_idx,j;
+  rtd R, R2, R4, A, Ax, Ay, S_n, Sx_n, Sy_n, S, Sx, Sy,
+    H1, H2, H3, sm, cm, s2, c2, s ,c, sqrt2;
+  if (max_n==0) {//( (r>1.0) || (max_n<0) )
+    S = a[0];
+    Sx = Sy = 0.0;
+  } else {
+    R = 1.0;
+    S =  a[0]*R;
+    Sx = ax[0]*R;
+    Sy = ay[0]*R;
+    <<zernike surface and partial derivatives: radial order sum>>
+    }
+  ZS[0]    = S;
+  dZSdx[0] = Sx;
+  dZSdy[0] = Sy;
+}
+@
+The Zernike surface is computed by summing all the azimuthal order of a each radial order from the highest to the lowest azimuthal order.
+The Zernike coefficients [[a]] are ordered by increasing azimuthal order.
+<<zernike surface: radial order sum>>=
+sqrt2 = sqrt(2.0);
+sincos(2*o,&s2,&c2);
+for (n=1;n<=max_n;n++) {
+  j = (n+1)*(n+2)/2;
+  a_idx = j - 1;
+
+  m = n;
+  R = pow(r,n);
+  sincos(m*o, &sm, &cm);
+  if (j%2) {
+    A = a[a_idx--]*sm;
+    A += a[a_idx--]*cm;
+  } else {
+    A = a[a_idx--]*cm;
+    A += a[a_idx--]*sm;
+  }
+  j -= 2;
+  A *= sqrt2;
+  S_n = R*A;
+
+  m -= 2;
+  if (m>=0) {
+    R2 = n*R - (n-1.0)*pow(r,m);
+    <<azimuth>>
+    S_n += R2*A;
+  }
+
+  m -= 2;
+  while (m>=0) {
+    mH = m + 4;
+    if (r>0) {
+      <<H3>>
+      <<H2>>
+      <<H1>>
+      <<R recurrence>>
+      <<azimuth>>
+    } else {
+      R4 = (m==0) ? pow(-1.0,0.5*n) : 0.0;
+      A = 1.0;
+    }
+    S_n += R4*A;
+    R  = R2;
+    R2 = R4;
+    m -= 2;
+  }
+  S += sqrt(n+1.0)*S_n;
+}
+@
+The azimuthal function are computed in a decreasing $m$ order starting from $m=n$, to $n-2$, $n-4$,...
+The azimuthal function are derived using the following recurrence relation
+\begin{eqnarray}
+  \label{eq:54}
+  \cos(m-2\theta) &=& \cos(m\theta)\cos(2\theta) + \sin(m\theta)\sin(2\theta) \\
+  \sin(m-2\theta) &=& \sin(m\theta)\cos(2\theta) - \cos(m\theta)\sin(2\theta)
+\end{eqnarray}
+<<azimuth>>=
+  if (m>0) {
+    c = cm*c2 + sm*s2;
+    s = sm*c2 - cm*s2;
+    if (j%2) {
+      A = a[a_idx--]*s;
+      A += a[a_idx--]*c;
+    } else {
+      A = a[a_idx--]*c;
+      A += a[a_idx--]*s;
+    }
+    j -= 2;
+    A *= sqrt2;
+    cm = c;
+    sm = s;
+  } else {
+    A = a[a_idx--];
+    --j;
+  }
+@
+The radial functions $R_{nm}(r)$ are derived from the recurrence relation\cite{CRM03}:
+\begin{equation}
+  \label{eq:47}
+  R_{n(m-4)}(r) = H_1R_{nm}(r) + \left( H_2 + {H_3 \over r^2} \right) R_{n(m-2)}(r),
+\end{equation}
+<<R recurrence>>=
+R4 = H1*R + ( H2 + H3/(r*r) )*R2;
+@
+starting at $m=n$ and with
+\begin{equation}
+  \label{eq:52}
+  R_{nn}(r) = r^n,
+\end{equation}
+and
+\begin{equation}
+  \label{eq:53}
+  R_{n(n-2)}(r) = nR_{nn}(r) - (n-1)R_{(n-2)(n-2)}(r).
+\end{equation}
+@
+where
+\begin{equation}
+  \label{eq:48}
+  H_1 = {m(m-1) \over 2} - mH_2 + H_3{ (n+m+2)(n-m) \over 8 },
+\end{equation}
+<<H1>>=
+H1 = mH*(mH-1.0)*0.5 - mH*H2 + H3*(n+mH+2.0)*(n-mH)*0.125;
+@
+\begin{equation}
+  \label{eq:49}
+  H_2 = H_3{(n+m)(n-m+2) \over 4(m-1) } + (m-2),
+\end{equation}
+<<H2>>=
+H2 = H3*0.25*(n+mH)*(n-mH+2.0)/(mH-1.0) + mH - 2.0;
+@
+and
+\begin{equation}
+  \label{eq:50}
+  H_3 = {-4(m-2)(m-3) \over (n+m-2)(n-m+4) }.
+\end{equation}
+<<H3>>=
+H3 = -4.0*(mH-2.0)*(mH-3.0)/((n+mH-2.0)*(n-mH+4.0));
+@
+A modification of the above algorithm to compute simultaneously the surface and its partial derivatives:
+<<zernike surface and partial derivatives: radial order sum>>=
+sqrt2 = sqrt(2.0);
+sincos(2*o,&s2,&c2);
+for (n=1;n<=max_n-1;n++) {
+  j = (n+1)*(n+2)/2;
+  a_idx = j - 1;
+
+  m = n;
+  R = pow(r,n);
+  sincos(m*o, &sm, &cm);
+  if (j%2) {
+    Ax = ax[a_idx]*sm;
+    Ay = ay[a_idx]*sm;
+    A  = a[a_idx--]*sm;
+    Ax += ax[a_idx]*cm;
+    Ay += ay[a_idx]*cm;
+    A  += a[a_idx--]*cm;
+  } else {
+    Ax = ax[a_idx]*cm;
+    Ay = ay[a_idx]*cm;
+    A  = a[a_idx--]*cm;
+    Ax += ax[a_idx]*sm;
+    Ay += ay[a_idx]*sm;
+    A  += a[a_idx--]*sm;
+  }
+  j -= 2;
+  Ax *= sqrt2;
+  Ay *= sqrt2;
+  A *= sqrt2;
+  Sx_n = R*Ax;
+  Sy_n = R*Ay;
+  S_n  = R*A;
+
+  m -= 2;
+  if (m>=0) {
+    R2 = n*R - (n-1.0)*pow(r,m);
+    <<azimuth II>>
+    Sx_n += R2*Ax;
+    Sy_n += R2*Ay;
+    S_n  += R2*A;
+  }
+
+  m -= 2;
+  while (m>=0) {
+    mH = m + 4;
+    if (r>0) {
+      <<H3>>
+      <<H2>>
+      <<H1>>
+      <<R recurrence>>
+      <<azimuth II>>
+    } else {
+      R4 = (m==0) ? pow(-1.0,0.5*n) : 0.0;
+      Ax = 1.0;
+      Ay = 1.0;
+      A  = 1.0;
+    }
+    Sx_n += R4*Ax;
+    Sy_n += R4*Ay;
+    S_n  += R4*A;
+    R  = R2;
+    R2 = R4;
+    m -= 2;
+  }
+  Sx += sqrt(n+1.0)*Sx_n;
+  Sy += sqrt(n+1.0)*Sy_n;
+  S  += sqrt(n+1.0)*S_n;
+}
+
+n = max_n;
+j = (n+1)*(n+2)/2;
+a_idx = j - 1;
+
+m = n;
+R = pow(r,n);
+sincos(m*o, &sm, &cm);
+if (j%2) {
+  A = a[a_idx--]*sm;
+  A += a[a_idx--]*cm;
+ } else {
+  A = a[a_idx--]*cm;
+  A += a[a_idx--]*sm;
+ }
+j -= 2;
+A *= sqrt2;
+S_n = R*A;
+
+m -= 2;
+if (m>=0) {
+  R2 = n*R - (n-1.0)*pow(r,m);
+  <<azimuth>>
+      S_n += R2*A;
+ }
+
+m -= 2;
+while (m>=0) {
+  mH = m + 4;
+  if (r>0) {
+    <<H3>>
+    <<H2>>
+    <<H1>>
+    <<R recurrence>>
+    <<azimuth>>
+  } else {
+    R4 = (m==0) ? pow(-1.0,0.5*n) : 0.0;
+    A = 1.0;
+  }
+  S_n += R4*A;
+  R  = R2;
+  R2 = R4;
+  m -= 2;
+ }
+S += sqrt(n+1.0)*S_n;
+@  with
+<<azimuth II>>=
+  if (m>0) {
+    c = cm*c2 + sm*s2;
+    s = sm*c2 - cm*s2;
+    if (j%2) {
+      Ax = ax[a_idx]*s;
+      Ay = ay[a_idx]*s;
+      A  = a[a_idx--]*s;
+      Ax += ax[a_idx]*c;
+      Ay += ay[a_idx]*c;
+      A  += a[a_idx--]*c;
+    } else {
+      Ax = ax[a_idx]*c;
+      Ay = ay[a_idx]*c;
+      A  = a[a_idx--]*c;
+      Ax += ax[a_idx]*s;
+      Ay += ay[a_idx]*s;
+      A  += a[a_idx--]*s;
+    }
+    j -= 2;
+    Ax *= sqrt2;
+    Ay *= sqrt2;
+    A  *= sqrt2;
+    cm = c;
+    sm = s;
+  } else {
+    Ax = ax[a_idx];
+    Ay = ay[a_idx];
+    A  = a[a_idx--];
+    --j;
+  }
+@
+\subsection{Zernike surface derivative}
+\label{sec:zern-surf-deriv}
+
+The partial derivative of the Zernike surface given in Eq.~(\ref{eq:43}) is written
+\begin{equation}
+  \label{eq:55}
+  {\partial \varphi \left( \vec r \right) \over \partial x } = \sum_{j=2}^N a_j   {\partial Z_j \left( \vec r \right) \over \partial x },
+\end{equation}
+where
+\begin{equation}
+  \label{eq:56}
+  {\partial Z_j \left( \vec r \right) \over \partial x } = \sum_{k=1}^{j-1} b_{jk}^x Z_k \left( \vec r \right)
+\end{equation}
+Inserting Eq.~(\ref{eq:55}) into Eq.~(\ref{eq:56}) leads to
+\begin{equation}
+  \label{eq:57}
+  {\partial \varphi \left( \vec r \right) \over \partial x } = \sum_{j=2}^N a_j \sum_{k=1}^{j-1} b_{jk}^x Z_k \left( \vec r \right) = \sum_{k=1}^{N-1} Z_k \left( \vec r \right) \sum_{j={k+1}}^N a_jb_{jk}^x  = \sum_{k=1}^{N-1} Z_k \left( \vec r \right) c_{k}^x,
+\end{equation}
+with
+\begin{equation}
+  \label{eq:58}
+  c_k^x = \sum_{j={k+1}}^N a_jb_{jk}^x.
+\end{equation}
+
+The x and y derivatives of the Zernike surface are computed with
+\index{rayTracing!zernikeS!surface\_derivatives}
+<<zernikeS functions>>=
+void zernikeS::surface_derivatives(rtd *d__dSdx, rtd *d__dSdy,
+				   rtd *d__r, rtd *d__o, const int N)
+{
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N/N_THREAD2+1,1);
+  surface_kern LLL gridDim, blockDim RRR (d__dSdx, d__r, d__o, N, max_n-1, d__cx);
+  surface_kern LLL gridDim, blockDim RRR (d__dSdy, d__r, d__o, N, max_n-1, d__cy);
+}
+@
+Both derivatives depends on the projection coefficients of Zernike x and y derivatives:
+<<zernike derivative x coefficient>>=
+int zern_dx_coef(rtd *b, int j, int n, int m, int jp, int np, int mp)
+{
+  int delta_m, rule_0, rule_1, rule_2, rule_3;
+  delta_m = mp - m;
+  rule_0 = (delta_m==1) || (delta_m==-1);
+  rule_1 = (j-jp)%2 == 0 && !( (m==0) || (mp==0) );
+  rule_2 = ( (m==0) && (mp!=0) ) && (jp%2 == 0);
+  rule_3 = ( (m!=0) && (mp==0) ) && (j%2  == 0);
+  if ( rule_0 && (rule_1||rule_2||rule_3) )
+    *b = sqrt( (n+1.0)*(np+1.0) );
+  else
+    return 0;
+  if ( (m==0) || (mp==0) )
+    *b *= sqrt(2.0);
+  return 1;
+}
+@
+<<zernike derivative y coefficient>>=
+int zern_dy_coef(rtd *b, int j, int n, int m, int jp, int np, int mp)
+{
+  int delta_m, rule_0, rule_1, rule_2, rule_3, sign_rule_1, sign_rule_2;
+  delta_m = mp - m;
+  rule_0 = (delta_m==1) || (delta_m==-1);
+  rule_1 = (j-jp)%2 == 1 && !( (m==0) || (mp==0) );
+  rule_2 = ( (m==0) && (mp!=0) ) && (jp%2 == 1);
+  rule_3 = ( (m!=0) && (mp==0) ) && (j%2  == 1);
+  if ( rule_0 && (rule_1||rule_2||rule_3) )
+    *b = sqrt( (n+1.0)*(np+1.0) );
+  else
+    return 0;
+  sign_rule_1 = (delta_m==+1) && (j%2 == 1);
+  sign_rule_2 = (delta_m==-1) && (j%2 == 0);
+  if ( ( (m!=0) && (mp!=0) ) && ( sign_rule_1 || sign_rule_2 ) )
+    *b *= -1;
+  if ( (m==0) || (mp==0) )
+    *b *= sqrt(2.0);
+  return 1;
+}
+@
+\subsection{Zernike surface and derivatives}
+\label{sec:zern-surf-deriv-1}
+
+\index{rayTracing!zernikeS!surface\_and\_derivatives}
+<<zernikeS functions>>=
+void zernikeS::surface_and_derivatives(rtd *d__S, rtd *d__dSdx, rtd *d__dSdy,
+                                       rtd *d__r, rtd *d__o, const int N)
+{
+    dim3 blockDim(N_THREAD,N_THREAD);
+    dim3 gridDim(N/N_THREAD2+1,1);
+    surface_and_derivatives_kern LLL gridDim, blockDim RRR (d__S, d__dSdx, d__dSdy,
+                                                            d__r, d__o, N, max_n,
+                                                            d__a, d__cx, d__cy);
+}
+@
+\index{rayTracing!zernikeS!surface}
+<<zernikeS functions>>=
+void zernikeS::surface_and_derivatives(rtd *d__S, rtd *d__dSdx, rtd *d__dSdy,
+                                       rtd *d__r, rtd *d__o, const int N, int surf_id)
+{
+  //fprintf(stdout,"a offset = %d\n",surf_id*n_mode);
+    dim3 blockDim(N_THREAD,N_THREAD);
+    dim3 gridDim(N/N_THREAD2+1,1);
+    surface_and_derivatives_kern LLL gridDim, blockDim RRR (d__S, d__dSdx, d__dSdy,
+                                                            d__r, d__o, N, max_n,
+                                                            d__a + surf_id*n_mode,
+                                                            d__cx + surf_id*n_mode,
+                                                            d__cy + surf_id*n_mode);
+
+}
+@ with
+<<zernike surface and derivatives kernel>>=
+__global__ void surface_and_derivatives_kern(rtd *S, rtd *dSdx, rtd *dSdy,
+                                             rtd *r, rtd *o, const int N,
+                                             int max_n, rtd *a, rtd *ax, rtd *ay)
+{
+  int i, j, k;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if (k<N) {
+    zernike_surface_and_partials(S+k, dSdx+k, dSdy+k, r[k], o[k], max_n, a, ax, ay);
+  }
+}
+@
+
+\subsection{Projection}
+\label{sec:projection}
+
+The projection $a_i$ of a wavefront phase $\varphi$ onto a Zernike polynomial is given by
+\begin{equation}
+  \label{eq:59}
+  a_i = { \sum_k \varphi\left( \vec r_k \right) Z_i\left( \vec r_k \right) \over \sum_k \left| Z_i\left( \vec r_k \right) \right|^2 }
+\end{equation}
+@
+\index{rayTracing!zernikeS!projection}
+<<zernikeS functions>>=
+void zernikeS::projection(float *d__phase, rtd *d__r, rtd *d__o, const int N)
+{
+  int k;
+  int n_byte = sizeof(rtd)*n_mode;
+  rtd *d__ap;
+  HANDLE_ERROR( cudaMalloc((void**)&d__ap, n_byte ) );
+  HANDLE_ERROR( cudaMemset(d__ap, 0, n_byte ) );
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1);
+  for (k=0;k<n_mode;k++)
+    projection_kern LLL gridDim, blockDim RRR (d__a, d__phase, d__r, d__o, N, max_n, d__ap, k);
+  HANDLE_ERROR( cudaFree( d__ap) );
+  HANDLE_ERROR( cudaMemcpy( a, d__a,
+			    sizeof(rtd)*n_mode, cudaMemcpyDeviceToHost ) );
+}
+@ where
+<<zernike projection kernel>>=
+__global__ void projection_kern(rtd *a, float *phase, rtd *r, rtd *o, const int N,
+				int max_n, rtd *ap, int mode)
+{
+  int i;
+  rtd num, denom, z;
+  num = denom = 0.0;
+  ap[mode] = 1.0;
+  for (i=0; i<N; i++) {
+    if (phase[i]!=0)
+      {
+	z = zernike_surface(r[i], o[i], max_n, ap);
+	num   += phase[i]*z;
+	denom += z*z;
+      }
+  }
+  a[mode]  = num/denom;
+  ap[mode] = 0.0;
+}
+@
+\section{Aperture}
+\label{sec:aperture}
+
+\index{rayTracing!aperture}
+An aperture is a bounded surface used to clip a bundle of ray to the aperture shape.
+<<aperture structure>>=
+struct aperture {
+  <<aperture parameters>>
+  void setup(rtd _D_, int _D_px_,
+	     vector _origin_, vector _euler_angles_);
+  void setup(rtd _D_, rtd _ri_, int _D_px_,
+	     vector _origin_, vector _euler_angles_);
+  void setup(rtd _D_, rtd _ri_, rtd _D_seg_, int _D_px_,
+	     vector *_origin_, vector *_euler_angles_, int N_segment);
+  void setup_GMT_M1(rtd _D_, int _D_px_);
+  void cleanup(void);
+  void vignetting(bundle *rays);
+
+};
+@
+A circular aperture is defined by its diameter [[D]] in meter of [[D_px]] in pixel.
+If the aperture is annular [[ri]] defines the ratio between the inner and outer diameter.
+The aperture can be segmented with [[N]] identical segments of diameter [[D_seg]].
+The location of the aperture segments is defined within a given coordinate system [[ref_frame]].
+A mask [[V]] is used to select the rays that are not vignetted by the aperture.
+<<aperture parameters>>=
+int D_px;
+rtd D, ri, D_seg;
+int N;
+mask V;
+coordinate_system ref_frame;
+
+@
+\subsection{Setup \& Cleanup}
+\label{sec:aper-setup--cleanup}
+
+An aperture is initialized with:
+\begin{itemize}
+\item for a circular aperture,
+\index{rayTracing!aperture!setup}
+<<aperture functions>>=
+void aperture::setup(rtd _D_, int _D_px_,
+		     vector _origin_, vector _euler_angles_)
+{
+  D_px = _D_px_;
+  D_seg = D = _D_;
+  ri   = 0.0;
+  N = 1;
+  V.setup(D_px*D_px);
+  ref_frame.setup(_origin_, _euler_angles_);
+}
+@  \item for an annular aperture,
+\index{rayTracing!aperture!setup}
+<<aperture functions>>=
+void aperture::setup(rtd _D_, rtd _ri_, int _D_px_,
+		     vector _origin_, vector _euler_angles_)
+{
+  D_px = _D_px_;
+  D_seg = D = _D_;
+  ri   = _ri_;
+  N = 1;
+  V.setup(D_px*D_px);
+  ref_frame.setup(_origin_, _euler_angles_);
+}
+@
+\item for an aperture with [[N_segment]] circular segment of diameter [[D_seg]], each segment with a different coordinate system,
+\index{rayTracing!aperture!setup}
+<<aperture functions>>=
+void aperture::setup(rtd _D_, rtd _ri_, rtd _D_seg_, int _D_px_,
+		     vector *_origin_, vector *_euler_angles_, int N_segment)
+{
+  D_px  = _D_px_;
+  D     = _D_;
+  D_seg = _D_seg_;
+  ri    = _ri_;
+  N = N_segment;
+  V.setup(D_px*D_px*N);
+  ref_frame.setup(_origin_, _euler_angles_, N);
+}
+@
+\end{itemize}
+
+The memory is freed with
+\index{rayTracing!aperture!cleanup}
+<<aperture functions>>=
+void aperture::cleanup(void)
+{
+  fprintf(stdout,"@(CEO)>aperture: freeing memory!\n");
+  V.cleanup();
+  ref_frame.cleanup();
+}
+@
+The vignetting of the rays are done with
+\index{rayTracing!aperture!vignetting}
+<<aperture functions>>=
+void aperture::vignetting(bundle *rays)
+{
+  rtd R2, Rri2;
+  R2 = D_seg*D_seg*0.25;
+  Rri2 = R2*ri*ri;
+  //fprintf(stdout,"R2=%g - Rri2=%5.2f\n",R2,Rri2);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
+  HANDLE_ERROR( cudaMemset(V.m, 0, sizeof(char)*rays->N_RAY ) );
+  vignetting_kernel LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY,
+						Rri2, R2,
+						ref_frame.d__R,
+						ref_frame.d__origin);
+  intersection LLL gridDim , blockDim RRR (V.m, rays->d__ray, rays->N_RAY);
+}
+@ calling the device kernel:
+<<vignetting kernel>>=
+__global__ void vignetting_kernel(char *mask, ray *d__ray, int N_RAY,
+				  rtd inner2, rtd outer2,
+				  rtd *d__R, vector *d__origin)
+{
+  int i, j, ij, iCoordSys, idx;
+  rtd rho2;
+  rtd x, y, z, u, v, w, x1, y1, s0, k, l, m;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = threadIdx.y;
+  iCoordSys = blockIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( ij<N_RAY )
+  {
+
+    idx = iCoordSys;
+
+    u = d__ray[ij].coordinates.x - d__origin[idx].x;
+    v = d__ray[ij].coordinates.y - d__origin[idx].y;
+    w = d__ray[ij].coordinates.z - d__origin[idx].z;
+
+    idx = iCoordSys*9;
+
+    x = d__R[0+idx]*u + d__R[3+idx]*v + d__R[6+idx]*w;
+    y = d__R[1+idx]*u + d__R[4+idx]*v + d__R[7+idx]*w;
+    z = d__R[2+idx]*u + d__R[5+idx]*v + d__R[8+idx]*w;
+
+    u = d__ray[ij].directions.x;
+    v = d__ray[ij].directions.y;
+    w = d__ray[ij].directions.z;
+
+    k = d__R[0+idx]*u + d__R[3+idx]*v + d__R[6+idx]*w;
+    l = d__R[1+idx]*u + d__R[4+idx]*v + d__R[7+idx]*w;
+    m = d__R[2+idx]*u + d__R[5+idx]*v + d__R[8+idx]*w;
+
+    if (m==0) { return; }
+    s0 = -z/m;
+    x1 = x + k*s0;
+    y1 = y + l*s0;
+    rho2 = x1*x1 + y1*y1;
+    if ( (iCoordSys==0) && (rho2<inner2) )
+      {
+	return;
+      }
+    if (rho2<=outer2)
+      {
+	mask[ij] = 1;
+      }
+  }
+}
+@
+The vignetting by the aperture is computed as the intersection between the aperture mask and the ray vignetting flags:
+<<aperture intersection>>=
+__global__ void intersection(char *mask, ray *d__ray, int N_RAY)
+{
+  int i, j, ij, iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
+  if  ( ij<N_RAY )
+  {
+    ij += iSource*N_RAY;
+    d__ray[ij].v &= mask[ij];
+  }
+}
+@
+
+\section{Ray tracing routines}
+\label{sec:ray-tracing-routines}
+
+\subsection{Coordinates transformation}
+\label{sec:coord-transf}
+
+The coordinates and cosine directions of the rays need to be transformed into the surface coordinates system first.
+The matrix [[R]] in the conic structure transforms the coordinates in the LCS $(x,y,z)$ into the GCS $(\bar x,\bar y,\bar z)$ i.e.
+\begin{equation}
+  \left[
+  \begin{array}{c}
+    \bar x - \bar x_o \\
+    \bar y - \bar y_o \\
+    \bar z - \bar z_o
+  \end{array}
+  \right] = R \left[
+    \begin{array}{c}
+      x \\
+      y \\
+      z
+    \end{array}
+\right]
+\end{equation}
+The reverse transform is simply
+\begin{equation}
+  \left[
+    \begin{array}{c}
+      x \\
+      y \\
+      z
+    \end{array}
+\right] = R^T \left[
+  \begin{array}{c}
+    \bar x - \bar x_o \\
+    \bar y - \bar y_o \\
+    \bar z - \bar z_o
+  \end{array}
+  \right] = \left( \left[
+  \begin{array}{c}
+    \bar x - \bar x_o \\
+    \bar y - \bar y_o \\
+    \bar z - \bar z_o
+  \end{array}
+  \right]^T R \right)^T
+\end{equation}
+<<transformation to surface system>>=
+void transform_to_S(bundle *rays, conic *F)
+{
+  transform_to_S_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+				   F->ref_frame.d__R, F->ref_frame.d__origin);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
+  transform_to_S_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+					     F->ref_frame.d__R, F->ref_frame.d__origin);
+}
+void transform_to_S(bundle *rays, aperture *A)
+{
+  transform_to_S_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+				   A->ref_frame.d__R, A->ref_frame.d__origin);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
+  transform_to_S_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+					     A->ref_frame.d__R, A->ref_frame.d__origin);
+}
+@
+<<transformation to surface system kernel>>=
+__global__ void transform_to_S_kernel(ray *d__ray, int N_RAY,
+				      rtd *d__R, vector *d__origin)
+{
+  int i, j, ij;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    forward_transform(&(d__ray[ij].coordinates), &(d__ray[ij].coordinates),
+		      d__R, d__origin);
+    forward_transform_centered(&(d__ray[ij].directions), &(d__ray[ij].directions),
+			       d__R);
+  }
+}
+@ with the projection of the ray coordinates in the surface reference frame LCS:
+<<coordinates forward transform>>=
+__host__ __device__  void forward_transform(vector *v_out, vector *v_in,
+					 rtd *d__R, vector *d__origin)
+{
+  rtd u, v, w;
+  u = v_in->x - d__origin->x;
+  v = v_in->y - d__origin->y;
+  w = v_in->z - d__origin->z;
+
+  v_out->x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
+  v_out->y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
+  v_out->z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
+}
+__host__ __device__  void forward_transform_centered(vector *v_out, vector *v_in,
+						  rtd *d__R)
+{
+  rtd u, v, w;
+  u = v_in->x;
+  v = v_in->y;
+  w = v_in->z;
+
+  v_out->x = d__R[0]*u + d__R[3]*v + d__R[6]*w;
+  v_out->y = d__R[1]*u + d__R[4]*v + d__R[7]*w;
+  v_out->z = d__R[2]*u + d__R[5]*v + d__R[8]*w;
+}
+@
+<<transformation to rays system>>=
+void transform_to_R(bundle *rays, conic *F)
+{
+  transform_to_R_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+				   F->ref_frame.d__R, F->ref_frame.d__origin);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
+  transform_to_R_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+        	 				     F->ref_frame.d__R, F->ref_frame.d__origin);
+}
+void transform_to_R(bundle *rays, aperture *A)
+{
+  transform_to_R_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+				   A->ref_frame.d__R, A->ref_frame.d__origin);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
+  transform_to_R_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+        	 				     A->ref_frame.d__R, A->ref_frame.d__origin);
+}
+@
+<<transformation to rays system kernel>>=
+__global__ void transform_to_R_kernel(ray *d__ray, int N_RAY,
+                                      rtd *d__R, vector *d__origin)
+{
+  int i, j, ij;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    backward_transform(&(d__ray[ij].coordinates), &(d__ray[ij].coordinates),
+		       d__R, d__origin);
+    backward_transform_centered(&(d__ray[ij].directions), &(d__ray[ij].directions),
+				d__R);
+  }
+}
+@ with the projection of the ray coordinates in the rays reference frame LCS:
+@
+<<coordinates backward transform>>=
+__host__ __device__  void backward_transform(vector *v_out, vector *v_in,
+                                    rtd *d__R, vector *d__origin)
+{
+  rtd u, v, w;
+
+  u = v_in->x;
+  v = v_in->y;
+  w = v_in->z;
+
+  v_out->x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
+  v_out->y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
+  v_out->z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
+
+  v_out->x += d__origin->x;
+  v_out->y += d__origin->y;
+  v_out->z += d__origin->z;
+}
+__host__ __device__  void backward_transform_centered(vector *v_out, vector *v_in,
+						  rtd *d__R)
+{
+  rtd u, v, w;
+
+  u = v_in->x;
+  v = v_in->y;
+  w = v_in->z;
+
+  v_out->x = d__R[0]*u + d__R[1]*v + d__R[2]*w;
+  v_out->y = d__R[3]*u + d__R[4]*v + d__R[5]*w;
+  v_out->z = d__R[6]*u + d__R[7]*v + d__R[8]*w;
+}
+@
+
+\subsection{Surface intersection}
+\label{sec:surface-intersection}
+
+<<intersection with surface>>=
+void intersect(bundle *rays, conic *F)
+{
+  intersect_chief_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+					F->k, F->c, F->d__origin,
+					F->even_asphere_N, F->d__even_asphere_a);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
+  intersect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+					       F->k, F->c, F->d__origin,
+					       rays->d__chief_ray,
+					       F->even_asphere_N, F->d__even_asphere_a);
+}
+
+<<intersection with surface kernel>>=
+__global__ void intersect_chief_kernel(ray *d__ray, const int N_RAY,
+				       const rtd Fk, const rtd Fc,
+				       vector *d__origin,
+				       const int N, rtd *a)
+{
+  int j, ij;
+  rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
+  vector vv;
+  ij = 0;
+
+  <<intersection with z=0 plane>>
+  d__ray[ij].optical_path_length = s0;
+  s0 = s1 = 0;
+  for (j=0; j<SNELL_N_ITERATION; j++)
+    {
+      <<Newton-Raphson>>
+      s0 = s1;
+    }
+}
+__global__ void intersect_kernel(ray *d__ray, int N_RAY,
+				 rtd Fk, const rtd Fc,
+				 vector *d__origin,
+                                 ray *d__chief_ray,
+				 int N, rtd *a)
+{
+  int i, j, ij;
+  rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
+  vector vv;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    <<intersection with z=0 plane>>
+    d__ray[ij].optical_path_length = s0;
+    s0 = s1 = 0;
+    for (j=0; j<SNELL_N_ITERATION; j++)
+    {
+      <<Newton-Raphson>>
+	s0 = s1;
+    }
+  d__ray[ij].optical_path_difference +=
+    d__ray[ij].optical_path_length - d__chief_ray->optical_path_length;
+  }
+}
+@
+The intersection of a ray with the surface is derived using the parametric equations of the ray
+\begin{eqnarray}
+  \label{eq:3}
+  x &=& x_0 + ks \\
+  y &=& y_0 + ls \\
+  z &=& z_0 + ms
+\end{eqnarray}
+where $s$ is the distance along the ray from the point $(x_0,y_0,z_0)$.
+Eq.~(\ref{eq:3}) are inserted into the surface definition Eq.~(\ref{eq:4}) that is solved for $s$.
+
+The intersection with the plane $z=0$ in the LCS is derived first leading to
+\begin{eqnarray}
+  \label{eq:5}
+  s_0 &=& -z_0/m \\
+  x_1 &=& x_0 + ks_0 \\
+  y_1 &=& y_0 + ls_0
+\end{eqnarray}
+<<intersection with z=0 plane>>=
+k  = d__ray[ij].directions.x;
+l  = d__ray[ij].directions.y;
+m  = d__ray[ij].directions.z;
+if (m==0) { return; }
+s0 = -d__ray[ij].coordinates.z/m;
+x1 = d__ray[ij].coordinates.x + k*s0;
+y1 = d__ray[ij].coordinates.y + l*s0;
+@
+and giving a new set of parametric equations
+\begin{eqnarray}
+  \label{eq:6}
+  x &=& x_1 + ks \\
+  y &=& y_1 + ls \\
+  z &=& ms
+\end{eqnarray}
+
+The distance $s$ to the surface is obtained with the Newton--Raphson iterative method
+\begin{equation}
+  \label{eq:7}
+  s_{j+1} = s_j - { F(x_j,y_j,z_j) \over F^\prime(x_j,y_j,z_j) }
+\end{equation}
+where
+\begin{eqnarray}
+  \label{eq:8}
+  x_j &=& x_1 + ks_j \\
+  y_j &=& y_1 + ls_j \\
+  z_j &=& ms_j
+\end{eqnarray}
+<<Newton-Raphson>>=
+vv.x = x1 + k*s0;
+vv.y = y1 + l*s0;
+vv.z = m*s0;
+@ and where
+\begin{eqnarray}
+  \label{eq:9}
+  F^\prime(x_j,y_j,z_j) &=& \left. { {\mathrm d} F \over {\mathrm d} s  } \right|_{s=s_j} \\
+                      &=& k\left.{ \partial F(x,y,z) \over \partial x } \right|_j + l\left. { \partial F(x,y,z) \over \partial y }\right|_j + m\left.{ \partial F(x,y,z) \over \partial z }\right|_j
+\end{eqnarray}
+<<Newton-Raphson>>=
+S = conic_surface(&vv, d__origin, Fk, Fc, N, a);
+K = partial_x_conic_surface(&vv, d__origin, Fk, Fc, N, a);
+L = partial_y_conic_surface(&vv, d__origin, Fk, Fc, N, a);
+M = partial_z_conic_surface();
+dSds = K*k + L*l + M*m;
+if (dSds==0) { return; }
+s1 = s0 - S/dSds;
+if (abs(s1-s0)<TOL)
+{
+  d__ray[ij].coordinates.x = x1 + k*s1;
+  d__ray[ij].coordinates.y = y1 + l*s1;
+  d__ray[ij].coordinates.z = m*s1;
+  d__ray[ij].surface_normal.x    =
+    partial_x_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc, N, a);
+  d__ray[ij].surface_normal.y    =
+    partial_y_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc, N, a);
+  d__ray[ij].surface_normal.z    = partial_z_conic_surface();
+  d__ray[ij].optical_path_length += s1;
+  d__ray[ij].n_iteration = j;
+  break;
+}
+@
+The iterative process is started with
+\begin{equation}
+  \label{eq:11}
+  s_1 = 0,
+\end{equation}
+and is terminated when
+\begin{equation}
+  \label{eq:12}
+  \left|s_{j+1} - s_j \right| < \epsilon,
+\end{equation}
+where $\epsilon$ is a tolerance set by the required accuracy.
+
+The final distance along a ray from the point $(x_0,y_0,z_0)$ is
+\begin{equation}
+  \label{eq:13}
+  s = s_0 + s_{j+1}.
+\end{equation}
+
+The surface normal at the intersection point will be needed to compute the refracted ray:
+\begin{eqnarray}
+  \label{eq:1}
+  K &=& \left.{ \partial F(x,y,z) \over \partial x } \right|_{j+1} \\
+  L &=& \left.{ \partial F(x,y,z) \over \partial y } \right|_{j+1} \\
+  M &=& \left.{ \partial F(x,y,z) \over \partial z } \right|_{j+1}.
+\end{eqnarray}
+@
+
+\subsection{Snell's law}
+\label{sec:snells-law}
+
+\subsubsection{Refraction}
+\label{sec:refraction}
+
+\def\np{n^\prime}
+\def\kp{k^\prime}
+\def\lp{l^\prime}
+\def\mp{m^\prime}
+\def\Sp{S^\prime}
+
+The Snell's law can be written as
+\begin{equation}
+  \label{eq:10}
+  \np \vec \Sp \times \vec r = n \vec S \times \vec r.
+\end{equation}
+$\vec S:(k,l,m)$ and $\vec \Sp:(\kp,\lp,\mp)$ are both unit vectors along the incident and refracted rays, respectively.
+$\vec r:(K,L,M)$ is a unit vector normal to the refraction surface at the ray intersection point.
+$n$ and $\np$ are the refractive indices for the incident and refracted rays, respectively.
+
+Eq.~(\ref{eq:10}) implies that the three vectors $\vec S$, $\vec \Sp$ and $\vec r$ are co--planar, from which it follows that
+\begin{equation}
+  \label{eq:14}
+  \vec \Sp = \mu \vec S + \Gamma \vec r,
+\end{equation}
+where $\mu=n/\np$ and $\Gamma$ has to be determined.
+$\Gamma$ is derived by solving
+\begin{equation}
+  \label{eq:15}
+  \left| \vec \Sp \right|^2 - \left| \mu \vec S + \Gamma \vec r \right|^2 = 0
+\end{equation}
+Developing Eq.~(\ref{eq:15}) leads to $\Gamma$ being the solution of a quadratic equation
+\begin{equation}
+  \label{eq:16}
+  \Gamma^2 + 2a\Gamma + b = 0
+\end{equation}
+where
+\begin{equation}
+  \label{eq:17}
+  a = \mu { kK +lL + mM \over K^2 + L^2 + M^2 },
+\end{equation}
+<<a equation>>=
+K = d__ray[ij].surface_normal.x;
+L = d__ray[ij].surface_normal.y;
+M = d__ray[ij].surface_normal.z;
+G2 = K*K + L*L + M*M;
+k = d__ray[ij].directions.x;
+l = d__ray[ij].directions.y;
+m = d__ray[ij].directions.z;
+a = mu*(k*K + l*L + m*M)/G2;
+@  and
+\begin{equation}
+  \label{eq:18}
+  b = { \mu^2 -1 \over K^2 + L^2 + M^2 }.
+\end{equation}
+<<b equation>>=
+b = (mu*mu-1)/G2;
+@
+Eq.~(\ref{eq:16}) is solved with the Newton--Raphson iterative method by introducing the new function
+\begin{equation}
+  \label{eq:19}
+  V(\Gamma) = \Gamma^2 + 2a\Gamma + b,
+\end{equation}
+and writing $\Gamma$ as
+\begin{equation}
+  \label{eq:20}
+  \Gamma_{j+1} = \Gamma_j - { V(\Gamma_j) \over V^\prime(\Gamma_j) }.
+\end{equation}
+Noting that
+\begin{equation}
+  \label{eq:21}
+  V^\prime(\Gamma_j) = \left. { \mathrm d V \over \mathrm d \Gamma } \right|_j = 2\left( \Gamma_j + a \right),
+\end{equation}
+Eq.~(\ref{eq:20}) becomes
+\begin{equation}
+  \label{eq:22}
+  \Gamma_{j+1} = { \Gamma_j^2 - b \over 2(\Gamma_j + a) }.
+\end{equation}
+with
+\begin{equation}
+  \label{eq:23}
+  \Gamma_1 = {-b \over 2a }.
+\end{equation}
+
+<<refraction>>=
+void refract(bundle *rays, const rtd mu)
+{
+  refract_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1, mu);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
+  refract_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, mu);
+}
+@
+<<refraction kernel>>=
+__global__ void refract_kernel(ray *d__ray, int N_RAY, const rtd mu)
+{
+  int i, j, ij;
+  rtd k, l, m, K, L ,M, G2, a, b, gamma0, gamma1, gamma_relative_error;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    <<a equation>>
+    <<b equation>>
+    gamma0 = -0.5*b/a;
+    for (j=0; j<SNELL_N_ITERATION; j++)
+    {
+      gamma1 = 0.5*(gamma0*gamma0-b)/(gamma0+a);
+      gamma_relative_error = abs( gamma1/gamma0 - 1.0 );
+        if (gamma_relative_error<1E-6)
+      {
+        d__ray[ij].directions.x = mu*k + gamma1*K;
+        d__ray[ij].directions.y = mu*l + gamma1*L;
+        d__ray[ij].directions.z = mu*m + gamma1*M;
+        return;
+      }
+      gamma0 = gamma1;
+    }
+  }
+}
+@
+\subsubsection{Reflection}
+\label{sec:reflection}
+
+In the case of reflection, one have $\mu=1$, $b=0$ and
+\begin{equation}
+  \label{eq:24}
+  \Gamma = -2a.
+\end{equation}
+Eq.~(\ref{eq:14}) thus becomes
+\begin{equation}
+  \label{eq:25}
+    \vec \Sp = \vec S -2a \vec r.
+\end{equation}
+<<reflection>>=
+void reflect(bundle *rays)
+{
+  reflect_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1, 1.0);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
+  reflect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, 1.0);
+}
+@
+Setting $\mu=-1$ makes the mirror behaving like a thin lens:
+<<thin lens>>=
+void thin_lens(bundle *rays)
+{
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
+  reflect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY, -1.0);
+}
+@
+<<reflection kernel>>=
+    __global__ void reflect_kernel(ray *d__ray, int N_RAY, float mu)
+{
+  int i, j, ij;
+  rtd k, l, m, K, L ,M, G2, a;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    <<a equation>>
+    a *= -2.0;
+    d__ray[ij].directions.x = mu*k + a*K;
+    d__ray[ij].directions.y = mu*l + a*L;
+    d__ray[ij].directions.z = mu*m + a*M;
+  }
+}
+@
+
+\section{Input/Output}
+\label{sec:inputoutput}
+
+\section{Tests}
+\label{sec:tests}
+
+<<rayTracing.bin>>=
+<<benchmark II>>
+@
+\subsection{Benchmark I}
+\label{sec:benchmark-i}
+
+<<benchmark I>>=
+#include <iostream>
+#include <fstream>
+#include "ceo.h"
+using namespace std;
+
+int main(int argc,char *argv[]) {
+  int N_GS, N_GS_max, nPx, k_nPx, k_GS, zern_j, zern_n, k;
+  float elaspedTime;
+  rtd D;
+  vector src_origin, zern_origin, zern_euler_angles;
+  ofstream f;
+  float *zen, *azi;
+
+  D = 25.5;
+  src_origin.x =  0.0;
+  src_origin.y =  0.0;
+  src_origin.z = 25.0;
+
+  nPx = 256;
+
+  stopwatch tid;
+  source src;
+  zernikeS zern;
+  gmt_m1 M1;
+  gmt_m2 M2;
+
+  zern_n = 6;
+  zern_j = (zern_n+1)*(zern_n+2)/2;
+  rtd *a;
+  a = (rtd *)malloc( sizeof(rtd)*zern_j );
+  for (k=0;k<zern_j;k++)
+    a[k] = 1e-6;
+  zern_origin.x = zern_origin.y = zern_origin.z = 0.0;
+  zern_euler_angles.x = zern_euler_angles.y = zern_euler_angles.z = 0.0;
+  zern.setup(zern_n,a,zern_origin,zern_euler_angles,7);
+
+  N_GS_max = 3;
+
+  f.open("bench0.txt");
+  f.precision(3);
+  f << "nPx";
+  for (k_GS=1;k_GS<=N_GS_max;k_GS++)
+    f << "\t" << k_GS << "GS";
+  f << endl;
+
+  nPx = 2;
+  for (k_nPx=2;k_nPx<11;k_nPx++) {
+
+    nPx*=2;
+    f << nPx;
+
+    for (N_GS=1; N_GS<=N_GS_max; N_GS++) {
+
+      zen = (float *) malloc( sizeof(float)*N_GS );
+      azi = (float *) malloc( sizeof(float)*N_GS );
+      for (k_GS=0;k_GS<N_GS;k_GS++) {
+	zen[k_GS] = 0.0;
+	azi[k_GS] = 0.0;
+      }
+
+      src.setup("R",zen,azi,INFINITY,N_GS,D,nPx,src_origin);
+
+      M1.setup(D,nPx,&zern,0);
+
+      M2.setup(D,nPx,&zern,N_GS);
+
+      /* for (int k=0;k<2;k++) { */
+      /* 	M2.blocking( &(src.rays) ); */
+      /* 	M1.trace( &(src.rays) ); */
+      /* 	M2.trace( &(src.rays) ); */
+      /* 	src.rays.to_sphere(-5.830,2.197173); */
+      /* 	src.opd2phase(); */
+      /* } */
+
+      tid.tic();
+
+      src.wavefront.reset();
+      src.reset_rays();
+      M2.blocking( &(src.rays) );
+      M1.trace( &(src.rays) );
+      M2.trace( &(src.rays) );
+      src.rays.to_sphere(-5.830,2.197173);
+      src.opd2phase();
+
+      tid.toc(&elaspedTime);
+      f << "\t" << elaspedTime;
+
+      src.cleanup();
+      M1.cleanup();
+      M2.cleanup();
+      free(zen);
+      free(azi);
+
+    } // N_GS
+    f << endl;
+  } // nPx
+  f.close();
+  zern.cleanup();
+  free(a);
+ }
+@
+\subsection{Benchmark II}
+\label{sec:benchmark-ii}
+
+<<benchmark II>>=
+#include <iostream>
+#include <fstream>
+#include "ceo.h"
+using namespace std;
+
+int main(int argc,char *argv[]) {
+  int N_GS, N_GS_max, nPx, k_nPx, k_GS, zern_j, zern_n, k;
+  float elaspedTime;
+  rtd D;
+  vector src_origin, zern_origin, zern_euler_angles;
+  ofstream f;
+  float *zen, *azi;
+  rtd *a;
+
+  D = 25.5;
+  src_origin.x =  0.0;
+  src_origin.y =  0.0;
+  src_origin.z = 25.0;
+
+  nPx = 256;
+
+  stopwatch tid;
+  source src;
+  zernikeS zern;
+  gmt_m1 M1;
+  gmt_m2 M2;
+
+  f.open("bench_zernike.txt");
+  f.precision(3);
+  /* f << "nPx"; */
+  /* for (k_GS=1;k_GS<=N_GS_max;k_GS++)  */
+  /*   f << "\t" << k_GS << "GS"; */
+  /* f << endl; */
+
+  for (zern_n = 0;zern_n<11;zern_n++) {
+    //    f << zern_n;
+  zern_j = (zern_n+1)*(zern_n+2)/2;
+    f << zern_j;
+  a = (rtd *)malloc( sizeof(rtd)*zern_j );
+  for (k=0;k<zern_j;k++)
+    a[k] = 1e-7;
+  zern_origin.x = zern_origin.y = zern_origin.z = 0.0;
+  zern_euler_angles.x = zern_euler_angles.y = zern_euler_angles.z = 0.0;
+  zern.setup(zern_n,a,zern_origin,zern_euler_angles,7);
+
+  N_GS_max = 3;
+
+  nPx = 469;
+  N_GS = 1;
+
+  zen = (float *) malloc( sizeof(float)*N_GS );
+  azi = (float *) malloc( sizeof(float)*N_GS );
+  for (k_GS=0;k_GS<N_GS;k_GS++) {
+    zen[k_GS] = 6*60/RADIAN2ARCSEC;
+    azi[k_GS] = 2*k_GS*PI/3;
+  }
+
+  src.setup("R",zen,azi,INFINITY,N_GS,D,nPx,src_origin);
+  M1.setup(D,nPx,&zern,0);
+  M2.setup(D,nPx,&zern,0);
+
+  for (int k=0;k<1;k++) {
+
+    tid.tic();
+
+  src.wavefront.reset();
+  src.reset_rays();
+  M2.blocking( &(src.rays) );
+  M1.trace( &(src.rays) );
+  M2.trace( &(src.rays) );
+  src.rays.to_sphere(-5.830,2.197173);
+  src.opd2phase();
+
+  tid.toc(&elaspedTime);
+  f << "\t" << elaspedTime;;
+
+  }
+  f << endl;;
+
+  src.cleanup();
+  M1.cleanup();
+  M2.cleanup();
+  zern.cleanup();
+
+  }
+
+  free(zen);
+  free(azi);
+  free(a);
+ }
+@
+\subsection{Profile}
+\label{sec:profile}
+
+<<profile>>=
+#include <cuda_profiler_api.h>
+#include "ceo.h"
+    /**
+       /usr/local/cuda/bin/nvprof ./a.out
+     */
+int main(int argc,char *argv[]) {
+  int N_GS, nPx, k, nIteration, zern_j, zern_n;
+  rtd D;
+  vector src_origin, zern_origin, zern_euler_angles;
+
+  N_GS = 1;
+  float zen[] = {0.0};
+  float azi[] = {0.0};
+
+  D = 25.5;
+  src_origin.x =  0.0;
+  src_origin.y =  0.0;
+  src_origin.z = 25.0;
+
+  nPx = 469;
+
+  stopwatch tid;
+
+  source src;
+  src.setup("R",zen,azi,INFINITY,N_GS,D,nPx,src_origin);
+
+  zernikeS zern;
+  /* rtd a[] = {0.0}; */
+  /* zern_origin.x = zern_origin.y = zern_origin.z = 0.0; */
+  /* zern_euler_angles.x = zern_euler_angles.y = zern_euler_angles.z = 0.0; */
+  /* zern.setup(0,a,zern_origin,zern_euler_angles,7); */
+  zern_n = 6;
+  zern_j = (zern_n+1)*(zern_n+2)/2;
+  rtd *a;
+  a = (rtd *)malloc( sizeof(rtd)*zern_j );
+  for (k=0;k<zern_j;k++)
+    a[k] = 1e-7;
+  zern_origin.x = zern_origin.y = zern_origin.z = 0.0;
+  zern_euler_angles.x = zern_euler_angles.y = zern_euler_angles.z = 0.0;
+  zern.setup(zern_n,a,zern_origin,zern_euler_angles,7);
+
+  gmt_m1 M1;
+  M1.setup(D,nPx,&zern,N_GS);
+
+  gmt_m2 M2;
+  M2.setup(D,nPx,&zern,N_GS);
+
+  src.wavefront.reset();
+  src.reset_rays();
+  //  M2.blocking( &(src.rays) );
+  M1.trace( &(src.rays) );
+  /* M2.trace( &(src.rays) ); */
+  /* src.rays.to_sphere(-5.830,2.197173); */
+  /* src.opd2phase(); */
+
+  src.cleanup();
+  zern.cleanup();
+  M1.cleanup();
+  M2.cleanup();
+  free(a);
+ }
