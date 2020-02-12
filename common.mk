@@ -13,7 +13,7 @@ WEAVE   	= $(NOWEBPATH)/bin/noweave
 TANGLE    	= $(NOWEBPATH)/bin/notangle
 CPIF	    	= $(NOWEBPATH)/bin/cpif
 TEXTOPDF  	= pdflatex
-NVCCFLAGS	= -arch=sm_20 -lineinfo -Xcompiler '-ansi,-D_GNU_SOURCE,-fwrapv,-fPIC,-fno-omit-frame-pointer,-pthread,-fno-strict-aliasing,-O3'
+NVCCFLAGS	= -lineinfo -Xcompiler '-ansi,-D_GNU_SOURCE,-fwrapv,-fPIC,-fno-omit-frame-pointer,-pthread,-fno-strict-aliasing,-O3'
 LIBS 		= -L$(CEOPATH)/lib $(CUDALIBPATH:%=-L%) -lceo -lcurl -ljsmn $(CUDALIBS:%=-l%)
 INCS		= -I. -I$(CEOPATH)/include $(CUDAINCPATH:%=-I%) -I$(PYTHONPATH)/include #$(MATLABINCS)
 SHELL		= /bin/bash
