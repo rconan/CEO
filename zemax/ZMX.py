@@ -43,7 +43,7 @@ class ZemaxModel():
         self.mce_curr = []
         self.mce_ops  = []
 
-        self.default_surf = { "decenters": [0.0, 0.0, 0.0], "CONI": 0.0, "PARM": {}, "TILTHELPER": 0 }
+        self.default_surf = { "decenters": [0.0, 0.0, 0.0], "CONI": 0.0, "PARM": {}, "XDAT": {}, "TILTHELPER": 0 }
         self.current = deepcopy(self.default_surf)
 
         for line in unix.cat(filename).split('\n'):
@@ -178,6 +178,12 @@ class ZemaxModel():
                 self.current["PARM"][1] = 0.0
                 self.current["PARM"][2] = 0.0
 
+    def XDAT(self, n, value,*line):
+        n     = int(n)
+        value = float(value)
+
+        self.current["XDAT"][n] = value
+
     def DISZ(self, z):
         if z == "INFINITY":
             z = 0
@@ -228,7 +234,8 @@ class ZemaxModel():
     def MODE(self, *line): pass
 
     def NSCD(*line): pass
-
+    
+    def OMMA(self, *line): pass
     def PFIL(self, *line): pass
     def PICB(self, *line): pass
     def POLS(self, *line): pass
@@ -254,7 +261,7 @@ class ZemaxModel():
     def VDSZ(self, *line): pass
     def VDXN(self, *line): pass
     def VDYN(self, *line): pass
-    def XDAT(self, *line): pass
+
     def XFLD(self, *line): pass
     def YFLD(self, *line): pass
 
@@ -351,6 +358,8 @@ class ZmxSurf2CEO:
             self.do_tilted(parms)
         elif self.surf["TYPE"] == "EVENASPH":
             self.do_evenasph(parms)
+        elif self.surf["TYPE"] == "SZERNSAG":
+            self.do_standardzernikesag(parms)
 
     def TILTHELPER(self, help):
         """help: 1 if pre-tilt surface, 2 if post-tilt surface.
@@ -375,6 +384,34 @@ class ZmxSurf2CEO:
                 break
         
         self.kwargs["asphere_a"] = np.array(coeffs[:j+1])
+
+    def do_standardzernikesag(self, parms):
+        maxterm = xdat[1]
+        coeffs = [xdat[i] for i in range(2+1, 2+maxterm+1)]
+
+        # Not clear whether CEO accepts this.  If not we should complain if the lens diameter doesn't match the normalization radius
+        normalization_radius = xdat[2]
+        
+        zernike_decenter_x = parm[9]
+        zernike_decenter_y = parm[10]
+
+        extrapolate = parm[0]  # In Zemax, if this is 1 then the zernike terms extend beyond the normalization radius.  We'll ignore this.
+        
+        #CEO does not support aspheric terms combined with zernike so bail out if any of the aspheric terms are non-zero
+        for i in range(1,9):
+            if parm[i] != 0:
+                raise Exception('CEO does not suppoert aspheric terms on a zernike surface')
+
+        # 
+        # Get everything into CEO here
+
+                # zernike_decenter_x
+                # zernike_decenter_y
+        self.kwargs["zernike_a"] = np.array(coeffs)  # Is this correct?
+
+)
+        print(normalization_radius, zernike_decenter_x, zernike_decenter_y, coeffs)
+
 
     def do_tilted(self, parms):
         a = parms[1]
