@@ -32,12 +32,12 @@ The ray tracing method involves 4 steps \cite{}:
 
 <<coordinate system data type>>
 
+<<zernikeS structure>>
 <<conic structure>>
 
 __host__ __device__ rtd even_asphere(rtd r, int N, rtd *a);
 __host__ __device__ rtd partial_x_or_y_even_asphere(rtd x_or_y, rtd r2, int N, rtd *a);
 
-<<zernikeS structure>>
 
 __host__ __device__  rtd zernike_surface(rtd r, rtd o, int max_n, rtd *a);
 __host__ __device__  rtd zernike_surface_x_derivative(rtd r, rtd o, int max_n, rtd *a);
@@ -67,6 +67,7 @@ void transform_to_S(bundle *rays, aperture *A);
 void transform_to_R(bundle *rays, conic *F);
 void transform_to_R(bundle *rays, aperture *A);
 void intersect(bundle *rays, conic *F);
+void intersect(bundle *rays, conic *F, zernikeS *Z);
 void reflect(bundle *rays);
 void refract(bundle *rays, rtd mu);
 #endif // __RAYTRACING_H__
@@ -80,6 +81,7 @@ void refract(bundle *rays, rtd mu);
 <<transformation to surface system kernel>>
 <<transformation to rays system kernel>>
 <<intersection with surface kernel>>
+<<intersection with Zernike surface kernel>>
 <<reflection kernel>>
 <<refraction kernel>>
 
@@ -110,6 +112,7 @@ void refract(bundle *rays, rtd mu);
 <<transformation to surface system>>
 <<transformation to rays system>>
 <<intersection with surface>>
+<<intersection with Zernike surface>>
 <<reflection>>
 <<refraction>>
 @
@@ -461,6 +464,7 @@ cdef class Quaternion:
         void reverse_setup(rtd , rtd , vector , vector , vector, rtd, int, rtd *)
         void cleanup()
         void trace(bundle *)
+        void trace(bundle *, zernikeS *)
 @ 
 <<class definitions>>=
 # conic
@@ -472,6 +476,8 @@ cdef class Conic:
         public bint coord_break
         public int  rotation_order
         public dict material
+        public ZernikeS zern
+        int zflag
 @
 <<rayTracing.pyx>>=
 from cython cimport boundscheck, wraparound
@@ -518,7 +524,8 @@ cdef class Conic:
                   rtd refractive_index = 0.0,
                   bint coord_break = False,
                   int rotation_order = 1,
-		  rtd[:] asphere_a = np.empty(0)):
+		  rtd[:] asphere_a = np.empty(0),
+		  rtd[:] zernike_a = np.empty(0)):
         self._c_conic = new conic()
         cdef vector __origin
         __origin.x = <rtd>origin[0]
@@ -541,6 +548,16 @@ cdef class Conic:
                 self._c_conic.reverse_setup(c, k, __origin, __euler_angles, 
                                     __conic_origin, refractive_index,
                                     asphere_a.size, &asphere_a[0])
+        cdef int zern_j, max_n
+        cdef rtd[:] a
+        self.zflag = 0
+        if zernike_a.size>0:
+            zern_j = zernike_a.size
+            max_n = int(np.ceil((-3+np.sqrt(1+8*zern_j))/2))
+            self.zern = ZernikeS(max_n)
+            self.zern.a[0,:zern_j] = zernike_a
+            self.zern.update()
+            self.zflag = 1
         self.ref_frame = Coordinate_system(1)
         self.ref_frame.init( &(self._c_conic.ref_frame) )
         self.origin = Coordinates((1,3))
@@ -574,7 +591,10 @@ cdef class Conic:
         --------
         Source : the celestial source class
         """
-        self._c_conic.trace(&(src._c_source.rays))
+        if self.zflag>0:
+            self._c_conic.trace(&(src._c_source.rays),self.zern._c_zernikeS)
+        else:
+            self._c_conic.trace(&(src._c_source.rays))
 
     def refractive_index(self, Source src = None):
         # if self.material["name"] == "BK7":
@@ -1433,6 +1453,7 @@ struct conic {
 	     int asphere_N, rtd *asphere_a);
   void cleanup(void);
   void trace(bundle *src);
+  void trace(bundle *src, zernikeS *zern);
   void info(void);
 };
 @
@@ -1886,6 +1907,35 @@ void conic::trace(bundle *rays)
 					       k, c, d__origin,
 					       rays->d__chief_ray,
 					       even_asphere_N, d__even_asphere_a);
+  if (rays->refractive_index==refractive_index) 
+     reflect(rays);
+   else { 
+     refract(rays, rays->refractive_index/refractive_index);
+     rays->refractive_index = refractive_index;
+   }
+   transform_to_R_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+				       ref_frame.d__R, ref_frame.d__origin);
+  transform_to_R_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+        	 				    ref_frame.d__R, ref_frame.d__origin);
+}
+void conic::trace(bundle *rays, zernikeS *zern)
+{
+  rtd R = 0.5*rays->L;
+  transform_to_S_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+                                       ref_frame.d__R, ref_frame.d__origin);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
+  transform_to_S_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+					            ref_frame.d__R, ref_frame.d__origin);
+  zernike_intersect_chief_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+						k, c, d__origin,
+						zern->max_n, zern->d__a,
+						zern->d__cx, zern->d__cy, R);
+  zernike_intersect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+						       k, c, d__origin,
+						       rays->d__chief_ray,
+						       zern->max_n, zern->d__a,
+						       zern->d__cx, zern->d__cy, R);
   if (rays->refractive_index==refractive_index) 
      reflect(rays);
    else { 
@@ -3149,7 +3199,8 @@ void intersect(bundle *rays, conic *F)
 					       rays->d__chief_ray,
 					       F->even_asphere_N, F->d__even_asphere_a);
 }
-
+@
+and the associated kernels:
 <<intersection with surface kernel>>=
 __global__ void intersect_chief_kernel(ray *d__ray, const int N_RAY,
 				       const rtd Fk, const rtd Fc,
@@ -3190,6 +3241,72 @@ __global__ void intersect_kernel(ray *d__ray, int N_RAY,
     for (j=0; j<SNELL_N_ITERATION; j++)
     {
       <<Newton-Raphson>>
+	s0 = s1;
+    }
+  d__ray[ij].optical_path_difference +=
+    d__ray[ij].optical_path_length - d__chief_ray->optical_path_length;
+  }
+}
+@
+The intersection with a Zernike surface is done with:
+<<intersection with Zernike surface>>=
+void intersect(bundle *rays, conic *F, zernikeS *Z)
+{
+  rtd R = 0.5*rays->L;
+  zernike_intersect_chief_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+						F->k, F->c, F->d__origin,
+						Z->max_n, Z->d__a, Z->d__cx, Z->d__cy, R);
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
+  zernike_intersect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
+						       F->k, F->c, F->d__origin,
+						       rays->d__chief_ray,
+						       Z->max_n, Z->d__a, Z->d__cx, Z->d__cy, R);
+}
+@
+and the associated kernels:
+<<intersection with Zernike surface kernel>>=
+__global__ void zernike_intersect_chief_kernel(ray *d__ray, const int N_RAY,
+					       const rtd Fk, const rtd Fc,
+					       vector *d__origin,
+					       const int max_n, rtd *Z_a,
+					       rtd *Z_cx, rtd *Z_cy, const rtd R)
+{
+  int j, ij;
+  rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
+  vector vv;
+  ij = 0;
+
+  <<intersection with z=0 plane>>
+  d__ray[ij].optical_path_length = s0;
+  s0 = s1 = 0;
+  for (j=0; j<SNELL_N_ITERATION; j++)
+    {
+      <<Newton-Raphson (Zernike)>>
+      s0 = s1;
+    }
+}
+__global__ void zernike_intersect_kernel(ray *d__ray, int N_RAY,
+					 rtd Fk, const rtd Fc,
+					 vector *d__origin,
+					 ray *d__chief_ray,
+					 const int max_n, rtd *Z_a,
+					 rtd *Z_cx, rtd *Z_cy, const rtd R)
+{
+  int i, j, ij;
+  rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
+  vector vv;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  ij = j * gridDim.x * blockDim.x + i;
+  if ( (ij<N_RAY) && (d__ray[ij].v) )
+  {
+    <<intersection with z=0 plane>>
+    d__ray[ij].optical_path_length = s0;
+    s0 = s1 = 0;
+    for (j=0; j<SNELL_N_ITERATION; j++)
+    {
+      <<Newton-Raphson (Zernike)>>
 	s0 = s1;
     }
   d__ray[ij].optical_path_difference +=
@@ -3247,6 +3364,10 @@ where
 vv.x = x1 + k*s0;
 vv.y = y1 + l*s0;
 vv.z = m*s0;
+<<Newton-Raphson (Zernike)>>=
+vv.x = x1 + k*s0;
+vv.y = y1 + l*s0;
+vv.z = m*s0;
 @ and where
 \begin{eqnarray}
   \label{eq:9}
@@ -3271,6 +3392,33 @@ if (abs(s1-s0)<TOL)
   d__ray[ij].surface_normal.y    =
     partial_y_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc, N, a);
   d__ray[ij].surface_normal.z    = partial_z_conic_surface();
+  d__ray[ij].optical_path_length += s1;
+  d__ray[ij].n_iteration = j;
+  break;
+}
+<<Newton-Raphson (Zernike)>>=
+S = aspheric_surface(&vv, d__origin, Fk, Fc,
+		     max_n, Z_a, R);
+K = partial_x_aspheric_surface(&vv, d__origin, Fk, Fc,
+			       max_n, Z_cx, R);
+L = partial_y_aspheric_surface(&vv, d__origin, Fk, Fc,
+			       max_n, Z_cy, R);
+M = partial_z_aspheric_surface();
+dSds = K*k + L*l + M*m;
+if (dSds==0) { return; }
+s1 = s0 - S/dSds;
+if (abs(s1-s0)<TOL)
+{
+  d__ray[ij].coordinates.x = x1 + k*s1;
+  d__ray[ij].coordinates.y = y1 + l*s1;
+  d__ray[ij].coordinates.z = m*s1;
+  d__ray[ij].surface_normal.x    =
+    partial_x_aspheric_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc,
+			       max_n, Z_cx, R);
+  d__ray[ij].surface_normal.y    =
+    partial_y_aspheric_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc,
+			       max_n, Z_cy, R);
+  d__ray[ij].surface_normal.z    = partial_z_aspheric_surface();
   d__ray[ij].optical_path_length += s1;
   d__ray[ij].n_iteration = j;
   break;
