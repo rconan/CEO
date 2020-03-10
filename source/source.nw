@@ -3287,7 +3287,6 @@ void pssn::setup(source *src, const float r0, const float L0)
   N_PX = (int) sqrt(src->wavefront.N_PX/N);
   N_OTF = 2*N_PX-1;
   NN = N_OTF*N_OTF*N;
-  fprintf(stdout,"(W: %d ; O: %d)x%d\n",N_PX,N_OTF,N);
   n_byte = sizeof(float2)*NN;
   HANDLE_ERROR( cudaMalloc((void**)&d__W, n_byte) );
   HANDLE_ERROR( cudaMalloc((void**)&d__O, n_byte) );
@@ -3310,16 +3309,13 @@ void pssn::setup(source *src, const float r0, const float L0)
   CUBLAS_ERROR( cublasCreate(&handle) );
   __otf__(src, d__O0);
   CUBLAS_ERROR( cublasScnrm2( handle , NN, d__O0, 1 , &denom) );
-  fprintf(stdout,"||O0||=%g\n",denom);
   float d = src->rays.L/(src->rays.N_L-1);
   atm_otf(d,r0,L0);
   CUBLAS_ERROR( cublasScnrm2( handle , NN, d__C, 1 , &denom) );
-  fprintf(stdout,"||C||=%g\n",denom);
   dim3 blockDim(16,16);
   dim3 gridDim(N_OTF/16+1,N_OTF/16+1,N);
   OC_times LLL gridDim,blockDim RRR (buffer,d__O0,d__C,N_OTF);
   CUBLAS_ERROR( cublasScnrm2( handle , NN, buffer, 1 , &denom) );
-  fprintf(stdout,"||O0.C||=%g\n",denom);
 }
 @
 \item[[[cleanup]]]
@@ -3447,7 +3443,6 @@ float pssn::eval(void)
   dim3 gridDim(N_OTF/16+1,N_OTF/16+1,N);
   OC_times LLL gridDim,blockDim RRR (buffer,d__O,d__C,N_OTF);
   CUBLAS_ERROR( cublasScnrm2( handle , NN, buffer, 1 , &num) );
-  fprintf(stdout,"||O.C||=%g\n",num);
   result = num/denom;
   result *= result;
   return result;
