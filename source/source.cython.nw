@@ -1275,6 +1275,7 @@ class JSource(JSONAbstract,Source):
 
 <<source.pxd contents>>=
     cdef cppclass pssn:
+        int N
         int N_OTF
         int N_O
         float2 *d__W
@@ -1286,6 +1287,7 @@ class JSource(JSONAbstract,Source):
         void cleanup()
         void otf(source *)
         float eval()
+        float eval(float *)
 @
 \subsubsection{Class definition}
 \label{sec:class-definition-pssn}
@@ -1311,23 +1313,23 @@ cdef class PSSn:
         self._c_pssn = new pssn()
         self._c_pssn.setup(src._c_source,r0,L0)
         self.W = cuFloatComplexArray(
-            shape=(self._c_pssn.N_OTF,self._c_pssn.N_OTF),
+            shape=(self._c_pssn.N_OTF*self._c_pssn.N,self._c_pssn.N_OTF),
             dev_malloc=False)
         self.W._c_gpu.dev_data = self._c_pssn.d__W
         self.O0 = cuFloatComplexArray(
-            shape=(self._c_pssn.N_OTF,self._c_pssn.N_OTF),
+            shape=(self._c_pssn.N_OTF*self._c_pssn.N,self._c_pssn.N_OTF),
             dev_malloc=False)
         self.O0._c_gpu.dev_data = self._c_pssn.d__O0
         self.O = cuFloatComplexArray(
-            shape=(self._c_pssn.N_OTF,self._c_pssn.N_OTF),
+            shape=(self._c_pssn.N_OTF*self._c_pssn.N,self._c_pssn.N_OTF),
             dev_malloc=False)
         self.O._c_gpu.dev_data = self._c_pssn.d__O
         self.C = cuFloatComplexArray(
-            shape=(self._c_pssn.N_OTF,self._c_pssn.N_OTF),
+            shape=(self._c_pssn.N_OTF*self._c_pssn.N,self._c_pssn.N_OTF),
             dev_malloc=False)
         self.C._c_gpu.dev_data = self._c_pssn.d__C
         self.buffer = cuFloatComplexArray(
-            shape=(self._c_pssn.N_OTF,self._c_pssn.N_OTF),
+            shape=(self._c_pssn.N_OTF*self._c_pssn.N,self._c_pssn.N_OTF),
             dev_malloc=False)
         self.buffer._c_gpu.dev_data = self._c_pssn.buffer
     def __dealloc__(self):
@@ -1336,6 +1338,11 @@ cdef class PSSn:
         self._c_pssn.otf(src._c_source)
     def eval(self):
         return self._c_pssn.eval()
+    def evals(self):
+        cdef float[:] results
+        results = np.zeros(self._c_pssn.N,dtype=np.single)
+        self._c_pssn.eval(&results[0])
+        return np.asarray(results)
     @property
     def N_O(self):
         return self._c_pssn.N_O

@@ -283,6 +283,9 @@ int LOCAL_RAND_SEED;
 @ \item the identity number of the GMT atmosphere model
 <<atmosphere parameters>>=
 int ID;
+@ \item the file handle for the atmospheric phase screen layers:
+<<atmosphere parameters>>=
+  FILE *layers_fid;
 @ \end{itemize}
 
 The atmospheric layer parameters are:
@@ -880,8 +883,8 @@ void atmosphere::save_layer_phasescreens(const char* _fullpath_to_phasescreens, 
 }
 @
 <<phase screen loading>>=
-FILE *layers_fid;
-size_t N_READ;
+
+  size_t N_READ;
 layers_fid = fopen(fullpath_to_phasescreens,"rb");
 fprintf(stdout,"\n@(CEO)>atmosphere: Loading the phase screens in the layers from file %s...\n",fullpath_to_phasescreens);
 
@@ -890,8 +893,8 @@ if (N_READ==0)
   ERROR("Cannot read file!");
 
 tid.tic();
-phase_screen_LAYER = (float*)malloc(sizeof(float)*N_PHASE_LAYER*N_DURATION);
-N_READ     = fread(phase_screen_LAYER,sizeof(float),N_PHASE_LAYER*N_DURATION,layers_fid);
+phase_screen_LAYER = (float*)malloc(sizeof(float)*N_PHASE_LAYER);
+N_READ     = fread(phase_screen_LAYER,sizeof(float),N_PHASE_LAYER,layers_fid);
 if (N_READ==0)
   ERROR("Cannot read file!");
 HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
@@ -899,7 +902,6 @@ HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
                           sizeof(float)*N_PHASE_LAYER,
                           cudaMemcpyHostToDevice ) );
 tid.toc();
-fclose(layers_fid);
 @
 The phase screens of the layers are defined such as the x--axis of the screens are aligned with the wind direction $\theta$.
 The sketch below shows a phase screen in blue and inside, the location of the telescope pupil in green at W at time $t=0$..
@@ -1060,6 +1062,7 @@ void atmosphere::cleanup(void) {
   }
   if (phase_screen_LAYER!=NULL)
     free( phase_screen_LAYER );
+  fclose(layers_fid);
 }
 @
 The phase screen are defined in the telescope pupil at the ground
@@ -2468,13 +2471,17 @@ void atmosphere::rayTracing(source *src,
     new_tau     = tau - k_DURATION*layers_duration;
 
     if (N_DURATION>0) {
-      fprintf(stdout,"\n@(CEO)>atmopshere: Loading phase screens (%.0fs) to device...\n",layers_tau0);
-      tid.tic();
+      //fprintf(stdout,"\n@(CEO)>atmopshere: Loading phase screens (%.0fs) to device...\n",layers_tau0);
+      //tid.tic();
+      fseek( layers_fid, sizeof(int)+sizeof(float)*k_DURATION*N_PHASE_LAYER, SEEK_SET);
+      size_t N_READ     = fread(phase_screen_LAYER,sizeof(float),N_PHASE_LAYER,layers_fid);
+      if (N_READ==0)
+        ERROR("Cannot read file!");
       HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
-				phase_screen_LAYER + k_DURATION*N_PHASE_LAYER,
+				phase_screen_LAYER,
 				sizeof(float)*N_PHASE_LAYER,
 				cudaMemcpyHostToDevice ) );
-      tid.toc();
+      //tid.toc();
     } else {
       <<layer to device (ray tracing)>>
     }
