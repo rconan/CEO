@@ -3254,13 +3254,13 @@ float2 *d__W;
   each DFT is $[[N_OTF]]\times [[N_OTF]]$ where $[[N_OTF]]=2[[N_PX]]-1$ and
   there as may DFT as wavefront i.e. [[N]]:
 <<pssn parameters>>=
-int N_OTF, NN;
+int N_OTF, N_OTF2, NN;
 cufftHandle plan;
 @
 \item algebraic operator handle and results:
 <<pssn parameters>>=
 cublasHandle_t handle;
-float num,denom;
+float num, *denom;
 @
 \end{itemize}
 
@@ -3274,6 +3274,7 @@ struct pssn {
   void otf(source *src);
   void atm_otf(float d, float r0, float L0);
   float eval(void);
+  void eval(float *results);
 };
 @
 The pssn methods are:
@@ -3284,10 +3285,12 @@ void pssn::setup(source *src, const float r0, const float L0)
 {
   N_O = 0;
   N = src->wavefront.N;
+  denom = (float *) malloc(sizeof(float)*N);
   N_PX = (int) sqrt(src->wavefront.N_PX/N);
   N_OTF = 2*N_PX-1;
-  NN = N_OTF*N_OTF*N;
-  //fprintf(stdout,"(W: %d ; O: %d)x%d\n",N_PX,N_OTF,N);
+  N_OTF2 = N_OTF*N_OTF;
+  NN = N_OTF2*N;
+
   n_byte = sizeof(float2)*NN;
   HANDLE_ERROR( cudaMalloc((void**)&d__W, n_byte) );
   HANDLE_ERROR( cudaMalloc((void**)&d__O, n_byte) );
@@ -3309,17 +3312,17 @@ void pssn::setup(source *src, const float r0, const float L0)
                       "Unable to create plan");
   CUBLAS_ERROR( cublasCreate(&handle) );
   __otf__(src, d__O0);
-  CUBLAS_ERROR( cublasScnrm2( handle , NN, d__O0, 1 , &denom) );
-  //  fprintf(stdout,"||O0||=%g\n",denom);
+  //  CUBLAS_ERROR( cublasScnrm2( handle , NN, d__O0, 1 , &denom) );
   float d = src->rays.L/(src->rays.N_L-1);
   atm_otf(d,r0,L0);
-  CUBLAS_ERROR( cublasScnrm2( handle , NN, d__C, 1 , &denom) );
-  //fprintf(stdout,"||C||=%g\n",denom);
+  //  CUBLAS_ERROR( cublasScnrm2( handle , NN, d__C, 1 , &denom) );
   dim3 blockDim(16,16);
   dim3 gridDim(N_OTF/16+1,N_OTF/16+1,N);
   OC_times LLL gridDim,blockDim RRR (buffer,d__O0,d__C,N_OTF);
-  CUBLAS_ERROR( cublasScnrm2( handle , NN, buffer, 1 , &denom) );
-  //  fprintf(stdout,"||O0.C||=%g\n",denom);
+  for (int k=0;k<N;k++){
+    CUBLAS_ERROR( cublasScnrm2( handle , N_OTF2, buffer+k*N_OTF2, 1 , denom+k) );
+  }
+
 }
 @
 \item[[[cleanup]]]
@@ -3334,6 +3337,7 @@ void pssn::cleanup()
   HANDLE_ERROR(cudaFree(d__O0));
   HANDLE_ERROR(cudaFree(d__O));
   HANDLE_ERROR(cudaFree(buffer));
+  free(denom);
 }
 @
 \item[[[otf]]] 
@@ -3447,10 +3451,24 @@ float pssn::eval(void)
   dim3 gridDim(N_OTF/16+1,N_OTF/16+1,N);
   OC_times LLL gridDim,blockDim RRR (buffer,d__O,d__C,N_OTF);
   CUBLAS_ERROR( cublasScnrm2( handle , NN, buffer, 1 , &num) );
-  //  fprintf(stdout,"||O.C||=%g\n",num);
-  result = num/denom;
+  result = num/denom[0];
   result *= result;
   return result;
+}
+void pssn::eval(float *results)
+{
+  int k, N_OTF2;
+  float result;
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_OTF/16+1,N_OTF/16+1,N);
+  OC_times LLL gridDim,blockDim RRR (buffer,d__O,d__C,N_OTF);
+  N_OTF2 = N_OTF*N_OTF;
+  for (k=0;k<N;k++) {
+    CUBLAS_ERROR( cublasScnrm2( handle , N_OTF2, buffer+k*N_OTF2, 1 , &num) );
+    result = num/denom[k];
+    result *= result;
+    results[k] = result;
+  }
 }
 @  
 \end{description}
