@@ -329,6 +329,7 @@ The main parameters of the atmosphere are displayed with the [[info]] routine:
 <<info>>=
 void atmosphere::info(void)
 {
+#ifndef SILENT
 fprintf(stdout,"\n\x1B[1;42m@(CEO)>atmosphere: Von Karman atmospheric turbulence model\x1B[;42m\n");
 fprintf(stdout," . wavelength = %5.2fnm\n . r0 = %5.2fcm\n . L0 = %5.2fm\n",
        wavelength*1e9,r0*1e2,turbulence.L0);
@@ -343,6 +344,7 @@ for (int kLayer=0;kLayer<N_LAYER;kLayer++) {
   turbulence.wind_direction[kLayer]*180/PI);
 }
 fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+#endif
 }
 @
 
@@ -587,7 +589,7 @@ int n_bytes = sizeof(float)*7;
 switch(ID) {
   case 2 :
   {
-    fprintf(stdout,"@(CEO)>atmosphere: GMT case 2: STRONG GROUND LAYER (Goodwin LCO Jan08, case 7)\n");
+    INFO("@(CEO)>atmosphere: GMT case 2: STRONG GROUND LAYER (Goodwin LCO Jan08, case 7)\n");
     float altitude_2[]       = {25, 275, 425, 1250, 4000, 8000, 13000},
     xi0_2[]            = {0.2039, 0.1116, 0.1706, 0.2281, 0.1694, 0.0615, 0.054},
     wind_speed_2[]     = {9.4092, 9.6384, 9.7905, 2.7028, 8.2883, 30.1824, 13.0364},
@@ -600,7 +602,7 @@ switch(ID) {
   }
   case 3 :
   {
-    fprintf(stdout,"@(CEO)>atmosphere: GMT case 3: GOOD CONDITIONS (Goodwin LCO Jan08, case 1)\n");
+    INFO("@(CEO)>atmosphere: GMT case 3: GOOD CONDITIONS (Goodwin LCO Jan08, case 1)\n");
     float altitude_3[]       = {25, 275, 425, 1250, 4000, 8000, 13000},
     xi0_3[]            = {0.1410, 0.0381, 0.0542, 0.3403, 0.2528, 0.0917, 0.0819},
     wind_speed_3[]     = {2.1953, 2.2575, 2.3029, 2.7028, 8.2883, 30.1824, 13.0364},
@@ -613,7 +615,7 @@ switch(ID) {
   }
   case 4 :
   {
-    fprintf(stdout,"@(CEO)>atmosphere: GMT case 4: POOR CONDITIONS (Goodwin LCO Jan08, case 9)\n");
+    INFO("@(CEO)>atmosphere: GMT case 4: POOR CONDITIONS (Goodwin LCO Jan08, case 9)\n");
     float altitude_4[]       = {25, 275, 425, 1250, 4000, 8000, 13000},
     xi0_4[]            = {0.1335, 0.0730, 0.1117, 0.3311, 0.2170, 0.0613, 0.0724},
     wind_speed_4[]     = {9.4092, 9.6384, 9.7905, 10.8527, 18.2550, 39.1520, 43.7936},
@@ -626,7 +628,7 @@ switch(ID) {
   }
   case 5 :
   {
-    fprintf(stdout,"@(CEO)>atmosphere: GMT case 5: THIN CLOUDS (Goodwin LCO Jan08, case 5)\n");
+    INFO("@(CEO)>atmosphere: GMT case 5: THIN CLOUDS (Goodwin LCO Jan08, case 5)\n");
     float altitude_5[]       = {25, 275, 425, 1250, 4000, 8000, 13000},
     xi0_5[]            = {0.1335, 0.0730, 0.1117, 0.3311, 0.2170, 0.0613, 0.0724},
     wind_speed_5[]     = {9.4092, 9.6384, 9.7905, 10.8527, 18.2550, 39.1520, 43.7936},
@@ -639,7 +641,7 @@ switch(ID) {
   }
   default :
   {
-    fprintf(stdout,"@(CEO)>atmosphere: GMT case 1: MEDIAN (Goodwin LCO Jan08, case 5)\n");
+    INFO("@(CEO)>atmosphere: GMT case 1: MEDIAN (Goodwin LCO Jan08, case 5)\n");
     float altitude_1[]       = {25, 275, 425, 1250, 4000, 8000, 13000},
     xi0_1[]            = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
     wind_speed_1[]     = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
@@ -777,7 +779,7 @@ HANDLE_ERROR( cudaMemcpy( d__turbulence, &turbulence,
 int nel = N_LAYER*turbulence.N_k*turbulence.N_a;
 stopwatch tid;
 tid.tic();
-fprintf(stdout,"\n@(CEO)>atmosphere: initializing %d variates with SEED=%d ...",nel,LOCAL_RAND_SEED);
+INFO("\n@(CEO)>atmosphere: initializing %d variates with SEED=%d ...",nel,LOCAL_RAND_SEED);
 HANDLE_ERROR( cudaMalloc( (void**)&devStates, 4*nel*sizeof(curandState)) );
 HANDLE_ERROR( cudaMalloc( (void**)&zeta1, nel*sizeof(float)) );
 HANDLE_ERROR( cudaMalloc( (void**)&eta1,  nel*sizeof(float)) );
@@ -789,7 +791,7 @@ setupRandomSequence LLL gridDim,blockDim RRR (devStates, 4*nel, LOCAL_RAND_SEED)
 HANDLE_ERROR( cudaDeviceSynchronize() );
 generateVariates LLL gridDim,blockDim RRR (zeta1, eta1, zeta2, eta2, devStates, nel);
 HANDLE_ERROR( cudaDeviceSynchronize() );
-fprintf(stdout,"done!\n");
+INFO("done!\n");
 tid.toc();
 @
 \index{atmosphere!profile!setup}
@@ -820,12 +822,12 @@ void profile::setup(float *altitude_, float *xi0_,
   N_a = ceilf( N_a );
   f = powf( (4*N_a + PI)/(4*N_a - PI) , N_k );
   delta = 0.5*PI/N_a;
-  fprintf(stdout,"\n@(CEO)>profile:\n");
-  fprintf(stdout," . N_k = %f\n",N_k);
-  fprintf(stdout," . N_a = %f\n",N_a);
-  fprintf(stdout," . frequency range      = %8.2f\n",f);
-  fprintf(stdout," . frequency resolution = %6.4f\n",delta);
-  fprintf(stdout," . minimum frequency    = %6.4f\n",kmin);
+  INFO("\n@(CEO)>profile:\n");
+  INFO(" . N_k = %f\n",N_k);
+  INFO(" . N_a = %f\n",N_a);
+  INFO(" . frequency range      = %8.2f\n",f);
+  INFO(" . frequency resolution = %6.4f\n",delta);
+  INFO(" . minimum frequency    = %6.4f\n",kmin);
 }
 @
 \index{atmosphere!profile!cleanup}
@@ -860,7 +862,7 @@ void atmosphere::save_layer_phasescreens(const char* _fullpath_to_phasescreens, 
     time(&now);
     beg = *localtime(&now);
 
-    fprintf(stdout,"\n * LAYER PHASE SCREENS COMPUTING: %d/%d *\n",k_DURATION+1,_N_DURATION);
+    INFO("\n * LAYER PHASE SCREENS COMPUTING: %d/%d *\n",k_DURATION+1,_N_DURATION);
     layers_tau0 = k_DURATION*layers_duration;
     <<layer to device (ray tracing)>>
 
@@ -870,7 +872,7 @@ void atmosphere::save_layer_phasescreens(const char* _fullpath_to_phasescreens, 
 			      cudaMemcpyDeviceToHost ) );
     N_WRITE = fwrite(phase_screen_LAYER + k_DURATION*N_PHASE_LAYER,
 		     sizeof(float),N_PHASE_LAYER,fid);
-    fprintf(stdout," ==>> Written %lu elements out of %lu elements to file %s\n",
+    INFO(" ==>> Written %lu elements out of %lu elements to file %s\n",
 	    N_WRITE,N_PHASE_LAYER,_fullpath_to_phasescreens);
     if (N_WRITE<N_PHASE_LAYER) { break; }
 
@@ -878,7 +880,7 @@ void atmosphere::save_layer_phasescreens(const char* _fullpath_to_phasescreens, 
     mktime(&beg);
     strftime(buff, sizeof buff, "%c", &beg);
 
-    fprintf(stdout,"\n * ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ * ETA: %s\n",buff);
+    INFO("\n * ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ * ETA: %s\n",buff);
   }
   fclose(fid);
 
@@ -917,7 +919,7 @@ void atmosphere::save_duration_layer_phasescreens(const char* _fullpath_to_phase
     fid = fopen(filename,"wb");
     fwrite(&u,sizeof(int),1,fid);
 
-    fprintf(stdout,"\n * LAYER PHASE SCREENS COMPUTING: %d/%d *\n",k_DURATION+1,_N_DURATION);
+    INFO("\n * LAYER PHASE SCREENS COMPUTING: %d/%d *\n",k_DURATION+1,_N_DURATION);
     layers_tau0 = k_DURATION*layers_duration;
     <<layer to device (ray tracing)>>
 
@@ -927,7 +929,7 @@ void atmosphere::save_duration_layer_phasescreens(const char* _fullpath_to_phase
 			      cudaMemcpyDeviceToHost ) );
     N_WRITE = fwrite(phase_screen_LAYER,
 		     sizeof(float),N_PHASE_LAYER,fid);
-    fprintf(stdout," ==>> Written %lu elements out of %lu elements to file %s\n",
+    INFO(" ==>> Written %lu elements out of %lu elements to file %s\n",
 	    N_WRITE,N_PHASE_LAYER,_fullpath_to_phasescreens);
     if (N_WRITE<N_PHASE_LAYER) { break; }
 
@@ -945,7 +947,7 @@ void atmosphere::save_duration_layer_phasescreens(const char* _fullpath_to_phase
                                 cudaMemcpyHostToDevice ) );
     }
 
-    fprintf(stdout,"\n * ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ * ETA: %s\n",buff);
+    INFO("\n * ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ * ETA: %s\n",buff);
   }
 
 }
@@ -954,7 +956,7 @@ void atmosphere::save_duration_layer_phasescreens(const char* _fullpath_to_phase
 
   size_t N_READ;
 layers_fid = fopen(fullpath_to_phasescreens,"rb");
-fprintf(stdout,"\n@(CEO)>atmosphere: Loading the phase screens in the layers from file %s...\n",fullpath_to_phasescreens);
+INFO("\n@(CEO)>atmosphere: Loading the phase screens in the layers from file %s...\n",fullpath_to_phasescreens);
 
 N_READ = fread(&N_DURATION,       sizeof(int),  1,layers_fid);
 if (N_READ==0)
@@ -1018,9 +1020,9 @@ int layer::setup(float _altitude, float _xi0,
 layers = (layer*) malloc( sizeof(layer)*N_LAYER );
 HANDLE_ERROR( cudaMalloc( (void**)&d__layers, sizeof(layer)*N_LAYER ) );
 N_PHASE_LAYER = 0;
-fprintf(stdout,"\n@(CEO)>atmosphere: __ Layer Phase Screen __\n");
+INFO("\n@(CEO)>atmosphere: __ Layer Phase Screen __\n");
 for (int i_LAYER=0; i_LAYER<N_LAYER; i_LAYER++) {
-  fprintf(stdout," #%d: ",i_LAYER);
+  INFO(" #%d: ",i_LAYER);
   N_PHASE_LAYER += layers[i_LAYER].setup(altitude[i_LAYER], xi0[i_LAYER],
 					wind_speed[i_LAYER], wind_direction[i_LAYER],
 					 W, N_W, field_size,
@@ -1030,7 +1032,7 @@ for (int i_LAYER=0; i_LAYER<N_LAYER; i_LAYER++) {
 			    cudaMemcpyHostToDevice ) );
 }
 if (N_PHASE_LAYER>0)
-  fprintf(stdout," Total: %.2fMB\n",N_PHASE_LAYER*sizeof(float)/powf(2,20));
+  INFO(" Total: %.2fMB\n",N_PHASE_LAYER*sizeof(float)/powf(2,20));
 @  The phase screen of each layer is computed with:
 <<layer to device (ray tracing)>>=
 dim3 blockDimLayers(16,16);
@@ -1041,9 +1043,9 @@ int N = 0, i_LAYER, N_L, __N_W__;
 float delta_W = W/(N_W-1);
 delta_W /= layers_OSF;
 tid.tic();
-fprintf(stdout," . Computing layer phase screen: ");
+INFO(" . Computing layer phase screen: ");
 for (i_LAYER=0;i_LAYER<N_LAYER;i_LAYER++) {
-  fprintf(stdout,"%d,",i_LAYER);
+  INFO("%d,",i_LAYER);
   N_L = layers[i_LAYER].N_LENGTH_LAYER;
   __N_W__ = layers[i_LAYER].N_WIDTH_LAYER;
 
@@ -1058,7 +1060,7 @@ for (i_LAYER=0;i_LAYER<N_LAYER;i_LAYER++) {
 							     layers_src.dev_ptr, layers_tau0);
   N += N_L*__N_W__;
  }
-fprintf(stdout,"\b\n");
+INFO("\b\n");
 tid.toc();
 @ %def square_plps_layers
 The random generator is initialized within the following kernel:
@@ -1116,7 +1118,7 @@ void atmosphere::reset(void)
 \index{atmosphere!atmosphere!cleanup}
 <<cleanup>>=
 void atmosphere::cleanup(void) {
-  fprintf(stdout,"@(CEO)>atmosphere: freeing memory!\n");
+  INFO("@(CEO)>atmosphere: freeing memory!\n");
   turbulence.cleanup();
   HANDLE_ERROR( cudaFree( devStates ) );
   HANDLE_ERROR( cudaFree( zeta1  ));

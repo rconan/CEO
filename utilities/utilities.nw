@@ -40,6 +40,12 @@ static void Error( const char *errMsg,
 }
 #define ERROR( errMsg ) (Error( errMsg, __FILE__, __LINE__ ))
 
+#ifdef SILENT
+#define INFO( infoMsg, args... );
+#else
+#define INFO( infoMsg , args...)   fprintf(stdout,infoMsg, ##args);
+#endif
+
 static void HandleError( cudaError_t err,
                          const char *file,
                          int line ) {
@@ -607,6 +613,16 @@ where $N_s$ is the number of sources.
 In the following, a structure to time a chunk of CUDA code is defined:
 \index{utilities!stopwatch}
 <<tic-toc>>=
+#ifdef SILENT
+struct stopwatch{
+  float   elapsedTime;
+  void tic(void) { elapsedTime=0.0; }
+  void toc(void) {}
+  void toc(const char *message) {}
+  void toc(float *elapsedTime, const char *message) {}
+  void toc(float *elapsedTime) {}
+};
+#else
 struct stopwatch{
   float   elapsedTime;
   cudaEvent_t     start, stop;
@@ -651,6 +667,7 @@ struct stopwatch{
     HANDLE_ERROR( cudaEventDestroy( stop ) );
   }
 };
+#endif
 @
 
 \subsection{Statistics definitions}
@@ -1465,7 +1482,7 @@ __global__ void set_gmt_piston_kernel(float *phase, float *p,
 <<mask functions>>=
 void mask::set_filter(void) {
   <<set filter common>>
-  fprintf(stdout,"@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
+  INFO("@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
 }
 @ 
 \index{utilities!mask!set\_filter\_quiet}
@@ -1492,7 +1509,7 @@ void mask::set_index(void) {
 \index{utilities!mask!cleanup}
 <<mask functions>>=
 void mask::cleanup(void) {
-  fprintf(stdout,"@(CEO)>mask: freeing memory!\n");
+  INFO("@(CEO)>mask: freeing memory!\n");
   cublasDestroy(handle);
   HANDLE_ERROR( cudaFree( m ) );
   HANDLE_ERROR( cudaFree( f ) );
@@ -1538,7 +1555,7 @@ void mask::alter(float *filter)
   dim3 gridDim(nel/256+1);
   fill_ones_altered LLL gridDim,blockDim RRR (f, m, nel, filter);
   CUBLAS_ERROR( cublasSasum(handle, nel, f, 1, &nnz) );
-  fprintf(stdout,"@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
+  INFO("@(CEO)>mask: nnz = %.0f (density: %4.2f) \n",nnz,nnz/nel);
 }
 @  with the kernel
 <<fill ones altered>>=

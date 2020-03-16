@@ -230,14 +230,14 @@ LOCAL_RAND_SEED = RAND_SEED;
 pixel_scale = 0.0;
 absolute_pointing = 0;
 photoelectron_gain = 1.0;
-fprintf(stdout,"@(CEO)>imaging: Device memory allocation\n");
+INFO("@(CEO)>imaging: Device memory allocation\n");
 int N_DFT_bytes = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
 HANDLE_ERROR( cudaMalloc( (void**)&d__wave_PUPIL , sizeof(float2) * N_DFT_bytes) );
 HANDLE_ERROR( cudaMalloc( (void**)&d__frame ,
 			  sizeof(float) *N_PX_CAMERA*N_PX_CAMERA*N_LENSLET*N_SOURCE ) );
 reset();
 <<imaging CUFFT plan creation>>
-fprintf(stdout,"@(CEO)> Setting up random generator\n");
+INFO("@(CEO)> Setting up random generator\n");
 int n_data;
 n_data = N_SOURCE*N_LENSLET*N_PX_CAMERA*N_PX_CAMERA;
 HANDLE_ERROR( cudaMalloc( (void**)&devStates, n_data*sizeof(curandState)) );
@@ -326,7 +326,7 @@ Dynamically allocated variables are freed with the cleanup routine:
 \index{imaging!imaging!cleanup}
 <<cleanup>>=
 void imaging::cleanup(void) {
-  fprintf(stdout,"@(CEO)>imaging: Device memory free\n");
+  INFO("@(CEO)>imaging: Device memory free\n");
   cufftDestroy(plan);
   cudaFree( d__wave_PUPIL );
   cudaFree( d__frame );
@@ -492,7 +492,7 @@ gridDim  = dim3(1+N_PX_CAMERA*N_SIDE_LENSLET/16,1+N_PX_CAMERA*N_SIDE_LENSLET/16,
                 N_SOURCE);
 // fprintf(stdout,"FWHM=%f\n",src->fwhm);
 if (src->fwhm>0) {
-  fprintf(stdout,"CONVOLUTION!\n");
+  INFO("CONVOLUTION!\n");
   gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
   <<propagation (convolution)>>
 }
@@ -685,7 +685,7 @@ HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_FORWA
 @ that computes the discrete Fourier tranform (DFT) from the complex amplitude [[d__wave_PUPIL]] in the pupil plane.
 CUFFT requires to define a plan first:
 <<imaging CUFFT plan creation>>=
-fprintf(stdout,"@(CEO)>imaging: Creating a 2D FFT plan\n");
+INFO("@(CEO)>imaging: Creating a 2D FFT plan\n");
 int n_DFT[NRANK] = {N_DFT, N_DFT};
 int iodist = N_DFT*N_DFT;
 int BATCH = N_LENSLET*N_SOURCE;
@@ -1539,6 +1539,7 @@ The main parameters are displayed with:
 <<info>>=
 void imaging::info(void)
 {
+#ifndef SILENT
   fprintf(stdout,"\n\x1B[1;42m@(CEO)>imaging:\x1B[;42m\n");
   fprintf(stdout," . imaging device    : %4d\n",N_LENSLET);
   fprintf(stdout," . pupil sampling    : %4d\n",N_PX_PUPIL);
@@ -1547,6 +1548,7 @@ void imaging::info(void)
   fprintf(stdout," . frame sampling    : %4d\n",N_PX_CAMERA);
   fprintf(stdout," . source #          : %4d\n",N_SOURCE);
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+#endif
 }
 @
 The frame is saved to a file with:
