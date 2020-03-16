@@ -1,4 +1,4 @@
-% -*- mode: Noweb; noweb-code-mode: c-mode -*-
+ -*- mode: Noweb; noweb-code-mode: c-mode -*-
 @
 \def\bk{\bar \kappa_i}
 \def\bkx{\bar \kappa_{x,i}}
@@ -161,6 +161,11 @@ struct atmosphere {
 		  const float delta_x, const int N_X,
 		  const float delta_y, const int N_Y,
 		  const float tau);
+  void ray_tracing(source *src,
+                   const float delta_x, const int N_X,
+                   const float delta_y, const int N_Y,
+                   const float tau, const int k_DURATION);
+  void duration_loading(const char* fullpath_to_phasescreens);
 };
 
 #endif // __ATMOSPHERE_H__
@@ -238,6 +243,7 @@ struct atmosphere {
 
 <<ray tracing>>
 <<ray tracing (regular)>>
+<<duration phase screens loading>>
 @
 
 \section{Parameters}
@@ -1001,7 +1007,7 @@ int layer::setup(float _altitude, float _xi0,
     WIDTH_LAYER    = d*(N_WIDTH_LAYER-1);
     LENGTH_LAYER   = d*(N_LENGTH_LAYER-1);
     N = N_WIDTH_LAYER*N_LENGTH_LAYER;
-    fprintf(stdout,"(%5.2fX%5.2f) meters & (%dX%d) pixels ==> %.2fMB \n",
+    INFO("(%5.2fX%5.2f) meters & (%dX%d) pixels ==> %.2fMB \n",
 	    LENGTH_LAYER,WIDTH_LAYER,
 	    N_LENGTH_LAYER,N_WIDTH_LAYER,N*sizeof(float)/powf(2,20));
   }
@@ -2573,6 +2579,62 @@ void atmosphere::rayTracing(source *src,
 						       N_LAYER, new_tau);
   }
 }
+@
+Separating ray tracing from phase screen loading:
+<<ray tracing (regular)>>=
+void atmosphere::ray_tracing(source *src,
+			    const float delta_x, const int N_X,
+			    const float delta_y, const int N_Y,
+          const float tau, const int k_DURATION)
+{
+  float layers_tau0 = k_DURATION*layers_duration;
+  float new_tau = tau - layers_tau0;
+
+  dim3 blockDim(16,16);
+  dim3 gridDim( 1+N_X/16 , 1+N_Y/16, src->N_SRC);
+  if (src->wavefront.M==NULL) {
+    rayTracingKernReg LLL gridDim, blockDim RRR(delta_x, N_X,
+						delta_y, N_Y,
+						src->wavefront.phase,
+						src->dev_ptr, src->N_SRC,
+						powf(r0,-5.0/6.0),
+						d__layers,
+						d__phase_screen_LAYER,
+						N_LAYER, new_tau);
+  } else {
+    rayTracingKernReg_masked LLL gridDim, blockDim RRR(delta_x, N_X,
+						       delta_y, N_Y,
+						       src->wavefront.phase,
+						       src->wavefront.M->m,
+						       src->dev_ptr, src->N_SRC,
+						       powf(r0,-5.0/6.0),
+						       d__layers,
+						       d__phase_screen_LAYER,
+						       N_LAYER, new_tau);
+  }
+}
+@
+Loading individual [[duration]] phase screens:
+<<duration phase screens loading>>=
+void atmosphere::duration_loading(const char* fullpath_to_phasescreens)
+{
+  size_t N_READ;
+  FILE * dlayers_fid = fopen(fullpath_to_phasescreens,"rb");
+  fprintf(stdout,"\n@(CEO)>atmosphere: Loading the phase screens in the layers from file %s...\n",fullpath_to_phasescreens);
+  int u;
+  N_READ = fread(&u, sizeof(int),  1,dlayers_fid);
+  if (N_READ==0)
+    ERROR("Cannot read file!");
+
+  N_READ     = fread(phase_screen_LAYER,sizeof(float),N_PHASE_LAYER,layers_fid);
+  if (N_READ==0)
+    ERROR("Cannot read file!");
+  HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
+                            phase_screen_LAYER,
+                            sizeof(float)*N_PHASE_LAYER,
+                            cudaMemcpyHostToDevice ) );
+}
+
 @
 \section{Tests}
 \label{sec:tests}
