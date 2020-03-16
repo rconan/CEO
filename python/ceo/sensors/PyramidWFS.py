@@ -32,12 +32,6 @@ class PyramidWFS(Pyramid):
         thr : Threshold for pupil registration refinement: select only SAs with flux percentage above thr.
         """
 
-        #-> Extract sub-pupil image from CCD frame
-        def extract_subpupil(this_frame, this_pup):#, sz=n_sub):
-            sz = n_sub
-            extr = this_frame[np.abs(yr[this_pup])<= sz/2,:][:,np.abs(xr[this_pup]) <= sz/2]
-            return extr
-
         #-> Insert a sub-pupil image into a CCD frame
         def insert_subpupil(this_frame, this_pup):
             fr = np.zeros((nx,ny))
@@ -96,11 +90,13 @@ class PyramidWFS(Pyramid):
             yra.append((np.squeeze(np.where(np.abs(yr[this_pup])<= n_sub/2))[0] ,
                         np.squeeze(np.where(np.abs(yr[this_pup])<= n_sub/2))[-1]))
             indpup.append( np.sqrt(xxn**2 + yyn**2) <= n_sub/2)
+        self._xr = xr
+        self._yr = yr
 
         #-> Create the intersection of the four sub-pupil circular masks
         indpup0 = []
         for this_pup in range(4):
-            indpup0.append(extract_subpupil(indpup[this_pup],this_pup))
+            indpup0.append(self.get_subpupil(this_pup, indpup[this_pup], sz=n_sub))
         indpup0 = np.sum(indpup0, axis=0) == 4  # Select SA present on ALL sub-pupils
 
         #-> Pupil registration refinement based on SA flux thresholding
@@ -109,7 +105,7 @@ class PyramidWFS(Pyramid):
             # Compute the flux per SA
             flux2D = np.zeros((n_sub,n_sub))
             for this_pup in range(4):
-                flux2D += extract_subpupil(ccd_frame,this_pup) 
+                flux2D += self.get_subpupil(this_pup, ccd_frame, sz=n_sub) 
 
             meanflux = np.mean(flux2D[indpup0])
             fluxthr = meanflux*thr
@@ -129,6 +125,20 @@ class PyramidWFS(Pyramid):
         self.analyze(src)
         self._ref_measurement = self._measurement.copy()
 
+    def get_subpupil(self, this_pup, this_frame=None, sz=None):
+        """
+        Extracts the selected sub-pupil from CCD frame.
+        Parameters:
+          this_pup: Sup-pupil number = {0,1,2,3}
+          this_frame: CCD frame (optional). Default: Current CCD frame.
+          sz: Size of array to be extracted (optional). Default: Size of sub-pupil image (N_SIDE_LENSLET).
+        """
+        if sz is None:
+            sz = self.N_SIDE_LENSLET
+        if this_frame is None:
+            this_frame = self.ccd_frame
+        extr = this_frame[np.abs(self._yr[this_pup])<= sz/2,:][:,np.abs(self._xr[this_pup]) <= sz/2]
+        return extr
 
     @property
     def indpup(self):
@@ -233,7 +243,7 @@ class PyramidWFS(Pyramid):
         #sx2d = np.full((self.camera.N_PX_FRAME,self.camera.N_PX_FRAME), np.nan)
         sx2d = np.zeros((self.camera.N_PX_FRAME,self.camera.N_PX_FRAME))
         sx2d[self.indpup[0]] = this_sx
-        sx2d = sx2d[0:int(self.camera.N_PX_FRAME/2),0:int(self.camera.N_PX_FRAME/2)]
+        sx2d = self.get_subpupil(0,sx2d)
         return sx2d
         
     def get_sy2d(self, this_sy=None):
@@ -246,7 +256,7 @@ class PyramidWFS(Pyramid):
         #sy2d = np.full((self.camera.N_PX_FRAME,self.camera.N_PX_FRAME), np.nan)
         sy2d = np.zeros((self.camera.N_PX_FRAME,self.camera.N_PX_FRAME))
         sy2d[self.indpup[0]] = this_sy
-        sy2d = sy2d[0:int(self.camera.N_PX_FRAME/2),0:int(self.camera.N_PX_FRAME/2)]
+        sy2d = self.get_subpupil(0, sy2d)
         return sy2d
 
     def get_measurement_size(self):
