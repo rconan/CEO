@@ -53,7 +53,7 @@ class ZemaxModel():
             line = line.split()
 
             if len(line): 
-                print('Processing: ',line[0],'(',','.join(line[1:]),')')
+                # print('Processing: ',line[0],'(',','.join(line[1:]),')')
                 getattr(self, line[0])(*line[1:])        # Call internal methods to parse lines
 
         self.surfaces.append(getConic(self.current))
@@ -261,6 +261,7 @@ class ZemaxModel():
 
     def STOP(self, *line): pass
 
+    def TCED(self, *line): pass
     def TOL (self, *line): pass
     def TOLE(self, *line): pass
     def VANN(self, *line): pass
@@ -333,7 +334,7 @@ class ZmxSurf2CEO:
         del surf["CONI"]
         del surf["decenters"]
  
-        print('Surface ', surf, 'items: ', surf.items())
+        # print('Surface ', surf, 'items: ', surf.items())
 
         for k,v in surf.items():
             getattr(self, k)(v)
@@ -341,7 +342,8 @@ class ZmxSurf2CEO:
         self.conic = self.CEOCreateConic()
 
     def CEOCreateConic(self):
-        # print (self.kwargs)
+        print (self.args)
+        print (self.kwargs)
         conic = ceo.Conic(*self.args, **self.kwargs)
         # print (conic.origin)
         return conic
@@ -418,10 +420,10 @@ class ZmxSurf2CEO:
 
         # 
         # Get everything into CEO here
-
+                # Ignore the decenters for now
                 # zernike_decenter_x
                 # zernike_decenter_y
-        # self.kwargs["zernike_a"] = np.array(coeffs)  # Is this correct?
+        self.kwargs["zernike_a"] = np.array(coeffs)  # Is this correct?
 
 
         print(normalization_radius, zernike_decenter_x, zernike_decenter_y, coeffs)
