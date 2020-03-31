@@ -165,7 +165,8 @@ struct atmosphere {
                    const float delta_x, const int N_X,
                    const float delta_y, const int N_Y,
                    const float tau, const int k_DURATION);
-  void duration_loading(const char* fullpath_to_phasescreens);
+  void duration_loading(const char* fullpath_to_phasescreens,
+                        const int k_DURATION);
 };
 
 #endif // __ATMOSPHERE_H__
@@ -292,7 +293,7 @@ int LOCAL_RAND_SEED;
 int ID;
 @ \item the file handle for the atmospheric phase screen layers:
 <<atmosphere parameters>>=
-  FILE *layers_fid;
+  // FILE *layers_fid;
 @ \end{itemize}
 
 The atmospheric layer parameters are:
@@ -486,11 +487,11 @@ phase screen time length [[duration]].
 \index{atmosphere!atmosphere!setup}
 <<atmosphere setup (ray tracing)>>=
 void atmosphere::setup(float r0_, float L0, int _NLAYER,
-		       float *altitude, float *xi0,
-		       float *wind_speed, float *wind_direction,
+                       float *altitude, float *xi0,
+                       float *wind_speed, float *wind_direction,
                        float _W_, int _N_W_,
-		       float _field_size_,
-		       float duration) {
+                       float _field_size_,
+                       float duration) {
   wavelength = 550e-9;
   wavenumber = wavelength/2/PI;
   r0 = r0_;
@@ -749,17 +750,18 @@ void atmosphere::gmt_setup(float r0_, float L0,
 @
 <<atmosphere setup (GMT prm, ray tracing, precomputed phase screens, rand seed)>>=
 void atmosphere::gmt_setup(float r0_, float L0,
-			     float _W_, int _N_W_,
-			     float _field_size_,
-			     float duration,
-			     const char *fullpath_to_phasescreens,
-			     int _N_DURATION,
-                             int _RAND_SEED_) {
+                           float _W_, int _N_W_,
+                           float _field_size_,
+                           float duration,
+                           const char *fullpath_to_phasescreens,
+                           int _N_DURATION,
+                           int _RAND_SEED_) {
   <<gmt atmosphere setup common>>
   <<allocation: turbulence profile>>
-  LOCAL_RAND_SEED = _RAND_SEED_;
+      LOCAL_RAND_SEED = _RAND_SEED_;
   <<allocation: variates generation>>
-  <<save or load phase screens>>
+  phase_screen_LAYER = (float *)malloc(N_PHASE_LAYER*sizeof(float));
+  HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_LAYER, N_PHASE_LAYER*sizeof(float) ) );
 }
 @
 <<allocation>>=
@@ -954,6 +956,7 @@ void atmosphere::save_duration_layer_phasescreens(const char* _fullpath_to_phase
 @
 <<phase screen loading>>=
 
+  FILE *layers_fid;
   size_t N_READ;
 layers_fid = fopen(fullpath_to_phasescreens,"rb");
 INFO("\n@(CEO)>atmosphere: Loading the phase screens in the layers from file %s...\n",fullpath_to_phasescreens);
@@ -972,6 +975,7 @@ HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
                           sizeof(float)*N_PHASE_LAYER,
                           cudaMemcpyHostToDevice ) );
 tid.toc();
+fclose(layers_fid);
 @
 The phase screens of the layers are defined such as the x--axis of the screens are aligned with the wind direction $\theta$.
 The sketch below shows a phase screen in blue and inside, the location of the telescope pupil in green at W at time $t=0$..
@@ -1132,7 +1136,6 @@ void atmosphere::cleanup(void) {
   }
   if (phase_screen_LAYER!=NULL)
     free( phase_screen_LAYER );
-  fclose(layers_fid);
 }
 @
 The phase screen are defined in the telescope pupil at the ground
@@ -2543,10 +2546,10 @@ void atmosphere::rayTracing(source *src,
     if (N_DURATION>0) {
       //fprintf(stdout,"\n@(CEO)>atmopshere: Loading phase screens (%.0fs) to device...\n",layers_tau0);
       //tid.tic();
-      fseek( layers_fid, sizeof(int)+sizeof(float)*k_DURATION*N_PHASE_LAYER, SEEK_SET);
-      size_t N_READ     = fread(phase_screen_LAYER,sizeof(float),N_PHASE_LAYER,layers_fid);
-      if (N_READ==0)
-        ERROR("Cannot read file!");
+      //      fseek( layers_fid, sizeof(int)+sizeof(float)*k_DURATION*N_PHASE_LAYER, SEEK_SET);
+      //      size_t N_READ     = fread(phase_screen_LAYER,sizeof(float),N_PHASE_LAYER,layers_fid);
+      //if (N_READ==0)
+      //        ERROR("Cannot read file!");
       HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
 				phase_screen_LAYER,
 				sizeof(float)*N_PHASE_LAYER,
@@ -2618,23 +2621,35 @@ void atmosphere::ray_tracing(source *src,
 @
 Loading individual [[duration]] phase screens:
 <<duration phase screens loading>>=
-void atmosphere::duration_loading(const char* fullpath_to_phasescreens)
+  void atmosphere::duration_loading(const char* fullpath_to_phasescreens,
+                                    const int k_DURATION)
 {
+  char suffix[32];
+  char filename[256];
+  strcpy(filename,fullpath_to_phasescreens);
+  sprintf(suffix,".%03d",k_DURATION);
+  strcat(filename,suffix);
   size_t N_READ;
-  FILE * dlayers_fid = fopen(fullpath_to_phasescreens,"rb");
-  fprintf(stdout,"\n@(CEO)>atmosphere: Loading the phase screens in the layers from file %s...\n",fullpath_to_phasescreens);
+  FILE * dlayers_fid = fopen(filename,"rb");
+  INFO("\n@(CEO)>atmosphere: Loading the phase screens in the layers from file %s...\n",filename);
   int u;
+  if (dlayers_fid==NULL) {
+    ERROR("Opening file failed!");
+  }
   N_READ = fread(&u, sizeof(int),  1,dlayers_fid);
   if (N_READ==0)
     ERROR("Cannot read file!");
 
-  N_READ     = fread(phase_screen_LAYER,sizeof(float),N_PHASE_LAYER,layers_fid);
+  N_READ     = fread(phase_screen_LAYER,sizeof(float),N_PHASE_LAYER,dlayers_fid);
   if (N_READ==0)
     ERROR("Cannot read file!");
-  HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
+
+    HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
                             phase_screen_LAYER,
                             sizeof(float)*N_PHASE_LAYER,
                             cudaMemcpyHostToDevice ) );
+
+  fclose(dlayers_fid);
 }
 
 @
