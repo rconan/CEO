@@ -172,7 +172,8 @@ double atmospheric_dispersion(float wavelength, float delta_wavelength,
 			      float temperature, float humidity);
 
 void dev2host( float *host_data, float *dev_data, int N);
-void host2dev( float **dev_data, float *host_data, int N);
+void host2dev( float *dev_data, float *host_data, int N);
+void host2dev_char( char *dev_data, char *host_data, int N);
 void freedev( float **dev_data );
 
 <<template gpu data structure>>
@@ -258,6 +259,9 @@ void set_device(int id) {
 <<GMT pupil>>
 <<GMT segment piston kernel>>
 <<polygon winding number kernel>>
+
+<<GPU float methods>>
+<<GPU double methods>>
 
 <<Fried geometry masks>>
 <<Fried geometry>>
@@ -1747,17 +1751,17 @@ fprintf(stdout,"@(CEO)>utilities: Data saved to %s!\n",filename);
 void dev2host( float *host_data, float *dev_data, int N) {
      HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
 			       N*sizeof(float), cudaMemcpyDeviceToHost ) ) ;
-     HANDLE_ERROR( cudaDeviceSynchronize() );
 }
 @
 \index{utilities!host2dev}
 <<data to device from host>>=
-void host2dev( float **dev_data, float *host_data, int N) {
-    fprintf(stdout,"__ HOST2DEV __\n");
-    HANDLE_ERROR( cudaMalloc( (void**)dev_data, N*sizeof(float)) );
-    HANDLE_ERROR( cudaMemcpy( *dev_data, host_data, 
+void host2dev( float *dev_data, float *host_data, int N) {
+    HANDLE_ERROR( cudaMemcpy( dev_data, host_data, 
 			       N*sizeof(float), cudaMemcpyHostToDevice ) ) ;
-    HANDLE_ERROR( cudaDeviceSynchronize() );
+}
+void host2dev_char( char *dev_data, char *host_data, int N) {
+  HANDLE_ERROR( cudaMemcpy( dev_data, host_data, 
+                            N*sizeof(char), cudaMemcpyHostToDevice ) ) ;
 }
 @ 
 \index{utilities!freedev}
@@ -1769,41 +1773,92 @@ void freedev( float **dev_data ) {
 @ 
 \index{utilities!gpu}
 <<template gpu data structure>>=
-template<typename T> 
-struct gpu_t {
-  T *dev_data, *host_data;
+  //template<typename T> 
+struct gpu_float {
+  float *dev_data, *host_data;
   int N, nb;
   stats S;
-  void setup(void) {
-    nb = sizeof(T);
-  }
-  void setup(int N_T) {
-    nb = sizeof(T);
-    N = N_T;
-  }
-  void dev_malloc(void) {
-    HANDLE_ERROR( cudaMalloc( (void**)&dev_data, N*nb) );
-  }
-  void free_dev(void) {
-    HANDLE_ERROR( cudaFree( dev_data ) );
-  }
-  void dev2host(void) {
-    HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
-			      N*nb, cudaMemcpyDeviceToHost ) ) ;
-  }
-  void host2dev(void) {
-    HANDLE_ERROR( cudaMemcpy( dev_data, host_data, 
-			      N*nb, cudaMemcpyHostToDevice ) ) ;
-  }
-  void reset(void) {
-    HANDLE_ERROR( cudaMemset( dev_data, 0, N*nb) );
-  }
-  /*void double2float(gpu_t<float> *cuFloatArray ) {
+  void setup(void);
+  void setup(int N_T);
+  void dev_malloc(void);
+  void free_dev(void);
+  void dev2host(void);
+  void host2dev(void);
+  void reset(void);
+};
+struct gpu_double {
+  double *dev_data, *host_data;
+  int N, nb;
+  stats S;
+  void setup(void);
+  void setup(int N_T);
+  void dev_malloc(void);
+  void free_dev(void);
+  void dev2host(void);
+  void host2dev(void);
+  void reset(void);
+};
+@
+<<GPU float methods>>=
+void gpu_float::setup(void) {
+  nb = sizeof(float);
+}
+void gpu_float::setup(int N_T) {
+  nb = sizeof(float);
+  N = N_T;
+}
+void gpu_float::dev_malloc(void) {
+  HANDLE_ERROR( cudaMalloc( (void**)&dev_data, N*nb) );
+}
+void gpu_float::free_dev(void) {
+  HANDLE_ERROR( cudaFree( dev_data ) );
+}
+void gpu_float::dev2host(void) {
+  HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
+                            N*nb, cudaMemcpyDeviceToHost ) ) ;
+}
+void gpu_float::host2dev(void) {
+  HANDLE_ERROR( cudaMemcpy( dev_data, host_data, 
+                            N*nb, cudaMemcpyHostToDevice ) ) ;
+}
+void gpu_float::reset(void) {
+  HANDLE_ERROR( cudaMemset( dev_data, 0, N*nb) );
+}
+@
+<<GPU double methods>>=
+void gpu_double::setup(void) {
+  nb = sizeof(double);
+}
+void gpu_double::setup(int N_T) {
+  nb = sizeof(double);
+  N = N_T;
+}
+void gpu_double::dev_malloc(void) {
+  HANDLE_ERROR( cudaMalloc( (void**)&dev_data, N*nb) );
+}
+void gpu_double::free_dev(void) {
+  HANDLE_ERROR( cudaFree( dev_data ) );
+}
+void gpu_double::dev2host(void) {
+  HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
+                            N*nb, cudaMemcpyDeviceToHost ) ) ;
+}
+void gpu_double::host2dev(void) {
+  HANDLE_ERROR( cudaMemcpy( dev_data, host_data, 
+                            N*nb, cudaMemcpyHostToDevice ) ) ;
+}
+void gpu_double::reset(void) {
+  HANDLE_ERROR( cudaMemset( dev_data, 0, N*nb) );
+}
+@
+<<GPU methods>>=
+  /*
+  void double2float(gpu_float *cuFloatArray ) {
     dim3 blockDim(256);
     dim3 gridDim(N/256+1);
     double2float_kern LLL gridDim,blockDim RRR (cuFloatArray->dev_data, dev_data, N);
     }*/
-};
+
 @ with
 <<double2float kernel>>=
 __global__ void double2float_kern(float *d__single_data, double *d__double_data, const int N)
