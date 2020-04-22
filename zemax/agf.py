@@ -81,7 +81,7 @@ def GlassIndex(glassfiles):
 # 
 # BK7 = GlassIndex["BK7"]
 # 
-# print glass_index(GlassIndex["BK7"]["formula"], 0.55, 30, 2, GlassIndex["BK7"]["c"], BK7["D0"], BK7["D1"], BK7["D2"], BK7["E0"], BK7["E1"], BK7["Ltk"])
+# print (glass_index(GlassIndex["BK7"]["formula"], 0.55, 30, 2, GlassIndex["BK7"]["c"], BK7["D0"], BK7["D1"], BK7["D2"], BK7["E0"], BK7["E1"], BK7["Ltk"]))
 # 1.51814374838
 
 """

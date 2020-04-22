@@ -150,3 +150,42 @@ This directory contains glass catalogues used in the translator. A
 Zemax configuration file will specify the names of any glass
 catalogues needed in its description, and the ZemaxModel will read in
 these catalogues using the code in agf.py.
+
+Raytrace Data
+-------------
+To compare the raytracing results between Zemax and CEO 
+ray data has been generated in the ZmxFiles folder for all the files in the ZmxFiles directory using the script ZemaxRaytraces.py which interacts with Zemax OpticStudio using the ZOS-API.  For each .zmx file a numpy .npz file is created which contains the following:
+
+
+fields: (nfield,2) Array of field positions 
+
+waves: (nwave) Array of wavelengths in microns
+
+raydata: (nsurfaces, nfields, nwaves, nrays, 13)  The ray data.
+
+The final dimension contains the following data for each ray:
+0.    ErrorCode
+1.    VignetteCode
+2.    X  The ray intersection in meters
+3.    Y
+4.    Z
+5.    L  The ray direction cosines after refraction/reflection
+6.    M
+7.    N
+8.    L2 The surface normal direction at the intersection point
+9.    M2
+10.    N2
+11.    OPL The optical path length
+12.    Intensity 
+
+
+For convenience, a summary of each zmx file prescription is given in the corresponding .txt file.
+
+Example to read the ray data back in:
+```
+rayfiles = np.load('conic1_zern.npz')
+waves = rayfiles['waves']
+fields = rayfiles['fields']
+raydata = rayfiles['raydata']
+plt.plot(raydata[-1,0,0,:,2],raydata[-1,0,0,:,3],'.')
+```

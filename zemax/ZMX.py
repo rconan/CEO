@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import math
 import ceo
 import unix
@@ -6,6 +8,7 @@ import numpy as np
 import os
 from copy import deepcopy
 from raytrace import raytrace
+
 
 
 # global variables
@@ -43,13 +46,15 @@ class ZemaxModel():
         self.mce_curr = []
         self.mce_ops  = []
 
-        self.default_surf = { "decenters": [0.0, 0.0, 0.0], "CONI": 0.0, "PARM": {}, "TILTHELPER": 0 }
+        self.default_surf = { "decenters": [0.0, 0.0, 0.0], "CONI": 0.0, "PARM": {}, "XDAT": {}, "TILTHELPER": 0 }
         self.current = deepcopy(self.default_surf)
 
         for line in unix.cat(filename).split('\n'):
             line = line.split()
 
-            if len(line): getattr(self, line[0])(*line[1:])        # Call internal methods to parse lines
+            if len(line): 
+                # print('Processing: ',line[0],'(',','.join(line[1:]),')')
+                getattr(self, line[0])(*line[1:])        # Call internal methods to parse lines
 
         self.surfaces.append(getConic(self.current))
 
@@ -70,7 +75,7 @@ class ZemaxModel():
                 glassfiles.append(agf.AGFFile(file))
             else:
                 pass
-                # print "Could not load catelogue in " + file
+                # print ("Could not load catelogue in " + file)
 
         self.GlassIndex = agf.GlassIndex(glassfiles)
 
@@ -178,6 +183,12 @@ class ZemaxModel():
                 self.current["PARM"][1] = 0.0
                 self.current["PARM"][2] = 0.0
 
+    def XDAT(self, n, value,*line):
+        n     = int(n)
+        value = float(value)
+
+        self.current["XDAT"][n] = value
+
     def DISZ(self, z):
         if z == "INFINITY":
             z = 0
@@ -223,12 +234,16 @@ class ZemaxModel():
     def GLRS(self, *line): pass
     def GSTD(self, *line): pass
     def HIDE(self, *line): pass
+    def HYPR(self, *line): pass
+    
     def MAZH(self, *line): pass
+    def MEMA(self, *line): pass
     def MIRR(self, *line): pass
     def MODE(self, *line): pass
 
     def NSCD(*line): pass
-
+    
+    def OMMA(self, *line): pass
     def PFIL(self, *line): pass
     def PICB(self, *line): pass
     def POLS(self, *line): pass
@@ -246,6 +261,7 @@ class ZemaxModel():
 
     def STOP(self, *line): pass
 
+    def TCED(self, *line): pass
     def TOL (self, *line): pass
     def TOLE(self, *line): pass
     def VANN(self, *line): pass
@@ -254,7 +270,7 @@ class ZemaxModel():
     def VDSZ(self, *line): pass
     def VDXN(self, *line): pass
     def VDYN(self, *line): pass
-    def XDAT(self, *line): pass
+
     def XFLD(self, *line): pass
     def YFLD(self, *line): pass
 
@@ -278,7 +294,7 @@ class ZemaxModel():
         phi   = math.atan2(m, l)
         theta = math.asin(math.sqrt(l**2 + m**2))
 
-        # print "phi: {}, theta: {}".format(phi, theta)
+        # print ("phi: {}, theta: {}".format(phi, theta))
 
         self.azimuth = np.array(phi,   dtype=np.float32, ndmin=1)
         self.zenith  = np.array(theta, dtype=np.float32, ndmin=1)
@@ -317,6 +333,8 @@ class ZmxSurf2CEO:
         del surf["CURV"]
         del surf["CONI"]
         del surf["decenters"]
+ 
+        # print('Surface ', surf, 'items: ', surf.items())
 
         for k,v in surf.items():
             getattr(self, k)(v)
@@ -324,9 +342,10 @@ class ZmxSurf2CEO:
         self.conic = self.CEOCreateConic()
 
     def CEOCreateConic(self):
-        # print self.kwargs
+        print (self.args)
+        print (self.kwargs)
         conic = ceo.Conic(*self.args, **self.kwargs)
-        # print conic.origin
+        # print (conic.origin)
         return conic
 
     def DISZ(self, z):
@@ -344,14 +363,18 @@ class ZmxSurf2CEO:
 
     def PARM(self, parms):
         if len(parms) == 0: return
-
+        print ("in PARM with type ", self.surf["TYPE"])
         if self.surf["TYPE"] == "COORDBRK":
             self.do_coordbrk(parms)
         elif self.surf["TYPE"] == "TILTSURF":
             self.do_tilted(parms)
         elif self.surf["TYPE"] == "EVENASPH":
             self.do_evenasph(parms)
-
+        elif self.surf["TYPE"] == "SZERNSAG":
+            self.do_standardzernikesag(parms)
+            
+    def XDAT(self, *args): pass
+        
     def TILTHELPER(self, help):
         """help: 1 if pre-tilt surface, 2 if post-tilt surface.
 
@@ -375,6 +398,36 @@ class ZmxSurf2CEO:
                 break
         
         self.kwargs["asphere_a"] = np.array(coeffs[:j+1])
+
+    def do_standardzernikesag(self, parms):
+        print ("do_standardzernikesag")
+        xdat = self.surf["XDAT"]
+        maxterm = int(xdat[1])
+        coeffs = [xdat[i] for i in range(2+1, 2+maxterm+1)]
+
+        # Not clear whether CEO accepts this.  If not we should complain if the lens diameter doesn't match the normalization radius
+        normalization_radius = xdat[2]
+        
+        zernike_decenter_x = parms[9]
+        zernike_decenter_y = parms[10]
+
+        extrapolate = parms[0]  # In Zemax, if this is 1 then the zernike terms extend beyond the normalization radius.  We'll ignore this.
+        
+        #CEO does not support aspheric terms combined with zernike so bail out if any of the aspheric terms are non-zero
+        for i in range(1,9):
+            if parms[i] != 0:
+                raise Exception('CEO does not suppoert aspheric terms on a zernike surface')
+
+        # 
+        # Get everything into CEO here
+                # Ignore the decenters for now
+                # zernike_decenter_x
+                # zernike_decenter_y
+        self.kwargs["zernike_a"] = np.array(coeffs)  # Is this correct?
+
+
+        print(normalization_radius, zernike_decenter_x, zernike_decenter_y, coeffs)
+
 
     def do_tilted(self, parms):
         a = parms[1]
