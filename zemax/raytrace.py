@@ -10,7 +10,7 @@ def p_ray(src, ray_idx):
     print ('XYZ: '+np.array_str(src.rays.coordinates.host()[ray_idx]))
     print ('KLM: '+np.array_str(src.rays.directions.host()[ray_idx]))
 
-def raytrace(src,S,idx,xyz):
+def raytrace(src,S,idx,xyz,klm):
     _S_ = S[idx-1]
     ceo.Transform_to_S(src,_S_)
 
@@ -29,6 +29,7 @@ def raytrace(src,S,idx,xyz):
         for k in range(idx-1,-1,-1):
             ceo.Transform_to_R(src,S[k])
         xyz.append(src.rays.coordinates.host())
+        klm.append(src.rays.directions.host())
 
         c = src.rays.chief_coordinates.host()[0]
         d = src.rays.chief_directions.host()[0]
