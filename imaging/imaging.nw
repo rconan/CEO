@@ -387,7 +387,8 @@ void imaging::propagate(source *src) {
   */
 
   //absolute_pointing = 1;
-  //fprintf(stdout,"Absolute pointing: %d\n",absolute_pointing);
+  //  fprintf(stdout," pixel scale: %.2E\n",pixel_scale);
+  //  fprintf(stdout,"Absolute pointing: %d\n",absolute_pointing);
   dim3 gridDim;
   dim3 blockDim(16,16);
   gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
@@ -561,11 +562,11 @@ HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wave_PUPIL, d__wave_PUPIL, CUFFT_FORWA
 N_PHOTON_PER_FRAME = N_PHOTON_PER_SECOND_PER_FRAME = src->n_photon()*src->wavefront.M->area;
 float intensity_norm;
 intensity_norm = src->wavefront.M->area/src->wavefront.M->nnz;
-/*
+
 fprintf(stdout,"Source # of photon: %g\n",src->n_photon());
-fprintf(stdout,"Wavefront mask area and nnz: %f & %f\n",src->wavefront.M->area,src->wavefront.M->nnz);
+fprintf(stdout,"Wavefront mask area and nnz: (%f,%f) & %f\n",src->rays.V.area,src->wavefront.M->area,src->wavefront.M->nnz);
 fprintf(stdout,"# of photon per second: %g\n",N_PHOTON_PER_SECOND_PER_FRAME);
-*/
+
 int N, Nb;
 N = N_DFT * N_DFT * N_LENSLET*N_SOURCE;
 Nb = (int) ceilf( sqrtf(N)/16.0 );
@@ -1400,7 +1401,7 @@ __global__ void noisify(curandState *state, float *frame, const int n_frame,
 	 frame[id] = (frame[id]<0) ? 0 : frame[id]; 
 	 frame[id] += (readOutNoiseRms>0) ?
 	   curand_normal(&localState)*readOutNoiseRms : 0;
-	 frame[id] -= nBackgroundPhoton*exposureTime*photoelectron_gain;
+	 //frame[id] -= nBackgroundPhoton*exposureTime*photoelectron_gain;
 	 //frame[id] = (frame[id]>0) ? floorf(frame[id]) : ceilf(frame[id]);
 	 state[id] = localState;
        }
