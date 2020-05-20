@@ -2,7 +2,7 @@ import sys
 import math
 import numpy as np
 import numpy.linalg as LA
-from scipy.optimize import brenth, leastsq
+from scipy.optimize import brenth
 from scipy.signal import fftconvolve
 from scipy.linalg import block_diag
 from skimage.feature import blob_log
@@ -17,9 +17,10 @@ from . import phaseStats
 from  ceo.nastran_pch_reader import nastran_pch_reader
 from ceo import Source, GMT_M1, GMT_M2, ShackHartmann, GeometricShackHartmann,\
     TT7,\
-    GmtMirrors, SegmentPistonSensor, \
+    GmtMirrors, \
     constants, Telescope, cuFloatArray, cuDoubleArray, Aperture,\
-    Transform_to_S, Intersect, Reflect, Refract, Transform_to_R, ZernikeS, ascupy
+    Transform_to_S, Intersect, Reflect, Refract, Transform_to_R, ZernikeS
+from .sensors import IdealSegmentPistonSensor
 
 
 def __mean_slope_removal__(valid):
@@ -903,6 +904,75 @@ class GMT_MX(GmtMirrors):
             raise ValueError('"coupled" or "decoupled" must be set to True!')
 
 
+    def NGWS_segment_piston_mask(self, wfs, gs, seg_pist_sig_thr=0.25, seg_pist_stroke=100e-9):
+        """
+        Segment piston PWFS signals are very localized, with most information residing across segment gaps. This function computes a set of PWFS signal masks (one mask per segment) indicating which sub-apertures convey segment piston information  [1: valid sub-apertures].
+
+        Parameters
+        ----------
+        seg_pist_sig_thr: float (0 < thr < 1.0)
+            The segment piston signal threshold for sub-aperture selection
+
+        seg_pist_stroke: float
+            The segment piston amplitude applied for mask calibration [m].
+        """
+        D_M2_PIST = self.calibrate(wfs, gs, mirror="M2", mode=u"segment piston", \
+                                    stroke=seg_pist_stroke)
+        segment_piston_signal_mask = []
+        for kSeg in range(7):
+            sigpist = np.abs(D_M2_PIST[0:wfs.n_sspp, kSeg]) + \
+                      np.abs(D_M2_PIST[wfs.n_sspp: , kSeg])
+            segment_piston_signal_mask.append(sigpist/np.max(sigpist) > seg_pist_sig_thr)
+        signal_mask_dict = {'mask':segment_piston_signal_mask, 'thr':seg_pist_sig_thr,
+                    'stroke':seg_pist_stroke} 
+        return signal_mask_dict
+
+
+    def NGWS_segment_mask(self, wfs, gs, seg_sig_thr=0.15, seg_tilt_stroke=1e-6):
+        """
+        This function computes a set of signal masks (one per segment) identifying sub-apertures over each segment [1: valid sub-apertures]
+        The signal pattern used for the identification is the signal pattern produced by a segment tilt. A large PWFS modulation is required for better flux distribution uniformity. 
+
+        Parameters
+        ----------
+        seg_sig_thr: float (0 < thr < 1.0)
+            The segment signal threshold for sub-aperture selection
+
+        seg_tilt_stroke: float
+            The TT amplitude applied for mask calibration [rad].
+        """
+        cl_modulation = wfs.modulation
+        cl_mod_sampling = wfs.modulation_sampling
+        wfs.modulation = 10.0  # modulation radius in lambda/D units
+        wfs.modulation_sampling = 64
+        D_M2_TT = self.calibrate(wfs, gs, mirror="M2", mode=u"segment tip-tilt", stroke=seg_tilt_stroke)
+        wfs.modulation = cl_modulation
+        wfs.modulation_sampling = cl_mod_sampling
+        segment_signal_mask = []
+        for kSeg in range(7):
+            sigtt = np.sum(np.abs(D_M2_TT[0:wfs.n_sspp, kSeg*2:kSeg*2+2]), axis=1) + \
+                    np.sum(np.abs(D_M2_TT[wfs.n_sspp: , kSeg*2:kSeg*2+2]), axis=1)
+            segment_signal_mask.append(sigtt/np.max(sigtt) > seg_sig_thr)
+        signal_mask_dict = {'mask':segment_signal_mask, 'thr':seg_sig_thr,
+                    'stroke':seg_tilt_stroke}
+        return signal_mask_dict
+
+    def NGWS_apply_segment_mask(self, IntMat, signal_mask):
+        n_mode = (IntMat.shape)[1]//7  ## number of modes calibrated per segment
+        n_sspp = (IntMat.shape)[0]//2
+        for kSeg in range(7):
+            IntMat[0:n_sspp, kSeg*n_mode+1:(kSeg+1)*n_mode] *= signal_mask[kSeg][:,np.newaxis]
+            IntMat[n_sspp: , kSeg*n_mode+1:(kSeg+1)*n_mode] *= signal_mask[kSeg][:,np.newaxis]
+        return IntMat
+
+    def NGWS_apply_segment_piston_mask(self, IntMat, signal_mask):
+        n_mode = (IntMat.shape)[1]//7  ## number of modes calibrated per segment
+        n_sspp = (IntMat.shape)[0]//2
+        for kSeg in range(7):
+            IntMat[0:n_sspp, kSeg*n_mode] *= signal_mask[kSeg]
+            IntMat[n_sspp: , kSeg*n_mode] *= signal_mask[kSeg]
+        return IntMat
+
     def NGWS_calibrate(self,wfs,gs,stroke=25e-9, 
             seg_pist_sig_masked=False,seg_pist_sig_thr=0.25,seg_pist_stroke=100e-9,
             seg_sig_masked=False,seg_sig_thr=0.15,seg_tilt_stroke=1e-6, 
@@ -933,54 +1003,6 @@ class GMT_MX(GmtMirrors):
             If seg_sig_masked==True, this parameter sets the TT amplitude applied for mask calibration [rad]. Default: 1e-6
         """
 
-        def segment_piston_mask(seg_pist_sig_thr, seg_pist_stroke):
-            """
-            Segment piston PWFS signals are very localized, with most information residing across segment gaps. This function computes a set of PWFS signal masks (one mask per segment) indicating which sub-apertures convey segment piston information  [1: valid sub-apertures].
-
-            Parameters
-            ----------
-            seg_pist_sig_thr: float (0 < thr < 1.0)
-                The segment piston signal threshold for sub-aperture selection
-
-            seg_pist_stroke: float
-                The segment piston amplitude applied for mask calibration [m].
-            """
-            D_M2_PIST = self.calibrate(wfs, gs, mirror="M2", mode=u"segment piston", \
-                                        stroke=seg_pist_stroke)
-            segment_piston_signal_mask = []
-            for kSeg in range(7):
-                sigpist = np.abs(D_M2_PIST[0:wfs.n_sspp, kSeg]) + \
-                          np.abs(D_M2_PIST[wfs.n_sspp: , kSeg])
-                segment_piston_signal_mask.append(sigpist/np.max(sigpist) > seg_pist_sig_thr)
-            return segment_piston_signal_mask
-
-        def segment_mask(seg_sig_thr, seg_tilt_stroke):
-            """
-            This function computes a set of signal masks (one per segment) identifying sub-apertures over each segment [1: valid sub-apertures]
-            The signal pattern used for the identification is the signal pattern produced by a segment tilt. A large PWFS modulation is required for better flux distribution uniformity. 
-
-            Parameters
-            ----------
-            seg_sig_thr: float (0 < thr < 1.0)
-                The segment signal threshold for sub-aperture selection
-
-            seg_tilt_stroke: float
-                The TT amplitude applied for mask calibration [rad].
-            """
-            cl_modulation = wfs.modulation
-            cl_mod_sampling = wfs.modulation_sampling
-            wfs.modulation = 10.0  # modulation radius in lambda/D units
-            wfs.modulation_sampling = 64
-            D_M2_TT = self.calibrate(wfs, gs, mirror="M2", mode=u"segment tip-tilt", stroke=seg_tilt_stroke)
-            wfs.modulation = cl_modulation
-            wfs.modulation_sampling = cl_mod_sampling
-            segment_signal_mask = []
-            for kSeg in range(7):
-                sigtt = np.sum(np.abs(D_M2_TT[0:wfs.n_sspp, kSeg*2:kSeg*2+2]), axis=1) + \
-                        np.sum(np.abs(D_M2_TT[wfs.n_sspp: , kSeg*2:kSeg*2+2]), axis=1)
-                segment_signal_mask.append(sigtt/np.max(sigtt) > seg_sig_thr)
-            return segment_signal_mask
-
         #----- Calibrate the interaction matrix between ASM segment KL modes and PWFS
         print("Calibrating IntMat between pyramid and segment KL modes")
         kl_first_mode = 0     # 0: includes segment piston mode
@@ -988,27 +1010,21 @@ class GMT_MX(GmtMirrors):
         D_M2_MODES = self.calibrate(wfs, gs, mirror="M2", mode=u"Karhunen-Loeve", stroke=stroke, 
                                first_mode=kl_first_mode, stroke_scaling=stroke_scaling)
         nall = (D_M2_MODES.shape)[1]  ## number of modes calibrated
-        n_mode = int(nall/7)
+        n_mode = nall//7
 
         #----- Mask the interaction matrix signals
         if seg_sig_masked==True:
             print("\nCalibrating segment signal masks...")
-            segment_signal_mask = segment_mask(seg_sig_thr, seg_tilt_stroke)
-            for kSeg in range(7):
-                D_M2_MODES[0:wfs.n_sspp, kSeg*n_mode+1:(kSeg+1)*n_mode] *= segment_signal_mask[kSeg][:,np.newaxis]
-                D_M2_MODES[wfs.n_sspp: , kSeg*n_mode+1:(kSeg+1)*n_mode] *= segment_signal_mask[kSeg][:,np.newaxis]
-            wfs.segment_signal_mask = {'mask':segment_signal_mask, 'thr':seg_sig_thr,
-                        'stroke':seg_tilt_stroke}
+            segment_signal_mask = self.NGWS_segment_mask(wfs, gs, seg_sig_thr, seg_tilt_stroke)
+            D_M2_MODES = self.NGWS_apply_segment_mask(D_M2_MODES, segment_signal_mask['mask']) 
+            wfs.segment_signal_mask = segment_signal_mask
             print("Segment signal masks applied.")
 
         if seg_pist_sig_masked==True:
             print("\nCalibrating segment piston signal masks...")
-            segpist_signal_mask = segment_piston_mask(seg_pist_sig_thr, seg_pist_stroke)
-            for kSeg in range(7):
-                D_M2_MODES[0:wfs.n_sspp, kSeg*n_mode] *= segpist_signal_mask[kSeg]
-                D_M2_MODES[wfs.n_sspp: , kSeg*n_mode] *= segpist_signal_mask[kSeg]
-            wfs.segpist_signal_mask = {'mask':segpist_signal_mask, 'thr':seg_pist_sig_thr,
-                        'stroke':seg_pist_stroke} 
+            segpist_signal_mask = self.NGWS_segment_piston_mask(wfs, gs, seg_pist_sig_thr, seg_pist_stroke)
+            D_M2_MODES = self.NGWS_apply_segment_piston_mask(D_M2_MODES, segpist_signal_mask['mask'])
+            wfs.segpist_signal_mask = segpist_signal_mask
             print("Segment piston signal masks applied.")
 
         return D_M2_MODES
@@ -1396,531 +1412,6 @@ class GeometricTT7(Sensor):
     def Data(self):
         return self.valid_slopes.reshape(14,1)
 
-
-class DispersedFringeSensor(SegmentPistonSensor):
-    """
-    A class for the GMT Dispersed Fringe Sensor.
-    This class inherits from the SegmentPistonSensor class.
-
-    Parameters
-    ----------
-    Same parameters as in SegmentPistonSensor class.
-
-    Attributes
-    ----------
-    INIT_ALL_ATTRIBUTES : bool ; Default: False
-        If True, additional attributes (mainly for display and debugging) will be created. See list of Additional Attributes below.
-    fftlet_rotation : float ; vector with 12xN_SRC elements
-        The angle of the line joining the center of the three lobes of the fftlet image. Init by calibrate() method.
-    lobe_detection : string  ; default: 'gaussfit'
-        Algorithm for lobe detection, either 'gaussfit' for 2D gaussian fit, or 'peak_value' for peak detection.
-    spsmask : bool
-        Data cube containing the masks (one for each fftlet) required to isolate the "detection blob", i.e. the upper-most lobe from which the measurement will be computed. Init by calibrate() method.
-
-    measurement : float
-        Dispersed Fringe Sensor output measurement vector; y-coordinate of the detection blob in the rotated reference frame (i.e. the reference frame having the x-axis passing through the three lobe peaks on a fftlet image, and the y-axis perpendicular to it. Units: pixels in the fftlet image plane.
-
-    Attributes (Additional)
-    -----------------------
-    blob_data : float
-        fftlet peak detection data; blob_data is a matrix containing the (x,y,radius) of the three lobes on each fftlet image. Init by calibrate() method.
-
-    pl_m, pl_b : float
-        Slope and y-intercept of the line passing through the three lobe peaks on a fftlet image. Init by calibrate() method.
-
-    pp_m, pp_b : float
-        Slope and y-intercept of the perpendicular line to the line above, passing between the central and the "detection blob" in a ffltlet image. Init by calibrate() method.
-
-    fftlet_fit_params : float
-        Gaussian fit parameters of detection blobs (Amplitude normalized to central lobe peak, y, x, width_y, width_x, rotation). Init by process() method.
-
-    fftlet_fit_images : float
-        Data cube containing best-fit 2D gaussians of detection blobs. Init by process() method.
-
-    measurement_ortho : float
-        x-coordinate of the detection blob in the rotated reference frame (i.e. the reference frame having the x-axis passing through the three lobe peaks on a fftlet image, and the y-axis perpendicular to it. Init by process() method.
-
-    See also
-    --------
-    SegmentPistonSensor : the super class
-    IdealSegmentPistonSensor : the class for an idealized segment piston sensor
-    GMT_M1 : the class for GMT M1 model
-    Source : a class for astronomical sources
-    cuFloatArray : an interface class between GPU host and device data for floats
-    """
-    def __init__(self, M1, src, dispersion=5.0, field_of_view=3.0,nyquist_factor=1.0,BIN_IMAGE=2,MALLOC_DFT=True):
-        SegmentPistonSensor.__init__(self)
-        self._N_SRC = src.N_SRC
-        self.INIT_ALL_ATTRIBUTES = False
-        self.lobe_detection = 'gaussfit'
-
-    def init_detector_mask(self, mask_size):
-        """
-        Defines the circular mask to be applied over each fringe image.
-
-        Parameters
-        ----------
-        mask_size: float
-           Diameter of mask in arcseconds. 
-        """
-        mask_size_px = mask_size / (self.pixel_scale * constants.RAD2ARCSEC)
-        print("Size of DFS detector mask [pix]: %d"%(np.round(mask_size_px)) )
-        N_PX_FRINGE_IMAGE = int(self.camera.N_PX_IMAGE / self.camera.BIN_IMAGE)
-        scale = mask_size_px / N_PX_FRINGE_IMAGE
-        circ = Telescope(N_PX_FRINGE_IMAGE, 1, scale=scale)
-        circ_m = circ.f.host(shape=(N_PX_FRINGE_IMAGE,N_PX_FRINGE_IMAGE))
-        big_circ_m = np.tile(np.tile(circ_m,self.camera.N_SIDE_LENSLET).T,self.camera.N_SIDE_LENSLET)
-        gpu_big_circ_m = cuFloatArray(host_data=big_circ_m)
-        self.fft_mask.alter(gpu_big_circ_m)
-
-    def gaussian_func(self, height, center_x, center_y, width_x, width_y, rotation):
-        """
-        Returns a gaussian function G(x,y) to produce a 2D Gaussian with the given parameters
-
-        Parameters
-        ----------
-        height : float
-            Amplitude of the Gaussian
-        center_x : float
-            x-coordinates of the Gaussian's center in pixels.
-        center_y : float
-            y-coordinates of the Gaussian's center in pixels.
-        width_x : float
-            standard deviation in the x-direction in pixels.
-        width_y : float
-            standard deviation in the y-direction in  pixels.
-        rotation : float
-            angle of rotation of the Gaussian (x,y)  axes in degrees.
-        """
-        width_x = float(np.absolute(width_x))
-        width_y = float(np.absolute(width_y))
-        rotation = np.deg2rad(rotation)
-
-        def rotgauss(x,y):
-            xp = (x-center_x) * np.cos(rotation) - (y-center_y) * np.sin(rotation) + center_x
-            yp = (x-center_x) * np.sin(rotation) + (y-center_y) * np.cos(rotation) + center_y
-            g = height*np.exp( -(((center_x-xp)/width_x)**2+
-                                 ((center_y-yp)/width_y)**2)/2.)
-            return g
-        return rotgauss
-
-    def fitgaussian(self, data):
-        """
-        Fits a 2D Gaussian to the input data, and returns the Gaussian fit parameters: (amplidute, x, y, width_x, width_y, rotation)
-
-        Parameters
-        ----------
-        data : numpy 2D ndarray
-            The array containing the image (i.e. the detection blob) to be fitted with a 2D Gaussian
-        """
-        def moments():
-            total = data.sum()
-            X, Y = np.indices(data.shape)
-            x = (X*data).sum()/total
-            y = (Y*data).sum()/total
-            col = data[:, int(y)]
-            width_x = np.sqrt(abs((np.arange(col.size)-y)**2*col).sum()/col.sum())
-            row = data[int(x), :]
-            width_y = np.sqrt(abs((np.arange(row.size)-x)**2*row).sum()/row.sum())
-            height = data.max()
-            return height, x, y, width_x, width_y, 0.0
-
-        params = moments()
-        errorfunction = lambda p: np.ravel(self.gaussian_func(*p)(*np.indices(data.shape)) - data)
-        p, success = leastsq(errorfunction, params)
-        return p
-
-    def get_data_cube(self, data_type='fftlet'):
-        """
-        Returns the DFS data (either fringe or fftlet images) in cube format
-
-	Parameters
-	----------
-	data_type : string.  (default: fftlet)
-		Set to "camera" to return fringes; 
-		Set to "fftlet" to return fftlet images;
-		Set to "pupil_masks" to return the sub-aperture masks;
-		Set to "phase" to return the phase on each sub-aperture.
-	"""
-
-        assert data_type=='fftlet' or data_type=='camera' or data_type=='pupil_masks' or data_type=='phase', "data_type should be either 'fftlet', 'camera', or 'pupil_masks', or 'phase'"
-
-        n_lenslet = self.camera.N_SIDE_LENSLET
-
-        if data_type == 'fftlet':
-            data = self.fftlet.host()
-            n_px = self.camera.N_PX_IMAGE
-        elif data_type == 'camera':
-            data = self.camera.frame.host()
-            n_px = int(self.camera.N_PX_IMAGE/2)
-        elif data_type == 'pupil_masks':
-            data = self.W.amplitude.host()
-            n_px = int( (data.shape)[0] / n_lenslet)
-        elif data_type == 'phase':
-            data = self.W.phase.host()
-            n_px = int( (data.shape)[0] / n_lenslet)
-
-        dataCube = np.zeros((n_px, n_px, self._N_SRC*12))
-        k = 0
-        for j in range(n_lenslet):
-            for i in range(n_lenslet):
-                dataCube[:,:,k] = data[i*n_px:(i+1)*n_px, j*n_px:(j+1)*n_px]
-                k += 1
-                if k == self._N_SRC*12: break
-            if k == self._N_SRC*12: break
-        return dataCube
-
-    def calibrate(self, src):
-        """
-        Perform the following calibrations tasks:
-        1) Calibrates the lobe detection masks (spsmask).
-        2) Computes and stores the reference slopen null vector for a flat WF
-
-        Parameters
-        ----------
-        src : Source
-             The Source object used for piston sensing
-        """
-        self.reset()
-        self.propagate(src)
-        self.fft()
-        dataCube = self.get_data_cube(data_type='fftlet')
-
-        ### Essential data
-        self.fftlet_rotation = np.zeros(src.N_SRC*12)
-        self.spsmask = np.zeros((self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE,src.N_SRC*12), dtype='bool')
-        ### Additional data for visualization and debugging
-        if self.INIT_ALL_ATTRIBUTES == True:
-            self.blob_data = np.zeros((src.N_SRC*12, 3, 3))
-            self.pl_m = np.zeros((src.N_SRC*12))
-            self.pl_b = np.zeros((src.N_SRC*12))
-            self.pp_m = np.zeros((src.N_SRC*12))
-            self.pp_b = np.zeros((src.N_SRC*12))
-
-        for k in range(src.N_SRC*12):
-            ### Find center coordinates of three lobes (i.e. central and two lateral ones) on each imagelet.
-            blob_data = blob_log(dataCube[:,:,k], min_sigma=5, max_sigma=10, overlap=1,
-                                 threshold=0.005*np.max(dataCube[:,:,k]))
-            assert blob_data.shape == (3,3), "lobe detection failed"
-            blob_data = blob_data[np.argsort(blob_data[:,0])]  #order data in asceding y-coord
-
-            ### The code below does the following:
-            ### 1) Fit a line passing through the centers of the three lobes (aka pl line).
-            ###    y = pl_m * x + pl_b
-            ### 2) Find the perpendicular to the pl line (aka pp line) passing through a point lying between
-            ###    the central and uppermost lobe (aka BORDER POINT).
-            ###    y = pp_m * x + pp_b
-
-            ### BORDER POINT coordinates (pp_x, pp,y)
-            ### separation tweaking: 0.5 will select BORDER POINT equidistant to the two lobes.
-            separation_tweaking = 0.6
-            pp_py, pp_px = blob_data[1,0:2] + separation_tweaking*(blob_data[2,0:2] - blob_data[1,0:2])
-
-            if np.all(blob_data[:,1] == blob_data[0,1]):    # pl line is VERTICAL
-                pp_m = 0.
-                self.fftlet_rotation[k] = 0.
-                pl_m = float('inf')
-            else:
-                pl_m, pl_b = np.polyfit(blob_data[:,1], blob_data[:,0], 1)  # pl line fitting
-                pp_m = -1.0 / pl_m
-                fftlet_rotation = np.arctan(pl_m)
-                ### We know that the rotation angles are [-90, -30, 30, 90].
-                apriori_angles = np.array([-90,-30,30,90])
-                fftlet_rotation = (math.pi/180)*min(apriori_angles, key=lambda aa:abs(aa-fftlet_rotation*180/math.pi))
-                self.fftlet_rotation[k] = fftlet_rotation
-                pp_m = -1.0/ np.tan(fftlet_rotation)
-
-            pp_b = pp_py - pp_m * pp_px
-
-            ### Define the SPS masks as the region y > pp line
-            u = np.arange(self.camera.N_PX_IMAGE)
-            v = np.arange(self.camera.N_PX_IMAGE)
-            xx,yy = np.meshgrid(u,v)
-            self.spsmask[:,:,k] = yy > xx*pp_m+pp_b
-
-            if self.INIT_ALL_ATTRIBUTES == True:
-                self.blob_data[k,:,:] = blob_data
-                self.pl_m[k] = pl_m
-                self.pl_b[k] = pl_b
-                self.pp_m[k] = pp_m
-                self.pp_b[k] = pp_b
-
-        ### Compute reference slope vector (for flat WF)
-        self.analyze(src)
-        self._ref_measurement = self.measurement.copy()
-
-    def reset(self):
-        """
-        Resets both the SPS detector frame and the fftlet buffer to zero.
-        """
-        self.camera.reset()
-        self.fftlet.reset()
-
-    def process(self):
-        """
-        Processes the Dispersed Fringe Sensor detector frame
-        """
-        dataCube = self.get_data_cube(data_type='fftlet')
-        self.measurement = np.zeros(self._N_SRC*12)
-
-        if self.INIT_ALL_ATTRIBUTES == True:
-            self.fftlet_fit_params = np.zeros((6,self._N_SRC*12))
-            self.measurement_ortho = np.zeros(self._N_SRC*12)
-            if self.lobe_detection == 'gaussfit':
-                self.fftlet_fit_images = np.zeros((self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE,self._N_SRC*12))
-
-        for k in range(self._N_SRC*12):
-            mylobe = dataCube[:,:,k] * self.spsmask[:,:,k]
-            centralpeak = np.max(dataCube[:,:,k])
-            if self.lobe_detection == 'gaussfit':
-                params = self.fitgaussian(mylobe)
-                (height, y, x, width_y, width_x, rot) = params
-            elif self.lobe_detection == 'peak_value':
-                mylobe  = rotate(mylobe,self.fftlet_rotation[k]*180/np.pi, reshape=False)
-                height = np.max(mylobe)
-                height_pos = np.argmax(mylobe)
-                y, x = np.unravel_index(height_pos, mylobe.shape)
-                if y < (mylobe.shape[0]-1) and x < (mylobe.shape[1]-1):
-                    dx = 0.5*(mylobe[y,x-1] - mylobe[y,x+1]) / (mylobe[y,x-1]+mylobe[y,x+1]-2*height+1e-6)
-                    dy = 0.5*(mylobe[y-1,x] - mylobe[y+1,x]) / (mylobe[y-1,x]+mylobe[y+1,x]-2*height+1e-6)
-                    x += dx
-                    y += dy
-                width_x, width_y, rot = 0,0,0
-            #x1 = x * np.cos(-self.fftlet_rotation[k]) - y * np.sin(-self.fftlet_rotation[k])
-            #y1 = x * np.sin(-self.fftlet_rotation[k]) + y * np.cos(-self.fftlet_rotation[k])
-            y1 = y
-            x1 = x
-            self.measurement[k] = y1
-
-            if self.INIT_ALL_ATTRIBUTES == True:
-                self.measurement_ortho[k] = x1
-                self.fftlet_fit_params[:,k] = (height / centralpeak, y, x, width_y, width_x, rot)
-                if self.lobe_detection == 'gaussfit':
-                    fftlet_shape = (self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE)
-                    self.fftlet_fit_images[:,:,k] = self.gaussian_func(*params)(*np.indices(fftlet_shape))
-
-    def analyze(self, src):
-        """
-        Propagates the guide star to the SPS detector (noiseless) and processes the frame
-
-        Parameters
-        ----------
-        src : Source
-            The piston sensing guide star object
-        """
-        self.reset()
-        self.propagate(src)
-        self.fft()
-        self.process()
-
-    def piston(self, src):
-        """
-        Return M1 differential piston. This method was created to provide compatibility with the IdealSegmentPistonSensor Piston method.
-
-        Parameters
-        ----------
-        src : Source
-            The piston sensing guide star object
-
-        Return
-        ------
-        p : numpy ndarray
-            A 12 element differential piston vector
-        """
-        self.analyze(src)
-        p = self.get_measurement()
-        return p.reshape(-1,12)
-
-    @property
-    def Data(self):
-        return self.get_measurement()
-
-    def get_measurement(self):
-        """
-        Returns the measurement vector minus reference vector.
-        """
-        return self.measurement - self._ref_measurement
-
-    def get_measurement_size(self):
-        """
-        Returns the size of the measurement vector
-        """
-        return self._N_SRC*12
-
-    def get_ref_measurement(self):
-        return self._ref_measurement
-
-class IdealSegmentPistonSensor:
-    """
-    A class for the GMT segment piston sensor
-
-    Parameters
-    ----------
-    D :  float
-        Telescope diameter (m)
-    nPx : integer
-        Pupil linear sampling (pixels)
-    W : float, optional
-        The width of the lenslet; default: 1.5m
-    L : float, optional
-        The length of the lenslet; default: 1.5m
-    segment : string
-        "full" for piston on the entire segments or "edge" for the differential piston between segment.
-    zenith : list
-    azimuth: list
-        List of coordinates of source(s) coupled with sensors; default: [0.], [0.]
-    Attributes
-    ----------
-    P : numpy ndarray
-        M1 segment mask as a 7 columns array
-    rc : float
-        The radius of the circle where are centered the first 6 lenslets
-    rp : float
-        The radius of the circle where are centered the last 6 lenslets
-    W : float
-        The width of the lenslet
-    L : float
-        The length of the lenslet
-    M : numpy ndarray
-        The mask corresponding to the 12 lenslet array as a 12 columns array
-    segment : string
-        "full" for piston on the entire segments or "edge" for the differential piston between segment.
-
-    See also
-    --------
-    GMT_MX : a class for GMT M1 and M2 mirrors
-
-    Examples
-    --------
-    >>> import ceo
-    >>> nPx = 256
-    >>> D = 25.5
-    >>> src = ceo.Source("R",rays_box_size=D,rays_box_sampling=nPx,rays_origin=[0.0,0.0,25])
-    >>> gmt = ceo.GMT_MX()
-    >>> src.reset()
-    >>> gmt.propagate(src)
-
-    The piston per M1 segment is obtained with
-    >>> SPS = ceo.IdealSegmentPistonSensor(D,nPx,segment='full')
-    >>> SPS.piston(src)
-
-    The 12 differential pistons are given by
-    >>> SPS = ceo.IdealSegmentPistonSensor(D,nPx,segment='edge')
-    >>> SPS.piston(src)
-    """
-
-    def __init__(self, D, D_px, W=1.5, L=1.5, segment=None, zenith=[0.], azimuth=[0.]):
-        assert segment=="full" or segment=="edge", "segment parameter is either ""full"" or ""edge"""
-        self.segment = segment
-        self._N_SRC = len(zenith)
-        def ROT(o):
-            return np.array([ [ math.cos(o), math.sin(o)], [-math.sin(o),math.cos(o)] ])
-        n = D_px
-        R = D/2
-        u = np.linspace(-1,1,n)*R
-        x,y = np.meshgrid(u,u)
-        xy = np.array( [ x.flatten(), y.flatten()] )
-        self.rc = 4.387
-        xy_rc = np.array([[0],[self.rc]])
-        #print xy_rc
-        self.rp = 7.543
-        xy_rp = np.array([[self.rp],[0]])
-        #print xy_rp
-        self.W = W
-        self.L = L
-        self.M = []
-        for k_SRC in range(self._N_SRC):
-            xySrc = 82.5*np.array( [[zenith[k_SRC]*math.cos(azimuth[k_SRC])],
-                                      [zenith[k_SRC]*math.sin(azimuth[k_SRC])]] )
-            _M_ = []
-            for k in range(6):
-                theta = -k*math.pi/3
-                #print ROT(theta)
-                xyp = np.dot(ROT(theta),xy - xySrc) - xy_rc
-                _M_.append( np.logical_and( np.abs(xyp[0,:])<self.L/2,  np.abs(xyp[1,:])<self.W/2 ) )
-            for k in range(6):
-                theta = (1-k)*math.pi/3
-                #print ROT(theta)
-                xyp = np.dot(ROT(theta),xy - xySrc) - xy_rp
-                _M_.append( np.logical_and( np.abs(xyp[0,:])<self.L/2,  np.abs(xyp[1,:])<self.W/2 ) )
-            self.M.append( np.array( _M_ ) )
-        #print self.M.shape
-
-    def reset(self):
-        pass
-
-    def process(self):
-        pass
-
-    def piston(self,src):
-        """
-        Return either M1 segment piston or M1 differential piston
-
-        Parameters
-        ----------
-        src : Source
-            The piston sensing guide star object
-
-        Return
-        ------
-        p : numpy ndarray
-            A 7 element piston vector for segment="full" or a 12 element differential piston vector for segment="edge"
-        """
-
-        if self.segment=="full":
-            p = src.piston(where='segments')
-        elif self.segment=="edge":
-            W = src.wavefront.phase.host()
-            p = np.zeros((self._N_SRC,12))
-            for k_SRC in range(self._N_SRC):
-                _P_ = src.rays.piston_mask[k_SRC]
-                _M_ = self.M[k_SRC]
-                for k in range(6):
-                    #print k,(k+1)%6
-                    p[k_SRC,2*k] = np.sum( W[k_SRC,:]*_P_[k,:]*_M_[k,:] )/np.sum( _P_[k,:]*_M_[k,:] ) - \
-                             np.sum( W[k_SRC,:]*_P_[6,:]*_M_[k,:] )/np.sum( _P_[6,:]*_M_[k,:] )
-                    p[k_SRC,2*k+1] = np.sum( W[k_SRC,:]*_P_[k,:]*_M_[k+6,:] )/np.sum( _P_[k,:]*_M_[k+6,:] ) - \
-                               np.sum( W[k_SRC,:]*_P_[(k+1)%6,:]*_M_[k+6,:] )/np.sum( _P_[(k+1)%6,:]*_M_[k+6,:] )
-        return p
-
-    def calibrate(self,src):
-        """
-        Calibrates the reference slope vector.
-        """
-        p = self.piston(src)
-        self.ref_measurement = p.ravel()
-
-    def propagate(self,src):
-        """
-        Computes the segment piston vector.
-        """
-        p = self.piston(src)
-        self.measurement = p.ravel()
-        
-    def analyze(self, src):
-        self.reset()
-        self.propagate(src)
-        self.process()
-
-    def get_measurement(self):
-        """
-        Returns the measurement vector
-        """
-        return self.measurement - self.ref_measurement
-
-    def get_measurement_size(self):
-        """
-        Returns the size of the measurement vector
-        """
-        if self.segment=="edge":
-            n_meas = 12
-        elif self.segment=="full":
-            n_meas = 7
-        return n_meas*self._N_SRC
-
-    @property
-    def Data(self):
-        return self.get_measurement()
 
 class SegmentTipTiltSensor:
     """
