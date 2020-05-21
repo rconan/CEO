@@ -139,8 +139,15 @@ class IdealSegmentPistonSensor:
         """
         Calibrates the reference slope vector.
         """
+        self.reset()
         p = self.piston(src)
         self.ref_measurement = p.ravel()
+
+    def set_reference_measurement(self, src):
+        """
+        Same as self.calibrate(). Provided for compatibility with other sensors
+        """
+        self.calibrate(src)
 
     def propagate(self,src):
         """
@@ -150,7 +157,6 @@ class IdealSegmentPistonSensor:
         self.measurement = p.ravel()
         
     def analyze(self, src):
-        self.reset()
         self.propagate(src)
         self.process()
 
@@ -173,3 +179,6 @@ class IdealSegmentPistonSensor:
     @property
     def Data(self):
         return self.get_measurement()
+
+    def get_ref_measurement(self):
+        return self.ref_measurement

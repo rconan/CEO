@@ -68,6 +68,7 @@ class PyramidWFS(Pyramid):
         label[mqt4] = 4
 
         centers = center_of_mass(ccd_frame, labels=label, index=[1,2,3,4])
+        #centers = [[117.5,117.5],[117.5,249.5],[249.5,117.5],[249.5,249.5]] # OVERRIDE!!!!!
         print("Center of subpupil images (pix):")
         print(np.array_str(np.array(centers), precision=1), end='\n')
 
@@ -122,6 +123,13 @@ class PyramidWFS(Pyramid):
         self.n_sspp = int(cp.sum(self._indpup[0])) # number of valid SAs
 
         #-> Compute reference vector
+        self.set_reference_measurement(src)
+
+    def set_reference_measurement(self, src):
+        """
+        Calibrates the reference measurement vector
+        """
+        self.reset()
         self.analyze(src)
         self._ref_measurement = self._measurement.copy()
 
@@ -286,7 +294,6 @@ class PyramidWFS(Pyramid):
         src : Source
             The pyramid's guide star object
         """
-        self.reset()
         self.propagate(src)
         self.process()
 

@@ -253,7 +253,15 @@ class DispersedFringeSensor(SegmentPistonSensor):
                 self.pp_m[k] = pp_m
                 self.pp_b[k] = pp_b
 
-        ### Compute reference slope vector (for flat WF)
+        ### Compute reference measurement vector (for flat WF)
+        self.process()
+        self._ref_measurement = self.measurement.copy()
+
+    def set_reference_measurement(self, src):
+        """
+        Calibrates the reference measurement vector
+        """
+        self.reset()
         self.analyze(src)
         self._ref_measurement = self.measurement.copy()
 
@@ -316,7 +324,6 @@ class DispersedFringeSensor(SegmentPistonSensor):
         src : Source
             The piston sensing guide star object
         """
-        self.reset()
         self.propagate(src)
         self.fft()
         self.process()
