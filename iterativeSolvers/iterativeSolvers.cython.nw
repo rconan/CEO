@@ -4,11 +4,15 @@
 \label{sec:pxd-file}
 
 <<iterativeSolvers.pxd>>=
+from utilities cimport float2, cuFloatArray,  cuFloatComplexArray
+from BTBT cimport Btbt, BTBT
 cdef extern from "iterativeSolvers.h":
     cdef cppclass iterativeSolvers:
         int N_ITERATION, cvgce_iteration
         float RTOL, ATOL
-
+        void minres_setup(int)
+        void minres_vorst(float *, BTBT *, float *, float* )
+        void cleanup()
 <<class definitions>>
 @ 
 
@@ -17,6 +21,8 @@ cdef extern from "iterativeSolvers.h":
 
 <<class definitions>>=
 cdef class IterativeSolvers:
+    cdef iterativeSolvers *_c_iterativeSolvers
+cdef class Minres:
     cdef iterativeSolvers *_c_iterativeSolvers
 @ 
 \section{PYX file}
@@ -42,8 +48,49 @@ cdef class IterativeSolvers:
     @property
     def RTOL(self):
         return self._c_iterativeSolvers.RTOL
+    @RTOL.setter
+    def RTOL(self, float value):
+        self._c_iterativeSolvers.RTOL = value
 
     @property
     def ATOL(self):
         return self._c_iterativeSolvers.ATOL
+cdef class Minres:
+    def __cinit__(self,int n_x):
+        self._c_iterativeSolvers = new iterativeSolvers()
+        self._c_iterativeSolvers.minres_setup(n_x)
+
+    def solve(self, cuFloatArray x, Btbt A, cuFloatArray b, cuFloatArray x0):
+        self._c_iterativeSolvers.minres_vorst(x._c_gpu.dev_data,
+                                              A._c_BTBT,
+                                              b._c_gpu.dev_data,
+                                              x0._c_gpu.dev_data)
+    def __dealloc__(self):
+        self._c_iterativeSolvers.cleanup()
+
+    @property
+    def N_ITERATION(self):
+        return self._c_iterativeSolvers.N_ITERATION
+
+    @N_ITERATION.setter
+    def N_ITERATION(self, int value):
+        self._c_iterativeSolvers.N_ITERATION = value
+
+    @property
+    def cvgce_iteration(self):
+        return self._c_iterativeSolvers.cvgce_iteration
+
+    @property
+    def RTOL(self):
+        return self._c_iterativeSolvers.RTOL
+    @RTOL.setter
+    def RTOL(self, float value):
+        self._c_iterativeSolvers.RTOL = value
+
+    @property
+    def ATOL(self):
+        return self._c_iterativeSolvers.ATOL
+    @ATOL.setter
+    def ATOL(self, float value):
+        self._c_iterativeSolvers.ATOL = value
  

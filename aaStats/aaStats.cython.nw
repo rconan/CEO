@@ -29,6 +29,9 @@ cdef extern from "aaStats.h":
 \label{sec:class-definitions}
 
 <<class definitions>>=
+cdef class AaStatsMatrix:
+    cdef aaStats *_c_aaStats
+    cdef public cuFloatArray cov
 cdef class AaStats:
     cdef aaStats *_c_aaStats
     cdef public cuFloatArray cov
@@ -46,6 +49,31 @@ cdef class PaStats:
 \index{aaStats!python!AaStats}
 <<aaStats.pyx>>=
 # aaStats
+cdef class AaStatsMatrix:
+    """
+    Slopes covariance matrix class
+
+    Parameters
+    ----------
+    N_SIDE_LENSLET : int
+        The size of the lenslet array
+    atm : Atmosphere
+        The atmosphere model
+    lenslet pitch : float
+        The lenslet array pitch
+    src : Source
+        The guide stars
+    """
+
+    def __cinit__(self,int N_SIDE_LENSLET, AtmosphereAbstract atm, float lenslet_pitch, Source src):
+        self._c_aaStats = new aaStats()
+        self._c_aaStats.setup(N_SIDE_LENSLET, atm._c_atmosphere, lenslet_pitch, src._c_source, src.N_SRC)
+        self.cov = cuFloatArray(shape=(self._c_aaStats.N_SRC2*4*self._c_aaStats.NU,self._c_aaStats.NU))
+        self.cov._c_gpu.dev_data = self._c_aaStats.d__cov
+
+    def __dealloc__(self):
+        self._c_aaStats.cleanup()
+
 cdef class AaStats:
     """
     Slopes covariance matrix class
