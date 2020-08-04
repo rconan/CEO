@@ -17,7 +17,7 @@ from .gmtMirrors import BendingModes, KarhunenLoeve, GmtMirrors, GMT_M1, GMT_M2,
 from .GMTLIB import CalibrationVault, GMT_MX, JGMT_MX, GeometricTT7, SegmentTipTiltSensor, EdgeSensors, Trace, PSSn as GMT_PSSn
 from .mapping import Mapping
 from . import phaseStats
-from .sensors import PyramidWFS as Pyramid                               
+from .sensors import PyramidWFS as Pyramid
 from .sensors import DispersedFringeSensor, IdealSegmentPistonSensor
 from IPython.display import Markdown, display
 def sweetcheat():
