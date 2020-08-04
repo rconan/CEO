@@ -5,7 +5,7 @@ import cupy as cp
 from scipy.ndimage import center_of_mass
 
 class PyramidWFS(Pyramid):
-    def __init__(self, N_SIDE_LENSLET, N_PX_LENSLET, modulation=0.0, N_GS=1, throughput=1.0):
+    def __init__(self, N_SIDE_LENSLET, N_PX_LENSLET, modulation=0.0, N_GS=1, throughput=1.0, separation=None):
         Pyramid.__init__(self)
         self._ccd_frame = ascupy(self.camera.frame)
         self._SUBAP_NORM = 'MEAN_FLUX_PER_SUBAP'
@@ -32,6 +32,13 @@ class PyramidWFS(Pyramid):
         thr : Threshold for pupil registration refinement: select only SAs with flux percentage above thr.
         """
 
+        #-> Insert a sub-pupil image into a CCD frame
+        def insert_subpupil(this_frame, this_pup):
+            fr = np.zeros((nx,ny))
+            sz = this_frame.shape
+            fr[yra[this_pup][0]:yra[this_pup][1]+1,xra[this_pup][0]:xra[this_pup][1]+1] = this_frame
+            return fr
+
         #-> Acquire CCD frame applying high modulation:
         self.reset()
         cl_modulation = self.modulation # keep track of selected modulation radius
@@ -49,10 +56,10 @@ class PyramidWFS(Pyramid):
         y = np.linspace(0, ny-1, ny)
         xx, yy = np.meshgrid(x, y)
 
-        mqt1 = np.logical_and(xx<(nx/2), yy<(ny/2)) # First quadrant (lower left)
-        mqt2 = np.logical_and(xx>(nx/2), yy<(ny/2)) # Second quadrant (lower right)
-        mqt3 = np.logical_and(xx<(nx/2), yy>(ny/2)) # Third quadrant (upper left)
-        mqt4 = np.logical_and(xx>(nx/2), yy>(ny/2)) # Fourth quadrant (upper right)
+        mqt1 = np.logical_and(xx< (nx/2), yy< (ny/2)) # First quadrant (lower left)
+        mqt2 = np.logical_and(xx>=(nx/2), yy< (ny/2)) # Second quadrant (lower right)
+        mqt3 = np.logical_and(xx< (nx/2), yy>=(ny/2)) # Third quadrant (upper left)
+        mqt4 = np.logical_and(xx>=(nx/2), yy>=(ny/2)) # Fourth quadrant (upper right)
 
         label = np.zeros((nx,ny)) # labels needed for ndimage.center_of_mass
         label[mqt1] = 1
@@ -61,6 +68,7 @@ class PyramidWFS(Pyramid):
         label[mqt4] = 4
 
         centers = center_of_mass(ccd_frame, labels=label, index=[1,2,3,4])
+        #centers = [[117.5,117.5],[117.5,249.5],[249.5,117.5],[249.5,249.5]] # OVERRIDE!!!!!
         print("Center of subpupil images (pix):")
         print(np.array_str(np.array(centers), precision=1), end='\n')
 
@@ -68,44 +76,77 @@ class PyramidWFS(Pyramid):
         n_sub = self.N_SIDE_LENSLET + round(self.N_SIDE_LENSLET*percent_extra_subaps/100)
         print("Number of SAs across pupil: %d"%n_sub, end="\r", flush=True)
 
-        indpup = []  # list of pupil index vectors
-        n_sspp = []
+        indpup = []
+        xr = []
+        yr = []
+        xra = []
+        yra = []
         for this_pup in range(4):
-            indpup.append( (xx-centers[this_pup][0])**2 + (yy-centers[this_pup][1])**2 <= round(n_sub/2)**2 )
-            n_sspp.append( np.sum(indpup[this_pup]) )
-        n_sspp = np.unique(n_sspp)
+            xxn = xx-centers[this_pup][0]
+            yyn = yy-centers[this_pup][1]
+            xr.append( np.arange(np.min(xxn),np.max(xxn)+1) )
+            yr.append( np.arange(np.min(yyn),np.max(yyn)+1) )
+            xra.append((np.squeeze(np.where(np.abs(xr[this_pup])<= n_sub/2))[0] ,
+                        np.squeeze(np.where(np.abs(xr[this_pup])<= n_sub/2))[-1]))
+            yra.append((np.squeeze(np.where(np.abs(yr[this_pup])<= n_sub/2))[0] ,
+                        np.squeeze(np.where(np.abs(yr[this_pup])<= n_sub/2))[-1]))
+            indpup.append( np.sqrt(xxn**2 + yyn**2) <= n_sub/2)
+        self._xr = xr
+        self._yr = yr
 
-        if n_sspp.size > 1:
-            print('Error!! number of valid SAs per sub-pupil are different!')
-            print(np.array_str(np.array(n_sspp)))
-            return	
+        #-> Create the intersection of the four sub-pupil circular masks
+        indpup0 = []
+        for this_pup in range(4):
+            indpup0.append(self.get_subpupil(this_pup, indpup[this_pup], sz=n_sub))
+        indpup0 = np.sum(indpup0, axis=0) == 4  # Select SA present on ALL sub-pupils
 
         #-> Pupil registration refinement based on SA flux thresholding
         if thr > 0:
 
-            # Compute the flux per SA 
-            flux = np.zeros(n_sspp)
-            for subpup in indpup:
-                flux += ccd_frame[subpup]
+            # Compute the flux per SA
+            flux2D = np.zeros((n_sub,n_sub))
+            for this_pup in range(4):
+                flux2D += self.get_subpupil(this_pup, ccd_frame, sz=n_sub) 
 
-            meanflux = np.mean(flux) 
+            meanflux = np.mean(flux2D[indpup0])
             fluxthr = meanflux*thr
-            thridx = flux > fluxthr
-            n_sspp1 = np.sum(thridx)
+            indpup1 = flux2D > fluxthr
+            n_sspp1 = np.sum(indpup1)
             print("->     Number of valid SAs: %d"%n_sspp1, flush=True)
 
-            #indpup1 = [np.copy(subpup) for subpup in indpup]
-            for subpup in indpup:
-                subpup[subpup] *= thridx
+            indpup = []
+            for this_pup in range(4):
+                indpup.append(insert_subpupil(indpup1,this_pup).astype(bool))
 
         #-> Save pupil registration (GPU memory)		
         self._indpup = [cp.asarray(subpup) for subpup in indpup]
         self.n_sspp = int(cp.sum(self._indpup[0])) # number of valid SAs
 
         #-> Compute reference vector
+        self.set_reference_measurement(src)
+
+    def set_reference_measurement(self, src):
+        """
+        Calibrates the reference measurement vector
+        """
+        self.reset()
         self.analyze(src)
         self._ref_measurement = self._measurement.copy()
 
+    def get_subpupil(self, this_pup, this_frame=None, sz=None):
+        """
+        Extracts the selected sub-pupil from CCD frame.
+        Parameters:
+          this_pup: Sup-pupil number = {0,1,2,3}
+          this_frame: CCD frame (optional). Default: Current CCD frame.
+          sz: Size of array to be extracted (optional). Default: Size of sub-pupil image (N_SIDE_LENSLET).
+        """
+        if sz is None:
+            sz = self.N_SIDE_LENSLET
+        if this_frame is None:
+            this_frame = self.ccd_frame
+        extr = this_frame[np.abs(self._yr[this_pup])<= sz/2,:][:,np.abs(self._xr[this_pup]) <= sz/2]
+        return extr
 
     @property
     def indpup(self):
@@ -210,7 +251,7 @@ class PyramidWFS(Pyramid):
         #sx2d = np.full((self.camera.N_PX_FRAME,self.camera.N_PX_FRAME), np.nan)
         sx2d = np.zeros((self.camera.N_PX_FRAME,self.camera.N_PX_FRAME))
         sx2d[self.indpup[0]] = this_sx
-        sx2d = sx2d[0:int(self.camera.N_PX_FRAME/2),0:int(self.camera.N_PX_FRAME/2)]
+        sx2d = self.get_subpupil(0,sx2d)
         return sx2d
         
     def get_sy2d(self, this_sy=None):
@@ -223,7 +264,7 @@ class PyramidWFS(Pyramid):
         #sy2d = np.full((self.camera.N_PX_FRAME,self.camera.N_PX_FRAME), np.nan)
         sy2d = np.zeros((self.camera.N_PX_FRAME,self.camera.N_PX_FRAME))
         sy2d[self.indpup[0]] = this_sy
-        sy2d = sy2d[0:int(self.camera.N_PX_FRAME/2),0:int(self.camera.N_PX_FRAME/2)]
+        sy2d = self.get_subpupil(0, sy2d)
         return sy2d
 
     def get_measurement_size(self):
@@ -253,7 +294,6 @@ class PyramidWFS(Pyramid):
         src : Source
             The pyramid's guide star object
         """
-        self.reset()
         self.propagate(src)
         self.process()
 

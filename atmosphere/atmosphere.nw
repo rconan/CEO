@@ -30,6 +30,16 @@
 #include "centroiding.h"
 #endif
 
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#define handle_error(msg)				\
+  do { perror(msg); exit(EXIT_FAILURE); } while (0)
+
 struct layer {
 
   <<layer parameters>>
@@ -308,6 +318,10 @@ float *d__phase_screen_LAYER;
 @ \item the size in memory of all the phase screnn in the layers
 <<atmosphere parameters>>=
 unsigned long N_PHASE_LAYER;
+@ \item phase screen layers file ID
+<<atmosphere parameters>>=
+  //FILE *layers_fid;
+size_t mmap_size;
 @ \end{itemize}
 
 
@@ -879,7 +893,7 @@ void atmosphere::save_layer_phasescreens(const char* _fullpath_to_phasescreens, 
 			    cudaMemcpyHostToDevice ) );
 }
 @
-<<phase screen loading>>=
+<<phase screen loading (original)>>=
 FILE *layers_fid;
 size_t N_READ;
 layers_fid = fopen(fullpath_to_phasescreens,"rb");
@@ -900,6 +914,47 @@ HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
                           cudaMemcpyHostToDevice ) );
 tid.toc();
 fclose(layers_fid);
+@
+MEMORY MAP:
+<<phase screen loading>>=
+FILE *layers_fid;
+size_t N_READ;
+layers_fid = fopen(fullpath_to_phasescreens,"rb");
+
+N_READ = fread(&N_DURATION,       sizeof(int),  1,layers_fid);
+if (N_READ==0)
+  ERROR("Cannot read file!");
+
+fclose(layers_fid);
+
+struct stat sb;
+int fd;
+off_t offset, pa_offset;
+
+fprintf(stdout,"\n@(CEO)>atmosphere: Memory-mapping the phase screens in the layers from file %s...\n",fullpath_to_phasescreens);
+tid.tic();
+fd = open(fullpath_to_phasescreens, O_RDONLY);
+if (fd == -1)
+  handle_error("open");
+
+if (fstat(fd, &sb) == -1)           /* To obtain file size */
+  handle_error("fstat");
+offset = sizeof(int);
+pa_offset = offset & ~(sysconf(_SC_PAGE_SIZE) - 1); 
+mmap_size = sb.st_size - pa_offset;
+//phase_screen_LAYER = (float*)malloc(sizeof(float)*N_PHASE_LAYER*N_DURATION);
+//N_READ     = fread(phase_screen_LAYER,sizeof(float),N_PHASE_LAYER*N_DURATION,layers_fid);
+//if (N_READ==0)
+//  ERROR("Cannot read file!");
+phase_screen_LAYER = (float *) mmap(NULL, mmap_size, PROT_READ, MAP_PRIVATE, fd, pa_offset);
+if (phase_screen_LAYER == MAP_FAILED)
+  handle_error("mmap");
+
+HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
+                          phase_screen_LAYER,
+                          sizeof(float)*N_PHASE_LAYER,
+                          cudaMemcpyHostToDevice ) );
+tid.toc();
 @
 The phase screens of the layers are defined such as the x--axis of the screens are aligned with the wind direction $\theta$.
 The sketch below shows a phase screen in blue and inside, the location of the telescope pupil in green at W at time $t=0$..
@@ -1059,7 +1114,8 @@ void atmosphere::cleanup(void) {
     HANDLE_ERROR( cudaFree( d__layers ) );
   }
   if (phase_screen_LAYER!=NULL)
-    free( phase_screen_LAYER );
+    munmap(phase_screen_LAYER, mmap_size);
+  //    free( phase_screen_LAYER );
 }
 @
 The phase screen are defined in the telescope pupil at the ground
@@ -2417,7 +2473,7 @@ const source *src, const float tau)
     new_tau     = tau - k_DURATION*layers_duration;
 
     if (N_DURATION>0) {
-      fprintf(stdout,"\n@(CEO)>atmopshere: Loading phase screens (%.0fs) to device...\n",layers_tau0);
+      fprintf(stdout,"\n@(CEO)>atmosphere: Loading phase screens (%.0fs) to device...\n",layers_tau0);
       tid.tic();
       HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
 				phase_screen_LAYER + k_DURATION*N_PHASE_LAYER,
@@ -2468,7 +2524,7 @@ void atmosphere::rayTracing(source *src,
     new_tau     = tau - k_DURATION*layers_duration;
 
     if (N_DURATION>0) {
-      fprintf(stdout,"\n@(CEO)>atmopshere: Loading phase screens (%.0fs) to device...\n",layers_tau0);
+      fprintf(stdout,"\n@(CEO)>atmosphere: Loading phase screens (%.0fs) to device...\n",layers_tau0);
       tid.tic();
       HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
 				phase_screen_LAYER + k_DURATION*N_PHASE_LAYER,
