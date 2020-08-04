@@ -5,7 +5,8 @@
 
 <<source.pxd>>=
 from numpy cimport ndarray
-from utilities cimport mask, cuFloatArray, cuDoubleArray, cuIntArray, MaskAbstract
+from utilities cimport mask, cuFloatArray, cuFloatComplexArray, cuDoubleArray, cuIntArray, MaskAbstract, gpu_t, float2
+from rayTracing cimport Coordinates
 cdef extern from "utilities.h":
     ctypedef double rtd
     ctypedef struct vector:
@@ -32,21 +33,27 @@ cdef extern from "source.h":
 <<source.pxd contents>>=
     cdef cppclass bundle:
         int N_RAY, N_BUNDLE, N_L
-	int *d__piston_mask
+        int *d__piston_mask
         rtd refractive_index, L
         rtd *d__sphere_radius
         rtd *d__sphere_distance
+        double rot_angle
+        vector *d__origin
         vector *d__sphere_origin
         ray *d__ray
-	ray *d__chief_ray
+        ray *d__chief_ray
         void setup(rtd, int, int , vector, int)
         void setup(rtd, int , vector, int)
+        void setup_free(int, double *, double *, vector)
+        void setup_free(double, double, int, double *, double *, vector)
         void cleanup()
         void to_z_plane(rtd)
         void to_sphere(vector)
         void to_sphere(rtd , rtd)
+        void to_focal_plane(rtd , rtd)
         void get_coordinates(double *)
         void get_chief_coordinates(double *)
+        void get_sphere_origins(double *)
         void get_directions(double *)
         void get_chief_directions(double *)
         void get_optical_path_length(double *)
@@ -56,6 +63,9 @@ cdef extern from "source.h":
 					 float , int ,
 					 float , int )
         void get_vignetting(double *)
+        void gmt_truss_onaxis()
+        void gmt_m2_baffle()
+    # static routines
 	void get_n_iteration(int *)
 @
 \subsubsection{Class definition}
@@ -64,20 +74,21 @@ cdef extern from "source.h":
 <<class definitions>>=
 # Bundle
 cdef class Bundle:
-    cdef bundle *_c_bundle
-    cdef cuDoubleArray _coordinates_
-    cdef cuDoubleArray _chief_coordinates_
-    cdef cuDoubleArray _directions_
-    cdef cuDoubleArray _chief_directions_
-    cdef cuDoubleArray _optical_path_length_
-    cdef cuDoubleArray _chief_optical_path_length_
-    cdef cuDoubleArray _optical_path_difference_
-    cdef cuDoubleArray _vignetting_
-    cdef cuIntArray _n_iteration_
-    cdef public cuDoubleArray sphere_radius
-    cdef public cuDoubleArray sphere_distance
-    cdef double[:,::1] _d__sphere_origin_
-    cdef cuIntArray _piston_mask_
+    cdef:
+        bundle *_c_bundle
+        cuDoubleArray _coordinates_
+        cuDoubleArray _chief_coordinates_
+        cuDoubleArray _directions_
+        cuDoubleArray _chief_directions_
+        cuDoubleArray _optical_path_length_
+        cuDoubleArray _chief_optical_path_length_
+        cuDoubleArray _optical_path_difference_
+        cuDoubleArray _vignetting_
+        cuDoubleArray _sphere_origins_
+        cuIntArray _n_iteration_
+        public cuDoubleArray sphere_radius
+        public cuDoubleArray sphere_distance
+        public cuIntArray _piston_mask_
 @
 \subsection{PYX file}
 \label{sec:pyx-file}
@@ -129,10 +140,10 @@ cdef class Bundle:
         The sampling of the box encompassing the ray bundle (the number of rays is N_L$\times$N_L
     """
 
-    def __cinit__(self, Source src):
+    def __cinit__(self, *args, **kwargs):
         self._c_bundle = new bundle()
-        self._c_bundle = &(src._c_source.rays)
 
+    def __init__(self):
         self._coordinates_               = cuDoubleArray(
             shape=(self._c_bundle.N_RAY*self._c_bundle.N_BUNDLE,3),dev_malloc=True)
         self._chief_coordinates_         = cuDoubleArray(
@@ -149,6 +160,8 @@ cdef class Bundle:
             shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
         self._vignetting_                = cuDoubleArray(
             shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
+        self._sphere_origins_            = cuDoubleArray(
+            shape=(self._c_bundle.N_BUNDLE,3),dev_malloc=True)
         self._n_iteration_                = cuIntArray(
             shape=(self._c_bundle.N_BUNDLE,self._c_bundle.N_RAY),dev_malloc=True)
 
@@ -161,6 +174,62 @@ cdef class Bundle:
         self._piston_mask_._c_gpu.dev_data = self._c_bundle.d__piston_mask;
 
     <<bundle common>>
+@
+This a special [[Bundle]] class that is solely used by the [[Source]] class
+\index{source!python!SourceBundle}
+<<source.pyx>>=
+cdef class SourceBundle(Bundle):
+    """
+    A class to represent a bundle of rays
+
+    This class is instanciated by the Source class
+
+    Parameters
+    ----------
+    src : Source
+        The Source object that contains the pointer to CEO bundle structure
+
+    See also
+    --------
+    Bundle: the parent class for all ray bundle classes
+
+    """
+    def __init__(self,Source src):
+        self._c_bundle = &(src._c_source.rays)
+        super(SourceBundle,self).__init__()
+@
+This ray bundle used user--defined ray coordinates:        
+\index{source!python!FreeBundle}
+<<source.pyx>>=        
+cdef class FreeBundle(Bundle):
+    """
+    A class to represent a bundle of rays
+    
+
+    Parameters
+    ----------
+    x : ndarray
+        the x coordinates of the rays in the entrance pupil
+    y : ndarray
+        the y coordinates of the rays in the entrance pupil
+    origin : list
+        the point of origin of the chief ray
+
+    See also
+    --------
+    Bundle: the parent class for all ray bundle classes
+
+    """
+    def __init__(self, ndarray x, ndarray y, list origin,
+                 double zenith=0.0, double azimuth=0.0):
+        cdef vector __origin
+        __origin.x = <rtd>origin[0]
+        __origin.y = <rtd>origin[1]
+        __origin.z = <rtd>origin[2]
+        self._c_bundle.setup_free(zenith, azimuth, x.size, <double *>x.data, <double *>y.data, __origin)
+        super(FreeBundle,self).__init__()
+    def __dealloc__(self):
+        self._c_bundle.cleanup()
 @
 <<bundle common>>=
 """
@@ -179,6 +248,22 @@ def to_z_plane(self,rtd z_plane):
     """
     self._c_bundle.to_z_plane(z_plane)
 
+
+def to_focal_plane(self,
+                   rtd focal_plane_distance,
+                   rtd focal_plane_radius):
+    """
+    Propagates the rays to the focal plane
+
+    Parameters
+    ----------
+    focal_plane_distance : double, optional
+        The location of the focal plane on the optical axis
+    focal_plane_radius : double, optional
+        The radius of curvature of the focal plane
+    """
+    self._c_bundle.to_focal_plane(focal_plane_distance, focal_plane_radius)
+
 def to_sphere(self, sphere_origin=None,
               rtd focal_plane_distance=0.0,
               rtd focal_plane_radius=0.0):
@@ -193,7 +278,6 @@ def to_sphere(self, sphere_origin=None,
         The location of the focal plane on the optical axis; default: 0.0
     focal_plane_radius : double, optional
         The radius of curvature of the focal plane; default: 0.0
-
     """
     cdef vector origin
     if sphere_origin is not None:
@@ -254,9 +338,42 @@ def ee80(self,spaxel="circle"):
     except ValueError:
         return np.float('inf')
 
+def gmt_truss_onaxis(self):
+    self._c_bundle.gmt_truss_onaxis()
+def gmt_m2_baffle(self):
+    self._c_bundle.gmt_m2_baffle()
+
 property N_BUNDLE:
     def __get__(self):
         return self._c_bundle.N_BUNDLE
+
+property origin:
+    def __get__(self):
+        cdef gpu_t[vector] *_c_gpu
+        cdef vector origin
+        _c_gpu = new gpu_t[vector]()
+        _c_gpu.setup(1)
+        _c_gpu.dev_data = self._c_bundle.d__origin
+        _c_gpu.host_data = &origin
+        _c_gpu.dev2host()
+        return origin.x,origin.y,origin.z
+    def __set__(self,val):
+        cdef gpu_t[vector] *_c_gpu
+        cdef vector origin
+        origin.x = val[0]
+        origin.y = val[1]
+        origin.z = val[2]
+        _c_gpu = new gpu_t[vector]()
+        _c_gpu.setup(1)
+        _c_gpu.dev_data = self._c_bundle.d__origin
+        _c_gpu.host_data = &origin
+        _c_gpu.host2dev()
+
+property rot_angle:
+    def __get__(self):
+        return self._c_bundle.rot_angle
+    def __set__(self,val):
+        self._c_bundle.rot_angle = val
 
 property N_L:
     def __get__(self):
@@ -301,6 +418,11 @@ property vignetting:
     def __get__(self):
         self._c_bundle.get_vignetting(self._vignetting_._c_gpu.dev_data)
         return self._vignetting_
+
+property sphere_origins:
+    def __get__(self):
+        self._c_bundle.get_sphere_origins(self._sphere_origins_._c_gpu.dev_data)
+        return self._sphere_origins_
 
 property n_iteration:
     def __get__(self):
@@ -457,6 +579,9 @@ cdef class Complex_amplitude:
     def addPhase(self, cuFloatArray phase):
         self._c_complex_amplitude.add_phase(1,phase._c_gpu.dev_data)        
 
+    def axpy(self, float alpha, cuFloatArray phase):
+        self._c_complex_amplitude.add_phase(alpha,phase._c_gpu.dev_data)        
+
     def __iadd__(self, x):
         cdef cuFloatArray data
         if isinstance(x,(np.ndarray,list,tuple,float)):
@@ -572,17 +697,21 @@ cdef class Complex_amplitude:
         int N_SRC
         const char *photometric_band
         float fwhm, magnitude
+        float2 *d__otf
         complex_amplitude wavefront
         bundle rays
         void setup(const char *,float , float , float )
-	void setup(const char *,float , float , float , int )
+        void setup(const char *,float , float , float , int )
         void setup(const char *,float *, float *, float , int , int )
         void setup(const char *,float *, float *, float , int , rtd, int, vector)
-        #void setup(const char *,float *,float *, float *, float , int , rtd, int, vector)
         void setup(const char *,float *,double *, double *, float , int , rtd, int, vector)
+        void setup_chief(const char *,float *,double *, double *, float , int , rtd, int, vector, vector)
+        void setup(const char *,float *,double *, double *, float , int , int, double *, double *, vector)
         void cleanup()
         void reset_rays()
+        void reset_rays(int)
         void opd2phase()
+        void opd2phase(int)
         void info()
         float n_photon()
         float n_photon(float)
@@ -591,6 +720,7 @@ cdef class Complex_amplitude:
         float spectral_bandwidth()
         void update_directions(double *, double *, int)
         void update_magnitude(float *, int)
+        void optical_transfer_function(float2 *)
 @
 \subsubsection{Class definition}
 \label{sec:class-definition-2}
@@ -612,6 +742,7 @@ cdef class Source:
         readonly tuple OPTICALPATH
         public double samplingTime, timeStamp
         public dict parameters
+        public bytes band
 @
 \subsection{PYX file}
 \label{sec:pyx-file-2}
@@ -636,11 +767,11 @@ cdef class Source:
     fwhm : float, optional
         The fwhm of the source intensity distribution in detector pixel unit (before binning), defaults to None.
     rays_box_size : float, optional
-        The size of the ray bundle [m], defaults to None.
+        The size of the ray bundle [m], defaults to 25.5.
     rays_box_sampling : int, optional
         The linear sampling of the ray bundle
     rays_origin : list, optional
-         A 3 element list, with the first 2 being the (x,y) origin of the ray bundle and the 3rd the ray bundle starting z coordinates
+         A 3 element list, with the first 2 being the (x,y) origin of the ray bundle and the 3rd the ray bundle starting z coordinates, defaults to [0,0,25]
     samplingTime : double
         the source propagation sampling time; default: 1s
 
@@ -723,7 +854,7 @@ cdef class Source:
         self._c_source = new source()
         self.parameters = {'args':args,'kwargs':kwargs}
 
-    def __init__(self,char *photometric_band,
+    def __init__(self,photometric_band,
                  zenith=0, azimuth=0,
                  magnitude=None,
                  height=float("inf"),
@@ -731,8 +862,11 @@ cdef class Source:
                  fwhm = None,
                  rays_box_size=None,
                  rays_box_sampling=None,
-                 rays_origin=None,
-                 samplingTime = 1.0 ):
+                 rays_origin=[0.0,0.0,25.0],
+                 chief_ray_origin=None,
+                 samplingTime = 1.0,
+                 int N_RAY=0,
+                 double[:] rays_x=None, double[:] rays_y=None):
 
         cdef float[:] z,a
         if rays_box_sampling is not None:
@@ -747,31 +881,61 @@ cdef class Source:
             self._magnitude_ = np.array( magnitude, dtype=np.float32, ndmin=1)
         self.height  = float(height);
         self.size = self._zenith_.size
-        cdef vector _origin_
-        if rays_box_size is None:
-            z = np.array( zenith,  dtype=np.float32, ndmin=1)
-            a = np.array( azimuth, dtype=np.float32, ndmin=1)
-            self._c_source.setup(photometric_band,
-                                 &z[0],&a[0], height,
-                                 self.size, np.prod(resolution))
-        else:
+        self.band = <bytes>photometric_band.encode()
+        cdef vector _origin_, _chief_origin_
+        if N_RAY>0:
             _origin_.x = <float>rays_origin[0]
             _origin_.y = <float>rays_origin[1]
             _origin_.z = <float>rays_origin[2]
-            self._c_source.setup(photometric_band,
+            self._c_source.setup(self.band,
                                  &self._magnitude_[0],
                                  &self._zenith_[0],
                                  &self._azimuth_[0], height,
                                  self.size,
-                                 rays_box_size,
-				 rays_box_sampling,
-				 _origin_)
+                                 N_RAY,
+                                 &rays_x[0],
+                                 &rays_y[0],
+                                 _origin_)
+        else:
+            if rays_box_size is None:
+                z = np.array( zenith,  dtype=np.float32, ndmin=1)
+                a = np.array( azimuth, dtype=np.float32, ndmin=1)
+                self._c_source.setup(self.band,
+                                     &z[0],&a[0], height,
+                                     self.size, np.prod(resolution))
+            else:
+                _origin_.x = <float>rays_origin[0]
+                _origin_.y = <float>rays_origin[1]
+                _origin_.z = <float>rays_origin[2]
+                if chief_ray_origin is None:
+                    self._c_source.setup(self.band,
+                                         &self._magnitude_[0],
+                                         &self._zenith_[0],
+                                         &self._azimuth_[0], height,
+                                         self.size,
+                                         rays_box_size,
+                                         rays_box_sampling,
+                                         _origin_)
+                else:
+                    _chief_origin_.x = <float>chief_ray_origin[0]
+                    _chief_origin_.y = <float>chief_ray_origin[1]
+                    _chief_origin_.z = <float>chief_ray_origin[2]
+                    self._c_source.setup_chief(self.band,
+                                         &self._magnitude_[0],
+                                         &self._zenith_[0],
+                                         &self._azimuth_[0], height,
+                                         self.size,
+                                         rays_box_size,
+                                         rays_box_sampling,
+                                         _origin_,
+                                         _chief_origin_)
+
         #if magnitude is not None:
         #    self._c_source.magnitude = magnitude
         if fwhm is not None:
             self._c_source.fwhm = fwhm
         self.wavefront = Complex_amplitude(self)
-        self.rays = Bundle(self)
+        self.rays = SourceBundle(self)
         self.N_SRC = self._c_source.N_SRC
         self.sphere_distance = None
         self.samplingTime = samplingTime
@@ -792,7 +956,7 @@ cdef class Source:
             A list of CEO object the source is propagating through
         """
         x.OPTICALPATH = y
-        print "OPTICAL PATH: "+str(map(lambda z: z.__class__.__name__,x.OPTICALPATH))
+        #print "OPTICAL PATH: "+str(map(lambda z: z.__class__.__name__,x.OPTICALPATH))
 
     def __richcmp__(Source x, tuple y, int op):
         """
@@ -807,7 +971,7 @@ cdef class Source:
         """
         if op==Py_GT:
             x.OPTICALPATH = x.OPTICALPATH + y
-            print "OPTICAL PATH: "+str(map(lambda z: z.__class__.__name__,x.OPTICALPATH))
+            #print "OPTICAL PATH: "+str(map(lambda z: z.__class__.__name__,x.OPTICALPATH))
         else:
             assert False
 
@@ -823,7 +987,8 @@ cdef class Source:
         """
         assert self.OPTICALPATH is not None, "OPTICALPATH is not set!"
         self.reset()
-        map(lambda x: x.propagate(self), self.OPTICALPATH)
+        #map(lambda x: x.propagate(self), self.OPTICALPATH)
+        l = [x.propagate(self) for x in self.OPTICALPATH]
         self.timeStamp += self.samplingTime
 
     def __iadd__(self, int x):
@@ -832,11 +997,16 @@ cdef class Source:
             self.__pos__()
         return self
 
-    def opd2phase(self):
+    def opd2phase(self, int FLAG=1):
         """
         Transfer the OPD from ray tracing to the wavefront phase
+        
+        Parameters
+        ----------
+        FLAG : int (optional)
+            If FLAG is 0, the rays vignetting mask is not reset, this is used for sequential ray tracing (default: 1) 
         """
-        self._c_source.opd2phase()
+        self._c_source.opd2phase(FLAG)
 
     def updateDirections(self, zenith, azimuth):
         """
@@ -869,7 +1039,7 @@ cdef class Source:
             x = cuFloatArray(shape=(self.n*self.size,self.m))
             x._c_gpu.dev_data = self._c_source.wavefront.amplitude
             return x
-
+        
     property wavelength:
         def __get__(self):
             return self._c_source.wavelength()
@@ -939,11 +1109,16 @@ cdef class Source:
         self._c_source.wavefront.reset()
         self._c_source.reset_rays()
 
-    def resetRays(self):
+    def resetRays(self, int FLAG=1):
         """
         Re--initialize the ray bundle
+        
+        Parameters
+        ----------
+        FLAG : int (optional)
+            If FLAG is 0, the rays vignetting mask is not reset, this is used for sequential ray tracing (default: 1) 
         """
-        self._c_source.reset_rays()
+        self._c_source.reset_rays(FLAG)
 
     def piston(self, where='pupil',int units_exponent=0):
         """
@@ -1037,7 +1212,7 @@ cdef class Source:
         Computes the average angle of arrival (tip and tilt) of each segment
 
         Returns
-        -------
+        
         cuFloatArray
             The average angle of arrival of each segment in an array of size [N_SRCx7x2,1] as [cx,cy]
         """
@@ -1064,6 +1239,14 @@ cdef class Source:
                                                                self._c_source.rays.L,
                                                                self._c_source.rays.d__piston_mask)
         return np.asarray(sxy)
+
+    def opticalTransferFunction(self):
+        cdef cuFloatComplexArray otf
+        cdef int N
+        N = self.rays.N_L*2-1
+        otf = cuFloatComplexArray(shape=(N,N),dev_malloc=True)
+        self._c_source.optical_transfer_function(otf._c_gpu.dev_data)
+        return otf
 @
 
 \subsubsection{JSource}
@@ -1090,6 +1273,92 @@ class JSource(JSONAbstract,Source):
                         rays_box_sampling = self.jprms["pupil sampling"],
                         rays_origin       = self.jprms["rays origin"])
 @
+\section{PSSn}
+\label{sec:source-pssn}
+
+\index{source!python!PSSn}
+
+<<source.pxd contents>>=
+    cdef cppclass pssn:
+        int N
+        int N_OTF
+        int N_O
+        float2 *d__W
+        float2 *d__O
+        float2 *d__O0
+        float2 *d__C
+        float2 *buffer
+        void setup(source *, float, float)
+        void cleanup()
+        void otf(source *)
+        float eval()
+        float eval(float *)
+@
+\subsubsection{Class definition}
+\label{sec:class-definition-pssn}
+
+<<class definitions>>=
+# PSSn
+cdef class PSSn:
+    cdef:
+        pssn *_c_pssn
+        public cuFloatComplexArray W
+        public cuFloatComplexArray O0
+        public cuFloatComplexArray O
+        public cuFloatComplexArray C
+        public cuFloatComplexArray buffer
+@
+\subsection{PYX file}
+\label{sec:pyx-file-pssn}
+
+<<source.pyx>>=
+#PSSn
+cdef class PSSn:
+    def __cinit__(self, Source src, float r0, float L0):
+        self._c_pssn = new pssn()
+        self._c_pssn.setup(src._c_source,r0,L0)
+        self.W = cuFloatComplexArray(
+            shape=(self._c_pssn.N_OTF*self._c_pssn.N,self._c_pssn.N_OTF),
+            dev_malloc=False)
+        self.W._c_gpu.dev_data = self._c_pssn.d__W
+        self.O0 = cuFloatComplexArray(
+            shape=(self._c_pssn.N_OTF*self._c_pssn.N,self._c_pssn.N_OTF),
+            dev_malloc=False)
+        self.O0._c_gpu.dev_data = self._c_pssn.d__O0
+        self.O = cuFloatComplexArray(
+            shape=(self._c_pssn.N_OTF*self._c_pssn.N,self._c_pssn.N_OTF),
+            dev_malloc=False)
+        self.O._c_gpu.dev_data = self._c_pssn.d__O
+        self.C = cuFloatComplexArray(
+            shape=(self._c_pssn.N_OTF*self._c_pssn.N,self._c_pssn.N_OTF),
+            dev_malloc=False)
+        self.C._c_gpu.dev_data = self._c_pssn.d__C
+        self.buffer = cuFloatComplexArray(
+            shape=(self._c_pssn.N_OTF*self._c_pssn.N,self._c_pssn.N_OTF),
+            dev_malloc=False)
+        self.buffer._c_gpu.dev_data = self._c_pssn.buffer
+    def __dealloc__(self):
+        self._c_pssn.cleanup()
+    def otf(self,Source src):
+        self._c_pssn.otf(src._c_source)
+    def eval(self):
+        return self._c_pssn.eval()
+    def evals(self):
+        cdef float[:] results
+        results = np.zeros(self._c_pssn.N,dtype=np.single)
+        self._c_pssn.eval(&results[0])
+        return np.asarray(results)
+    @property
+    def N_O(self):
+        return self._c_pssn.N_O
+    @N_O.setter
+    def N_O(self,int value):
+        self._c_pssn.N_O = value
+@
+
+\subsection{PXD file}
+\label{sec:pxd-file-10}
+
 \section{Ray tracing routines}
 \label{sec:ray-tracing-routines-1}
 

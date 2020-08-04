@@ -10,10 +10,15 @@ cdef extern from "utilities.h":
         rtd x
         rtd y
         rtd z
+    void set_device(int)
 cdef extern from "cuda.h":
     ctypedef struct float2:
         float x
         float y
+@         
+<<utilities.pyx>>=
+def setDevice(int id):
+    set_device(id)
 @
 \section{JSONAbstract}
 \label{sec:jsonabstract}
@@ -36,22 +41,22 @@ class JSONAbstract:
                  verbose = True):
         if jsonfile is not None:
             if (not os.path.isfile(jsonfile)) and (zipdata is not None):
-                matches = re.match(r'(.*)://(.*)/(.*.zip)',zipdata)
+                matches = re.match(r'(.*)://(.*)/(.*)/(.*.zip)',zipdata)
                 if matches.group(1)=='s3':
-                    print "Downloading "+matches.group(3)+" from s3://"+matches.group(2)+" to "+cache+matches.group(3)+"..."
+                    print("Downloading "+matches.group(4)+" from s3://"+matches.group(2)+"/"+matches.group(3)+" to "+cache+matches.group(4)+"...")
                     s3 = boto3.resource('s3')
-                    s3.Bucket(matches.group(2)).download_file(matches.group(3),cache+matches.group(3))
+                    s3.Bucket(matches.group(2)).download_file(matches.group(3)+"/"+matches.group(4),cache+matches.group(4))
                 try:
-                    with zipfile.ZipFile(cache+matches.group(3), "r") as z:
-                        print "Unzipping "+cache+matches.group(3)+"..."
+                    with zipfile.ZipFile(cache+matches.group(4), "r") as z:
+                        print("Unzipping "+cache+matches.group(4)+"...")
                         z.extractall(cache)
                 except IOError as e:
-                    print "Unable to open %s!"%(cache+matches.group(3))
+                    print("Unable to open %s!"%(cache+matches.group(4)))
             try:
                 with open(jsonfile) as f:
-	            self.jprms = json.loads(f.read())
+	                self.jprms = json.loads(f.read())
             except IOError as e:
-                print "Unable to open %s!"%(jsonfile)
+                print("Unable to open %s!"%(jsonfile))
         else:
            self.jprms = jprms
         if verbose:
@@ -177,7 +182,9 @@ The cython wrapper for the mask structure (Sec.~\ref{sec:mask-structure}) is
         void setup_circular(int, float, float)
         void setup_GMT(int, float)
         void set_gmt_piston(float *, float *)
+        void reset()
         void alter(float *)
+        void add(char *, int)
         void cleanup()
 @ 
 \subsubsection{Class definition}
@@ -190,6 +197,8 @@ cdef class MaskAbstract:
     cdef readonly int n    
     cdef readonly cuFloatArray f
     cdef cuIntArray _piston_mask_
+cdef class Mask(MaskAbstract):
+    pass
 @ 
 \subsection{PYX file}
 \label{sec:pyx-file-1}
@@ -441,6 +450,7 @@ cdef extern from "utilities.h":
         T *host_data
         int N
         void setup()
+        void setup(int)
         void dev_malloc()
         void free_dev()
         void dev2host()
@@ -456,14 +466,16 @@ cdef extern from "utilities.h":
 # cuFloatArray
 from operator import mul
 from numpy cimport ndarray, dtype
+from libc.stdint cimport intptr_t
 cdef class cuFloatArray:
     cdef gpu_t[float] *_c_gpu
     <<cu array definitions>>
 @ 
 <<cu array definitions>>=
-cdef dtype type
+cdef public dtype type
 cdef public int size
 cdef public shape
+cdef public order
 cdef dev_malloc
 cdef public ndarray host_data
 cdef units
@@ -477,7 +489,7 @@ cdef class cuFloatArray:
     <<cu array class doc>>
     """
 
-    def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
+    def __cinit__(self,shape=None,order='C',host_data=None,dev_malloc=False):
         self._c_gpu = new gpu_t[float]()
         self.type = dtype(np.float32)
         <<cu array constructor>>
@@ -492,6 +504,8 @@ Parameters
 ----------
 shape : tuple of int, optional
     Number of rows and colums; default: None
+order : string, optional
+    Set the memory layout, "C" or "F"; default: "C"
 host_data : list or tuple or numpy array, optional
     Host data to copy to the device; default: None
 dev_malloc : bool, optional
@@ -499,10 +513,10 @@ dev_malloc : bool, optional
 
 Attributes
 ----------
-size : int
-    The total number of element
 shape : tuple
     The shape of the data array
+order : string, optional
+    The memory layout, "C" or "F"
 size : float
     The number of elements in the data array
 host_data : ndarray
@@ -513,6 +527,7 @@ dev_malloc : bool
 <<cu array constructor>>=
 self._c_gpu.setup();
 self.dev_malloc = dev_malloc
+self.order = order
 if shape is not None:
     self.shape = shape
     self.size = np.prod(shape)
@@ -521,7 +536,7 @@ if self.dev_malloc:
     self._c_gpu.N = self.size
     self._c_gpu.dev_malloc()           
 if host_data is not None:
-    self.host_data = np.array( host_data , dtype=self.type , order='C')
+    self.host_data = np.array( host_data , dtype=self.type , order=self.order)
     self.shape = host_data.shape
     self.size = np.prod(self.shape)
     self._c_gpu.N = self.size
@@ -538,11 +553,29 @@ def __dealloc__(self):
     if self.dev_malloc:
         self._c_gpu.free_dev()
 
-def host(self,units=None,zm=False,mask=None,shape=None):
+def host(self,units=None,zm=False,mask=None,shape=None, order=None):
     <<cu array host>>
 
 def reset(self):
     self._c_gpu.reset()
+
+@property
+def dev_ptr(self):
+    cdef intptr_t a
+    a = <intptr_t> self._c_gpu.dev_data
+    return a
+
+@property
+def nbytes(self):
+    cdef size_t nb
+    nb = sizeof(self.type)*self._c_gpu.N
+    return nb
+
+def __repr__(self):
+    repr(self.host())
+
+def __str__(self):
+    str(self.host())
 @
 <<cu array host>>=
 <<cu array method doc>>
@@ -552,7 +585,9 @@ if shape is not None:
     prod = lambda x,y : x*y
     assert reduce(prod,shape,)==reduce(prod,self.shape), "Total size of array must be unchanged!"
     self.shape = shape
-self.host_data = np.zeros(self.shape,order='c',dtype=self.type)
+if order is not None:
+    self.order = order    
+self.host_data = np.zeros(self.shape,order=self.order,dtype=self.type)
 self.assign_ptr()
 self._c_gpu.dev2host()
 if zm:
@@ -574,6 +609,8 @@ Parameters
 ----------
 shape : tuple, optional
     The shape of the data array, default to None
+order : string, optional
+    Set the memory layout, "C" or "F"; default: None
 units : string, optional
     The data converstion units: ""micron"", ""nm"", ""arcsec" and ""mas"", default to None
 zm : boolean, optional
@@ -603,7 +640,7 @@ cdef class cuIntArray:
     <<cu array class doc>>
     """
 
-    def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
+    def __cinit__(self,shape=None,host_data=None,dev_malloc=False,order='C'):
         self._c_gpu = new gpu_t[int]()
         self.type = dtype(np.int32)
         <<cu array constructor>>
@@ -631,7 +668,7 @@ cdef class cuDoubleArray:
     <<cu array class doc>>
     """
 
-    def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
+    def __cinit__(self,shape=None,host_data=None,dev_malloc=False,order='C'):
         self._c_gpu = new gpu_t[double]()
         self.type = dtype(np.double)
         <<cu array constructor>>
@@ -665,6 +702,7 @@ cdef:
     dtype type
     public int size
     public shape
+    public order
     dev_malloc
     float2 *_host_data_
     public ndarray host_data
@@ -678,7 +716,7 @@ cdef class cuFloatComplexArray:
     <<cu complex array class doc>>
     """
 
-    def __cinit__(self,shape=None,host_data=None,dev_malloc=False):
+    def __cinit__(self,shape=None,host_data=None,dev_malloc=False,order='C'):
         self._c_gpu = new gpu_t[float2]()
         self.type = dtype(np.complex64)
         <<cu complex array constructor>>
@@ -694,6 +732,8 @@ Parameters
 ----------
 shape : tuple of int, optional
     Number of rows and colums; default: None
+order : string, optional
+    Set the memory layout, "C" or "F"; default: "C"
 host_data : list or tuple or numpy array, optional
     Host data to copy to the device; default: None
 dev_malloc : bool, optional
@@ -701,10 +741,10 @@ dev_malloc : bool, optional
 
 Attributes
 ----------
-size : int
-    The total number of element
 shape : tuple
     The shape of the data array
+order : string, optional
+    The memory layout, "C" or "F"
 size : float
     The number of elements in the data array
 host_data : ndarray
@@ -717,6 +757,7 @@ cdef int k
 cdef tuple subs
 self._c_gpu.setup();
 self.dev_malloc = dev_malloc
+self.order = order
 if shape is not None:
     self.shape = shape
     self.size = np.prod(shape)
@@ -726,7 +767,7 @@ if self.dev_malloc:
     self._c_gpu.dev_malloc()           
     self.assign_ptr()
 if host_data is not None:
-    self.host_data = np.array( host_data , dtype=self.type , order='C')
+    self.host_data = np.array( host_data , dtype=self.type , order=self.order)
     self.shape = host_data.shape
     self.size = np.prod(self.shape)
     self._c_gpu.N = self.size
@@ -748,7 +789,7 @@ def __dealloc__(self):
         self._c_gpu.free_dev()
         PyMem_Free(self._host_data_)
 
-def host(self,units=None,zm=False,mask=None,shape=None):
+def host(self,units=None,zm=False,mask=None,shape=None,order=None):
     <<cu complex array host>>
 
 def reset(self):
@@ -764,7 +805,9 @@ if shape is not None:
     prod = lambda x,y : x*y
     assert reduce(prod,shape,)==reduce(prod,self.shape), "Total size of array must be unchanged!"
     self.shape = shape
-self.host_data = np.zeros(self.shape,order='c',dtype=self.type)
+if order is not None:
+    self.order = order    
+self.host_data = np.zeros(self.shape,order=self.order,dtype=self.type)
 self.assign_ptr()
 self._c_gpu.dev2host()
 for k in range(self.size):
@@ -783,6 +826,8 @@ Parameters
 ----------
 shape : tuple, optional
     The shape of the data array, default to None
+order : string, optional
+    Set the memory layout, "C" or "F"; default: None
 units : string, optional
     The data converstion units: ""micron"", ""nm"", ""arcsec" and ""mas"", default to None
 
@@ -867,6 +912,74 @@ cpdef wavefrontFiniteDifference(cuFloatArray sx, cuFloatArray sy, int NL,
     else:
         wavefront_finite_difference(sx._c_gpu.dev_data, sy._c_gpu.dev_data, NL, 
                                     phi._c_gpu.dev_data, n, d, M._c_mask, N_GS)
+@
+
+\subsection{Special functions}
+\label{sec:spec_fun}
+
+\subsubsection{Irregular Modified Bessel Functions}
+\label{sec:irreg_modif_bessel}
+
+
+\index{utilities!python!Knu}
+<<utilities.pxd>>=
+    double _K_nu_(double, double)
+@
+<<utilities.pyx>>=
+cpdef double Knu(double nu, double x):
+   return _K_nu_(nu,x)
+@
+
+\section{Geometry}
+\label{sec:geometry-1}
+
+\index{utilities!python!polywind}
+The cython wrapper for the routine that computes the winding number of a polygon
+(Sec.~\ref{sec:geometry}) is
+<<utilities.pxd>>=
+## polygon winding number
+    int polywind(double Px, double Py, double *Vx, double *Vy, int NV)
+    void polywinds(int *W, double *Px, double *Py, int NP, double *Vx, double *Vy, int NV)
+@
+<<utilities.pyx>>=
+## polygon winding number
+cpdef polyWind(double Px, double Py, double[:] Vx, double[:] Vy):
+    """
+    Computes the winding number of a polygon around a point P
+    Parameters
+    ----------
+    Px : double
+        The x coordinates of the point 
+    Py : double
+        The y coordinates of the point 
+    Vx : ndarray
+        The x coordinate array of the polygon vertices 
+    Vy : ndarray
+        The y coordinate array of the polygon vertices 
+    """
+    return polywind(Px, Py, &Vx[0], &Vy[0], Vx.size)
+cpdef polyWinds(cuDoubleArray Px, cuDoubleArray Py, cuDoubleArray Vx, cuDoubleArray Vy):
+    """
+    Computes the winding numbers of a polygon around a array of points P
+    Parameters
+    ----------
+    Px : cuDoubleArray
+        The x coordinate array of the points
+    Py : cuDoubleArray
+        The y coordinate array of the points 
+    Vx : cuDoubleArray
+        The x coordinate array of the polygon vertices 
+    Vy : cuDoubleArray
+        The y coordinate array of the polygon vertices 
+    """
+    cdef cuIntArray W
+    cdef int NP, NV
+    NP = Px.size
+    NV = Vx.size
+    W = cuIntArray(shape=Px.shape, dev_malloc=True)
+    polywinds(W._c_gpu.dev_data, Px._c_gpu.dev_data, Py._c_gpu.dev_data, NP,
+              Vx._c_gpu.dev_data, Vy._c_gpu.dev_data, NV)
+    return W
 @
 \section{Sparse matrix}
 \label{sec:sparse-matrix-1}

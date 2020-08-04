@@ -54,11 +54,20 @@ struct source {
   void setup(const char *_photometric_band, float *magnitude,
 	     rtd *_zenith, rtd *_azimuth, float _height,
 	     int _N_SRC, rtd _L_, int _N_L_, vector origin);
+  void setup_chief(const char *_photometric_band, float *magnitude,
+             rtd *_zenith, rtd *_azimuth, float _height,
+             int _N_SRC, rtd _L_, int _N_L_,
+             vector origin, vector chief_origin);
+  void setup(const char *_photometric_band, float *_magnitude,
+	     rtd *_zenith, rtd *_azimuth, float _height, int _N_SRC,
+	     int _N_RAY_, double *x, double *y, vector origin);
    void cleanup(void);
 
   void reset_rays(void);
+  void reset_rays(int RESET_RAYS_MASK);
 
   void opd2phase(void);
+  void opd2phase(int RESET_RAYS_MASK);
 
   void info(void);
 
@@ -74,7 +83,11 @@ struct source {
   void update_directions(double *zenith, double *azimuth, int N_DIR);
   void update_magnitude(float *magnitude, int N_MAG);
   void copy_magnitude(source *other_src);
+  void optical_transfer_function(float2 *d__otf);
 };
+
+<<pssn structure>>
+
 #endif // __SOURCE_H__
 @
 \subsection{Source}
@@ -89,13 +102,19 @@ struct source {
 <<to z plane kernel>>
 <<to sphere kernel>>
 <<reference sphere origin from chief ray>>
+<<bundle free coordinates kernel>>
 <<ray bundle kernels>>
 <<bundle reset kernel>>
+<<wavefront padding kernel>>
+<<square modulus kernel>>
 <<wavefront differentiation kernel (partial illumination identification)>>
 <<wavefront differentiation kernel (slope estimates)>>
 <<wavefront differentiation kernel (gradient)>>
 <<wavefront differentiation kernel (gradient average)>>
 <<wavefront differentiation kernel (segments gradient average)>>
+
+<<GMT truss on-axis projection kernel>>
+<<GMT M2 baffle kernel>>
 
 <<ray bundle functions>>
 
@@ -144,9 +163,14 @@ struct source {
 <<number of photons>>
 <<number of background photons>>
 <<wavenumber>>
+<<optical transfer function>>
 <<plot phase>>
 <<plot amplitude I>>
 <<plot amplitude II>>
+
+<<atmosphere otf kernel>>
+<<pssn OC product kernel>>
+<<pssn methods>>
 @
 
 \section{Parameters}
@@ -178,6 +202,7 @@ struct complex_amplitude {
   void cleanup(void);
   void reset(void);
   void reset(complex_amplitude *wavefront);
+  void reset_amplitude(void);
   void reset_phase(void);
   void reset_phase(complex_amplitude *wavefront_prime);
   void add_phase(float alpha, float *phase_prime);
@@ -265,11 +290,14 @@ rtd optical_path_difference;
 @ the vignetting flag [[v]], $[[v]]=0$ means the ray is vignetted:
 <<ray data>>=
 char v;
-@ and the number of iterative steps for the Raphson--Newton method:
+@  the number of iterative steps for the Raphson--Newton method:
 <<ray data>>=
 int n_iteration;
-
+@ the energy throughput associated with each ray:
+<<ray data>>=
+rtd throughput;
 @
+
 \subsection{Ray bundle}
 \label{sec:ray-bundle}
 
@@ -281,12 +309,18 @@ struct bundle {
   <<ray bundle parameters>>
   void setup(rtd RADIUS, int N_RADIUS, int N_THETA, vector origin, int N_SRC);
   void setup(rtd L, int N_L, vector origin, int N_SRC);
+  void setup(rtd L, int N_L, vector origin, vector chief_origin, int N_SRC);
+  void setup_free(int _N_RAY_, double *x, double *y, vector origin);
+  void setup_free(double zenith, double azimuth,
+                  int _N_RAY_, double *x, double *y, vector origin);
   void cleanup(void);
   void to_z_plane(rtd z_in);
+  void to_focal_plane(rtd z_chief_on_axis, rtd rho_focal_plane);
   void to_sphere(vector sphere_origin);
   void to_sphere(rtd z_chief_on_axis, rtd rho_focal_plane);
   void get_coordinates(double *d__coord);
   void get_chief_coordinates(double *d__coord);
+  void get_sphere_origins(double *d__coord);
   void get_directions(double *d__dir);
   void get_chief_directions(double *d__dir);
   void get_chief_optical_path_length(double *d__opl);
@@ -297,6 +331,8 @@ struct bundle {
 				   float const delta_y, int N_y);
   void get_vignetting(double *d__v);
   void get_n_iteration(int *n_iteration);
+  void gmt_truss_onaxis(void);
+  void gmt_m2_baffle(void);
 };
 @
 A bundle allocates an array of [[N_RAY]] rays on the device
@@ -313,9 +349,12 @@ The total number of rays
 int N_RAY_TOTAL;
 @
 The x and y coordinates of the [[origin]] vector specifies the location of the center of the ray bundle when it crosses the (x,y) plane of the first surface.
-The z coordinate specifies the height of the ray bundle with respect to the first surface.
+The z coordinate specifies the height of the ray bundle with respect to the
+first surface.
+The ray bundle can be rotated clockwise by [[rot_angle]].
 <<ray bundle parameters>>=
 vector *d__origin;
+double rot_angle;
 @
 The chief ray is defined with
 <<ray bundle parameters>>=
@@ -352,6 +391,14 @@ int *d__piston_mask;
 <<ray bundle parameters>>= 
 rtd refractive_index;
 @
+The on--axis projection of the truss on M1 center segment creates a polygon
+repeated 3 times around the segment center of symmetry.
+[[d__Vx]] and [[d__Vy]] are the x and y coordinates, respectively, of the
+vertices of the first polygon
+<<ray bundle parameters>>=
+double *d__Vx, *d__Vy;
+@
+
 \subsubsection{Setup \& Cleanup}
 \label{sec:bundle-setup--cleanup}
 
@@ -371,13 +418,19 @@ void bundle::setup(rtd RADIUS, int _N_RADIUS_,
   N_BUNDLE = N_SRC;
   N_RAY = (N_RADIUS-1)*N_THETA + 1;
   N_RAY_TOTAL = N_RAY*N_BUNDLE;
+  rot_angle = 0.0;
   V.setup(N_RAY_TOTAL);
   HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY_TOTAL ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
+  <<truss parameters initialization>>
   <<chief ray allocation>>
 }
+@ with
+<<truss parameters initialization>>=
+d__Vx = NULL;
+d__Vy = NULL;
 @
 The direction cosines $(k,l,m)$ of the rays are defined from the source zenith $\zeta$ and azimuth $\xi$ angles as
 \begin{eqnarray}
@@ -403,23 +456,29 @@ ray_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
 @
 The chief ray is defined with
 <<chief ray allocation>>=
+<<chief ray allocation (common)>>
+<<chief ray allocation (chief origin)>>
+@
+<<chief ray allocation (common)>>=
 refractive_index = 1.0;
-vector chief_origin;
-chief_origin.x = 0.0;
-chief_origin.y = 0.0;
-chief_origin.z = origin.z;
 HANDLE_ERROR( cudaMalloc((void**)&d__chief_ray, sizeof(ray)*N_BUNDLE ) );
-HANDLE_ERROR( cudaMalloc((void**)&d__chief_origin, sizeof(vector) ) );
-HANDLE_ERROR( cudaMemcpy( d__chief_origin, &chief_origin,
-                         sizeof(vector), cudaMemcpyHostToDevice ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__sphere_origin,   sizeof(vector)*N_BUNDLE ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__sphere_radius,   sizeof(rtd)*N_BUNDLE ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__sphere_distance, sizeof(rtd)*N_BUNDLE ) );
 @
+<<chief ray allocation (chief origin)>>=
+vector chief_origin;
+chief_origin.x = 0.0;
+chief_origin.y = 0.0;
+chief_origin.z = origin.z;
+HANDLE_ERROR( cudaMalloc((void**)&d__chief_origin, sizeof(vector) ) );
+HANDLE_ERROR( cudaMemcpy( d__chief_origin, &chief_origin,
+                         sizeof(vector), cudaMemcpyHostToDevice ) );
+@
  and is initialized with
 <<chief ray init>>=
 ray_coordinates LLL gridDim , blockDim RRR (d__chief_ray, 1, src->dev_ptr,
-					    0.0, 2, 1, d__origin);
+					    0.0, 2, 1, d_chief__origin);
 
 @
 The cartesian coordinates are defined with the sampling of the square box length [[N_L]] from $-[[L]]$ to [[L]].
@@ -433,13 +492,120 @@ The cartesian coordinates are defined with the sampling of the square box length
   N_BUNDLE = N_SRC;
   N_RAY = N_L*N_L;
   N_RAY_TOTAL = N_RAY*N_BUNDLE;
+  rot_angle = 0.0;
   V.setup(N_RAY_TOTAL);
   HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY_TOTAL ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
   HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
 			    sizeof(vector), cudaMemcpyHostToDevice ) );
   HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY_TOTAL ) );
+  <<truss parameters initialization>>
   <<chief ray allocation>>
+}
+@
+The origin of the chief ray is specified with [[chief_origin]]
+<<ray bundle functions>>=
+void bundle::setup(rtd _L_, int _N_L_, vector origin, vector chief_origin, int N_SRC)
+{
+  strcpy(geom,"box");
+  N_L = _N_L_;
+  L = _L_;
+  N_BUNDLE = N_SRC;
+  N_RAY = N_L*N_L;
+  N_RAY_TOTAL = N_RAY*N_BUNDLE;
+  rot_angle = 0.0;
+  V.setup(N_RAY_TOTAL);
+  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY_TOTAL ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
+  HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
+                            sizeof(vector), cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY_TOTAL ) );
+  <<truss parameters initialization>>
+  <<chief ray allocation (common)>>
+  HANDLE_ERROR( cudaMalloc((void**)&d__chief_origin, sizeof(vector) ) );
+  HANDLE_ERROR( cudaMemcpy( d__chief_origin, &chief_origin,
+                            sizeof(vector), cudaMemcpyHostToDevice ) );
+}
+@
+The ray bundle can be set to arbitrary coordinates in the entrance puil
+\index{source!bundle!setup\_free)}
+<<ray bundle functions>>=
+void bundle::setup_free(int _N_RAY_, double *x, double *y, vector origin)
+{
+  <<free bundle memory allocation>>
+  double zenith = 0.0;
+  double azimuth = 0.0;
+  <<free bundle initialization>>
+}
+void bundle::setup_free(double zenith, double azimuth,
+                        int _N_RAY_, double *x, double *y, vector origin)
+{
+  <<free bundle memory allocation>>
+  <<free bundle initialization>>
+ }
+<<free bundle memory allocation>>=
+strcpy(geom,"free");
+N_BUNDLE = 1;
+N_RAY = _N_RAY_;
+N_RAY_TOTAL = N_RAY*N_BUNDLE;
+rot_angle = 0.0;
+V.setup(N_RAY_TOTAL);
+HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY_TOTAL ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
+HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
+		    sizeof(vector), cudaMemcpyHostToDevice ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY_TOTAL ) );
+<<truss parameters initialization>>
+<<chief ray allocation>>
+@
+<<free bundle initialization>>=
+double *d__x, *d__y;
+int n_byte = sizeof(double)*N_RAY_TOTAL;
+HANDLE_ERROR( cudaMalloc((void**)&d__x, n_byte ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__y, n_byte ) );
+HANDLE_ERROR( cudaMemcpy( d__x, x, n_byte, cudaMemcpyHostToDevice ) );
+HANDLE_ERROR( cudaMemcpy( d__y, y, n_byte, cudaMemcpyHostToDevice ) );
+
+dim3 blockDim(N_THREAD,N_THREAD);
+dim3 gridDim(N_RAY_TOTAL/N_THREAD2+1,1, N_BUNDLE);
+ray_free_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, d__x, d__y, d__origin,
+                                                 zenith, azimuth);
+
+HANDLE_ERROR( cudaMemset(d__x, 0, n_byte ) );
+HANDLE_ERROR( cudaMemset(d__y, 0, n_byte ) );
+blockDim = dim3(1,1);
+gridDim  = dim3(1,1, N_BUNDLE);
+ray_free_coordinates LLL gridDim , blockDim RRR (d__chief_ray, 1, d__x, d__y, d__origin,
+                                                 zenith, azimuth);
+
+HANDLE_ERROR( cudaFree( d__x ) );
+HANDLE_ERROR( cudaFree( d__y ) );
+@ with
+<<bundle free coordinates kernel>>=
+  __global__ void ray_free_coordinates(ray *d__ray, int N_RAY, double *d__x, double *d__y, vector *origin,
+                                       double zenith, double azimuth)
+{
+  int i, j, k;
+  rtd s;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+//  iSource = blockIdx.z;
+  k = j * gridDim.x * blockDim.x + i;
+  if (i<N_RAY)
+  {
+    d__ray[k].coordinates.x = d__x[k] + origin->x;
+    d__ray[k].coordinates.y = d__y[k] + origin->y;
+    d__ray[k].coordinates.z = origin->z;
+    d__ray[k].directions.x  = sin(zenith)*cos(azimuth);
+    d__ray[k].directions.y  = sin(zenith)*sin(azimuth);
+    d__ray[k].directions.z  = -cos(zenith);
+    s = -origin->z/d__ray[k].directions.z;
+    d__ray[k].coordinates.x -= s*d__ray[k].directions.x;
+    d__ray[k].coordinates.y -= s*d__ray[k].directions.y;
+    d__ray[k].optical_path_length = 0.0;
+    d__ray[k].optical_path_difference = 0.0;
+    d__ray[k].v = 1;
+  }
 }
 @
 The direction cosines $(k,l,m)$ of the rays are defined from the source zenith $\zeta$ and azimuth $\xi$ angles as
@@ -459,7 +625,7 @@ The cartesian coordinates $x$ and $y$ of the rays are given by
 blockDim = dim3(N_THREAD,N_THREAD);
 gridDim  = dim3(N_L/N_THREAD+1,N_L/N_THREAD+1, N_BUNDLE);
 ray_coordinates_box LLL gridDim , blockDim RRR (d__ray, N_RAY, src->dev_ptr,
-                                                            L, N_L, d__origin);
+                                                L, N_L, d__origin, rot_angle);
 @
 Memory is freed with
 \index{source!bundle!cleanup}
@@ -475,6 +641,11 @@ void bundle::cleanup(void)
   HANDLE_ERROR( cudaFree( d__sphere_origin ) );
   HANDLE_ERROR( cudaFree( d__sphere_radius ) );
   HANDLE_ERROR( cudaFree( d__sphere_distance ) );
+  if (d__Vx!=NULL) {
+    HANDLE_ERROR( cudaFree( d__Vx ) );
+    HANDLE_ERROR( cudaFree( d__Vy ) );
+  }
+  V.cleanup();
 }
 @
 
@@ -493,9 +664,11 @@ The rays are propagated to the plane $z=[[z__plane]]$ with
 <<ray bundle functions>>=
 void bundle::to_z_plane(rtd z_plane)
 {
-  to_z_plane_chief_kernel LLL 1, 1, N_BUNDLE RRR (d__chief_ray, 1, z_plane);
-  dim3 blockDim(N_THREAD,N_THREAD);
-  dim3 gridDim(N_RAY/N_THREAD2+1,1,N_BUNDLE);
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  to_z_plane_chief_kernel LLL gridDim , blockDim RRR (d__chief_ray, 1, z_plane);
+  blockDim = dim3(N_THREAD,N_THREAD);
+  gridDim  = dim3(N_RAY/N_THREAD2+1,1,N_BUNDLE);
   to_z_plane_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, z_plane, d__chief_ray);
 }
 @ where
@@ -523,6 +696,29 @@ void bundle::to_z_plane(rtd z_plane)
       d__ray[k].optical_path_length - d__chief_ray->optical_path_length;
   }
 }
+  __global__ void to_vz_plane_kernel(ray *d__ray, int N_RAY, vector *d__v, ray *d__chief_ray)
+{
+  int i, j, k0, k, iSource;
+  rtd s;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  k = j * gridDim.x * blockDim.x + i;
+  k0 = k;
+  k += iSource*N_RAY;
+  if ( (k0<N_RAY ) && (d__ray[k].v) )
+  {
+    if (d__ray[k].directions.z==0)
+       return;
+    s = (d__v[iSource].z - d__ray[k].coordinates.z)/d__ray[k].directions.z;
+    d__ray[k].coordinates.x = d__ray[k].coordinates.x + s*d__ray[k].directions.x;
+    d__ray[k].coordinates.y = d__ray[k].coordinates.y + s*d__ray[k].directions.y;
+    d__ray[k].coordinates.z = d__v[iSource].z;
+    d__ray[k].optical_path_length = s;
+    d__ray[k].optical_path_difference +=
+      d__ray[k].optical_path_length - d__chief_ray->optical_path_length;
+  }
+}
 __global__ void to_z_plane_chief_kernel(ray *d__ray, int N_RAY, rtd z_plane)
 {
   int k, iSource;
@@ -537,8 +733,35 @@ __global__ void to_z_plane_chief_kernel(ray *d__ray, int N_RAY, rtd z_plane)
   d__ray[k].coordinates.z = z_plane;
   d__ray[k].optical_path_length = s;
 }
+__global__ void to_vz_plane_chief_kernel(ray *d__ray, int N_RAY, vector *d__v)
+{
+  int k, iSource;
+  rtd s;
+  iSource = blockIdx.z;
+  k = iSource;
+  if (d__ray[k].directions.z==0)
+    return;
+  s = (d__v[k].z - d__ray[k].coordinates.z)/d__ray[k].directions.z;
+  d__ray[k].coordinates.x = d__ray[k].coordinates.x + s*d__ray[k].directions.x;
+  d__ray[k].coordinates.y = d__ray[k].coordinates.y + s*d__ray[k].directions.y;
+  d__ray[k].coordinates.z = d__v[k].z;
+  d__ray[k].optical_path_length = s;
+}
 @
-
+The rays are propagated to the plane focal by computing first the coordinates of the intersection of the chief ray with the curved focal plane and then by propagated the rays from the last surface to the z--plane at the intersection of the chief ray with the focal plane.
+<<ray bundle functions>>=
+void bundle::to_focal_plane(rtd z_chief_on_axis, rtd rho_focal_plane)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  <<reference sphere distance>>
+  <<reference sphere origin>>
+  to_vz_plane_chief_kernel LLL gridDim , blockDim RRR (d__chief_ray, 1, d__sphere_origin);
+  blockDim = dim3(N_THREAD,N_THREAD);
+  gridDim  = dim3(N_RAY/N_THREAD2+1,1,N_BUNDLE);
+  to_vz_plane_kernel LLL gridDim , blockDim RRR (d__ray, N_RAY, d__sphere_origin, d__chief_ray);
+}
+@ 
 \subsubsection{Reference sphere}
 \label{sec:reference-sphere}
 
@@ -792,6 +1015,7 @@ void bundle::to_sphere(rtd *s, rtd sphere_radius)
 The coordinates, directions, optical path length and vignetting map are copied into arrays with the following functions:
 <<ray bundle functions>>=
 <<gathering ray coordinates>>
+<<gathering sphere origins>>
 <<gathering ray directions>>
 <<gathering ray optical path length>>
 <<gathering ray optical path difference>>
@@ -801,6 +1025,7 @@ The coordinates, directions, optical path length and vignetting map are copied i
 @
 <<ray bundle kernels>>=
 <<gathering ray coordinates kernel>>
+<<gathering sphere origins kernel>>
 <<gathering ray directions kernel>>
 <<gathering ray optical path length kernel>>
 <<gathering ray optical path difference kernel>>
@@ -843,6 +1068,34 @@ __global__ void get_coordinates_kernel(double *d__coord, ray *d__ray, int N_RAY)
     d__coord[l++] = d__ray[k].coordinates.x;
     d__coord[l++] = d__ray[k].coordinates.y;
     d__coord[l]   = d__ray[k].coordinates.z;
+  }
+}
+@
+\index{source!bundle!get\_sphere\_origin}
+<<gathering sphere origins>>=
+void bundle::get_sphere_origins(double *d__coord)
+{
+  dim3 blockDim(1,1);
+  dim3 gridDim(1,1, N_BUNDLE);
+  get_sphere_origins_kernel LLL gridDim, blockDim RRR (d__coord, d__sphere_origin, 1);
+}
+@
+<<gathering sphere origins kernel>>=
+__global__ void get_sphere_origins_kernel(double *d__coord, vector *d__sphere_origin, int N_RAY)
+{
+  int i, j, k0, k, l, iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  iSource = blockIdx.z;
+  k0 = k;
+  k += iSource*N_RAY;
+  if ( k0<N_RAY )
+  {
+    l = k*3;
+    d__coord[l++] = d__sphere_origin[k].x;
+    d__coord[l++] = d__sphere_origin[k].y;
+    d__coord[l]   = d__sphere_origin[k].z;
   }
 }
 @
@@ -1168,6 +1421,92 @@ __global__ void reset_kernel(ray *d__ray, int N_RAY)
 }
 @
 
+\subsubsection{GMT Truss on--axis projection}
+\label{sec:gmt-truss--oa-proj}
+
+The vignetting of the rays by the on--axis footprint of the truss projected on the GMT M1
+center segment is computed with:
+\begin{itemize}
+\item for the truss:
+\index{source!bundle!gmt\_truss\_onaxis}
+<<ray bundle functions>>=
+void bundle::gmt_truss_onaxis(void)
+{
+  int NV = 15, nbyte, k,l;
+  double Vx[] = {-3.011774, -2.446105, -3.011774, -2.799304, -2.33903,  -1.566412, -1.640648,
+                 -1.9445,   -1.640648, -1.566412, -2.347462, -1.597649, -1.725044, -2.392888,
+                 -2.799304};
+  double Vy[] = {-2.902158,  0.,        2.902158,  3.107604,  0.07244,   0.518512,  0.175429,
+                 0.,       -0.175429, -0.518512, -0.067572, -3.865336, -3.810188, -0.427592,
+                 -3.107604};
+  double _Vx_, _Vy_, co, so, o;
+  dim3 blockDim(256);
+  dim3 gridDim(N_RAY_TOTAL/256+1);
+  nbyte = NV*sizeof(double);
+  if (d__Vx==NULL) {
+    HANDLE_ERROR( cudaMalloc((void**)&d__Vx, nbyte ) );
+    HANDLE_ERROR( cudaMalloc((void**)&d__Vy, nbyte ) );    
+  }
+  o = -2*PI/3;
+  for (k=0;k<3;k++) {
+    sincos(o,&so,&co);
+    for (l=0;l<NV;l++) {
+      _Vx_ =  Vx[l]*co + Vy[l]*so;
+      _Vy_ = -Vx[l]*so + Vy[l]*co;
+      Vx[l] = _Vx_;
+      Vy[l] = _Vy_;
+    }
+    HANDLE_ERROR( cudaMemcpy( d__Vx, &Vx, nbyte, cudaMemcpyHostToDevice ) );
+    HANDLE_ERROR( cudaMemcpy( d__Vy, &Vy, nbyte, cudaMemcpyHostToDevice ) );
+    gmt_truss_onaxis_kern LLL gridDim,blockDim RRR (d__ray,N_RAY_TOTAL,d__Vx,d__Vy,NV);
+  }
+}
+@
+with the device kernels
+<<GMT truss on-axis projection kernel>>=
+__global__ void gmt_truss_onaxis_kern(ray *d__ray, int NP, double *Vx, double *Vy, int NV)
+{
+  int i,w;
+  double rho2, R2;
+  R2 = 1.65*1.65;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i<NP && d__ray[i].v) {
+    w = polywind(d__ray[i].coordinates.x,d__ray[i].coordinates.y,Vx,Vy,NV);
+    rho2 = d__ray[i].coordinates.x*d__ray[i].coordinates.x +
+      d__ray[i].coordinates.y*d__ray[i].coordinates.y;
+    if (w!=0 || rho2<R2)
+      d__ray[i].v = 0;
+  }
+}
+@
+\item for M2 baffle:
+\index{source!bundle!gmt\_m2\_baffle}
+<<ray bundle functions>>=
+void bundle::gmt_m2_baffle(void)
+{
+  dim3 blockDim(256);
+  dim3 gridDim(N_RAY_TOTAL/256+1);
+  gmt_m2_baffle_kern LLL gridDim,blockDim RRR (d__ray,N_RAY_TOTAL);
+}  
+@
+with the device kernels
+<<GMT M2 baffle kernel>>=
+__global__ void gmt_m2_baffle_kern(ray *d__ray, int NP)
+{
+  int i;
+  double rho2, R2;
+  R2 = 1.65*1.65;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i<NP && d__ray[i].v) {
+    rho2 = d__ray[i].coordinates.x*d__ray[i].coordinates.x +
+      d__ray[i].coordinates.y*d__ray[i].coordinates.y;
+    if (rho2<R2)
+      d__ray[i].v = 0;
+  }
+}
+@
+\end{itemize}
+
 \subsection{source}
 \label{sec:source-1}
 
@@ -1399,7 +1738,7 @@ void source::setup(const char *_photometric_band, float *_magnitude,
   <<setup multiple sources contents: common part (host)>>
   fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
   fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
-  for (int i_SRC=0;i_SRC<N_SRC;i_SRC++) {
+  for (int i_SRC=0;i_SRC<min(N_SRC,10);i_SRC++) {
     <<setup multiple sources contents: common part (device)>>
     __src.magnitude        = _magnitude[i_SRC];
     __src.N_PHOTON         = n_photon(_magnitude[i_SRC]);
@@ -1418,31 +1757,71 @@ void source::setup(const char *_photometric_band, float *_magnitude,
   reset_rays();
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
 }
+void source::setup_chief(const char *_photometric_band, float *_magnitude,
+		   rtd *_zenith, rtd *_azimuth, float _height,
+		   int _N_SRC, rtd L, int N_L, vector origin, vector chief_origin) {
+  <<setup multiple sources contents: common part (host)>>
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  for (int i_SRC=0;i_SRC<min(N_SRC,10);i_SRC++) {
+    <<setup multiple sources contents: common part (device)>>
+    __src.magnitude        = _magnitude[i_SRC];
+    __src.N_PHOTON         = n_photon(_magnitude[i_SRC]);
+    HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
+			      sizeof(source) ,
+			      cudaMemcpyHostToDevice ) );
+    fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
+	    _zenith[i_SRC]*RADIAN2ARCSEC,
+	    _azimuth[i_SRC]*180/PI,_height,
+	    wavelength_micron(),_magnitude[i_SRC]);
+  }
+  wavefront.setup(N_L*N_L,N_SRC);
+  fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
+  rays_exist = 1;
+  rays.setup(L, N_L, origin, chief_origin, N_SRC);
+  reset_rays();
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+}
 @ with \index{source!source!reset\_rays}
 <<reset rays>>=
 void source::reset_rays(void)
 {
-  dim3 blockDim(1,1);
-  dim3 gridDim(1,1, rays.N_BUNDLE);
-  ray_coordinates LLL gridDim , blockDim RRR (rays.d__chief_ray, 1,
-                                              dev_ptr,
-                                              0.0, 2, 1, rays.d__origin);
-  blockDim = dim3(16,16);
-  gridDim  = dim3(rays.N_L/16+1,rays.N_L/16+1, rays.N_BUNDLE);
-  ray_coordinates_box LLL gridDim , blockDim RRR (rays.d__ray, rays.N_RAY,
-                                                  dev_ptr,
-                                                  rays.L, rays.N_L,
-                                                  rays.d__origin);
+  <<reset rays common>>    
   blockDim = dim3(256);
   gridDim  = dim3(rays.V.nel/256+1);
   fill_ones_char LLL gridDim,blockDim RRR (rays.V.m,rays.V.nel);
   rays.V.set_filter_quiet();
 }
+@ with
+<<reset rays common>>=
+dim3 blockDim(1,1);
+dim3 gridDim(1,1, rays.N_BUNDLE);
+ray_coordinates LLL gridDim , blockDim RRR (rays.d__chief_ray, 1,
+                                            dev_ptr,
+                                            0.0, 2, 1,
+                                            rays.d__chief_origin,
+                                            rays.rot_angle);
+if (rays.N_RAY>1)
+  {
+    blockDim = dim3(16,16);
+    gridDim  = dim3(rays.N_L/16+1,rays.N_L/16+1, rays.N_BUNDLE);
+    ray_coordinates_box LLL gridDim , blockDim RRR (rays.d__ray, rays.N_RAY,
+						    dev_ptr,
+						    rays.L, rays.N_L,
+                rays.d__origin,
+                rays.rot_angle);
+  }
+ else
+   ray_coordinates LLL gridDim , blockDim RRR (rays.d__ray, 1,
+                                               dev_ptr,
+                                               0.0, 2, 1,
+                                               rays.d__origin,
+                                               rays.rot_angle);
 @ and
 <<bundle coordinates kernel>>=
 __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
                                 rtd RADIUS, int N_RADIUS, int N_THETA,
-                                vector *origin)
+                                vector *origin, rtd rot_angle)
 {
   int i, j, k, iSource;
   rtd rho, theta, s;
@@ -1477,10 +1856,12 @@ s = -origin->z/d__ray[k].directions.z;
 d__ray[k].coordinates.x -= s*d__ray[k].directions.x;
 d__ray[k].coordinates.y -= s*d__ray[k].directions.y;
 d__ray[k].v = 1;
+d__ray[k].throughput = 1.0;
 @ and
 <<bundle coordinates kernel (box)>>=
 __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
-                                    rtd L, int N_L, vector *origin)
+                                    rtd L, int N_L, vector *origin,
+                                    rtd rot_angle)
 {
   int i, j, k, iSource;
   rtd x, y, s;
@@ -1491,16 +1872,78 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
   {
     <<rays box coordinates definition>>
     k = i + j*N_L + iSource*N_RAY;
-    d__ray[k].coordinates.x = x + origin->x;
-    d__ray[k].coordinates.y = y + origin->y;
-    <<bundle coordinates kernel (common)>>
+
+    d__ray[k].coordinates.z = origin->z;
+    d__ray[k].directions.x  = sin(src[iSource]._zenith_64_)*cos(src[iSource]._azimuth_64_);
+    d__ray[k].directions.y  = sin(src[iSource]._zenith_64_)*sin(src[iSource]._azimuth_64_);
+    d__ray[k].directions.z  = -cos(src[iSource]._zenith_64_);
+    d__ray[k].optical_path_length = 0.0;
+    d__ray[k].optical_path_difference = 0.0;
+    s = -origin->z/d__ray[k].directions.z;
+    x -= s*d__ray[k].directions.x;
+    y -= s*d__ray[k].directions.y;
+    d__ray[k].v = 1;
+    d__ray[k].throughput = 1.0;
+
+    d__ray[k].coordinates.x = x;//*co - y*so;
+    d__ray[k].coordinates.y = y;//x*so + y*co;
+
   }
 }
 @ with
 <<rays box coordinates definition>>=
-x   = L*(i - (N_L-1)*0.5)/(N_L-1);
-y   = L*(j - (N_L-1)*0.5)/(N_L-1);
+  rtd so, co, _x_, _y_;
+sincos(rot_angle,&so,&co);
+_x_   = L*(i - (N_L-1)*0.5)/(N_L-1);
+_y_   = L*(j - (N_L-1)*0.5)/(N_L-1);
+_x_ += origin->x;
+_y_ += origin->y;
+x = _x_*co - _y_*so;
+y = _x_*so + _y_*co;
+@  \item for multiple sources with wavefront resolution and with ray bundle coordinates (different magnitudes), zenith and azimuth are in double precision for ray tracing:
+<<setup for multiple sources with wavefront resolution and ray bundle>>=
+void source::setup(const char *_photometric_band, float *_magnitude,
+                   rtd *_zenith, rtd *_azimuth, float _height, int _N_SRC,
+                   int N_RAY, double *x, double *y, vector origin)
+{
+  <<setup multiple sources contents: common part (host)>>
+  fprintf(stdout,"\n\x1B[1;42m@(CEO)>%s:\x1B[;42m\n",tag);
+  fprintf(stdout," zen[arcsec] azim[deg]  height[m]  lambda[micron] magnitude\n");
+  for (int i_SRC=0;i_SRC<min(N_SRC,10);i_SRC++) {
+    <<setup multiple sources contents: common part (device)>>
+    __src.magnitude        = _magnitude[i_SRC];
+    __src.N_PHOTON         = n_photon(_magnitude[i_SRC]);
+    HANDLE_ERROR( cudaMemcpy( dev_ptr + i_SRC, &__src,
+			      sizeof(source) ,
+			      cudaMemcpyHostToDevice ) );
+    fprintf(stdout," %5.2f      %6.2f    %8.2f       %5.3f    %4.1f\n",
+	    _zenith[i_SRC]*RADIAN2ARCSEC,
+	    _azimuth[i_SRC]*180/PI,_height,
+	    wavelength_micron(),_magnitude[i_SRC]);
+  }
+  fprintf(stdout," N_RAY: %d\n", N_RAY);
+  wavefront.setup(N_RAY,N_SRC);
+  fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
+  rays_exist = 1;
+  rays.setup_free(N_RAY, x, y, origin);
+  fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
+}
 @ \end{itemize}
+
+The rays vignetting mask [[V]] is not reset if the flag [[RESET_RAYS_MASK]] is set to 0: 
+<<reset rays>>=
+void source::reset_rays(int RESET_RAYS_MASK)
+{
+  <<reset rays common>>    
+  blockDim = dim3(256);
+  gridDim  = dim3(rays.V.nel/256+1);
+  if (RESET_RAYS_MASK>0)
+  {
+    fill_ones_char LLL gridDim,blockDim RRR (rays.V.m,rays.V.nel);
+    rays.V.set_filter_quiet();
+  }
+}
+@
 
 The zenith and azimuth angle are updated with:
 \index{source!source!update\_directions}
@@ -1586,6 +2029,8 @@ The [[wavelength]] in meter corresponding to the photometric band is given by
 <<wavelength>>=
 float source::wavelength(void) {
   float lambda;
+  if (strcmp(photometric_band,"Vs")==0)
+    lambda = 0.500;
   if (strcmp(photometric_band,"V")==0)
     lambda = 0.550;
   if (strcmp(photometric_band,"R")==0)
@@ -1602,6 +2047,10 @@ float source::wavelength(void) {
     lambda = 2.157;
   if (strcmp(photometric_band,"R+I")==0)
     lambda = 0.715;
+  if (strcmp(photometric_band,"PHZ")==0)
+    lambda = 1.193;
+  if (strcmp(photometric_band,"VIS")==0)
+    lambda = 0.750;  
   return 1E-6*lambda;
 }
 @
@@ -1625,6 +2074,8 @@ float source::n_photon(float _magnitude_) {
 @ with 
 <<photometry zero point>>=
  float zero_point;
+ if (strcmp(photometric_band,"Vs")==0)
+    zero_point = 8.97e9;
  if (strcmp(photometric_band,"V")==0)
     zero_point = 8.97e9;
  if (strcmp(photometric_band,"R")==0)
@@ -1641,6 +2092,10 @@ float source::n_photon(float _magnitude_) {
     zero_point = 1.49e9;
  if (strcmp(photometric_band,"R+I")==0)
     zero_point = 24.46e9;
+ if (strcmp(photometric_band,"PHZ")==0)
+    zero_point = 7.21e9;
+ if (strcmp(photometric_band,"VIS")==0)
+    zero_point = 16.9e9;
 @ The number of background photon in $ray^{-1}s^{-1}.arcsec^{-2}$ for a given magnitude per arcsecond square is derived with
 \index{source!source!n\_background\_photon}
 <<number of background photons>>=
@@ -1653,6 +2108,8 @@ float source::n_background_photon(float backgroundMagnitude) {
 <<spectral bandwidth>>=
 float source::spectral_bandwidth(void) {
   float spectral_bandwidth;
+  if (strcmp(photometric_band,"Vs")==0)
+    spectral_bandwidth = 0.090;
   if (strcmp(photometric_band,"V")==0)
     spectral_bandwidth = 0.090;
   if (strcmp(photometric_band,"R")==0)
@@ -1669,6 +2126,10 @@ float source::spectral_bandwidth(void) {
     spectral_bandwidth = 0.320;
   if (strcmp(photometric_band,"R+I")==0)
     spectral_bandwidth = 0.300;
+  if (strcmp(photometric_band,"PHZ")==0)
+    spectral_bandwidth = 0.331;
+  if (strcmp(photometric_band,"VIS")==0)
+    spectral_bandwidth = 0.300;
   return spectral_bandwidth*1e-6;
 }
 @ The wave number is given by
@@ -1676,6 +2137,8 @@ float source::spectral_bandwidth(void) {
 <<wavenumber>>=
 float source::wavenumber(void) {
   float lambda;
+  if (strcmp(photometric_band,"Vs")==0)
+    lambda = 0.550;
   if (strcmp(photometric_band,"V")==0)
     lambda = 0.550;
   if (strcmp(photometric_band,"R")==0)
@@ -1692,6 +2155,10 @@ float source::wavenumber(void) {
     lambda = 2.157;
   if (strcmp(photometric_band,"R+I")==0)
     lambda = 0.715;
+  if (strcmp(photometric_band,"PHZ")==0)
+    lambda = 1.193;
+  if (strcmp(photometric_band,"VIS")==0)
+    lambda = 0.750;
   return 1E6*2*PI/lambda;
 }
 @
@@ -1703,26 +2170,30 @@ The ray tracing data are transferred to the wavefront structure with
 <<ray tracing>>=
 void source::opd2phase(void)
 {
-//  printf("Setting wavefront!\n");
   HANDLE_ERROR( cudaMemset(rays.V.m, 0, sizeof(char)*rays.N_RAY*rays.N_BUNDLE ) );
-  dim3 blockDim(16,16);
-  dim3 gridDim(rays.N_L/16+1, rays.N_L/16+1, rays.N_BUNDLE);
-  opd2phase_kernel LLL gridDim , blockDim RRR (wavefront.amplitude,
-                                                   wavefront.phase,
-						   rays.V.m,
-                                                   rays.d__ray, rays.N_RAY,
-                                                   rays.L, rays.N_L,
-                                                   dev_ptr);
-  wavefront.masked(&(rays.V));
-  rays.V.set_filter_quiet();
-  /* wavefront.M = &(rays.V); */
+  <<opd2phase common>>
 }
-@
+@ %def opd2phase
+@ with
+<<opd2phase common>>=
+dim3 blockDim(16,16);
+dim3 gridDim(rays.N_L/16+1, rays.N_L/16+1, rays.N_BUNDLE);
+opd2phase_kernel LLL gridDim , blockDim RRR (wavefront.amplitude,
+                                             wavefront.phase,
+                                             rays.V.m,
+                                             rays.d__ray, rays.N_RAY,
+                                             rays.L, rays.N_L,
+                                             rays.d__origin,
+                                             dev_ptr,
+                                             rays.rot_angle);
+wavefront.masked(&(rays.V));
+rays.V.set_filter_quiet();
+@ and
 <<gathering wavefront kernel>>=
 __global__ void opd2phase_kernel(float *amplitude, float *phase,
-				 char *m, ray *d__ray,  int N_RAY,
-				 rtd L,  int N_L,
-				 source *src)
+                                 char *m, ray *d__ray,  int N_RAY,
+                                 rtd L,  int N_L, vector *origin,
+                                 source *src,rtd rot_angle)
 {
   int i, j, k, iSource;
   rtd x, y;
@@ -1736,8 +2207,24 @@ __global__ void opd2phase_kernel(float *amplitude, float *phase,
     phase[k]     += d__ray[k].optical_path_difference +
       x*src[iSource].theta_x +
       y*src[iSource].theta_y;
+    amplitude[k] *= d__ray[k].throughput;
   }
 }
+@
+For ray tracing in sequential mode, the rays vignetting mask [[V]] should not be reset.
+The source [[reset_rays]] method should be called instead of the [[reset]] method with 0 passed as argument.
+Then [[opd2phase]] must be called sequentially with also 0 passed as argument.
+This will prevent the rays vignetting mask [[V]] to be resetted.
+<<ray tracing>>=
+void source::opd2phase(int RESET_RAYS_MASK)
+{
+  if (RESET_RAYS_MASK>0)
+    HANDLE_ERROR( cudaMemset(rays.V.m, 0, sizeof(char)*rays.N_RAY*rays.N_BUNDLE ) );
+  else
+    wavefront.reset_amplitude();
+  <<opd2phase common>>
+}
+
 @
 \subsubsection{Input/Output}
 \label{sec:inputoutput}
@@ -1818,12 +2305,11 @@ void source::cleanup(void) {
 @
 The amplitude and phase are initialized to respectively 1 and 0:
 <<square geometry>>=
-__global__ void squarePupil(float* amplitude, float *phase, const int N) {
+__global__ void squarePupil(float* amplitude, const int N) {
   int id;
   id = blockIdx.x * blockDim.x + threadIdx.x;
   if (id<N) {
     amplitude[id] = 1.0;
-    phase[id]     = 0.0;
   }
 }
 
@@ -1839,11 +2325,18 @@ The following resets the wavefront amplitude to zero and phase to 1:
 <<resetting the wavefront>>=
 void complex_amplitude::reset(void)
 {
+  reset_amplitude();
+  reset_phase();
+}
+@
+The amplitude is reset to 1 with:
+\index{source!complex\_amplitude!reset\_amplitude}
+<<resetting the wavefront>>=
+void complex_amplitude::reset_amplitude(void)
+{
   dim3 blockDim(16,1);
   dim3 gridDim(N_PX/16+1,1);
-  squarePupil LLL gridDim,blockDim RRR (amplitude, phase, N_PX);
-  /* if (M!=NULL) */
-  /*   apply_mask LLL gridDim,blockDim RRR (amplitude, phase, M->m, N_PX);   */
+  squarePupil LLL gridDim,blockDim RRR (amplitude, N_PX);
 }
 @ 
 The wavefront amplitude can also be reset to a given wavefront, both wavefronts will share the same mask,:
@@ -1935,6 +2428,8 @@ __global__ void apply_mask(float* amplitude, float* phase, const int N,
 <<wavefront stats>>=
 void complex_amplitude::rms(float *rms)
 {
+  if (M==NULL)
+	  ERROR("Wavefront mask is undefined!");
   float mean_data, nnz;
   int n_data = N_PX/N, idx, k;
   cublasHandle_t handle;
@@ -2542,7 +3037,110 @@ __global__ void segments_gradient_average_kernel(float *sx, float *sy,
         else
            sy[kL] = 0.0;
 }
-@ 
+@
+\subsubsection{Optical transfer function}
+\label{sec:otf}
+
+The optical transfer function is given by the auto--correlation of the wavefront
+complex amplitude $Phi(\vec r)$:
+\begin{eqnarray}
+  \label{eq:10}
+  O(\vec\rho) &=& \iint {\mathrm d}\vec r \Phi(\vec r) \Phi(\vec r +
+                  \vec\rho) \\
+  &=& {\mathcal F}^{-1} \left[ \left| {\mathcal F} \left[ \Phi(\vec r) \right]
+      \left( \vec f \right)\right|^2 \right] \left( \vec\rho \right) 
+\end{eqnarray}
+
+@
+<<optical transfer function>>=
+void source::optical_transfer_function(float2 *d__otf) {
+  int _N_PX_, N_OTF, n_byte;
+  float2 * d__wavefront;
+  cufftHandle plan;
+  _N_PX_ = (int) sqrt(wavefront.N_PX/wavefront.N);
+  N_OTF = 2*_N_PX_-1;
+  fprintf(stdout,"W: %d ; O: %d\n",_N_PX_,N_OTF);
+  n_byte = sizeof(float2)*N_OTF*N_OTF*wavefront.N;
+  HANDLE_ERROR( cudaMalloc((void**)&d__wavefront, n_byte) );  
+  HANDLE_ERROR( cudaMemset(d__otf, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(d__wavefront, 0, n_byte ) );
+  int n_DFT[2] = {N_OTF, N_OTF};
+  int iodist = N_OTF*N_OTF;
+  int BATCH = wavefront.N;
+  HANDLE_ERROR_CUFFT( cufftPlanMany(&plan, 2, n_DFT,
+                                    NULL, 1, iodist,
+                                    NULL, 1, iodist,
+                                    CUFFT_C2C,BATCH),
+                      "Unable to create plan");
+  dim3 blockDim(16,16);
+  dim3 gridDim(_N_PX_/16+1,_N_PX_/16+1,wavefront.N);
+  wavefront_padding LLL gridDim,blockDim RRR (d__wavefront,
+                                              N_OTF,
+                                              wavefront.amplitude,
+                                              wavefront.phase,
+                                              _N_PX_,
+                                              wavenumber());
+  //HANDLE_ERROR( cudaMemcpy( d__otf, d__wavefront, n_byte, cudaMemcpyDeviceToDevice ) );
+  HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wavefront, d__otf, CUFFT_FORWARD),
+                      "Unable to execute plan forward FT");
+  gridDim = dim3(N_OTF/16+1,N_OTF/16+1,wavefront.N);
+  square_modulus LLL gridDim,blockDim RRR (d__wavefront, d__otf, N_OTF);
+  HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__wavefront, d__otf, CUFFT_INVERSE),
+                      "Unable to execute plan forward FT");
+  HANDLE_ERROR(cudaFree(d__wavefront));
+  cufftDestroy(plan);
+}
+@
+<<wavefront padding kernel>>=
+__global__ void wavefront_padding(float2 *wavefront,
+                                  const int N_OTF,
+                                  const float *amplitude,
+                                  const float *phase,
+                                  const int N_PX,
+                                  const float wavenumber)
+{
+  int i,j,k,kw,iSource,ii,jj;
+  float so,co;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  k = i*N_PX+j;
+  k += iSource*N_PX*N_PX;
+  if ( (i<N_PX) && (j<N_PX)) {
+    ii = i-N_PX/2;
+    if (ii<0)
+      ii += N_OTF;
+    jj = j-N_PX/2;
+    if (jj<0)
+      jj += N_OTF;
+    kw = ii*N_OTF + jj;
+    kw += iSource*N_OTF*N_OTF;
+    sincos(wavenumber*phase[k],&so,&co);
+    wavefront[kw].x = amplitude[k]*co;
+    wavefront[kw].y = amplitude[k]*so;
+  }
+}
+@
+<<square modulus kernel>>=
+__global__ void square_modulus(float2 *wavefront,
+                               float2 *otf,
+                               const int N_OTF)
+{
+  int i,j,k,iSource,N2;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  N2 = N_OTF;
+  N2 *= N2;
+  if ( (i<N_OTF) && (j<N_OTF)) {
+    k = i*N_OTF + j;
+    k += iSource*N_OTF*N_OTF;
+    wavefront[k].x = (otf[k].x*otf[k].x + otf[k].y*otf[k].y)/N2;
+    wavefront[k].y = 0.0;
+  }
+}
+@
+
 \subsubsection{Input/Output}
 \label{sec:inputoutput-1}
 The wavefront phase is save to a file with
@@ -2668,3 +3266,259 @@ void complex_amplitude::show_amplitude(char *filename)
   HANDLE_ERROR( cudaFreeHost( data ) );
 }
 @
+
+\subsection{PSSn}
+\label{sec:PSSn}
+
+\index{source!pssn}
+
+The optical transfer function is given by the auto--correlation of the wavefront
+complex amplitude $Phi(\vec r)$:
+\begin{eqnarray}
+  \label{eq:10}
+  O(\vec\rho) &=& \iint {\mathrm d}\vec r \Phi(\vec r) \Phi(\vec r +
+                  \vec\rho) \\
+  &=& {\mathcal F}^{-1} \left[ \left| {\mathcal F} \left[ \Phi(\vec r) \right]
+      \left( \vec f \right)\right|^2 \right] \left( \vec\rho \right) 
+\end{eqnarray}
+
+
+The PSSn is a structure with the following parameters:
+\begin{itemize}
+\item the telescope optical transfer functions (OTF), both current [[O]] et reference [[O0]],
+  the structure may contain [[N_O]] current OTF and $[[N_O0=1]]$ or [[N_O]]
+  reference OTF:
+<<pssn parameters>>=
+int N_O, N_O0, n_byte;
+float2 *d__O, *d__O0, *buffer;
+@
+\item the atmosphere optical transfer function [[C]]:
+<<pssn parameters>>=
+float2 *d__C;
+@
+\item the wavefront complex amplitude [[W]] of size $[[N_PX]]\times
+  [[N_PX]]\times [[N]]$:
+<<pssn parameters>>=
+int N_PX, N;  
+float2 *d__W;
+@
+\item the discrete Fourier transform (DFT) plan handle [[plan]], the size of
+  each DFT is $[[N_OTF]]\times [[N_OTF]]$ where $[[N_OTF]]=2[[N_PX]]-1$ and
+  there as may DFT as wavefront i.e. [[N]]:
+<<pssn parameters>>=
+int N_OTF, N_OTF2, NN;
+cufftHandle plan;
+@
+\item algebraic operator handle and results:
+<<pssn parameters>>=
+cublasHandle_t handle;
+float num, *denom;
+@
+\end{itemize}
+
+The PPSn structure is:
+<<pssn structure>>=
+struct pssn {
+  <<pssn parameters>>
+  void setup(source *src, const float r0, const float L0);
+  void cleanup();
+  void __otf__(source *src, float2 *_d__O_);
+  void otf(source *src);
+  void atm_otf(float d, float r0, float L0);
+  float eval(void);
+  void eval(float *results);
+};
+@
+The pssn methods are:
+\begin{description}
+\item[[[setup]]]
+<<pssn methods>>=
+void pssn::setup(source *src, const float r0, const float L0)
+{
+  N_O = 0;
+  N = src->wavefront.N;
+  denom = (float *) malloc(sizeof(float)*N);
+  N_PX = (int) sqrt(src->wavefront.N_PX/N);
+  N_OTF = 2*N_PX-1;
+  N_OTF2 = N_OTF*N_OTF;
+  NN = N_OTF2*N;
+  n_byte = sizeof(float2)*NN;
+  HANDLE_ERROR( cudaMalloc((void**)&d__W, n_byte) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__O, n_byte) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__O0, n_byte) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__C, n_byte) );
+  HANDLE_ERROR( cudaMalloc((void**)&buffer, n_byte) );
+  HANDLE_ERROR( cudaMemset(d__O, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(d__O0, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(d__W, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(d__C, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(buffer, 0, n_byte ) );
+  int n_DFT[2] = {N_OTF, N_OTF};
+  int iodist = N_OTF*N_OTF;
+  int BATCH = N;
+  HANDLE_ERROR_CUFFT( cufftPlanMany(&plan, 2, n_DFT,
+                                    NULL, 1, iodist,
+                                    NULL, 1, iodist,
+                                    CUFFT_C2C,BATCH),
+                      "Unable to create plan");
+  CUBLAS_ERROR( cublasCreate(&handle) );
+  __otf__(src, d__O0);
+  //  CUBLAS_ERROR( cublasScnrm2( handle , NN, d__O0, 1 , &denom) );
+  float d = src->rays.L/(src->rays.N_L-1);
+  atm_otf(d,r0,L0);
+  //  CUBLAS_ERROR( cublasScnrm2( handle , NN, d__C, 1 , &denom) );
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_OTF/16+1,N_OTF/16+1,N);
+  OC_times LLL gridDim,blockDim RRR (buffer,d__O0,d__C,N_OTF);
+  for (int k=0;k<N;k++){
+    CUBLAS_ERROR( cublasScnrm2( handle , N_OTF2, buffer+k*N_OTF2, 1 , denom+k) );
+  }
+}
+@
+\item[[[cleanup]]]
+<<pssn methods>>=
+void pssn::cleanup()
+{
+  fprintf(stdout,"@(CEO)>%s: freeing memory!\n","PSSn");
+  CUBLAS_ERROR(cublasDestroy(handle));
+  cufftDestroy(plan);
+  HANDLE_ERROR(cudaFree(d__C));
+  HANDLE_ERROR(cudaFree(d__W));
+  HANDLE_ERROR(cudaFree(d__O0));
+  HANDLE_ERROR(cudaFree(d__O));
+  HANDLE_ERROR(cudaFree(buffer));
+  free(denom);
+}
+@
+\item[[[otf]]] 
+<<pssn methods>>=
+void pssn::__otf__(source *src, float2 *_d__O_)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_PX/16+1,N_PX/16+1,N);
+  wavefront_padding LLL gridDim,blockDim RRR (d__W,
+                                              N_OTF,
+                                              src->wavefront.amplitude,
+                                              src->wavefront.phase,
+                                              N_PX,
+                                              src->wavenumber());
+  HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__W, _d__O_, CUFFT_FORWARD),
+                      "Unable to execute plan forward FT");
+  gridDim = dim3(N_OTF/16+1,N_OTF/16+1,N);
+  square_modulus LLL gridDim,blockDim RRR (d__W, _d__O_, N_OTF);
+  HANDLE_ERROR_CUFFT( cufftExecC2C(plan, d__W, _d__O_, CUFFT_INVERSE),
+                      "Unable to execute plan forward FT");
+}
+void pssn::otf(source *src)
+{
+  float2 a;
+  HANDLE_ERROR( cudaMemset(d__W, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(buffer, 0, n_byte ) );
+  __otf__(src, buffer);
+  ++N_O;
+  a.x= (N_O-1.0)/N_O;
+  a.y = 0.0;
+  CUBLAS_ERROR( cublasCsscal(handle,NN,&a.x,d__O,1) );
+  a.x= 1.0/N_O;
+  CUBLAS_ERROR( cublasCaxpy(handle,NN,&a,buffer,1,d__O,1) );
+}
+@
+\item[[[atm_otf]]]
+<<pssn methods>>=
+void pssn::atm_otf(float d, float r0, float L0)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_OTF/16+1,N_OTF/16+1,N);
+  atm_otf_kernel LLL gridDim,blockDim RRR (d__C,N_OTF,d,r0,L0);
+}
+@
+<<atmosphere otf kernel>>=
+__global__ void atm_otf_kernel(float2 *C,
+                               const int N,
+                               const float d,
+                               const float r0,
+                               const float L0)
+{
+  int i,j,k,kw,iSource,ii,jj;
+  float x,y,r,sf,red,a,b;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  k = i*N+j;
+  k += iSource*N*N;
+  if ( (i<N) && (j<N)) {
+    ii = i-N/2;
+    jj = j-N/2;
+    if ((ii==0) && (jj==0)) {
+      sf = 0.0;
+    } else {
+      x = ii*d;
+      y = jj*d;
+      r = hypot(x,y);
+      red = 2*PI*r/L0;
+      a = tgammaf(11./6.)*
+        powf(24.*tgammaf(6./5.)/5.,5./6.)*
+        powf(2.,-5./6)*powf(PI,-8./3.)*
+        powf(L0/r0,5./3.);
+      b = tgammaf(5./6.)*powf(2.,-1./6.) - powf(red,5./6.)*_K_nu_(5./6.,red);
+      sf = a*b;
+    }
+    if (ii<0)
+      ii += N;
+    if (jj<0)
+      jj += N;
+    kw = ii*N + jj;
+    kw += iSource*N*N;
+    C[kw].x = expf(-sf);
+    C[kw].y = 0.0;
+  }
+}
+@
+<<pssn OC product kernel>>=
+__global__ void OC_times(float2 *buffer,
+                         float2 *_O_,
+                         float2 *_C_,
+                         const int N)
+{
+  int i,j,k,iSource;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  k = i*N+j;
+  k += iSource*N*N;
+  if ( (i<N) && (j<N)) {
+    buffer[k].x = _O_[k].x*_C_[k].x;
+    buffer[k].y = _O_[k].y*_C_[k].x;
+  }
+}
+@
+\item[[[eval]]]
+<<pssn methods>>=
+float pssn::eval(void)
+{
+  float result;
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_OTF/16+1,N_OTF/16+1,N);
+  OC_times LLL gridDim,blockDim RRR (buffer,d__O,d__C,N_OTF);
+  CUBLAS_ERROR( cublasScnrm2( handle , NN, buffer, 1 , &num) );
+  result = num/denom[0];
+  result *= result;
+  return result;
+}
+void pssn::eval(float *results)
+{
+  int k, N_OTF2;
+  float result;
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_OTF/16+1,N_OTF/16+1,N);
+  OC_times LLL gridDim,blockDim RRR (buffer,d__O,d__C,N_OTF);
+  N_OTF2 = N_OTF*N_OTF;
+  for (k=0;k<N;k++) {
+    CUBLAS_ERROR( cublasScnrm2( handle , N_OTF2, buffer+k*N_OTF2, 1 , &num) );
+    result = num/denom[k];
+    result *= result;
+    results[k] = result;
+  }
+}
+@  
+\end{description}

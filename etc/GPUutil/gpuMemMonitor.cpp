@@ -97,7 +97,7 @@ int main(int argc, char **argv)
     sleep(5); // TODO - make the cycle time an optional command line flag...
   }
 
-  cudaThreadExit();
+  //cudaThreadExit();
 
   std::cout << std::endl;
 

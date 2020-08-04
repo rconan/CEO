@@ -7,12 +7,15 @@
 from imaging cimport imaging, Imaging
 from centroiding cimport centroiding, Centroiding
 from source cimport Source
+from libc.math cimport round, M_PI
 cdef extern from "pyramid.h":
     cdef cppclass pyramid:
+        int N_SIDE_LENSLET
         float modulation
+        int modulation_sampling
+        float alpha
         imaging camera
-        centroiding data
-        void setup(int, int, float, int)
+        void setup(int, int, float, int, float, int)
         void cleanup()
 <<class definitions>>
 @
@@ -25,7 +28,6 @@ cdef class Pyramid:
     cdef:
         pyramid *_c_pyramid
         readonly Imaging camera
-        readonly Centroiding data
 @
 \section{PYX file}
 \label{sec:pyx-file}
@@ -43,6 +45,10 @@ cdef class Pyramid:
        The sampling in pixel of the pupil plane.
     modulation : float, optional
        The modulation at the vertex of the pyramid in lambda/D units, defaults to 0
+    modulation_sampling : int, optional
+       The number of points sampling the modulation at the vertex of the pyramid in lambda/D units, defaults to 0
+    separation : float, optional
+       The distance between left/right and up/down pupil images on the detector in telescope diameter D units, defaults to 2
     N_GS : int, optional
        The number of guide stars, defaults to 1
 
@@ -50,14 +56,18 @@ cdef class Pyramid:
     ----------
     camera : Imaging, readonly
        The detector object
-    data : Centroiding, readonly
-       The measurements container
+    N_SIDE_LENSLET : int, readonly
+       The linear size of the equivalent lenslet array (>1).
+    modulation : float
+       The modulation at the vertex of the pyramid in lambda/D units, defaults to 0
+    modulation_sampling : int
+       The number of points sampling the modulation at the vertex of the pyramid in lambda/D units, defaults to 0
+    separation : float
+       The distance between left/right and up/down pupil images on the detector in telescope diameter D units, defaults to 2
 
     See also
     --------
     Imaging : a class for a Fourier propagation model and for a detector model
-    Centroiding : a class for the data processing of wavefront sensor frames
-
 
     Examples
     --------
@@ -77,15 +87,18 @@ cdef class Pyramid:
     def __cinit__(self,int N_SIDE_LENSLET,
                   int N_PX_LENSLET,
                   float modulation = 0.0,
-                  int N_GS=1):
+                  int modulation_sampling = 0,
+                  float separation = 2,
+                  int N_GS=1, **kwargs):
         self._c_pyramid = new pyramid()
-        self._c_pyramid.setup(N_SIDE_LENSLET,N_PX_LENSLET,modulation,N_GS)
+        self._c_pyramid.setup(N_SIDE_LENSLET,N_PX_LENSLET,
+                              modulation,modulation_sampling,
+                              0.25*separation,N_GS)
+        self.modulation = modulation
         self.camera = Imaging(1,N_PX_LENSLET-1,DFT_osf=4,N_PX_IMAGE=4*N_PX_LENSLET,
                               BIN_IMAGE=N_PX_LENSLET/N_SIDE_LENSLET,
                               N_SOURCE=N_GS, isPtr=1)
         self.camera.set_ptr( &(self._c_pyramid.camera) )
-        self.data = Centroiding(N_SIDE_LENSLET*2, N_SOURCE=N_GS, isPtr=1)
-        self.data.set_ptr( &(self._c_pyramid.data) )
 
     def __dealloc__(self):
         self._c_pyramid.cleanup()
@@ -103,4 +116,35 @@ cdef class Pyramid:
         --------
         Source : a class for astronomical sources
         """
-        self.camera.propagateThroughPyramid(gs,self._c_pyramid.modulation)
+        self.camera.propagateThroughPyramid(gs,self._c_pyramid.modulation,
+                                            self._c_pyramid.modulation_sampling,
+                                            self._c_pyramid.alpha)
+
+    @property
+    def modulation(self):
+        return self._c_pyramid.modulation
+    @modulation.setter
+    def modulation(self, value):
+        if self._c_pyramid.modulation_sampling==0:
+            self._c_pyramid.modulation_sampling = <int> round(M_PI*value)
+            self._c_pyramid.modulation_sampling *= 4
+            print('(@CEO)>Pyramid: Set modulation sampling to {}'.format(self._c_pyramid.modulation_sampling))
+        self._c_pyramid.modulation = value
+
+    @property
+    def separation(self):
+        return 4*self._c_pyramid.alpha
+    @separation.setter
+    def separation(self, value):
+        self._c_pyramid.alpha = 0.25*value
+
+    @property
+    def modulation_sampling(self):
+        return self._c_pyramid.modulation_sampling
+    @modulation_sampling.setter
+    def modulation_sampling(self, value):
+        self._c_pyramid.modulation_sampling = value
+
+    @property
+    def N_SIDE_LENSLET(self):
+        return self._c_pyramid.N_SIDE_LENSLET

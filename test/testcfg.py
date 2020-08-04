@@ -1,5 +1,6 @@
 c = get_config()
 c.ExecutePreprocessor.timeout = 300
+c.ExecutePreprocessor.kernel_name='python3'
 c.NbConvertApp.notebooks = ["../atmosphere/Atmosphere.ipynb",
                             "../atmosphere/AtmospherePhaseScreenGradient.ipynb",
                             "../LMMSE/LaserTomography.ipynb",

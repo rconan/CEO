@@ -1,37 +1,59 @@
 % -*- mode: Noweb; noweb-code-mode: python-mode -*-
 
-<<ceo.pxd>>=
+\section{PXD file}
+\label{sec:pxd-file}
+
+<<GBTBT.pxd>>=
+from utilities cimport float2, cuFloatArray,  cuFloatComplexArray
 cdef extern from "GBTBT.h":
     cdef cppclass GBTBT:
-        int MT2_TOTAL
-        char *mask
-        void setup(int, int, int *, int, float *)
+        int M, N, NT, NT2, NDFT, HALF_NDFT, NU_TOTAL, NF, NF2, ind_size, cov_size
+        int[:] MT, MT2, NU, NU2
+        float2 *d__cov
+        float2 *d__b
+        float2 *d__c
+        void setup(int, int, int, int, float *_)
         void cleanup()
         void MVM(float *, float *)
-@
-\index{GBTBT!python!Gbtbt}
-<<ceo.pyx>>=
+<<class definitions>>
+@ 
+\subsection{Class definitions}
+\label{sec:class-definitions}
+
+<<class definitions>>=
 cdef class Gbtbt:
-    """
-    Generalized block matrix with 2RBT blocks
-    """
-    cdef ceo.GBTBT *_c_GBTBT
+    cdef:
+        GBTBT *_c_GBTBT
+        public int M, N, NT, NDFT, MT
+        public cuFloatComplexArray cov, b, c
+        public cuFloatArray e
+@
+\section{PYX file}
+\label{sec:pyx-file}
 
-    def __cinit__(self, int M_block, int N_block, int N_SIDE_LENSLET, PaStats pa, pupil=None):
-        self._c_GBTBT = new ceo.GBTBT()
-        self._c_GBTBT.setup(M_block,N_block,pa._c_paStats.M_LAYER,
-                            N_SIDE_LENSLET,pa._c_paStats.d__cov)
-        if pupil is not None:
-            self._c_GBTBT.mask = pupil._c_mask.m
-
+\index{GBTBT!python!Gbtbt}
+<<GBTBT.pyx>>=
+cdef class Gbtbt:
+    def __cinit__(self,int M, int N, int MT, int NT, cuFloatArray e):
+        self._c_GBTBT = new GBTBT()
+        self._c_GBTBT.setup(M,N,MT,NT,e._c_gpu.dev_data)
+        self.M    = self._c_GBTBT.M
+        self.MT   = MT
+        self.N    = self._c_GBTBT.N
+        self.NT   = self._c_GBTBT.NT
+        self.NDFT = self._c_GBTBT.NDFT
+        self.cov = cuFloatComplexArray(shape=(1,self.M*self.N*self.NDFT))
+        self.b   = cuFloatComplexArray(shape=(1,self.N*self.NDFT))
+        self.c   = cuFloatComplexArray(shape=(1,self.M*self.NDFT))
+        self.cov._c_gpu.dev_data = self._c_GBTBT.d__cov
+        self.b._c_gpu.dev_data   = self._c_GBTBT.d__b
+        self.c._c_gpu.dev_data   = self._c_GBTBT.d__c
+    def MVM(self,float[:] x):
+        cdef cuFloatArray __x,y
+        __x = cuFloatArray(host_data=x)
+        cdef int n
+        y = cuFloatArray(shape=(self.MT*self.MT,1),dev_malloc=True)
+        self._c_GBTBT.MVM(y._c_gpu.dev_data,__x._c_gpu.dev_data)
+        return y
     def __dealloc__(self):
         self._c_GBTBT.cleanup()
-
-    def MVM(self, cuFloatArray x):
-        y = cuFloatArray(shape=(self._c_GBTBT.MT2_TOTAL,1),dev_malloc=True)
-        self._c_GBTBT.MVM(y._c_gpu.dev_data,x._c_gpu.dev_data)
-        return y
-
-    property mask:
-        def __set__(self,MaskAbstract M):
-            self._c_GBTBT.mask = M._c_mask.m

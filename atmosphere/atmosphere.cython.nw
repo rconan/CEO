@@ -35,10 +35,16 @@ cdef extern from "atmosphere.h":
         void save_layer_phasescreens(char *,int)
 	void reset()
         void get_phase_screen(source *, float , int , float , int , float )
+        void get_phase_screen(source *, float , int , float , int , float , float)
         void get_phase_screen(source *, float )
         void get_phase_screen(float*, float *, float *, int,
                               source *, float )
+        void get_phase_screen_gradient(float *, float *,
+                                       float *, float *, int,
+                                       source *, float)
         void get_phase_screen_gradient(centroiding *, int , float , source *, float )
+        void get_phase_screen_gradient_rolling_shutter(
+            centroiding *, int , float , source *, float, float )
         void get_phase_screen_circ_centroids(centroiding *,  float, source *,
 					     int , float )
         void get_phase_screen_circ_uplink_centroids(centroiding *,  float, source *,
@@ -120,15 +126,15 @@ cdef class AtmosphereAbstract:
        The Fried parameter [m].
     L0 : number
        The outer scale of turbulence [m].
-    N_LAYER : int, optionnal
+    N_LAYER : int, optional
        The number of atmospheric layers, default: 1.
-    altitude : ndarray of floats, optionnal
+    altitude : ndarray of floats, optional
        The atmosphere layer altitudes [m], default: 0.0.
-    xi0 : ndarray of floats, optionnal
+    xi0 : ndarray of floats, optional
        The atmosphere layer weights 0<=xi0<=1, the sum must equal 1, default: 1.0.
-    wind_speed : ndarray of floats, optionnal
+    wind_speed : ndarray of floats, optional
        The atmosphere layer wind speeds [m/s], default: 0.0.
-    wind_direction : ndarray of floats, optionnal
+    wind_direction : ndarray of floats, optional
        The atmosphere layer wind directions [rd], default: 0.0.
     """
 
@@ -163,27 +169,27 @@ cdef class Atmosphere(AtmosphereAbstract):
        The Fried parameter [m].
     L0 : number
        The outer scale of turbulence [m].
-    N_LAYER : int, optionnal
+    N_LAYER : int, optional
        The number of atmospheric layers, default: 1.
-    altitude : ndarray of floats, optionnal
+    altitude : ndarray of floats, optional
        The atmosphere layer altitudes [m], default: 0.0.
-    xi0 : ndarray of floats, optionnal
+    xi0 : ndarray of floats, optional
        The atmosphere layer weights 0<=xi0<=1, the sum must equal 1, default: 1.0.
-    wind_speed : ndarray of floats, optionnal
+    wind_speed : ndarray of floats, optional
        The atmosphere layer wind speeds [m/s], default: 0.0.
-    wind_direction : ndarray of floats, optionnal
+    wind_direction : ndarray of floats, optional
        The atmosphere layer wind directions [rd], default: 0.0.
-    L : float, optionnal
+    L : float, optional
        The size of the square phase screen at an altitude of 0km [m], default: 0.0.
-    NXY_PUPIL : int, optionnal
+    NXY_PUPIL : int, optional
        The sampling of the square phase screen at an altitude of 0km [px], default: 0.
-    fov : float, optionnal
+    fov : float, optional
        The field of view [rd], default: 0.0.
-    duration : float, optionnal
+    duration : float, optional
        The time length of the phase screens [s], default: 1.0.
-    filename : bytes, optionnal
+    filename : str, optional
        The name of the file to save the phase screens of the layers to, default: None.
-    N_DURATION : int, optionnal
+    N_DURATION : int, optional
        The number of phase screens of time length duration, default: 1.
 
     Examples
@@ -242,7 +248,7 @@ cdef class Atmosphere(AtmosphereAbstract):
                  altitude=0.0, xi0=1.0,
                  wind_speed=0.0, wind_direction=0.0,
                  float L=0.0, int NXY_PUPIL=0, float fov=0.0,
-                 float duration=1.0, bytes filename=None,
+                 float duration=1.0, str filename=None,
                  int N_DURATION=1):
         super(Atmosphere,self).__init__(r0,L0,
                                         N_LAYER=N_LAYER,
@@ -264,7 +270,7 @@ cdef class Atmosphere(AtmosphereAbstract):
                                          <float *>self.wind_speed.data,
                                          <float *>self.wind_direction.data,
                                          L, NXY_PUPIL, fov,
-                                         duration, filename,
+                                         duration, filename.encode(),
                                          N_DURATION)
             else:
                 self._c_atmosphere.setup(r0, self.L0, self.N_LAYER,
@@ -304,17 +310,17 @@ cdef class GmtAtmosphere(AtmosphereAbstract):
        The Fried parameter [m].
     L0 : number
        The outer scale of turbulence [m].
-    L : float, optionnal
+    L : float, optional
        The size of the square phase screen at an altitude of 0km [m], default: 0.0.
-    NXY_PUPIL : int, optionnal
+    NXY_PUPIL : int, optional
        The sampling of the square phase screen at an altitude of 0km [px], default: 0.
-    fov : float, optionnal
+    fov : float, optional
        The field of view [rd], default: 0.0.
-    duration : float, optionnal
+    duration : float, optional
        The time length of the phase screens [s], default: 1.0.
-    filename : bytes, optionnal
+    filename : str, optional
        The name of the file to save the phase screens of the layers to, default: None.
-    N_DURATION : int, optionnal
+    N_DURATION : int, optional
        The number of phase screens of time length duration, default: 1.
     SEED : int, optional
        The seed of the random generator, default: 2016.
@@ -329,7 +335,7 @@ cdef class GmtAtmosphere(AtmosphereAbstract):
 
     def __init__(self, float r0, float L0,
                  float L=0.0,int NXY_PUPIL=0,float fov=0.0,
-                 float duration=1.0, bytes filename=None,
+                 float duration=1.0, str filename=None,
                  int N_DURATION=1,
                  int SEED=2016,
                  int ID=1):
@@ -346,7 +352,7 @@ cdef class GmtAtmosphere(AtmosphereAbstract):
                 self._c_atmosphere.gmt_setup(r0, L0,
                                              L, NXY_PUPIL,
                                              fov, duration,
-                                             filename, N_DURATION, SEED)
+                                             filename.encode(), N_DURATION, SEED)
 @
 \subsection{JGmtAtmosphere}
 \label{sec:jgmtatmosphere}
@@ -391,14 +397,8 @@ class JGmtAtmosphere(JSONAbstract,GmtAtmosphere):
     def __init__(self, *args, **kwargs):
         print "@(ceo.JGmtAtmosphere)>"
         JSONAbstract.__init__(self,  *args, **kwargs)
-        GmtAtmosphere.__init__(self,self.jprms["r0"],
-                               self.jprms["L0"],
-                               L          = self.jprms["pupil size"],
-                               NXY_PUPIL  = self.jprms["pupil sampling"],
-                               fov        = self.jprms["field-of-view [arcmin]"]*ARCMIN2RAD,
-                               duration   = self.jprms["duration"],
-                               filename   = str( self.jprms["filename"] ),
-                               N_DURATION = self.jprms["time sampling"])
+        #self.jprms['filename'] = self.jprms['filename'].encode('utf-8')
+        GmtAtmosphere.__init__(self, **self.jprms)
 @
 <<python atmosphere methods>>=
 def reset(self):
@@ -410,7 +410,7 @@ def save_layer_phasescreens(self, bytes filename, int N_DURATION):
 def get_phase_screen(self, Source src,
 		     float delta_x, int N_x,
 		     float delta_y, int N_y,
-		     float time):
+		     float time, float exponent=0.0):
     """
     Computes the N_x$\times$N_y phase screen of the source wavefront
 
@@ -429,9 +429,15 @@ def get_phase_screen(self, Source src,
     time: float
         The time of the atmosphere snapshot since the beginning of the simulation
     """
-    self._c_atmosphere.get_phase_screen(src._c_source,
-					delta_x, N_x,
-					delta_y, N_y, time)
+    if exponent>0:
+        self._c_atmosphere.get_phase_screen(src._c_source,
+                                            delta_x, N_x,
+                                            delta_y, N_y, time,
+                                            exponent)
+    else:
+        self._c_atmosphere.get_phase_screen(src._c_source,
+                                            delta_x, N_x,
+                                            delta_y, N_y, time)
 
 def phase_screen(self, Source src, float time):
     self._c_atmosphere.get_phase_screen(src._c_source, time)
@@ -519,11 +525,25 @@ def propagate(self, Source src):
     N = src.rays.N_L
     delta = src.rays.L/(N-1)
     self._c_atmosphere.rayTracing(src._c_source,
-				  delta, N, delta, N,
+				                  delta, N, delta, N,
                                   src.timeStamp)
+def get_phase_screen_gradient_values(self, double[:] x, double[:] y,
+                                     Source src, float time):
+    cdef int Nxy
+    Nxy = x.size
+    cdef cuFloatArray sx, sy
+    sx = cuFloatArray(shape=(Nxy,1),dev_malloc=True)
+    sy = cuFloatArray(shape=(Nxy,1),dev_malloc=True)
+    cdef cuFloatArray gx,gy
+    gx = cuFloatArray(host_data=x)
+    gy = cuFloatArray(host_data=y)
+    self._c_atmosphere.get_phase_screen_gradient(sx._c_gpu.dev_data, sy._c_gpu.dev_data,
+                                                 gx._c_gpu.dev_data, gy._c_gpu.dev_data, Nxy,
+                                                 src._c_source, time)
+    return np.asarray(sx.host(),dtype=np.double),np.asarray(sy.host(),dtype=np.double)
 
 def get_phase_screen_gradient(self, Centroiding cog, int NL, float d,
-			      Source src, float time):
+			      Source src, float time, float delay=0.0):
     """
     Computes the phase screen gradient of the source wavefront
 
@@ -540,8 +560,13 @@ def get_phase_screen_gradient(self, Centroiding cog, int NL, float d,
     time: float
         The time of the atmosphere snapshot since the beginning of the simulation
     """
-    self._c_atmosphere.get_phase_screen_gradient(cog._c_centroiding, NL, d,
-						 src._c_source, time)
+    if delay>0:
+        self._c_atmosphere.get_phase_screen_gradient_rolling_shutter(
+            cog._c_centroiding, NL, d,
+            src._c_source, time, delay)
+    else:
+        self._c_atmosphere.get_phase_screen_gradient(cog._c_centroiding, NL, d,
+                                                     src._c_source, time)
 
 def get_phase_screen_gradientSH(self, ShackHartmann wfs, int NL, float d,
 			      Source src, float time):

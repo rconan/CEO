@@ -6,20 +6,26 @@
 
 <<imaging.pxd>>=
 from source cimport source, Source
-from utilities cimport Sensor, cuFloatArray
+from utilities cimport Sensor, cuFloatArray, cuFloatComplexArray
+cdef extern from "cuda.h":
+    ctypedef struct float2:
+        float x
+        float y
 cdef extern from "imaging.h":
     cdef cppclass imaging:
         int N_PX_PUPIL, N_DFT, N_SIDE_LENSLET, N_PX_CAMERA, N_SOURCE, N_FRAME
-        float photoelectron_gain, N_PHOTON_PER_FRAME, N_PHOTON_TOTAL
+        float photoelectron_gain, N_PHOTON_PER_FRAME, N_PHOTON_TOTAL, pixel_scale
         float *d__frame
+        float2 *d__wave_PUPIL
         char absolute_pointing
         void setup(int , int , int , int , int, int)
         void cleanup()
         void set_pointing_direction(float *, float *)
         void propagate(source *)
+        void propagate_cpx(source *)
         void propagateThroughFieldStop(source *, float)
-        void propagateThroughPyramid(source *)
-        void propagateThroughModulatedPyramid(source *, float)
+        void propagateThroughPyramid(source *, float)
+        void propagateThroughModulatedPyramid(source *, float, int, float)
         void readout(float, float)
         void readout(float, float, float, float)
         void noiseless_readout(float)
@@ -38,6 +44,7 @@ cdef class Imaging(Sensor):
                      N_PX_IMAGE, BIN_IMAGE, N_SOURCE, \
                      N_PX_FRAME, ghost_N_FRAME
         readonly cuFloatArray frame
+        readonly cuFloatComplexArray cpx
         char isPtr
         public float exposureTime, readOutNoiseRms, nBackgroundPhoton, noiseFactor
         public float[:,:] ghost_frame
@@ -155,6 +162,8 @@ cdef class Imaging(Sensor):
         self.isPtr = isPtr
         self.frame = cuFloatArray(shape=(self.N_SOURCE*self.N_PX_FRAME,
 				         self.N_PX_FRAME))
+        self.cpx = cuFloatComplexArray(shape=(self.DFT_osf*(self.N_PX_PUPIL+1),
+				                              self.DFT_osf*(self.N_PX_PUPIL+1)))
         if not self.isPtr:
             if N_PX_IMAGE is None:
                 N_PX_IMAGE = N_PX_PUPIL
@@ -162,6 +171,7 @@ cdef class Imaging(Sensor):
                                   DFT_osf, N_PX_IMAGE,
                                   BIN_IMAGE, N_SOURCE)
             self.frame._c_gpu.dev_data = self._c_imaging.d__frame
+            self.cpx._c_gpu.dev_data = self._c_imaging.d__wave_PUPIL
             self._c_imaging.photoelectron_gain = photoElectronGain
 
         self.exposureTime      = exposureTime
@@ -214,6 +224,9 @@ cdef class Imaging(Sensor):
         """		       
         self._c_imaging.propagate(src._c_source)
 
+    def propagate_cpx(self, Source src):
+        self._c_imaging.propagate_cpx(src._c_source)
+
     def propagateThroughFieldStop(self, Source src, float field_stop_diam):
         """
         Propgates a source through the lenset then through a field stop in 
@@ -232,7 +245,10 @@ cdef class Imaging(Sensor):
         """		       
         self._c_imaging.propagateThroughFieldStop(src._c_source, field_stop_diam)
 
-    def propagateThroughPyramid(self, Source src, float modulation=0.0):
+    def propagateThroughPyramid(self, Source src,
+                                float modulation=0.0,
+                                int modulation_sampling=0,
+                                float alpha=0.5):
         """
         Propgates a source through a pyramid wavefront sensor to a detector in a pupil plane
 
@@ -249,9 +265,11 @@ cdef class Imaging(Sensor):
         """		       
         if modulation>0.0:
             self._c_imaging.propagateThroughModulatedPyramid(src._c_source,
-                                                             modulation)
+                                                             modulation,
+                                                             modulation_sampling,
+                                                             alpha)
         else:
-            self._c_imaging.propagateThroughPyramid(src._c_source)
+            self._c_imaging.propagateThroughPyramid(src._c_source,alpha)
 
     def readOut(self,float exposureTime, float readOutNoiseRms, 
                 float nBackgroundPhoton=0.0, float noiseFactor=1.0):
@@ -301,13 +319,28 @@ cdef class Imaging(Sensor):
         """
         Returns the pixel scale in radian
         """
-        return (src.wavelength/src.rays.L)*self.N_SIDE_LENSLET*self.BIN_IMAGE/self.DFT_osf
+        self._c_imaging.pixel_scale = (src.wavelength/src.rays.L)*self.N_SIDE_LENSLET*self.BIN_IMAGE/self.DFT_osf
+        return self._c_imaging.pixel_scale
 
     def pixelScaleArcsec(self,Source src):
         """
         Returns the pixel scale in arcsecond
         """
         return self.pixelScale(src)*180.0*3600.0/np.pi
+
+    def pointing(self, float zen, float azi):
+        """
+        Points the imager away from the source direction
+
+        Parameters
+        ----------
+        zen : float
+            The zenith angle offset with respect to the source zenith angle
+        azi : float
+            The azimuth angle offset with respect to the source azimuth angle
+        """
+        assert self._c_imaging.pixel_scale>0, "Imager pixel scale is not set, set it with <Imaging object>.pixelScale(<Source object>)"
+        self._c_imaging.set_pointing_direction(&zen,&azi)
 
     def ee80(self,double units=1.0, bint from_ghost=0):
         """
@@ -356,19 +389,79 @@ cdef class Imaging(Sensor):
                 q[k] = np.float('inf')
         return np.asarray(q)*units
 
-    property photoelectron_gain:
-        def __get__(self):
-            return self._c_imaging.photoelectron_gain
-        def __set__(self,float value):
-            self._c_imaging.photoelectron_gain = value
 
-    property N_FRAME:
-        def __get__(self):
-            return self._c_imaging.N_FRAME
+    def ee50(self,double units=1.0, bint from_ghost=0):
+        """
+        Computes the 50% ensquared energy patch size
+        
+        Parameters
+        ----------
+        units : double
+            The units to convert the 80% ensquared energy to
 
-    property N_PHOTON_PER_FRAME:
-        def __get__(self):
-            return self._c_imaging.N_PHOTON_PER_FRAME
+        Returns
+        -------
+        delta : double
+            The 80% ensquared energy patch size in pixel (default) or units if given
+        """
+        cdef:
+            int k, n, m, N_FRAME
+            double[::1] q 
+            double[:,::1] x, y, gate
+            double[:] u, v
+        if from_ghost:
+            psf = np.asarray( self.ghost_frame )
+            N_FRAME = self.ghost_N_FRAME
+        else:
+            psf = self.frame.host()  
+            N_FRAME = self._c_imaging.N_FRAME
+        n,m   = psf.shape
+        n /= self.N_SOURCE
+        #u     = np.linspace(-1.0,1.0,n)*(n/2.0)
+        #v     = np.linspace(-1.0,1.0,m)*(m/2.0)
+        u     = np.arange(n,dtype=np.float64)-(n-1)*0.5
+        v     = np.arange(m,dtype=np.float64)-(m-1)*0.5
+        x,y   = np.meshgrid(u,v)
+        psf = psf.reshape(self.N_SOURCE,n,m)
+        def ee50_fun(float ee_Delta, _psf_):
+            _ee_Delta_ = ee_Delta/2.0
+            #gate = np.logical_and(np.abs(x)<=_ee_Delta_,np.abs(y)<=_ee_Delta_)
+            gate = np.hypot(x,y)<=_ee_Delta_
+            return np.sum(_psf_*gate)/(self._c_imaging.N_PHOTON_PER_FRAME*\
+                                       N_FRAME/self.N_SOURCE) - 0.5
+        q = np.zeros(self.N_SOURCE)
+        for k in range(self.N_SOURCE):
+            try:
+                q[k] = bisect(ee50_fun,3,n,args=(psf[k,:,:]))
+            except ValueError:
+                q[k] = np.float('inf')
+        return np.asarray(q)*units
+
+    @property
+    def pixel_scale(self):
+        return self._c_imaging.pixel_scale
+
+    @property
+    def photoelectron_gain(self):
+        return self._c_imaging.photoelectron_gain
+    @photoelectron_gain.setter
+    def photoelectron_gain(self,float value):
+        self._c_imaging.photoelectron_gain = value
+
+    @property
+    def N_FRAME(self):
+        return self._c_imaging.N_FRAME
+
+    @property
+    def N_PHOTON_PER_FRAME(self):
+        return self._c_imaging.N_PHOTON_PER_FRAME
+
+    @property
+    def absolute_pointing(self):
+        return self._c_imaging.absolute_pointing
+    @absolute_pointing.setter
+    def absolute_pointing(self, int value):
+        self._c_imaging.absolute_pointing = value
 @
 \index{imaging!python!JImaging}
 <<imaging.pyx>>=

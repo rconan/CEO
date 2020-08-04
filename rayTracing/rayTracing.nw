@@ -2474,7 +2474,91 @@ void thin_lens(bundle *rays)
 \label{sec:tests}
 
 <<rayTracing.bin>>=
-<<benchmark II>>
+<<TEST I>>
+@
+
+\subsection{Test I}
+\label{sec:test-i}
+
+<<TEST I>>=
+#include <iostream>
+#include <sstream>
+#include <fstream>
+#include "ceo.h"
+using namespace std;
+
+int main(int argc,char *argv[]) {
+  int N_GS, N_GS_max, nPx, k_nPx, k_GS, zern_j, zern_n, k;
+  float elaspedTime, rms;
+  rtd D;
+  vector src_origin, zern_origin, zern_euler_angles;
+  //ostream f;
+  float *zen, *azi;
+
+  D = 25.5;
+  src_origin.x =  0.0;
+  src_origin.y =  0.0;
+  src_origin.z = 25.0;
+
+  nPx = 256;
+
+  stopwatch tid;
+  source src;
+  zernikeS zern;
+  gmt_m1 M1;
+  gmt_m2 M2;
+
+  zern_n = 0;
+  zern_j = (zern_n+1)*(zern_n+2)/2;
+  rtd *a;
+  a = (rtd *)malloc( sizeof(rtd)*zern_j );
+  for (k=0;k<zern_j;k++)
+    a[k] = 0*1e-6;
+  zern_origin.x = zern_origin.y = zern_origin.z = 0.0;
+  zern_euler_angles.x = zern_euler_angles.y = zern_euler_angles.z = 0.0;
+  zern.setup(zern_n,a,zern_origin,zern_euler_angles,7);
+
+  N_GS_max = 3;
+  nPx = 512;
+  N_GS = 1;
+
+  zen = (float *) malloc( sizeof(float)*N_GS );
+  azi = (float *) malloc( sizeof(float)*N_GS );
+  for (k_GS=0;k_GS<N_GS;k_GS++) {
+    zen[k_GS] = 0.0;
+    azi[k_GS] = 0.0;
+  }
+  src.setup("R",zen,azi,INFINITY,N_GS,D,nPx,src_origin);
+
+  M1.setup(&zern);
+
+  M2.setup(&zern);
+  
+  tid.tic();
+
+  src.wavefront.reset();
+  src.reset_rays();
+  M2.blocking( &(src.rays) );
+  M1.trace( &(src.rays) );
+  M2.trace( &(src.rays) );
+  src.rays.to_sphere(-5.830,2.197173);
+  src.opd2phase();
+
+  tid.toc(&elaspedTime);
+  std::cout << "ET:" << elaspedTime << "ms" << endl;
+
+  src.phase2file("phase.bin");
+
+  src.wavefront.rms(&rms);
+  std::cout << "WFE RMS:" << rms << "" << endl;
+
+  M1.cleanup();
+  M2.cleanup();
+  src.cleanup();
+  free(zen);
+  free(azi);
+
+}
 @
 \subsection{Benchmark I}
 \label{sec:benchmark-i}
@@ -2487,7 +2571,7 @@ using namespace std;
 
 int main(int argc,char *argv[]) {
   int N_GS, N_GS_max, nPx, k_nPx, k_GS, zern_j, zern_n, k;
-  float elaspedTime;
+  float elaspedTime, rms;
   rtd D;
   vector src_origin, zern_origin, zern_euler_angles;
   ofstream f;
@@ -2536,15 +2620,15 @@ int main(int argc,char *argv[]) {
       zen = (float *) malloc( sizeof(float)*N_GS );
       azi = (float *) malloc( sizeof(float)*N_GS );
       for (k_GS=0;k_GS<N_GS;k_GS++) {
-	zen[k_GS] = 0.0;
-	azi[k_GS] = 0.0;
+        zen[k_GS] = 0.0;
+        azi[k_GS] = 0.0;
       }
 
       src.setup("R",zen,azi,INFINITY,N_GS,D,nPx,src_origin);
 
-      M1.setup(D,nPx,&zern,0);
+      M1.setup(&zern);
 
-      M2.setup(D,nPx,&zern,N_GS);
+      M2.setup(&zern);
 
       /* for (int k=0;k<2;k++) { */
       /* 	M2.blocking( &(src.rays) ); */

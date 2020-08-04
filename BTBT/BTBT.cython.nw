@@ -4,16 +4,23 @@
 \label{sec:pxd-file}
 
 <<BTBT.pxd>>=
-from utilities cimport float2, cuFloatArray,  cuFloatComplexArray
+from utilities cimport float2, cuFloatArray,  cuFloatComplexArray, cuIntArray
 cdef extern from "BTBT.h":
     cdef cppclass BTBT:
         int M, N, MT, MT2, NT, NT2, NU, NU2, NDFT, HALF_NDFT, NU_TOTAL, NF, NF2, ind_size, cov_size
+        unsigned int *d__mu
+        unsigned int *d__xi
         float2 *d__cov
         float2 *d__b
         float2 *d__c
         void setup(int, int, int, int, float *_)
         void cleanup()
         void MVM(float *, float *)
+        void MVM_i(float *, float *)
+        void MVM_ii(float *, float *)
+        void MVM_iii(float *, float *)
+        void MVM_iv(float *, float *)
+        void MVM_v(float *, float *)
 <<class definitions>>
 @ 
 \subsection{Class definitions}
@@ -26,10 +33,64 @@ cdef class BT2:
         public int M, N, MT, NT, NDFT
         public cuFloatComplexArray cov, b, c
         cdef init(BT2, BTBT *)
+cdef class Btbt:
+    cdef:
+        BTBT *_c_BTBT
+        public int M, N, MT, NT, NDFT
+        public cuFloatComplexArray cov, b, c
+        public cuFloatArray e
+        public cuIntArray mu, xi
 @
 \section{PYX file}
 \label{sec:pyx-file}
 
+\index{BTBT!python!Btbt}
+<<BTBT.pyx>>=
+cdef class Btbt:
+    def __cinit__(self,int M, int N, int MT, int NT, cuFloatArray e):
+        self._c_BTBT = new BTBT()
+        self._c_BTBT.setup(M,N,MT,NT,e._c_gpu.dev_data)
+        self.M    = self._c_BTBT.M
+        self.MT   = self._c_BTBT.MT
+        self.N    = self._c_BTBT.N
+        self.NT   = self._c_BTBT.NT
+        self.NDFT = self._c_BTBT.NDFT
+        self.cov = cuFloatComplexArray(shape=(1,self.M*self.N*self.NDFT))
+        self.b   = cuFloatComplexArray(shape=(1,self.N*self.NDFT))
+        self.c   = cuFloatComplexArray(shape=(1,self.M*self.NDFT))
+        self.mu  = cuIntArray(shape=(1,self.NT*self.NT))
+        self.xi  = cuIntArray(shape=(1,self.MT*self.MT))
+        self.cov._c_gpu.dev_data = self._c_BTBT.d__cov
+        self.b._c_gpu.dev_data   = self._c_BTBT.d__b
+        self.c._c_gpu.dev_data   = self._c_BTBT.d__c
+        self.mu._c_gpu.dev_data = <int *>self._c_BTBT.d__mu
+        self.xi._c_gpu.dev_data = <int *>self._c_BTBT.d__xi
+    def MVM(self,float[:] x, int step=0):
+        cdef cuFloatArray __x,y
+        __x = cuFloatArray(host_data=x)
+        y = cuFloatArray(shape=(self.M*self.NT*self.NT,1),dev_malloc=True)
+        if step==0:
+            self._c_BTBT.MVM(y._c_gpu.dev_data,__x._c_gpu.dev_data)
+        if step==1:
+            self._c_BTBT.MVM_i(y._c_gpu.dev_data,__x._c_gpu.dev_data)
+        if step==2:
+            self._c_BTBT.MVM_ii(y._c_gpu.dev_data,__x._c_gpu.dev_data)
+        if step==3:
+            self._c_BTBT.MVM_iii(y._c_gpu.dev_data,__x._c_gpu.dev_data)
+        if step==4:
+            self._c_BTBT.MVM_iv(y._c_gpu.dev_data,__x._c_gpu.dev_data)
+        if step==5:
+            self._c_BTBT.MVM_v(y._c_gpu.dev_data,__x._c_gpu.dev_data)
+        return y
+    def MVM(self,float[:] x):
+        cdef cuFloatArray __x,y
+        __x = cuFloatArray(host_data=x)
+        y = cuFloatArray(shape=(self.M*self.NT*self.NT,1),dev_malloc=True)
+        self._c_BTBT.MVM(y._c_gpu.dev_data,__x._c_gpu.dev_data)
+        return y
+    def __dealloc__(self):
+        self._c_BTBT.cleanup()
+@
 \index{BTBT!python!BT2}
 <<BTBT.pyx>>=
 cdef class BT2:

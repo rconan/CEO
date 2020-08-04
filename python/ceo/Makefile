@@ -1,6 +1,13 @@
 include ../../common.mk
 
+PYV=$(shell python -c "import sys;t='{v[0]}.{v[1]}'.format(v=list(sys.version_info[:2]));sys.stdout.write(t)")
+
 .pyx.so:
-	cython --directive embedsignature=True --cplus $< -o  $<.cu
-	$(NVCC) -w $(INCS) -I$(PYTHONPATH)/include/python2.7/ -I$(PYTHONPATH)/lib/python2.7/site-packages/numpy/core/include -arch=sm_20 -lineinfo -Xcompiler '-fPIC,-pthread,-O3' -o  $<.o -c  $<.cu
-	$(NVCC) -shared $<.o -o $@ $(LIBS) 
+	cython -2 --directive embedsignature=True --cplus $< -o  $<.cu
+	$(NVCC) -w $(INCS) -I$(PYTHONPATH)/include/python$(PYV)m -I$(PYTHONPATH)/lib/python$(PYV)/site-packages/numpy/core/include -lineinfo -Xcompiler '-fPIC,-pthread,-O3' -o  $<.o -c  $<.cu
+	$(NVCC) -shared $<.o -o $@ $(LIBS)
+
+aco:
+	$(TANGLE) -RLinearActiveOptics.py  ActiveOptics.nw > LinearActiveOptics.py
+	$(WEAVE) -delay -index  ActiveOptics.nw > doc/LinearActiveOptics.tex
+	make -C doc

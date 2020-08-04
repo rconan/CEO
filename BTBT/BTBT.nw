@@ -35,6 +35,11 @@ struct BTBT {
   void info(void);
 
   void MVM(float *y, float *x);
+  void MVM_i(float *y, float *x);
+  void MVM_ii(float *y, float *x);
+  void MVM_iii(float *y, float *x);
+  void MVM_iv(float *y, float *x);
+  void MVM_v(float *y, float *x);
 
 };
 #endif // __BTBT_H__
@@ -167,29 +172,29 @@ HANDLE_ERROR( cudaMalloc((void**)&d__c, M*sizeof(float2)*NDFT ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__cov, M*N*sizeof(float2)*NDFT ) );
 HANDLE_ERROR( cudaMemset(d__cov, 0, M*N*sizeof(float2)*NDFT ) );  
 for (int k=0;k<(M*N);k++)
-  HANDLE_ERROR( cudaMemcpy( ((float *)d__cov) + k*NDFT, d__cov_ + k*NU2,
+  HANDLE_ERROR( cudaMemcpy( (float *)(d__cov + k*HALF_NDFT), d__cov_ + k*NU2,
 			    NU2*sizeof(float), cudaMemcpyDeviceToDevice) );
 
 int BATCH = M*N;
 fprintf(stdout,"\n@(CEO)>BTBT: Creating a 1D covariance FFT plan\n");
 HANDLE_ERROR_CUFFT( cufftPlan1d(&raster_plan, NDFT, CUFFT_R2C, BATCH),
 		    "Unable to create plan");
-HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(raster_plan, CUFFT_COMPATIBILITY_NATIVE),
-		    "Unable to set compatibility mode to native");
+/*HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(raster_plan, CUFFT_COMPATIBILITY_FFTW_PADDING),
+  "Unable to set compatibility mode to native");*/
 
 fprintf(stdout,"\n@(CEO)>BTBT: Creating a 1D MVM input FFT plan\n");
 BATCH = N;
 HANDLE_ERROR_CUFFT( cufftPlan1d(&MVM_input_plan, NDFT, CUFFT_R2C, BATCH),
 		    "Unable to create plan");
-HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(MVM_input_plan, CUFFT_COMPATIBILITY_NATIVE),
-		    "Unable to set compatibility mode to native");
+/*HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(MVM_input_plan, CUFFT_COMPATIBILITY_FFTW_PADDING),
+  "Unable to set compatibility mode to native");*/
 
 fprintf(stdout,"\n@(CEO)>BTBT: Creating a 1D MVM output FFT plan\n");
 BATCH = M;
 HANDLE_ERROR_CUFFT( cufftPlan1d(&MVM_output_plan, NDFT, CUFFT_C2R, BATCH),
 		    "Unable to create plan");
-HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(MVM_output_plan, CUFFT_COMPATIBILITY_NATIVE),
-		    "Unable to set compatibility mode to native");
+/*HANDLE_ERROR_CUFFT( cufftSetCompatibilityMode(MVM_output_plan, CUFFT_COMPATIBILITY_FFTW_PADDING),
+  "Unable to set compatibility mode to native");*/
 //cublasCreate(&handle);
 @ 
 <<allocation (matrix)>>=
@@ -276,7 +281,7 @@ for (int k=0;k<NDFT;k++) {
 <<raster covariance FT>>=
 HANDLE_ERROR_CUFFT( cufftExecR2C(raster_plan, (cufftReal*)d__cov, d__cov),
 		    "Unable to execute plan!");
-HANDLE_ERROR( cudaThreadSynchronize() );
+//HANDLE_ERROR( cudaThreadSynchronize() );
 
 @ Memory is freed with:
 \index{BTBT!BTBT!cleanup}
@@ -379,6 +384,55 @@ void BTBT::MVM(float *y, float *x)
 	}
   /* tid.toc("STEP 5"); */
 }
+void BTBT::MVM_i(float *y, float *x)
+{
+  <<MVM STEP 1: input ordering>>
+  float *b;  
+  b = (float*)malloc(N*sizeof(float2)*NDFT);  
+  HANDLE_ERROR( cudaMemcpy( b, (float *)d__b, N*sizeof(float2)*NDFT, cudaMemcpyDeviceToHost) );
+  /*
+  for (int i=0;i<(N*NDFT);i++) {  
+    fprintf(stdout,"|(%3d) [%+6.4E;%+6.4E]\n",i,b[i].x,b[i].y);  
+    } */
+  float s;
+  for (int i=0;i<N;i++) {
+    s = 0;
+    for (int k=0;k<NDFT;k++) {
+      s += b[k+i*NDFT];
+    }
+    fprintf(stdout,"S[b][%d]=%f\n",i,s);
+  }
+  free(b);  
+}
+void BTBT::MVM_ii(float *y, float *x)
+{
+ dim3 blockDim(256,1);
+ dim3 gridDim( 1+NT2/256,N);
+  <<MVM STEP 2: input FT>>
+}
+void BTBT::MVM_iii(float *y, float *x)
+{
+ dim3 blockDim(256,1);
+ dim3 gridDim( 1+NT2/256,N);
+     <<MVM STEP 3: Fourier domain multiplication>>
+}
+void BTBT::MVM_iv(float *y, float *x)
+{
+ dim3 blockDim(256,1);
+ dim3 gridDim( 1+NT2/256,N);
+ <<MVM STEP 4: output FT>>
+}
+void BTBT::MVM_v(float *y, float *x)
+{
+ dim3 blockDim(256,1);
+ dim3 gridDim( 1+NT2/256,N);
+ if (mask==NULL) {
+   <<MVM STEP 5: output ordering>>
+ }
+ else {
+   <<MVM STEP 5: output ordering (masked)>>
+ }
+}
 @
 The vector $s$ is made of $N$ components of length $[[NT]]^2$: $$s= \left[
 \begin{array}{c}
@@ -408,18 +462,20 @@ The matrix--to--vector multiplication $y=C_{\vec\alpha\cdot\vec\beta}s$ is deriv
 <<MVM STEP 1: input ordering>>=
 dim3 blockDim(256,1);
 dim3 gridDim( 1+NT2/256,N);
-mvm_input_order LLL gridDim,blockDim RRR ( ((float*)d__b), NDFT, x, NT2, d__mu);
+mvm_input_order LLL gridDim,blockDim RRR ( d__b, HALF_NDFT, x, NT2, d__mu);
 @  using the kernel:
 <<MVM input ordering kernel>>=
-__global__ void mvm_input_order(float *x_out, int n_x_out, 
+__global__ void mvm_input_order(float2 *x_out, int n_x_out, 
                                 float *x_in, int n_x_in, 
                                 unsigned int *ind) 
 {
   int k, n;
+  float *real_x_out;
   k = blockIdx.x * blockDim.x + threadIdx.x;
   n = blockIdx.y;
   if (k<n_x_in) {
-    x_out[ind[k] + n*n_x_out] = x_in[k + n*n_x_in];
+    real_x_out = (float *) (x_out + n*n_x_out);
+    real_x_out[ind[k]] = x_in[k + n*n_x_in];
   }
 }
 @ 
@@ -427,7 +483,7 @@ __global__ void mvm_input_order(float *x_out, int n_x_out,
 <<MVM STEP 2: input FT>>=
 HANDLE_ERROR_CUFFT( cufftExecR2C(MVM_input_plan, (cufftReal*)d__b, d__b),
                     "Unable to execute plan forward FT with MVM plan");
-HANDLE_ERROR( cudaThreadSynchronize() );
+//HANDLE_ERROR( cudaThreadSynchronize() );
 @
 \item $\tilde b$ and $\tilde T$ are multiplied element wise i.e. 
 $$\tilde c = \tilde b\tilde T =
@@ -483,43 +539,49 @@ cublasCgemmBatched(handle, CUBLAS_OP_N, CUBLAS_OP_N,
 <<MVM STEP 4: output FT>>=
 HANDLE_ERROR_CUFFT( cufftExecC2R(MVM_output_plan, d__c, (cufftReal*)d__c),
                     "Unable to execute inverse FT with MVM plan");
-HANDLE_ERROR( cudaThreadSynchronize() );
+//HANDLE_ERROR( cudaThreadSynchronize() );
 @
 \item the real part of $c$ is affected into vector $y$ according to the ordering in vector $\xi$ i.e. $y=c[\xi].x$.
 <<MVM STEP 5: output ordering>>=
 blockDim = dim3(256,1);
 gridDim  = dim3( 1+MT2/256,M);
-mvm_output_order LLL gridDim,blockDim RRR (y, MT2, ((float *)d__c), NDFT, d__xi);
+mvm_output_order LLL gridDim,blockDim RRR (y, MT2, d__c, HALF_NDFT, d__xi);
 @  using the kernel:
 <<MVM output ordering kernel>>=
 __global__ void mvm_output_order(float *x_out, int n_x_out, 
-                                float *x_in, int n_x_in, 
+                                float2 *x_in, int n_x_in, 
                                 unsigned int *ind) 
 {
-  int k, m;
+  int k, m, ndft;
+  float *real_x_in;
   k = blockIdx.x * blockDim.x + threadIdx.x;
   m = blockIdx.y;
   if (k<n_x_out) {
-      x_out[k + m*n_x_out] = x_in[ind[k] + m*n_x_in]/n_x_in;		
+    real_x_in = (float *) (x_in + m*n_x_in);
+    ndft = n_x_in*2 - 2;
+    x_out[k + m*n_x_out] = real_x_in[ind[k]]/ndft;
   }
 }
 <<MVM STEP 5: output ordering (masked)>>=
 blockDim = dim3(256,1);
 gridDim  = dim3( 1+MT2/256,M);
 mvm_output_order_mask LLL gridDim,blockDim RRR (y, MT2, 
-						((float *)d__c), NDFT, 
-						d__xi, mask);
+                                                d__c, HALF_NDFT, 
+                                                d__xi, mask);
 @  using the kernel:
 <<MVM output ordering kernel (masked)>>=
 __global__ void mvm_output_order_mask(float *x_out, int n_x_out, 
-                                float *x_in, int n_x_in, 
+                                float2 *x_in, int n_x_in, 
                                 unsigned int *ind, char *mask) 
 {
-  int k, m;
+  int k, m, ndft;
+  float *real_x_in;
   k = blockIdx.x * blockDim.x + threadIdx.x;
   m = blockIdx.y;
   if (k<n_x_out) {
-    x_out[k + m*n_x_out] = (mask[k]>0) ?  x_in[ind[k] + m*n_x_in]/n_x_in : 0;		
+    real_x_in = (float *) (x_in + m*n_x_in);
+    ndft = n_x_in*2 - 2;
+    x_out[k + m*n_x_out] = (mask[k]>0) ?  real_x_in[ind[k]]/ndft : 0;
   }
 }
 @ \end{enumerate}

@@ -90,11 +90,11 @@ cdef class Lmmse:
     def __cinit__(self,AtmosphereAbstract atm, 
                   Source guide_star, Source mmse_star,
                   float sampling, int N, MaskAbstract pupil, 
-                  char *solver_id, int osf=1):
+                  str solver_id, int osf=1):
         self._c_LMMSE = new LMMSE()
         self._c_LMMSE.setup(atm._c_atmosphere,
                             guide_star._c_source, mmse_star._c_source,
-                            sampling, N, pupil._c_mask, solver_id,osf)
+                            sampling, N, pupil._c_mask, <bytes>solver_id.encode(),osf)
         self.iSolve = IterativeSolvers()
         self.iSolve._c_iterativeSolvers = &(self._c_LMMSE.iSolve)
         self.aa = AaStats()
@@ -164,19 +164,19 @@ cdef class LmmseSH:
     
     def __cinit__(self,AtmosphereAbstract atm, 
                   Source guide_star, Source mmse_star,
-                  ShackHartmann wfs, char *solver_id,
+                  ShackHartmann wfs, str solver_id,
                   int osf=1, MaskAbstract M=None):
         self._c_LMMSE = new LMMSE()
         self.N_slope = wfs.N_SIDE_LENSLET*wfs.N_SIDE_LENSLET*2*guide_star._c_source.N_SRC
         if osf>1:
             self._c_LMMSE.setup(atm._c_atmosphere,
                                 guide_star._c_source, mmse_star._c_source,
-                                wfs._c_shackHartmann, solver_id,
+                                wfs._c_shackHartmann, <bytes>solver_id.encode(),
                                 osf, M._c_mask)
         else:
             self._c_LMMSE.setup(atm._c_atmosphere,
                                 guide_star._c_source, mmse_star._c_source,
-                                wfs._c_shackHartmann, solver_id)
+                                wfs._c_shackHartmann, <bytes>solver_id.encode())
         self.N_phase = self._c_LMMSE.NP
 
     def __dealloc__(self):
