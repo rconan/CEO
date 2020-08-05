@@ -28,12 +28,16 @@ struct LMMSE {
   void setup(atmosphere *atm, source *guide_star, source *mmse_star,
 	     float sampling, int N, char *solver_id);
   void setup(atmosphere *atm, source *guide_star, source *mmse_star,
-	     float sampling, int N, 
-	     mask *pupil, char *solver_id);
+             float sampling, int N, 
+             mask *pupil, char *solver_id);
   void setup(atmosphere *atm, source *guide_star, source *mmse_star,
-	     float sampling, int N, 
-	     mask *pupil, char *solver_id,
+             float sampling, int N, 
+             mask *pupil, char *solver_id,
              int wavefront_osf);
+  void setup(atmosphere *atm, source *guide_star, source *mmse_star,
+             float sampling, int _N_SIDE_LENSLET_,
+             mask *pupil, char *solver_id, int wavefront_osf,
+             float z_radius);
   void setup(atmosphere *atm, source *guide_star, source *mmse_star,
 	     shackHartmann *wfs, char *solver_id);
   void setup(atmosphere *atm, source *guide_star, source *mmse_star,
@@ -366,12 +370,44 @@ osf = 1; // The wavefront over-sampling factor (1 means the same sampling that t
 \index{LMMSE!LMMSE!setup}
 <<setup with pupil and osf>>=
 void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
-		       float sampling, int _N_SIDE_LENSLET_,
-                       mask *pupil, char *solver_id, int wavefront_osf)
+                  float sampling, int _N_SIDE_LENSLET_,
+                  mask *pupil, char *solver_id, int wavefront_osf)
 {
   N_SIDE_LENSLET_ = _N_SIDE_LENSLET_;
 osf = wavefront_osf; // The wavefront over-sampling factor (1 means the same sampling that the WFS)
 <<setup common with pupil>>
+}
+@ with a pupil, the wavefront over--sampling factor and polar average radius:
+\index{LMMSE!LMMSE!setup}
+<<setup with pupil and osf>>=
+void LMMSE::setup(atmosphere *atm, source *guide_star, source *mmse_star,
+                  float sampling, int _N_SIDE_LENSLET_,
+                  mask *pupil, char *solver_id, int wavefront_osf,
+                  float z_radius)
+{
+  N_SIDE_LENSLET_ = _N_SIDE_LENSLET_;
+osf = wavefront_osf; // The wavefront over-sampling factor (1 means the same sampling that the WFS)
+
+  N_guide_star = guide_star->N_SRC;
+  N_mmse_star  = 1;
+
+  <<setup: AA covariance>>
+
+  NP = osf*N_SIDE_LENSLET_+1; // The number of wavefront sample
+  NS = (osf>1) ? NP : N_SIDE_LENSLET_;
+
+  pa.setup(NP,NS,osf,atm,sampling,
+           mmse_star, N_mmse_star,
+           guide_star, N_guide_star,
+           z_radius);
+
+  paCov.setup(N_mmse_star,2*N_guide_star,pa.M_LAYER,NS,pa.d__cov);
+  paCov.mask = pupil->m;
+
+  PS_E_N_PX = paCov.MT2_TOTAL;
+  nnz = 0;
+
+<<setup common (solver setup and memory allocation)>>
 }
 @ with a Shack--Hartmann:
 \index{LMMSE!LMMSE!setup}
