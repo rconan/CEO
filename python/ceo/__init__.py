@@ -7,7 +7,7 @@ from .imaging import Imaging, JImaging
 from .centroiding import Centroiding
 from .shackHartmann import ShackHartmann, TT7, GeometricShackHartmann, JShackHartmann
 from .segmentPistonSensor import SegmentPistonSensor
-from .aaStats import AaStats, AaStatsMatrix, PaStats
+from .aaStats import AaStats, AaStatsMatrix, PaStats, APaStats
 from .BTBT import Btbt
 from .GBTBT import Gbtbt
 from .iterativeSolvers import Minres

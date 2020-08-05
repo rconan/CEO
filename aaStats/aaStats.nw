@@ -51,7 +51,7 @@ struct paStats {
   void setup(int M_, int N_, int osf_, const atmosphere *atm, float lenslet_pitch, 
              source *phase_src, int N_P_SRC, const source *slopes_src, int N_S_SRC);
   void setup(int M_, int N_, int osf_, const atmosphere *atm, float lenslet_pitch, 
-             source *phase_src, int N_P_SRC, const source *slopes_src, int N_S_SRC,
+             const source *slopes_src, int N_S_SRC,
              float z_radius);
 
   void cleanup(void);
@@ -679,10 +679,10 @@ void paStats::setup(int M_, int N_, int osf_,
 <<paStats setup>>=
 void paStats::setup(int M_, int N_, int osf_, 
                     const atmosphere *atm, float lenslet_pitch, 
-                    source *phase_src_in, int N_P_SRC, 
                     const source *slopes_src, int N_S_SRC,
                     float z_radius)
 {
+ int N_P_SRC = 1;
   N_SRC2 = N_P_SRC*N_S_SRC;
   float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
   osf = osf_;
@@ -696,9 +696,6 @@ void paStats::setup(int M_, int N_, int osf_,
   NF2 = NF*NF;
   kappa = 4;
   sampling = lenslet_pitch/osf;
-  source *phase_src;
-
-    phase_src = phase_src_in;
 
     M_LAYER = (int *)malloc(sizeof(int));
     M_LAYER[0] = M; 
@@ -923,7 +920,6 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
     paPolarPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch, 
                                                          atm->wavelength, atm->r0, 
                                                          atm->turbulence.L0, atm->d__layers, atm->N_LAYER,
-                                                         (phase_src->dev_ptr) + i_P_SRC, 
                                                          (slopes_src->dev_ptr) + j_S_SRC,
                                                          d__alpha, kappa, shift, z_radius);
     <<AA covariance with Wiener-Khinchin>>
@@ -934,7 +930,6 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
     paPolarPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch,
                                                          atm->wavelength, atm->r0, 
                                                          atm->turbulence.L0, atm->d__layers, atm->N_LAYER,
-                                                         (phase_src->dev_ptr) + i_P_SRC, 
                                                          (slopes_src->dev_ptr) + j_S_SRC,
                                                          d__beta, kappa, shift, z_radius);
     <<AA covariance with Wiener-Khinchin>>
@@ -945,10 +940,10 @@ fprintf(stdout,"\n");
 @ The power spectrum is computed with the following kernels:
 <<paStats power spectrum kernel>>=
 __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
-				float wavelength, float r0, float L0,
+                                float wavelength, float r0, float L0,
                                 layer *turb, int N_LAYER,
-				source *src1, source *src2,
-				float *alpha, float kappa, int shift)
+                                source *src1, source *src2,
+                                float *alpha, float kappa, int shift)
 {
   int i, j, k;
   float fx, fy, f_square, fs, gl, red, c_red, s_red, wavenumber, src_x, src_y;
@@ -993,11 +988,11 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
 The average of the power spectrum on an angular disc of radius $[z_radius]$ is
 <<paStats polar average power spectrum kernel>>=
 __global__ void paPolarPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
-                                float wavelength, float r0, float L0,
-                                layer *turb, int N_LAYER,
-                                source *src1, source *src2,
-                                float *alpha, float kappa, int shift,
-                                float z_radius)
+                                     float wavelength, float r0, float L0,
+                                     layer *turb, int N_LAYER,
+                                     source *src2,
+                                     float *alpha, float kappa, int shift,
+                                     float z_radius)
 {
   int i, j, k;
   float fx, fy, f_square, f, fs, gl, red, c_red, s_red, wavenumber, src_x, src_y, b;
@@ -1010,7 +1005,7 @@ __global__ void paPolarPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
     d__psd[k].x = 0;
     d__psd[k].y = 0;
      for (int k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++) {
-      gl = (1-turb[k_LAYER].altitude/src1->height);
+       gl = 1.0;
       red = 2*PI;
       src_x = src2->theta_x;
       src_x *= turb[k_LAYER].altitude;
