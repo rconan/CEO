@@ -55,6 +55,7 @@ cdef int N_phase
 cdef public IterativeSolvers iSolve
 cdef public AaStats aa
 cdef public BT2 aaCov
+cdef public cuFloatArray x
 @
 
 \section{PYX file}
@@ -99,16 +100,28 @@ cdef class Lmmse:
         self._c_LMMSE.setup(atm._c_atmosphere,
                             guide_star._c_source, mmse_star._c_source,
                             sampling, N, pupil._c_mask, <bytes>solver_id.encode(),osf)
-        self.iSolve = IterativeSolvers()
-        self.iSolve._c_iterativeSolvers = &(self._c_LMMSE.iSolve)
-        self.aa = AaStats()
-        self.aa.init(&(self._c_LMMSE.aa))
-        self.aaCov = BT2()
-        self.aaCov.init(&(self._c_LMMSE.aaCov))
-        self.N_phase = self._c_LMMSE.NP
+        <<LMMSE constructor>>
 
     <<Lmmse methods>>
+@
+with
+<<LMMSE constructor>>=
+self.iSolve = IterativeSolvers()
+self.iSolve._c_iterativeSolvers = &(self._c_LMMSE.iSolve)
+self.aa = AaStats()
+self.aa.init(&(self._c_LMMSE.aa))
+self.aaCov = BT2()
+self.aaCov.init(&(self._c_LMMSE.aaCov))
+self.N_phase = self._c_LMMSE.NP
+self.x = cuFloatArray(dev_malloc=False)
+self.x._c_gpu.dev_data = self._c_LMMSE.d__x
+@
 
+\subsection{ALmmse}
+\label{sec:almmse}
+
+\index{LMMSE!python!ALmmse}
+<<LMMSE.pyx>>=
 cdef class ALmmse:
     """
     A class for LMMSE reconstructor
@@ -144,13 +157,7 @@ cdef class ALmmse:
                             guide_star._c_source, 
                             sampling, N, pupil._c_mask, <bytes>solver_id.encode(),osf,
                             average_z_radius)
-        self.iSolve = IterativeSolvers()
-        self.iSolve._c_iterativeSolvers = &(self._c_LMMSE.iSolve)
-        self.aa = AaStats()
-        self.aa.init(&(self._c_LMMSE.aa))
-        self.aaCov = BT2()
-        self.aaCov.init(&(self._c_LMMSE.aaCov))
-        self.N_phase = self._c_LMMSE.NP
+        <<LMMSE constructor>>
 
     <<Lmmse methods>>
 @
