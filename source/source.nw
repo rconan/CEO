@@ -3326,7 +3326,9 @@ struct pssn {
   void otf(source *src);
   void atm_otf(float d, float r0, float L0);
   float eval(void);
+  float oeval(void);
   void eval(float *results);
+  void oeval(float *results);
 };
 @
 The pssn methods are:
@@ -3505,6 +3507,14 @@ float pssn::eval(void)
   result *= result;
   return result;
 }
+float pssn::oeval(void)
+{
+  float result;
+  CUBLAS_ERROR( cublasScnrm2( handle , NN, d__O, 1 , &num) );
+  result = num/denom[0];
+  result *= result;
+  return result;
+}
 void pssn::eval(float *results)
 {
   int k, N_OTF2;
@@ -3515,6 +3525,18 @@ void pssn::eval(float *results)
   N_OTF2 = N_OTF*N_OTF;
   for (k=0;k<N;k++) {
     CUBLAS_ERROR( cublasScnrm2( handle , N_OTF2, buffer+k*N_OTF2, 1 , &num) );
+    result = num/denom[k];
+    result *= result;
+    results[k] = result;
+  }
+}
+void pssn::oeval(float *results)
+{
+  int k, N_OTF2;
+  float result;
+  N_OTF2 = N_OTF*N_OTF;
+  for (k=0;k<N;k++) {
+    CUBLAS_ERROR( cublasScnrm2( handle , N_OTF2, d__O+k*N_OTF2, 1 , &num) );
     result = num/denom[k];
     result *= result;
     results[k] = result;
