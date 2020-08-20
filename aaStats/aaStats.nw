@@ -49,7 +49,10 @@ struct paStats {
   <<paStats parameters>>
 
   void setup(int M_, int N_, int osf_, const atmosphere *atm, float lenslet_pitch, 
-	     source *phase_src, int N_P_SRC, const source *slopes_src, int N_S_SRC);
+             source *phase_src, int N_P_SRC, const source *slopes_src, int N_S_SRC);
+  void setup(int M_, int N_, int osf_, const atmosphere *atm, float lenslet_pitch, 
+             const source *slopes_src, int N_S_SRC,
+             float z_radius);
 
   void cleanup(void);
 
@@ -80,6 +83,7 @@ struct paStats {
 #include "aaStats.h"
 
 <<sinc>>
+<<somb>>
 
 <<subaperture FT>>
 <<subaperture PSF>>
@@ -89,6 +93,7 @@ struct paStats {
 <<aaStats power spectrum kernel>>
 
 <<paStats power spectrum kernel>>
+<<paStats polar average power spectrum kernel>>
 <<paStats power spectrum kernel (single layer)>>
 
 <<covariance extraction>>
@@ -371,9 +376,11 @@ for (i_SRC=0;i_SRC<N_SRC;i_SRC++) {
         float2 *b;
     b = (float2*)malloc(psd_size);
     HANDLE_ERROR( cudaMemcpy( b, d__psd, psd_size, cudaMemcpyDeviceToHost) );
+    /*
     for (int i=0;i<100;i++) {
       fprintf(stdout,"|(%3d) [%+6.6g;%+6.6g]\n",i,b[i].x,b[i].y);
     }
+    */
     free(b);
     <<AA covariance reduction>>
 
@@ -626,9 +633,9 @@ Finally the Toeplitz compressed version of the matrix $\Xi$ is written:
 \index{aaStats!paStats!setup}
 <<paStats setup>>=
 void paStats::setup(int M_, int N_, int osf_, 
-		      const atmosphere *atm, float lenslet_pitch, 
-		      source *phase_src_in, int N_P_SRC, 
-		      const source *slopes_src, int N_S_SRC)
+                    const atmosphere *atm, float lenslet_pitch, 
+                    source *phase_src_in, int N_P_SRC, 
+                    const source *slopes_src, int N_S_SRC)
 {
   N_SRC2 = N_P_SRC*N_S_SRC;
   float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
@@ -667,6 +674,44 @@ void paStats::setup(int M_, int N_, int osf_,
   } else {
      <<paStats setup (multilayers)>>
   }
+  info(kappa,sampling);
+}
+<<paStats setup>>=
+void paStats::setup(int M_, int N_, int osf_, 
+                    const atmosphere *atm, float lenslet_pitch, 
+                    const source *slopes_src, int N_S_SRC,
+                    float z_radius)
+{
+ int N_P_SRC = 1;
+  N_SRC2 = N_P_SRC*N_S_SRC;
+  float alpha[2] = {1,0}, beta[2] = {0,1}, kappa; 
+  osf = osf_;
+  N = N_;
+  M = M_;
+  shift = (N==M) ? 0 : 1;  
+  N2 = M*N;
+  NU = M+N-1;
+  NU2 = NU*NU;
+  NF = 4096;
+  NF2 = NF*NF;
+  kappa = 4;
+  sampling = lenslet_pitch/osf;
+
+    M_LAYER = (int *)malloc(sizeof(int));
+    M_LAYER[0] = M; 
+
+    psd_size = sizeof(float2)*NF2;
+    cov_size = sizeof(float)*NU2*2*N_SRC2;
+    ind_size = sizeof(int)*N2;
+    int BATCH = 1;
+
+    <<paStats setup allocation>>
+
+    stopwatch tid;
+    tid.tic();
+    <<paStats polar average power spectrum with sources (same heights,rect.)>>
+    tid.toc(&cov_eval_et,"PA covariance evaluation");
+
   info(kappa,sampling);
 }
 @ The phase source is duplicated and set to the same height than the slope source:
@@ -853,13 +898,62 @@ for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
 }
 fprintf(stdout,"\n");
 }
+@
+The power spectrum of the average of the covariance over a continous sample of sources within a circle of angular radius $\zeta$ is given by:
+\begin{equation}
+  \label{eq:45}
+  W_{\varphi \vec \alpha}^{l,\zeta 2}(\vec f) = {1\over \pi\zeta^2} \int_0^\zeta {\mathrm d}z z \int_0^{2\pi}{\mathrm d} \theta -\iota\lambda\left( \vec f \cdot \vec\alpha \right) W_\varphi(\vec f) G(\gamma_l \vec f) \exp\left( 2\iota\pi h_l\vec f \cdot (\vec\theta_2-\vec\theta) \right),  
+\end{equation}
+Performing the integration leads to:
+\begin{equation}
+  \label{eq:45}
+  W_{\varphi \vec \alpha}^{l,\zeta 2}(\vec f) = -\iota\lambda\left( \vec f \cdot \vec\alpha \right) W_\varphi(\vec f) G(\gamma_l \vec f) {2J_1(2\pi h_lf\zeta)\over 2\pi h_lf\zeta} \exp\left( 2\iota\pi h_l\vec f \cdot \vec\theta_2 \right),  
+\end{equation}
+<<paStats polar average power spectrum with sources (same heights,rect.)>>=
+dim3 blockDimPsd(16,16);
+dim3 gridDimPsd( 1+NF/16 , 1+NF/16 );
+dim3 blockDimCov(16,16);
+dim3 gridDimCov( 1+NU/16 , 1+NU/16 );
+
+int i_P_SRC, j_S_SRC, offset0, offset;
+fprintf(stdout,"Polar average covariance %dx%d block:\n",N_P_SRC,N_S_SRC);
+for (i_P_SRC=0;i_P_SRC<N_P_SRC;i_P_SRC++) {
+
+  offset0 = 2*N_S_SRC*i_P_SRC;
+
+  for (j_S_SRC=0;j_S_SRC<N_S_SRC;j_S_SRC++) {
+
+    fprintf(stdout," [%d,%d]",i_P_SRC,j_S_SRC);
+
+    offset = offset0 + 2*j_S_SRC;
+    //fprintf(stdout,"(%2d",offset);
+    paPolarPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch, 
+                                                         atm->wavelength, atm->r0, 
+                                                         atm->turbulence.L0, atm->d__layers, atm->N_LAYER,
+                                                         (slopes_src->dev_ptr) + j_S_SRC,
+                                                         d__alpha, kappa, shift, z_radius);
+    <<AA covariance with Wiener-Khinchin>>
+    <<PA covariance reduction>>
+
+    offset = offset0 + (2*j_S_SRC+1);
+    //fprintf(stdout,",%2d)",offset);
+    paPolarPowerSpectrum LLL gridDimPsd,blockDimPsd RRR (d__psd, NF, osf, lenslet_pitch,
+                                                         atm->wavelength, atm->r0, 
+                                                         atm->turbulence.L0, atm->d__layers, atm->N_LAYER,
+                                                         (slopes_src->dev_ptr) + j_S_SRC,
+                                                         d__beta, kappa, shift, z_radius);
+    <<AA covariance with Wiener-Khinchin>>
+    <<PA covariance reduction>>
+}
+fprintf(stdout,"\n");
+}
 @ The power spectrum is computed with the following kernels:
 <<paStats power spectrum kernel>>=
 __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
-				float wavelength, float r0, float L0,
+                                float wavelength, float r0, float L0,
                                 layer *turb, int N_LAYER,
-				source *src1, source *src2,
-				float *alpha, float kappa, int shift)
+                                source *src1, source *src2,
+                                float *alpha, float kappa, int shift)
 {
   int i, j, k;
   float fx, fy, f_square, fs, gl, red, c_red, s_red, wavenumber, src_x, src_y;
@@ -882,9 +976,9 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
       fx = (float) i;
       fy = (float) j;
       if (i>=(NF/2))
-	fx = fx - NF;
+        fx = fx - NF;
       if (j>=(NF/2))
-	fy = fy - NF;
+        fy = fy - NF;
       fx *= fs;
       fy *= fs;
       f_square = fx*fx + fy*fy;
@@ -900,6 +994,59 @@ __global__ void paPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
     }
   }
 }
+@
+The average of the power spectrum on an angular disc of radius $[z_radius]$ is
+<<paStats polar average power spectrum kernel>>=
+__global__ void paPolarPowerSpectrum(float2 *d__psd, int NF, int osf, float d,
+                                     float wavelength, float r0, float L0,
+                                     layer *turb, int N_LAYER,
+                                     source *src2,
+                                     float *alpha, float kappa, int shift,
+                                     float z_radius)
+{
+  int i, j, k;
+  float fx, fy, f_square, f, fs, gl, red, c_red, s_red, wavenumber, src_x, src_y, b;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = i*NF + j;
+  if ( (i<NF) && (j<(NF)) ) {
+    wavenumber = wavelength*0.5/PI;
+    k = i*NF + j;
+    d__psd[k].x = 0;
+    d__psd[k].y = 0;
+     for (int k_LAYER=0;k_LAYER<N_LAYER;k_LAYER++) {
+       gl = 1.0;
+      red = 2*PI;
+      src_x = src2->theta_x;
+      src_x *= turb[k_LAYER].altitude;
+      src_y = src2->theta_y;
+      src_y *= turb[k_LAYER].altitude;
+      fs = osf*(2.0/NF)*(kappa/(2*d*gl));
+      fx = (float) i;
+      fy = (float) j;
+      if (i>=(NF/2))
+        fx = fx - NF;
+      if (j>=(NF/2))
+        fy = fy - NF;
+      fx *= fs;
+      fy *= fs;
+      f = hypot(fx,fy);
+      f_square = f*f;
+      fs *= fs;
+      b = 2*turb[k_LAYER].altitude*f*z_radius;
+      red *= fx*(src_x + 0.5*d*shift) + fy*(src_y + 0.5*d*shift);
+      sincosf( red, &s_red, &c_red);
+      red = -wavenumber*turb[k_LAYER].xi0*fs*wavelength*(fx*alpha[0] + fy*alpha[1])*
+        powf(r0,-5.0/3.0)*
+        phasePowerSpectrum(f_square, 1.0/L0)*
+        gateAmp(gl*fx*d,gl*fy*d)*
+        somb(b);
+      d__psd[k].x += -red*s_red;
+      d__psd[k].y +=  red*c_red;
+    }
+  }
+}
+@
 <<PA covariance reduction>>=
 pa_covariance_extraction LLL gridDimCov,blockDimCov RRR( d__cov + offset*NU2, NU,
 							 d__psd, NF, kappa);
@@ -1092,7 +1239,7 @@ __device__ float gatePSF(float fx, float fy) {
   out = sinc(fx)*sinc(fy);
   return out*out;
 }
-@ that depends on the $sinc$ function:
+@ that depends on the $\mathrm sinc$ function:
 \begin{equation}
   \label{eq:43}
   {\sin(\pi x)\over \pi x}
@@ -1100,6 +1247,16 @@ __device__ float gatePSF(float fx, float fy) {
 <<sinc>>=
 __device__ float sinc(float x) {
   return (x==0) ? 1.0 : sinf( PI*x) / (PI*x) ; 
+}
+@
+The Sombrero function is defined as:
+\begin{equation}
+  \label{eq:44}
+  {\mathrm somb}(x) = {2J_1(x)\over x}
+\end{equation}
+<<somb>>=
+__device__ float somb(float x) {
+  return (x==0) ? 1.0 : 2 * j1(PI*x) / (PI*x);
 }
 
 @

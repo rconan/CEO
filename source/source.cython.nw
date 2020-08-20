@@ -45,6 +45,7 @@ cdef extern from "source.h":
         void setup(rtd, int, int , vector, int)
         void setup(rtd, int , vector, int)
         void setup_free(int, double *, double *, vector)
+        void setup_free(double, double, int, double *, double *, vector)
         void cleanup()
         void to_z_plane(rtd)
         void to_sphere(vector)
@@ -63,6 +64,7 @@ cdef extern from "source.h":
 					 float , int )
         void get_vignetting(double *)
         void gmt_truss_onaxis()
+        void gmt_m2_baffle()
     # static routines
 	void get_n_iteration(int *)
 @
@@ -218,12 +220,13 @@ cdef class FreeBundle(Bundle):
     Bundle: the parent class for all ray bundle classes
 
     """
-    def __init__(self, ndarray x, ndarray y, list origin):
+    def __init__(self, ndarray x, ndarray y, list origin,
+                 double zenith=0.0, double azimuth=0.0):
         cdef vector __origin
         __origin.x = <rtd>origin[0]
         __origin.y = <rtd>origin[1]
         __origin.z = <rtd>origin[2]
-        self._c_bundle.setup_free(x.size, <double *>x.data, <double *>y.data, __origin)
+        self._c_bundle.setup_free(zenith, azimuth, x.size, <double *>x.data, <double *>y.data, __origin)
         super(FreeBundle,self).__init__()
     def __dealloc__(self):
         self._c_bundle.cleanup()
@@ -337,6 +340,8 @@ def ee80(self,spaxel="circle"):
 
 def gmt_truss_onaxis(self):
     self._c_bundle.gmt_truss_onaxis()
+def gmt_m2_baffle(self):
+    self._c_bundle.gmt_m2_baffle()
 
 property N_BUNDLE:
     def __get__(self):
@@ -1288,6 +1293,8 @@ class JSource(JSONAbstract,Source):
         void otf(source *)
         float eval()
         float eval(float *)
+        float oeval()
+        float oeval(float *)
 @
 \subsubsection{Class definition}
 \label{sec:class-definition-pssn}
@@ -1342,6 +1349,13 @@ cdef class PSSn:
         cdef float[:] results
         results = np.zeros(self._c_pssn.N,dtype=np.single)
         self._c_pssn.eval(&results[0])
+        return np.asarray(results)
+    def oeval(self):
+        return self._c_pssn.oeval()
+    def oevals(self):
+        cdef float[:] results
+        results = np.zeros(self._c_pssn.N,dtype=np.single)
+        self._c_pssn.oeval(&results[0])
         return np.asarray(results)
     @property
     def N_O(self):

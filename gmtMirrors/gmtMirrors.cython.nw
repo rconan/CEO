@@ -31,6 +31,8 @@ cdef class GmtMirrors:
         public GMT_M1 M1
         public GMT_M2 M2
         public float pointing_error_zenith, pointing_error_azimuth
+        public bint project_truss_onaxis
+        public bint M2_baffle
 @
 \subsection{PYX file}
 \label{sec:pyx-file}
@@ -117,6 +119,8 @@ cdef class GmtMirrors:
         self.focal_plane_radius   =  2.197173
         self.pointing_error_zenith  = 0.0
         self.pointing_error_azimuth = 0.0
+        self.project_truss_onaxis = False
+        self.M2_baffle = False
 
     def __getitem__(self,key):
         if key=="M1":
@@ -135,7 +139,7 @@ cdef class GmtMirrors:
             raise KeyError("Available keys are: M1 or M2")
 
     def propagate(self,Source src,str where_to="exit pupil",
-                  bint M2_is_a_stop=True, bint project_truss_onaxis=False):
+                  bint M2_is_a_stop=True):
         """
         Propagate the Source object to the pupil plane conjugated to M1
 
@@ -164,8 +168,11 @@ cdef class GmtMirrors:
         if M2_is_a_stop:
             self.M2.blocking(src.rays)
         self.M1.trace(src.rays)
-        if project_truss_onaxis:
+        if self.project_truss_onaxis:
             src.rays.gmt_truss_onaxis()
+        if self.M2_baffle:
+            src.rays.gmt_m2_baffle()
+        
         self.M2.trace(src.rays)
 #        src.sphere_distance
 #        src.rays.to_sphere(self.sphere_radius,sphere_distance = src.sphere_distance)
@@ -557,7 +564,7 @@ cdef class PolishMap:
 cdef class Modes:
     cdef:
         modes *_c_modes
-        public rtd[:,:] a
+        public ndarray a
         rtd *a_ptr
         public cuDoubleArray M
         public cuDoubleArray S
@@ -607,7 +614,7 @@ cdef class Modes:
             self._c_modes.setup(filename,N,n_mode)
         self.a = np.zeros((self._c_modes.N, self._c_modes.n_mode), dtype=np.float64)
         if n_mode>0:
-            self.a_ptr = &self.a[0,0]
+            self.a_ptr = <rtd *>self.a.data
         else:
             self.a_ptr = NULL
         self.M = cuDoubleArray(shape=(self._c_modes.BM_N_SAMPLE**2,

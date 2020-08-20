@@ -311,6 +311,8 @@ struct bundle {
   void setup(rtd L, int N_L, vector origin, int N_SRC);
   void setup(rtd L, int N_L, vector origin, vector chief_origin, int N_SRC);
   void setup_free(int _N_RAY_, double *x, double *y, vector origin);
+  void setup_free(double zenith, double azimuth,
+                  int _N_RAY_, double *x, double *y, vector origin);
   void cleanup(void);
   void to_z_plane(rtd z_in);
   void to_focal_plane(rtd z_chief_on_axis, rtd rho_focal_plane);
@@ -330,6 +332,7 @@ struct bundle {
   void get_vignetting(double *d__v);
   void get_n_iteration(int *n_iteration);
   void gmt_truss_onaxis(void);
+  void gmt_m2_baffle(void);
 };
 @
 A bundle allocates an array of [[N_RAY]] rays on the device
@@ -529,45 +532,61 @@ The ray bundle can be set to arbitrary coordinates in the entrance puil
 <<ray bundle functions>>=
 void bundle::setup_free(int _N_RAY_, double *x, double *y, vector origin)
 {
-  strcpy(geom,"free");
-  N_BUNDLE = 1;
-  N_RAY = _N_RAY_;
-  N_RAY_TOTAL = N_RAY*N_BUNDLE;
-  rot_angle = 0.0;
-  V.setup(N_RAY_TOTAL);
-  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY_TOTAL ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
-  HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
-			    sizeof(vector), cudaMemcpyHostToDevice ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY_TOTAL ) );
-  <<truss parameters initialization>>
-  <<chief ray allocation>>
-
-  double *d__x, *d__y;
-  int n_byte = sizeof(double)*N_RAY_TOTAL;
-  HANDLE_ERROR( cudaMalloc((void**)&d__x, n_byte ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__y, n_byte ) );
-  HANDLE_ERROR( cudaMemcpy( d__x, x, n_byte, cudaMemcpyHostToDevice ) );
-  HANDLE_ERROR( cudaMemcpy( d__y, y, n_byte, cudaMemcpyHostToDevice ) );
-
-  dim3 blockDim(N_THREAD,N_THREAD);
-  dim3 gridDim(N_RAY_TOTAL/N_THREAD2+1,1, N_BUNDLE);
-  ray_free_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, d__x, d__y, d__origin);
-  
-  HANDLE_ERROR( cudaMemset(d__x, 0, n_byte ) );
-  HANDLE_ERROR( cudaMemset(d__y, 0, n_byte ) );
-  blockDim = dim3(1,1);
-  gridDim  = dim3(1,1, N_BUNDLE);
-  ray_free_coordinates LLL gridDim , blockDim RRR (d__chief_ray, 1, d__x, d__y, d__origin);
-
-  HANDLE_ERROR( cudaFree( d__x ) );
-  HANDLE_ERROR( cudaFree( d__y ) );
+  <<free bundle memory allocation>>
+  double zenith = 0.0;
+  double azimuth = 0.0;
+  <<free bundle initialization>>
 }
+void bundle::setup_free(double zenith, double azimuth,
+                        int _N_RAY_, double *x, double *y, vector origin)
+{
+  <<free bundle memory allocation>>
+  <<free bundle initialization>>
+ }
+<<free bundle memory allocation>>=
+strcpy(geom,"free");
+N_BUNDLE = 1;
+N_RAY = _N_RAY_;
+N_RAY_TOTAL = N_RAY*N_BUNDLE;
+rot_angle = 0.0;
+V.setup(N_RAY_TOTAL);
+HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY_TOTAL ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
+HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
+		    sizeof(vector), cudaMemcpyHostToDevice ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY_TOTAL ) );
+<<truss parameters initialization>>
+<<chief ray allocation>>
+@
+<<free bundle initialization>>=
+double *d__x, *d__y;
+int n_byte = sizeof(double)*N_RAY_TOTAL;
+HANDLE_ERROR( cudaMalloc((void**)&d__x, n_byte ) );
+HANDLE_ERROR( cudaMalloc((void**)&d__y, n_byte ) );
+HANDLE_ERROR( cudaMemcpy( d__x, x, n_byte, cudaMemcpyHostToDevice ) );
+HANDLE_ERROR( cudaMemcpy( d__y, y, n_byte, cudaMemcpyHostToDevice ) );
+
+dim3 blockDim(N_THREAD,N_THREAD);
+dim3 gridDim(N_RAY_TOTAL/N_THREAD2+1,1, N_BUNDLE);
+ray_free_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, d__x, d__y, d__origin,
+                                                 zenith, azimuth);
+
+HANDLE_ERROR( cudaMemset(d__x, 0, n_byte ) );
+HANDLE_ERROR( cudaMemset(d__y, 0, n_byte ) );
+blockDim = dim3(1,1);
+gridDim  = dim3(1,1, N_BUNDLE);
+ray_free_coordinates LLL gridDim , blockDim RRR (d__chief_ray, 1, d__x, d__y, d__origin,
+                                                 zenith, azimuth);
+
+HANDLE_ERROR( cudaFree( d__x ) );
+HANDLE_ERROR( cudaFree( d__y ) );
 @ with
 <<bundle free coordinates kernel>>=
-__global__ void ray_free_coordinates(ray *d__ray, int N_RAY, double *d__x, double *d__y, vector *origin)
+  __global__ void ray_free_coordinates(ray *d__ray, int N_RAY, double *d__x, double *d__y, vector *origin,
+                                       double zenith, double azimuth)
 {
   int i, j, k;
+  rtd s;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
 //  iSource = blockIdx.z;
@@ -577,9 +596,12 @@ __global__ void ray_free_coordinates(ray *d__ray, int N_RAY, double *d__x, doubl
     d__ray[k].coordinates.x = d__x[k] + origin->x;
     d__ray[k].coordinates.y = d__y[k] + origin->y;
     d__ray[k].coordinates.z = origin->z;
-    d__ray[k].directions.x  =  0.0;
-    d__ray[k].directions.y  =  0.0;
-    d__ray[k].directions.z  = -1.0;
+    d__ray[k].directions.x  = sin(zenith)*cos(azimuth);
+    d__ray[k].directions.y  = sin(zenith)*sin(azimuth);
+    d__ray[k].directions.z  = -cos(zenith);
+    s = -origin->z/d__ray[k].directions.z;
+    d__ray[k].coordinates.x -= s*d__ray[k].directions.x;
+    d__ray[k].coordinates.y -= s*d__ray[k].directions.y;
     d__ray[k].optical_path_length = 0.0;
     d__ray[k].optical_path_difference = 0.0;
     d__ray[k].v = 1;
@@ -1404,6 +1426,8 @@ __global__ void reset_kernel(ray *d__ray, int N_RAY)
 
 The vignetting of the rays by the on--axis footprint of the truss projected on the GMT M1
 center segment is computed with:
+\begin{itemize}
+\item for the truss:
 \index{source!bundle!gmt\_truss\_onaxis}
 <<ray bundle functions>>=
 void bundle::gmt_truss_onaxis(void)
@@ -1436,7 +1460,6 @@ void bundle::gmt_truss_onaxis(void)
     HANDLE_ERROR( cudaMemcpy( d__Vy, &Vy, nbyte, cudaMemcpyHostToDevice ) );
     gmt_truss_onaxis_kern LLL gridDim,blockDim RRR (d__ray,N_RAY_TOTAL,d__Vx,d__Vy,NV);
   }
-  gmt_m2_baffle_kern LLL gridDim,blockDim RRR (d__ray,N_RAY_TOTAL);
 }
 @
 with the device kernels
@@ -1455,6 +1478,18 @@ __global__ void gmt_truss_onaxis_kern(ray *d__ray, int NP, double *Vx, double *V
       d__ray[i].v = 0;
   }
 }
+@
+\item for M2 baffle:
+\index{source!bundle!gmt\_m2\_baffle}
+<<ray bundle functions>>=
+void bundle::gmt_m2_baffle(void)
+{
+  dim3 blockDim(256);
+  dim3 gridDim(N_RAY_TOTAL/256+1);
+  gmt_m2_baffle_kern LLL gridDim,blockDim RRR (d__ray,N_RAY_TOTAL);
+}  
+@
+with the device kernels
 <<GMT M2 baffle kernel>>=
 __global__ void gmt_m2_baffle_kern(ray *d__ray, int NP)
 {
@@ -1470,6 +1505,7 @@ __global__ void gmt_m2_baffle_kern(ray *d__ray, int NP)
   }
 }
 @
+\end{itemize}
 
 \subsection{source}
 \label{sec:source-1}
@@ -2011,6 +2047,10 @@ float source::wavelength(void) {
     lambda = 2.157;
   if (strcmp(photometric_band,"R+I")==0)
     lambda = 0.715;
+  if (strcmp(photometric_band,"PHZ")==0)
+    lambda = 1.193;
+  if (strcmp(photometric_band,"VIS")==0)
+    lambda = 0.750;  
   return 1E-6*lambda;
 }
 @
@@ -2052,6 +2092,10 @@ float source::n_photon(float _magnitude_) {
     zero_point = 1.49e9;
  if (strcmp(photometric_band,"R+I")==0)
     zero_point = 24.46e9;
+ if (strcmp(photometric_band,"PHZ")==0)
+    zero_point = 7.21e9;
+ if (strcmp(photometric_band,"VIS")==0)
+    zero_point = 16.9e9;
 @ The number of background photon in $ray^{-1}s^{-1}.arcsec^{-2}$ for a given magnitude per arcsecond square is derived with
 \index{source!source!n\_background\_photon}
 <<number of background photons>>=
@@ -2082,6 +2126,10 @@ float source::spectral_bandwidth(void) {
     spectral_bandwidth = 0.320;
   if (strcmp(photometric_band,"R+I")==0)
     spectral_bandwidth = 0.300;
+  if (strcmp(photometric_band,"PHZ")==0)
+    spectral_bandwidth = 0.331;
+  if (strcmp(photometric_band,"VIS")==0)
+    spectral_bandwidth = 0.300;
   return spectral_bandwidth*1e-6;
 }
 @ The wave number is given by
@@ -2107,6 +2155,10 @@ float source::wavenumber(void) {
     lambda = 2.157;
   if (strcmp(photometric_band,"R+I")==0)
     lambda = 0.715;
+  if (strcmp(photometric_band,"PHZ")==0)
+    lambda = 1.193;
+  if (strcmp(photometric_band,"VIS")==0)
+    lambda = 0.750;
   return 1E6*2*PI/lambda;
 }
 @
@@ -3275,7 +3327,9 @@ struct pssn {
   void otf(source *src);
   void atm_otf(float d, float r0, float L0);
   float eval(void);
+  float oeval(void);
   void eval(float *results);
+  void oeval(float *results);
 };
 @
 The pssn methods are:
@@ -3453,6 +3507,14 @@ float pssn::eval(void)
   result *= result;
   return result;
 }
+float pssn::oeval(void)
+{
+  float result;
+  CUBLAS_ERROR( cublasScnrm2( handle , NN, d__O, 1 , &num) );
+  result = num/denom[0];
+  result *= result;
+  return result;
+}
 void pssn::eval(float *results)
 {
   int k, N_OTF2;
@@ -3463,6 +3525,18 @@ void pssn::eval(float *results)
   N_OTF2 = N_OTF*N_OTF;
   for (k=0;k<N;k++) {
     CUBLAS_ERROR( cublasScnrm2( handle , N_OTF2, buffer+k*N_OTF2, 1 , &num) );
+    result = num/denom[k];
+    result *= result;
+    results[k] = result;
+  }
+}
+void pssn::oeval(float *results)
+{
+  int k, N_OTF2;
+  float result;
+  N_OTF2 = N_OTF*N_OTF;
+  for (k=0;k<N;k++) {
+    CUBLAS_ERROR( cublasScnrm2( handle , N_OTF2, d__O+k*N_OTF2, 1 , &num) );
     result = num/denom[k];
     result *= result;
     results[k] = result;

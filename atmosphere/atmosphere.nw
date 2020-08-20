@@ -1,4 +1,4 @@
- -*- mode: Noweb; noweb-code-mode: c-mode -*-
+% -*- mode: Noweb; noweb-code-mode: c-mode -*-
 @
 \def\bk{\bar \kappa_i}
 \def\bkx{\bar \kappa_{x,i}}
@@ -29,6 +29,16 @@
 #ifndef __CENTROIDING_H__
 #include "centroiding.h"
 #endif
+
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#define handle_error(msg)				\
+  do { perror(msg); exit(EXIT_FAILURE); } while (0)
 
 struct layer {
 
@@ -101,6 +111,7 @@ struct atmosphere {
 		 int _N_DURATION,
 		 int _RAND_SEED_);
   void gmt_set_id(int _ID_);
+  void gmt_set_eph(float _EPH_);
 
   void cleanup(void);
 
@@ -109,7 +120,6 @@ struct atmosphere {
   void reset(void);
 
   void save_layer_phasescreens(const char* fullpath_to_phasescreens, int _N_DURATION);
-  void save_duration_layer_phasescreens(const char* fullpath_to_phasescreens, int _N_DURATION);
 
   void get_phase_screen(float *phase_screen,
 			float const *x, float const *y, int N_xy,
@@ -161,12 +171,6 @@ struct atmosphere {
 		  const float delta_x, const int N_X,
 		  const float delta_y, const int N_Y,
 		  const float tau);
-  void ray_tracing(source *src,
-                   const float delta_x, const int N_X,
-                   const float delta_y, const int N_Y,
-                   const float tau, const int k_DURATION);
-  void duration_loading(const char* fullpath_to_phasescreens,
-                        const int k_DURATION);
 };
 
 #endif // __ATMOSPHERE_H__
@@ -207,6 +211,7 @@ struct atmosphere {
 <<profile cleanup>>
 
 <<atmosphere setup (GMT, set ID)>>
+<<atmosphere setup (GMT, set EPH)>>
 <<atmosphere setup>>
 <<atmosphere setup (ray tracing)>>
 <<atmosphere setup (ray tracing, precomputed phase screens)>>
@@ -244,7 +249,6 @@ struct atmosphere {
 
 <<ray tracing>>
 <<ray tracing (regular)>>
-<<duration phase screens loading>>
 @
 
 \section{Parameters}
@@ -291,9 +295,9 @@ int LOCAL_RAND_SEED;
 @ \item the identity number of the GMT atmosphere model
 <<atmosphere parameters>>=
 int ID;
-@ \item the file handle for the atmospheric phase screen layers:
+@ \item the height of the atmosphere entrance pupil
 <<atmosphere parameters>>=
-  // FILE *layers_fid;
+float EPH;
 @ \end{itemize}
 
 The atmospheric layer parameters are:
@@ -319,6 +323,10 @@ float *d__phase_screen_LAYER;
 @ \item the size in memory of all the phase screnn in the layers
 <<atmosphere parameters>>=
 unsigned long N_PHASE_LAYER;
+@ \item phase screen layers file ID
+<<atmosphere parameters>>=
+  //FILE *layers_fid;
+size_t mmap_size;
 @ \end{itemize}
 
 
@@ -330,7 +338,6 @@ The main parameters of the atmosphere are displayed with the [[info]] routine:
 <<info>>=
 void atmosphere::info(void)
 {
-#ifndef SILENT
 fprintf(stdout,"\n\x1B[1;42m@(CEO)>atmosphere: Von Karman atmospheric turbulence model\x1B[;42m\n");
 fprintf(stdout," . wavelength = %5.2fnm\n . r0 = %5.2fcm\n . L0 = %5.2fm\n",
        wavelength*1e9,r0*1e2,turbulence.L0);
@@ -345,7 +352,6 @@ for (int kLayer=0;kLayer<N_LAYER;kLayer++) {
   turbulence.wind_direction[kLayer]*180/PI);
 }
 fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
-#endif
 }
 @
 
@@ -454,7 +460,7 @@ layer *layers, *d__layers;
 void atmosphere::setup(float r0_, float L0, int _NLAYER,
 		       float *altitude, float *xi0,
 		       float *wind_speed, float *wind_direction) {
-  wavelength = 550e-9;
+  wavelength = 500e-9;
   wavenumber = wavelength/2/PI;
   r0 = r0_;
   N_LAYER = _NLAYER;
@@ -487,12 +493,12 @@ phase screen time length [[duration]].
 \index{atmosphere!atmosphere!setup}
 <<atmosphere setup (ray tracing)>>=
 void atmosphere::setup(float r0_, float L0, int _NLAYER,
-                       float *altitude, float *xi0,
-                       float *wind_speed, float *wind_direction,
+		       float *altitude, float *xi0,
+		       float *wind_speed, float *wind_direction,
                        float _W_, int _N_W_,
-                       float _field_size_,
-                       float duration) {
-  wavelength = 550e-9;
+		       float _field_size_,
+		       float duration) {
+  wavelength = 500e-9;
   wavenumber = wavelength/2/PI;
   r0 = r0_;
   N_LAYER = _NLAYER;
@@ -528,7 +534,7 @@ void atmosphere::setup(float r0_, float L0, int _NLAYER,
 		       float duration,
 		       const char *fullpath_to_phasescreens,
 		       int _N_DURATION) {
-  wavelength = 550e-9;
+  wavelength = 500e-9;
   wavenumber = wavelength/2/PI;
   r0 = r0_;
   N_LAYER = _NLAYER;
@@ -552,14 +558,14 @@ struct stat sb;
 if (stat(fullpath_to_phasescreens,&sb)==0) {
   <<phase screen loading>>
 } else {
-  save_duration_layer_phasescreens(fullpath_to_phasescreens, N_DURATION);
+  save_layer_phasescreens(fullpath_to_phasescreens, N_DURATION);
 }
 @ %def save_layer_phasescreens
 For the GMT simulations, the GMT standard atmosphere model is called with:
 \index{atmosphere!atmosphere!gmt\_setup}
 <<atmosphere setup (GMT)>>=
 void atmosphere::gmt_setup() {
-  wavelength = 550e-9;
+  wavelength = 500e-9;
   wavenumber = wavelength/2/PI;
   r0 = 15e-2;
   turbulence.L0 = 60; 
@@ -577,6 +583,12 @@ void atmosphere::gmt_setup() {
   d__phase_screen_LAYER = NULL;
 }
 @ 
+The height of the atmosphere entrance pupil needs to be set before setting--up the atmosphere:
+<<atmosphere setup (GMT, set EPH)>>=
+void atmosphere::gmt_set_eph(float _EPH_) {
+  EPH = _EPH_;
+}
+@ 
 The GMT atmosphere ID needs to be set before setting--up the atmosphere:
 <<atmosphere setup (GMT, set ID)>>=
 void atmosphere::gmt_set_id(int _ID_) {
@@ -590,7 +602,7 @@ int n_bytes = sizeof(float)*7;
 switch(ID) {
   case 2 :
   {
-    INFO("@(CEO)>atmosphere: GMT case 2: STRONG GROUND LAYER (Goodwin LCO Jan08, case 7)\n");
+    fprintf(stdout,"@(CEO)>atmosphere: GMT case 2: STRONG GROUND LAYER (Goodwin LCO Jan08, case 7)\n");
     float altitude_2[]       = {25, 275, 425, 1250, 4000, 8000, 13000},
     xi0_2[]            = {0.2039, 0.1116, 0.1706, 0.2281, 0.1694, 0.0615, 0.054},
     wind_speed_2[]     = {9.4092, 9.6384, 9.7905, 2.7028, 8.2883, 30.1824, 13.0364},
@@ -603,7 +615,7 @@ switch(ID) {
   }
   case 3 :
   {
-    INFO("@(CEO)>atmosphere: GMT case 3: GOOD CONDITIONS (Goodwin LCO Jan08, case 1)\n");
+    fprintf(stdout,"@(CEO)>atmosphere: GMT case 3: GOOD CONDITIONS (Goodwin LCO Jan08, case 1)\n");
     float altitude_3[]       = {25, 275, 425, 1250, 4000, 8000, 13000},
     xi0_3[]            = {0.1410, 0.0381, 0.0542, 0.3403, 0.2528, 0.0917, 0.0819},
     wind_speed_3[]     = {2.1953, 2.2575, 2.3029, 2.7028, 8.2883, 30.1824, 13.0364},
@@ -616,7 +628,7 @@ switch(ID) {
   }
   case 4 :
   {
-    INFO("@(CEO)>atmosphere: GMT case 4: POOR CONDITIONS (Goodwin LCO Jan08, case 9)\n");
+    fprintf(stdout,"@(CEO)>atmosphere: GMT case 4: POOR CONDITIONS (Goodwin LCO Jan08, case 9)\n");
     float altitude_4[]       = {25, 275, 425, 1250, 4000, 8000, 13000},
     xi0_4[]            = {0.1335, 0.0730, 0.1117, 0.3311, 0.2170, 0.0613, 0.0724},
     wind_speed_4[]     = {9.4092, 9.6384, 9.7905, 10.8527, 18.2550, 39.1520, 43.7936},
@@ -629,7 +641,7 @@ switch(ID) {
   }
   case 5 :
   {
-    INFO("@(CEO)>atmosphere: GMT case 5: THIN CLOUDS (Goodwin LCO Jan08, case 5)\n");
+    fprintf(stdout,"@(CEO)>atmosphere: GMT case 5: THIN CLOUDS (Goodwin LCO Jan08, case 5)\n");
     float altitude_5[]       = {25, 275, 425, 1250, 4000, 8000, 13000},
     xi0_5[]            = {0.1335, 0.0730, 0.1117, 0.3311, 0.2170, 0.0613, 0.0724},
     wind_speed_5[]     = {9.4092, 9.6384, 9.7905, 10.8527, 18.2550, 39.1520, 43.7936},
@@ -642,7 +654,7 @@ switch(ID) {
   }
   default :
   {
-    INFO("@(CEO)>atmosphere: GMT case 1: MEDIAN (Goodwin LCO Jan08, case 5)\n");
+    fprintf(stdout,"@(CEO)>atmosphere: GMT case 1: MEDIAN (Goodwin LCO Jan08, case 5)\n");
     float altitude_1[]       = {25, 275, 425, 1250, 4000, 8000, 13000},
     xi0_1[]            = {0.1257, 0.0874, 0.0666, 0.3498, 0.2273, 0.0681, 0.0751},
     wind_speed_1[]     = {5.6540, 5.7964, 5.8942, 6.6370, 13.2925, 34.8250, 29.4187},
@@ -653,12 +665,15 @@ switch(ID) {
     memcpy(wind_direction, wind_direction_1, n_bytes);
   }
 }
+for (int k=0;k<N_LAYER;k++) {
+  altitude[k] -= EPH;
+ }
 turbulence.setup(altitude, xi0,
                  wind_speed, wind_direction, N_LAYER);
 @
 <<atmosphere setup (GMT prm)>>=
 void atmosphere::gmt_setup(float r0_, float L0) {
-  wavelength = 550e-9;
+  wavelength = 500e-9;
   wavenumber = wavelength/2/PI;
   r0 = r0_;
   turbulence.L0 = L0;
@@ -677,7 +692,7 @@ void atmosphere::gmt_setup(float r0_, float L0) {
 @
 <<atmosphere setup (GMT prm, rand seed)>>=
 void atmosphere::gmt_setup(float r0_, float L0, int _RAND_SEED_) {
-  wavelength = 550e-9;
+  wavelength = 500e-9;
   wavenumber = wavelength/2/PI;
   r0 = r0_;
   turbulence.L0 = L0;
@@ -750,18 +765,17 @@ void atmosphere::gmt_setup(float r0_, float L0,
 @
 <<atmosphere setup (GMT prm, ray tracing, precomputed phase screens, rand seed)>>=
 void atmosphere::gmt_setup(float r0_, float L0,
-                           float _W_, int _N_W_,
-                           float _field_size_,
-                           float duration,
-                           const char *fullpath_to_phasescreens,
-                           int _N_DURATION,
-                           int _RAND_SEED_) {
+			     float _W_, int _N_W_,
+			     float _field_size_,
+			     float duration,
+			     const char *fullpath_to_phasescreens,
+			     int _N_DURATION,
+                             int _RAND_SEED_) {
   <<gmt atmosphere setup common>>
   <<allocation: turbulence profile>>
-      LOCAL_RAND_SEED = _RAND_SEED_;
+  LOCAL_RAND_SEED = _RAND_SEED_;
   <<allocation: variates generation>>
-  phase_screen_LAYER = (float *)malloc(N_PHASE_LAYER*sizeof(float));
-  HANDLE_ERROR( cudaMalloc( (void**)&d__phase_screen_LAYER, N_PHASE_LAYER*sizeof(float) ) );
+  <<save or load phase screens>>
 }
 @
 <<allocation>>=
@@ -781,7 +795,7 @@ HANDLE_ERROR( cudaMemcpy( d__turbulence, &turbulence,
 int nel = N_LAYER*turbulence.N_k*turbulence.N_a;
 stopwatch tid;
 tid.tic();
-INFO("\n@(CEO)>atmosphere: initializing %d variates with SEED=%d ...",nel,LOCAL_RAND_SEED);
+fprintf(stdout,"\n@(CEO)>atmosphere: initializing %d variates with SEED=%d ...",nel,LOCAL_RAND_SEED);
 HANDLE_ERROR( cudaMalloc( (void**)&devStates, 4*nel*sizeof(curandState)) );
 HANDLE_ERROR( cudaMalloc( (void**)&zeta1, nel*sizeof(float)) );
 HANDLE_ERROR( cudaMalloc( (void**)&eta1,  nel*sizeof(float)) );
@@ -793,7 +807,7 @@ setupRandomSequence LLL gridDim,blockDim RRR (devStates, 4*nel, LOCAL_RAND_SEED)
 HANDLE_ERROR( cudaDeviceSynchronize() );
 generateVariates LLL gridDim,blockDim RRR (zeta1, eta1, zeta2, eta2, devStates, nel);
 HANDLE_ERROR( cudaDeviceSynchronize() );
-INFO("done!\n");
+fprintf(stdout,"done!\n");
 tid.toc();
 @
 \index{atmosphere!profile!setup}
@@ -824,12 +838,12 @@ void profile::setup(float *altitude_, float *xi0_,
   N_a = ceilf( N_a );
   f = powf( (4*N_a + PI)/(4*N_a - PI) , N_k );
   delta = 0.5*PI/N_a;
-  INFO("\n@(CEO)>profile:\n");
-  INFO(" . N_k = %f\n",N_k);
-  INFO(" . N_a = %f\n",N_a);
-  INFO(" . frequency range      = %8.2f\n",f);
-  INFO(" . frequency resolution = %6.4f\n",delta);
-  INFO(" . minimum frequency    = %6.4f\n",kmin);
+  fprintf(stdout,"\n@(CEO)>profile:\n");
+  fprintf(stdout," . N_k = %f\n",N_k);
+  fprintf(stdout," . N_a = %f\n",N_a);
+  fprintf(stdout," . frequency range      = %8.2f\n",f);
+  fprintf(stdout," . frequency resolution = %6.4f\n",delta);
+  fprintf(stdout," . minimum frequency    = %6.4f\n",kmin);
 }
 @
 \index{atmosphere!profile!cleanup}
@@ -864,7 +878,7 @@ void atmosphere::save_layer_phasescreens(const char* _fullpath_to_phasescreens, 
     time(&now);
     beg = *localtime(&now);
 
-    INFO("\n * LAYER PHASE SCREENS COMPUTING: %d/%d *\n",k_DURATION+1,_N_DURATION);
+    fprintf(stdout,"\n * LAYER PHASE SCREENS COMPUTING: %d/%d *\n",k_DURATION+1,_N_DURATION);
     layers_tau0 = k_DURATION*layers_duration;
     <<layer to device (ray tracing)>>
 
@@ -874,7 +888,7 @@ void atmosphere::save_layer_phasescreens(const char* _fullpath_to_phasescreens, 
 			      cudaMemcpyDeviceToHost ) );
     N_WRITE = fwrite(phase_screen_LAYER + k_DURATION*N_PHASE_LAYER,
 		     sizeof(float),N_PHASE_LAYER,fid);
-    INFO(" ==>> Written %lu elements out of %lu elements to file %s\n",
+    fprintf(stdout," ==>> Written %lu elements out of %lu elements to file %s\n",
 	    N_WRITE,N_PHASE_LAYER,_fullpath_to_phasescreens);
     if (N_WRITE<N_PHASE_LAYER) { break; }
 
@@ -882,7 +896,7 @@ void atmosphere::save_layer_phasescreens(const char* _fullpath_to_phasescreens, 
     mktime(&beg);
     strftime(buff, sizeof buff, "%c", &beg);
 
-    INFO("\n * ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ * ETA: %s\n",buff);
+    fprintf(stdout,"\n * ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ * ETA: %s\n",buff);
   }
   fclose(fid);
 
@@ -892,82 +906,20 @@ void atmosphere::save_layer_phasescreens(const char* _fullpath_to_phasescreens, 
 			    sizeof(float)*N_PHASE_LAYER,
 			    cudaMemcpyHostToDevice ) );
 }
-@ 
-<<phase screen precomputing>>=
-void atmosphere::save_duration_layer_phasescreens(const char* _fullpath_to_phasescreens, int _N_DURATION)
-{
-  int k_DURATION;
-  size_t N_WRITE, N_DATA;
-  stopwatch tid;
-  time_t now;
-  struct tm beg;
-  char buff[128];
-  int u = 1;
-  char suffix[32];
-  char filename[256];
-  FILE *fid;
-
-  N_DATA = N_PHASE_LAYER;
-  phase_screen_LAYER = (float*)malloc(sizeof(float)*N_DATA);
-
-  for (k_DURATION=0;k_DURATION<_N_DURATION;k_DURATION++) {
-
-    time(&now);
-    beg = *localtime(&now);
-
-    strcpy(filename,_fullpath_to_phasescreens);
-    sprintf(suffix,".%03d",k_DURATION);
-    strcat(filename,suffix);
-    fid = fopen(filename,"wb");
-    fwrite(&u,sizeof(int),1,fid);
-
-    INFO("\n * LAYER PHASE SCREENS COMPUTING: %d/%d *\n",k_DURATION+1,_N_DURATION);
-    layers_tau0 = k_DURATION*layers_duration;
-    <<layer to device (ray tracing)>>
-
-    HANDLE_ERROR( cudaMemcpy( phase_screen_LAYER,
-			      d__phase_screen_LAYER,
-			      sizeof(float)*N_PHASE_LAYER,
-			      cudaMemcpyDeviceToHost ) );
-    N_WRITE = fwrite(phase_screen_LAYER,
-		     sizeof(float),N_PHASE_LAYER,fid);
-    INFO(" ==>> Written %lu elements out of %lu elements to file %s\n",
-	    N_WRITE,N_PHASE_LAYER,_fullpath_to_phasescreens);
-    if (N_WRITE<N_PHASE_LAYER) { break; }
-
-    beg.tm_sec += tid.elapsedTime*1e-3*(_N_DURATION-k_DURATION);
-    mktime(&beg);
-    strftime(buff, sizeof buff, "%c", &beg);
-
-    fclose(fid);
-
-    if (k_DURATION==0) {
-      layers_tau0 = 0.0;
-      HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
-                                phase_screen_LAYER,
-                                sizeof(float)*N_PHASE_LAYER,
-                                cudaMemcpyHostToDevice ) );
-    }
-
-    INFO("\n * ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ * ETA: %s\n",buff);
-  }
-
-}
 @
-<<phase screen loading>>=
-
-  FILE *layers_fid;
-  size_t N_READ;
+<<phase screen loading (original)>>=
+FILE *layers_fid;
+size_t N_READ;
 layers_fid = fopen(fullpath_to_phasescreens,"rb");
-INFO("\n@(CEO)>atmosphere: Loading the phase screens in the layers from file %s...\n",fullpath_to_phasescreens);
+fprintf(stdout,"\n@(CEO)>atmosphere: Loading the phase screens in the layers from file %s...\n",fullpath_to_phasescreens);
 
 N_READ = fread(&N_DURATION,       sizeof(int),  1,layers_fid);
 if (N_READ==0)
   ERROR("Cannot read file!");
 
 tid.tic();
-phase_screen_LAYER = (float*)malloc(sizeof(float)*N_PHASE_LAYER);
-N_READ     = fread(phase_screen_LAYER,sizeof(float),N_PHASE_LAYER,layers_fid);
+phase_screen_LAYER = (float*)malloc(sizeof(float)*N_PHASE_LAYER*N_DURATION);
+N_READ     = fread(phase_screen_LAYER,sizeof(float),N_PHASE_LAYER*N_DURATION,layers_fid);
 if (N_READ==0)
   ERROR("Cannot read file!");
 HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
@@ -976,6 +928,47 @@ HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
                           cudaMemcpyHostToDevice ) );
 tid.toc();
 fclose(layers_fid);
+@
+MEMORY MAP:
+<<phase screen loading>>=
+FILE *layers_fid;
+size_t N_READ;
+layers_fid = fopen(fullpath_to_phasescreens,"rb");
+
+N_READ = fread(&N_DURATION,       sizeof(int),  1,layers_fid);
+if (N_READ==0)
+  ERROR("Cannot read file!");
+
+fclose(layers_fid);
+
+struct stat sb;
+int fd;
+off_t offset, pa_offset;
+
+fprintf(stdout,"\n@(CEO)>atmosphere: Memory-mapping the phase screens in the layers from file %s...\n",fullpath_to_phasescreens);
+tid.tic();
+fd = open(fullpath_to_phasescreens, O_RDONLY);
+if (fd == -1)
+  handle_error("open");
+
+if (fstat(fd, &sb) == -1)           /* To obtain file size */
+  handle_error("fstat");
+offset = sizeof(int);
+pa_offset = offset & ~(sysconf(_SC_PAGE_SIZE) - 1); 
+mmap_size = sb.st_size - pa_offset;
+//phase_screen_LAYER = (float*)malloc(sizeof(float)*N_PHASE_LAYER*N_DURATION);
+//N_READ     = fread(phase_screen_LAYER,sizeof(float),N_PHASE_LAYER*N_DURATION,layers_fid);
+//if (N_READ==0)
+//  ERROR("Cannot read file!");
+phase_screen_LAYER = (float *) mmap(NULL, mmap_size, PROT_READ, MAP_PRIVATE, fd, pa_offset);
+if (phase_screen_LAYER == MAP_FAILED)
+  handle_error("mmap");
+
+HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
+                          phase_screen_LAYER,
+                          sizeof(float)*N_PHASE_LAYER,
+                          cudaMemcpyHostToDevice ) );
+tid.toc();
 @
 The phase screens of the layers are defined such as the x--axis of the screens are aligned with the wind direction $\theta$.
 The sketch below shows a phase screen in blue and inside, the location of the telescope pupil in green at W at time $t=0$..
@@ -1013,7 +1006,7 @@ int layer::setup(float _altitude, float _xi0,
     WIDTH_LAYER    = d*(N_WIDTH_LAYER-1);
     LENGTH_LAYER   = d*(N_LENGTH_LAYER-1);
     N = N_WIDTH_LAYER*N_LENGTH_LAYER;
-    INFO("(%5.2fX%5.2f) meters & (%dX%d) pixels ==> %.2fMB \n",
+    fprintf(stdout,"(%5.2fX%5.2f) meters & (%dX%d) pixels ==> %.2fMB \n",
 	    LENGTH_LAYER,WIDTH_LAYER,
 	    N_LENGTH_LAYER,N_WIDTH_LAYER,N*sizeof(float)/powf(2,20));
   }
@@ -1024,9 +1017,9 @@ int layer::setup(float _altitude, float _xi0,
 layers = (layer*) malloc( sizeof(layer)*N_LAYER );
 HANDLE_ERROR( cudaMalloc( (void**)&d__layers, sizeof(layer)*N_LAYER ) );
 N_PHASE_LAYER = 0;
-INFO("\n@(CEO)>atmosphere: __ Layer Phase Screen __\n");
+fprintf(stdout,"\n@(CEO)>atmosphere: __ Layer Phase Screen __\n");
 for (int i_LAYER=0; i_LAYER<N_LAYER; i_LAYER++) {
-  INFO(" #%d: ",i_LAYER);
+  fprintf(stdout," #%d: ",i_LAYER);
   N_PHASE_LAYER += layers[i_LAYER].setup(altitude[i_LAYER], xi0[i_LAYER],
 					wind_speed[i_LAYER], wind_direction[i_LAYER],
 					 W, N_W, field_size,
@@ -1036,7 +1029,7 @@ for (int i_LAYER=0; i_LAYER<N_LAYER; i_LAYER++) {
 			    cudaMemcpyHostToDevice ) );
 }
 if (N_PHASE_LAYER>0)
-  INFO(" Total: %.2fMB\n",N_PHASE_LAYER*sizeof(float)/powf(2,20));
+  fprintf(stdout," Total: %.2fMB\n",N_PHASE_LAYER*sizeof(float)/powf(2,20));
 @  The phase screen of each layer is computed with:
 <<layer to device (ray tracing)>>=
 dim3 blockDimLayers(16,16);
@@ -1047,9 +1040,9 @@ int N = 0, i_LAYER, N_L, __N_W__;
 float delta_W = W/(N_W-1);
 delta_W /= layers_OSF;
 tid.tic();
-INFO(" . Computing layer phase screen: ");
+fprintf(stdout," . Computing layer phase screen: ");
 for (i_LAYER=0;i_LAYER<N_LAYER;i_LAYER++) {
-  INFO("%d,",i_LAYER);
+  fprintf(stdout,"%d,",i_LAYER);
   N_L = layers[i_LAYER].N_LENGTH_LAYER;
   __N_W__ = layers[i_LAYER].N_WIDTH_LAYER;
 
@@ -1064,7 +1057,7 @@ for (i_LAYER=0;i_LAYER<N_LAYER;i_LAYER++) {
 							     layers_src.dev_ptr, layers_tau0);
   N += N_L*__N_W__;
  }
-INFO("\b\n");
+fprintf(stdout,"\b\n");
 tid.toc();
 @ %def square_plps_layers
 The random generator is initialized within the following kernel:
@@ -1122,7 +1115,7 @@ void atmosphere::reset(void)
 \index{atmosphere!atmosphere!cleanup}
 <<cleanup>>=
 void atmosphere::cleanup(void) {
-  INFO("@(CEO)>atmosphere: freeing memory!\n");
+  fprintf(stdout,"@(CEO)>atmosphere: freeing memory!\n");
   turbulence.cleanup();
   HANDLE_ERROR( cudaFree( devStates ) );
   HANDLE_ERROR( cudaFree( zeta1  ));
@@ -1135,7 +1128,8 @@ void atmosphere::cleanup(void) {
     HANDLE_ERROR( cudaFree( d__layers ) );
   }
   if (phase_screen_LAYER!=NULL)
-    free( phase_screen_LAYER );
+    munmap(phase_screen_LAYER, mmap_size);
+  //    free( phase_screen_LAYER );
 }
 @
 The phase screen are defined in the telescope pupil at the ground
@@ -2493,7 +2487,7 @@ const source *src, const float tau)
     new_tau     = tau - k_DURATION*layers_duration;
 
     if (N_DURATION>0) {
-      fprintf(stdout,"\n@(CEO)>atmopshere: Loading phase screens (%.0fs) to device...\n",layers_tau0);
+      fprintf(stdout,"\n@(CEO)>atmosphere: Loading phase screens (%.0fs) to device...\n",layers_tau0);
       tid.tic();
       HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
 				phase_screen_LAYER + k_DURATION*N_PHASE_LAYER,
@@ -2544,17 +2538,13 @@ void atmosphere::rayTracing(source *src,
     new_tau     = tau - k_DURATION*layers_duration;
 
     if (N_DURATION>0) {
-      //fprintf(stdout,"\n@(CEO)>atmopshere: Loading phase screens (%.0fs) to device...\n",layers_tau0);
-      //tid.tic();
-      //      fseek( layers_fid, sizeof(int)+sizeof(float)*k_DURATION*N_PHASE_LAYER, SEEK_SET);
-      //      size_t N_READ     = fread(phase_screen_LAYER,sizeof(float),N_PHASE_LAYER,layers_fid);
-      //if (N_READ==0)
-      //        ERROR("Cannot read file!");
+      fprintf(stdout,"\n@(CEO)>atmosphere: Loading phase screens (%.0fs) to device...\n",layers_tau0);
+      tid.tic();
       HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
-				phase_screen_LAYER,
+				phase_screen_LAYER + k_DURATION*N_PHASE_LAYER,
 				sizeof(float)*N_PHASE_LAYER,
 				cudaMemcpyHostToDevice ) );
-      //tid.toc();
+      tid.toc();
     } else {
       <<layer to device (ray tracing)>>
     }
@@ -2584,74 +2574,6 @@ void atmosphere::rayTracing(source *src,
 						       N_LAYER, new_tau);
   }
 }
-@
-Separating ray tracing from phase screen loading:
-<<ray tracing (regular)>>=
-void atmosphere::ray_tracing(source *src,
-			    const float delta_x, const int N_X,
-			    const float delta_y, const int N_Y,
-          const float tau, const int k_DURATION)
-{
-  float layers_tau0 = k_DURATION*layers_duration;
-  float new_tau = tau - layers_tau0;
-
-  dim3 blockDim(16,16);
-  dim3 gridDim( 1+N_X/16 , 1+N_Y/16, src->N_SRC);
-  if (src->wavefront.M==NULL) {
-    rayTracingKernReg LLL gridDim, blockDim RRR(delta_x, N_X,
-						delta_y, N_Y,
-						src->wavefront.phase,
-						src->dev_ptr, src->N_SRC,
-						powf(r0,-5.0/6.0),
-						d__layers,
-						d__phase_screen_LAYER,
-						N_LAYER, new_tau);
-  } else {
-    rayTracingKernReg_masked LLL gridDim, blockDim RRR(delta_x, N_X,
-						       delta_y, N_Y,
-						       src->wavefront.phase,
-						       src->wavefront.M->m,
-						       src->dev_ptr, src->N_SRC,
-						       powf(r0,-5.0/6.0),
-						       d__layers,
-						       d__phase_screen_LAYER,
-						       N_LAYER, new_tau);
-  }
-}
-@
-Loading individual [[duration]] phase screens:
-<<duration phase screens loading>>=
-  void atmosphere::duration_loading(const char* fullpath_to_phasescreens,
-                                    const int k_DURATION)
-{
-  char suffix[32];
-  char filename[256];
-  strcpy(filename,fullpath_to_phasescreens);
-  sprintf(suffix,".%03d",k_DURATION);
-  strcat(filename,suffix);
-  size_t N_READ;
-  FILE * dlayers_fid = fopen(filename,"rb");
-  INFO("\n@(CEO)>atmosphere: Loading the phase screens in the layers from file %s...\n",filename);
-  int u;
-  if (dlayers_fid==NULL) {
-    ERROR("Opening file failed!");
-  }
-  N_READ = fread(&u, sizeof(int),  1,dlayers_fid);
-  if (N_READ==0)
-    ERROR("Cannot read file!");
-
-  N_READ     = fread(phase_screen_LAYER,sizeof(float),N_PHASE_LAYER,dlayers_fid);
-  if (N_READ==0)
-    ERROR("Cannot read file!");
-
-    HANDLE_ERROR( cudaMemcpy( d__phase_screen_LAYER,
-                            phase_screen_LAYER,
-                            sizeof(float)*N_PHASE_LAYER,
-                            cudaMemcpyHostToDevice ) );
-
-  fclose(dlayers_fid);
-}
-
 @
 \section{Tests}
 \label{sec:tests}
