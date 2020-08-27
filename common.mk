@@ -7,13 +7,13 @@ CUDALIBPATH   	= $(CUDAPATH)/lib64
 CUDAINCPATH   	= $(CUDAPATH)/include
 MATLABINCS	= -I/priv/monarcas1/rconan/MATLAB/R2013a/extern/include \
 	-I/export/monarcas1/rconan/MATLAB/R2013a/toolbox/distcomp/gpu/extern/include
-CUDALIBS	= curand cusparse cufft cublas cudart
+CUDALIBS	= curand cusparse cufft cublas cudart cusolver
 NOWEBPATH	= /usr
 WEAVE   	= $(NOWEBPATH)/bin/noweave
 TANGLE    	= $(NOWEBPATH)/bin/notangle
 CPIF	    	= $(NOWEBPATH)/bin/cpif
 TEXTOPDF  	= pdflatex
-NVCCFLAGS	= -DCEOPATH='"$(CEOPATH)"' -lineinfo -Xcompiler '-ansi,-D_GNU_SOURCE,-fwrapv,-fPIC,-fno-omit-frame-pointer,-pthread,-fno-strict-aliasing,-O3 -DSILENT'
+NVCCFLAGS	= -DCEOPATH='"$(CEOPATH)"' -lineinfo -Xcompiler '-ansi,-D_GNU_SOURCE,-fwrapv,-fPIC,-fno-omit-frame-pointer,-pthread,-fno-strict-aliasing,-O3' # -DSILENT'
 LIBS 		= -L$(CEOPATH)/lib $(CUDALIBPATH:%=-L%) -lceo -lcurl -ljsmn $(CUDALIBS:%=-l%)
 INCS		= -I. -I$(CEOPATH)/include $(CUDAINCPATH:%=-I%) -I$(PYTHONPATH)/include #$(MATLABINCS)
 SHELL		= /bin/bash

@@ -18,7 +18,8 @@
 #include <cufft.h>
 #include "cublas_v2.h"
 #include "cusparse_v2.h"
-
+#include <cusolverDn.h>
+  
 #define PI 3.141592653589793
 #define RADIAN2ARCSEC (180*3600/PI)
 #define MIN(a, b)  (((a) < (b)) ? (a) : (b))
@@ -89,6 +90,27 @@ static void HandleErrorCURAND( curandStatus_t err,
   if (err != CURAND_STATUS_SUCCESS)  {
     fprintf(stderr,"\n\x1B[31m@(CEO)>CURAND ERROR: %s in %s at line %d\x1B[0m\n", 
 	    msg, file, line );
+    exit( EXIT_FAILURE );
+  }
+}
+#define HANDLE_ERROR_CUSOLVER( err ) (HandleErrorCUSOLVER( err, __FILE__, __LINE__ ))   
+
+static void HandleErrorCUSOLVER( cusolverStatus_t err,
+                               const char *file,
+                               int line ) {
+  if (err != CUSOLVER_STATUS_SUCCESS)  {
+    if (err==CUSOLVER_STATUS_NOT_INITIALIZED)
+      fprintf(stderr,"\n\x1B[31m@(CEO)>CUSOLVER ERROR: %s in %s at line %d:.\x1B[0m\n", 
+              "the library was not initialized", file, line );
+    else if (err==CUSOLVER_STATUS_INVALID_VALUE)
+      fprintf(stderr,"\n\x1B[31m@(CEO)>CUSOLVER ERROR: %s in %s at line %d\x1B[0m\n", 
+              "invalid parameters were passed (m,n<0 or lda<max(1,m))", file, line );
+    else if (err==CUSOLVER_STATUS_ARCH_MISMATCH)
+      fprintf(stderr,"\n\x1B[31m@(CEO)>CUSOLVER ERROR: %s in %s at line %d\x1B[0m\n", 
+              "the device only supports compute capability 2.0 and above", file, line );
+    else
+      fprintf(stderr,"\n\x1B[31m@(CEO)>CURAND ERROR: %s in %s at line %d\x1B[0m\n",
+              "an internal operation failed.", file, line );
     exit( EXIT_FAILURE );
   }
 }
@@ -179,6 +201,9 @@ void freedev( float **dev_data );
 
 <<template gpu data structure>>
 
+void geqrf(float *d_tau, float *a, int m, int n);
+void ormqr(float *b, int m, float *q, float *tau, int n);
+
 <<sparse matrix>>
 
 void wavefront_finite_difference(float *sx, float *sy, int NL, 
@@ -263,6 +288,8 @@ void set_device(int id) {
 
 <<GPU float methods>>
 <<GPU double methods>>
+<<QR factorization>>
+<<compute Q^T*B>>
 
 <<Fried geometry masks>>
 <<Fried geometry>>
@@ -1780,35 +1807,43 @@ void freedev( float **dev_data ) {
 <<template gpu data structure>>=
   //template<typename T> 
 struct gpu_float {
-  float *dev_data, *host_data;
-  int N, nb;
-  stats S;
-  void setup(void);
-  void setup(int N_T);
-  void dev_malloc(void);
-  void free_dev(void);
-  void dev2host(void);
-  void host2dev(void);
-  void reset(void);
+  float *dev_data, *host_data, *d_tau;
+  <<gpu template common>>
+  void mv(gpu_float *y, gpu_float *x);
+  void qr_solve(gpu_float *x, gpu_float *b);
 };
 struct gpu_double {
   double *dev_data, *host_data;
-  int N, nb;
-  stats S;
-  void setup(void);
-  void setup(int N_T);
-  void dev_malloc(void);
-  void free_dev(void);
-  void dev2host(void);
-  void host2dev(void);
-  void reset(void);
+  <<gpu template common>>
 };
+@
+with
+<<gpu template common>>=
+int N, nb;
+stats S;
+cublasStatus_t stat;
+cublasHandle_t handle;
+cusolverDnHandle_t cusolverH;
+void setup(void);
+void setup(int N_T);
+void dev_malloc(void);
+void free_dev(void);
+void dev2host(void);
+void host2dev(void);
+void reset(void);
+void qr(int m);
 @
 <<GPU float methods>>=
 void gpu_float::setup(void) {
+  dev_data = NULL;
+  host_data = NULL;
+  d_tau = NULL;
   nb = sizeof(float);
 }
 void gpu_float::setup(int N_T) {
+  dev_data = NULL;
+  host_data = NULL;
+  d_tau = NULL;
   nb = sizeof(float);
   N = N_T;
 }
@@ -1816,7 +1851,8 @@ void gpu_float::dev_malloc(void) {
   HANDLE_ERROR( cudaMalloc( (void**)&dev_data, N*nb) );
 }
 void gpu_float::free_dev(void) {
-  HANDLE_ERROR( cudaFree( dev_data ) );
+  if (dev_data) HANDLE_ERROR( cudaFree( dev_data ) );
+  if (d_tau) HANDLE_ERROR( cudaFree( d_tau ) );
 }
 void gpu_float::dev2host(void) {
   HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
@@ -1828,6 +1864,142 @@ void gpu_float::host2dev(void) {
 }
 void gpu_float::reset(void) {
   HANDLE_ERROR( cudaMemset( dev_data, 0, N*nb) );
+}
+void gpu_float::mv(gpu_float *y, gpu_float *x) {
+  cublasCreate(&handle);
+  float alpha=1, beta=0;
+  CUBLAS_ERROR(cublasSgemv(handle,CUBLAS_OP_N,
+                           y->N,x->N,
+                           &alpha,
+                           dev_data,y->N,
+                           x->dev_data,1,
+                           &beta,
+                           y->dev_data,1));
+  cublasDestroy(handle);
+}
+void gpu_float::qr(int m) {
+
+  int *devInfo = NULL;
+  float *d_work = NULL;
+  int  lwork_geqrf = 0;
+  const int lda = m;
+
+  cusolverDnCreate(&cusolverH);
+  HANDLE_ERROR( cudaMalloc ((void**)&d_tau, sizeof(float) * m) );
+  HANDLE_ERROR( cudaMalloc ((void**)&devInfo, sizeof(int)) );
+
+  HANDLE_ERROR_CUSOLVER( cusolverDnSgeqrf_bufferSize(
+                                                cusolverH,
+                                                m,
+                                                N/m,
+                                                dev_data,
+                                                lda,
+                                                &lwork_geqrf) );
+
+  HANDLE_ERROR( cudaMalloc((void**)&d_work, sizeof(double)*lwork_geqrf) );
+
+  /* compute QR factorization */
+  HANDLE_ERROR_CUSOLVER( cusolverDnSgeqrf(
+                                     cusolverH, 
+                                     m, 
+                                     N/m, 
+                                     dev_data, 
+                                     lda, 
+                                     d_tau, 
+                                     d_work, 
+                                     lwork_geqrf, 
+                                     devInfo) );
+  HANDLE_ERROR( cudaDeviceSynchronize());
+
+  int info_gpu = 0;
+  HANDLE_ERROR( cudaMemcpy(&info_gpu, devInfo, sizeof(int), cudaMemcpyDeviceToHost));
+
+  printf("after geqrf: info_gpu = %d\n", info_gpu);
+
+  if (d_work) HANDLE_ERROR( cudaFree( d_work ) );
+  if (devInfo) HANDLE_ERROR( cudaFree( devInfo ) );
+  cusolverDnDestroy(cusolverH);
+
+}
+void gpu_float::qr_solve(gpu_float *x, gpu_float *b) {
+  int *devInfo = NULL;
+  float *d_work = NULL;
+  int  lwork_ormqr = 0;
+  int info_gpu = 0;
+  const int m = b->N;
+  const int lda = m;
+  const int ldb = m;
+  const int nrhs = 1;
+
+  cusolverDnCreate(&cusolverH);
+  cublasCreate(&handle);
+
+  HANDLE_ERROR( cudaMalloc ((void**)&devInfo, sizeof(int)) );
+
+  HANDLE_ERROR_CUSOLVER( cusolverDnSormqr_bufferSize(
+      cusolverH,
+      CUBLAS_SIDE_LEFT,
+      CUBLAS_OP_T,
+      m,
+      nrhs,
+      N/m,
+      dev_data,
+      lda,
+      d_tau,
+      b->dev_data,
+      ldb,
+      &lwork_ormqr));
+
+  HANDLE_ERROR( cudaMalloc((void**)&d_work, sizeof(float)*lwork_ormqr) );
+
+  /* compute Q^T*B */
+  HANDLE_ERROR_CUSOLVER(cusolverDnSormqr(
+                                    cusolverH,
+                                    CUBLAS_SIDE_LEFT,
+                                    CUBLAS_OP_T,
+                                    m,
+                                    nrhs,
+                                    N/m,
+                                    dev_data,
+                                    lda,
+                                    d_tau,
+                                    b->dev_data,
+                                    ldb,
+                                    d_work,
+                                    lwork_ormqr,
+                                    devInfo));
+  HANDLE_ERROR( cudaDeviceSynchronize());
+
+  /* check if QR is good or not */
+  HANDLE_ERROR( cudaMemcpy(&info_gpu, devInfo, sizeof(int), cudaMemcpyDeviceToHost));
+
+   printf("after ormqr: info_gpu = %d\n", info_gpu);
+
+  /* compute x = R \ Q^T*B */
+  float one = 1;
+  //assert(cudaSuccess == cudaStat1);
+  ( cublasStrsm(
+                              handle,
+                              CUBLAS_SIDE_LEFT,
+                              CUBLAS_FILL_MODE_UPPER,
+                              CUBLAS_OP_N, 
+                              CUBLAS_DIAG_NON_UNIT,
+                              N/m,
+                              nrhs,
+                              &one,
+                              dev_data,
+                              lda,
+                              b->dev_data,
+                              N/m));
+  HANDLE_ERROR( cudaDeviceSynchronize());
+
+  HANDLE_ERROR(cudaMemcpy(x->dev_data, b->dev_data, sizeof(float)*N/m, cudaMemcpyDeviceToDevice));
+
+
+  if (d_work)  HANDLE_ERROR( cudaFree( d_work ) );
+  if (devInfo) HANDLE_ERROR( cudaFree( devInfo ) );
+  cusolverDnDestroy(cusolverH);
+  cublasDestroy(handle);
 }
 @
 <<GPU double methods>>=
@@ -1873,7 +2045,117 @@ __global__ void double2float_kern(float *d__single_data, double *d__double_data,
   if (i<N)
     d__single_data[i] =  __double2float_rn ( d__double_data[i] ) ;
 }
-@ 
+@
+
+\subsubsection{QR factorization}
+\label{sec:qr_factor}
+
+<<QR factorization>>=
+  void geqrf(float *d_tau, float *a, int m, int n) {
+
+  int *devInfo = NULL;
+  float *d_work = NULL;
+  int  lwork_geqrf = 0;
+  const int lda = m;
+  cusolverDnHandle_t cusolverH;
+  cusolverDnCreate(&cusolverH);
+  //HANDLE_ERROR( cudaMalloc ((void**)&d_tau, sizeof(float) * m) );
+  HANDLE_ERROR( cudaMalloc ((void**)&devInfo, sizeof(int)) );
+
+  HANDLE_ERROR_CUSOLVER( cusolverDnSgeqrf_bufferSize(
+                                                     cusolverH,
+                                                     m,
+                                                     n,
+                                                     a,
+                                                     lda,
+                                                     &lwork_geqrf));
+
+  HANDLE_ERROR( cudaMalloc((void**)&d_work, sizeof(double)*lwork_geqrf) );
+
+  /* compute QR factorization */
+  HANDLE_ERROR_CUSOLVER( cusolverDnSgeqrf(
+                                          cusolverH, 
+                                          m, 
+                                          n, 
+                                          a, 
+                                          lda, 
+                                          d_tau, 
+                                          d_work, 
+                                          lwork_geqrf, 
+                                          devInfo));
+  HANDLE_ERROR( cudaDeviceSynchronize());
+
+  int info_gpu = 0;
+  HANDLE_ERROR( cudaMemcpy(&info_gpu, devInfo, sizeof(int), cudaMemcpyDeviceToHost));
+
+  printf("after geqrf: info_gpu = %d\n", info_gpu);
+  //assert(0 == info_gpu);
+
+  if (d_work) HANDLE_ERROR( cudaFree( d_work ) );
+  if (devInfo) HANDLE_ERROR( cudaFree( devInfo ) );
+  cusolverDnDestroy(cusolverH);
+}
+<<compute Q^T*B>>=
+  void ormqr(float *b, int m, float *q, float *tau, int n)
+{
+  int *devInfo = NULL;
+  float *d_work = NULL;
+  int  lwork_ormqr = 0;
+  int info_gpu = 0;
+  const int lda = m;
+  const int ldb = m;
+  const int nrhs = 1;
+  cusolverDnHandle_t cusolverH;
+  cusolverDnCreate(&cusolverH);
+
+  HANDLE_ERROR( cudaMalloc ((void**)&devInfo, sizeof(int)) );
+
+  HANDLE_ERROR_CUSOLVER( cusolverDnSormqr_bufferSize(
+                                                     cusolverH,
+                                                     CUBLAS_SIDE_LEFT,
+                                                     CUBLAS_OP_T,
+                                                     m,
+                                                     1,
+                                                     n,
+                                                     q,
+                                                     lda,
+                                                     tau,
+                                                     b,
+                                                     m,
+                                                     &lwork_ormqr));
+
+
+  //lwork = (lwork_geqrf > lwork_ormqr)? lwork_geqrf : lwork_ormqr;
+  HANDLE_ERROR( cudaMalloc((void**)&d_work, sizeof(float)*lwork_ormqr) );
+
+  /* compute Q^T*B */
+  HANDLE_ERROR_CUSOLVER(cusolverDnSormqr(
+                                         cusolverH,
+                                         CUBLAS_SIDE_LEFT,
+                                         CUBLAS_OP_T,
+                                         m,
+                                         1,
+                                         n,
+                                         q,
+                                         lda,
+                                         tau,
+                                         b,
+                                         m,
+                                         d_work,
+                                         lwork_ormqr,
+                                         devInfo));
+  HANDLE_ERROR( cudaDeviceSynchronize());
+
+  /* check if QR is good or not */
+  HANDLE_ERROR(cudaMemcpy(&info_gpu, devInfo, sizeof(int), cudaMemcpyDeviceToHost));
+
+   printf("after ormqr: info_gpu = %d\n", info_gpu);
+
+   if (d_work) HANDLE_ERROR( cudaFree( d_work ) );
+   if (devInfo) HANDLE_ERROR( cudaFree( devInfo ) );
+   cusolverDnDestroy(cusolverH);
+}
+@
 
 \subsection{Atmospheric dispersion}
 \label{sec:atmosph-disp}
