@@ -56,7 +56,11 @@ class DispersedFringeSensor(SegmentPistonSensor):
     Source : a class for astronomical sources
     cuFloatArray : an interface class between GPU host and device data for floats
     """
-    def __init__(self, M1, src, dispersion=5.0, field_of_view=3.0,nyquist_factor=1.0,BIN_IMAGE=2,MALLOC_DFT=True):
+    def __init__(self, M1, src, lenslet_size=1.5,
+                 dispersion=5.0, field_of_view=3.0,
+                 nyquist_factor=1.0,BIN_IMAGE=2,
+                 MALLOC_DFT=True,
+                 middle_mask_width=0.0):
         SegmentPistonSensor.__init__(self)
         self._N_SRC = src.N_SRC
         self.INIT_ALL_ATTRIBUTES = False
