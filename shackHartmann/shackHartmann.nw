@@ -43,6 +43,7 @@ struct geometricShackHartmann {
   <<geometric parameters>>
   void setup(int N_SIDE_LENSLET, float d, int N_GS);
   <<shackHartmann common methods>>
+  void folded_slopes(float *d__valid_slopes, mask *lenslet_mask);
   void reset(void);
 };
 
@@ -69,6 +70,7 @@ void process(void);
 void analyze(source *gs);
 void get_valid_reference_slopes(float *d__valid_slopes);
 void get_valid_slopes(float *d__valid_slopes);
+void masked_slopes(float *d__valid_slopes, mask *lenslet_mask);
 void get_valid_slopes_norm(float *d__valid_slopes_norm);
 @
 \subsection{Source}
@@ -81,6 +83,7 @@ void get_valid_slopes_norm(float *d__valid_slopes_norm);
 <<geometric valid lenslet>>
 <<valid lenslet slopes kernel>>
 <<valid lenslet slopes norm kernel>>
+<<folded slopes kernel>>
 
 <<setup>>
 <<cleanup>>
@@ -90,10 +93,11 @@ void get_valid_slopes_norm(float *d__valid_slopes_norm);
 <<wavefront processing>>
 <<get detector frame>>
 <<valid lenslet slopes>>
+<<masked slopes>>
 <<valid lenslet slopes norm>>
 <<update valid lenslet>>
 <<geometric reset>>
-
+<<folded slopes>>
 <<tt7 setup>>
 @
 
@@ -737,6 +741,71 @@ __global__ void get_valid_slopes_norm_kern(float *d__valid_slopes_norm,  int *id
     d__valid_slopes_norm[k] = hypotf( d__c[ _idx_ ] + d__c0[ _idx_ ],
                                       d__c[ _idx_ + N_LENSLET] +
                                       d__c0[ _idx_ + N_LENSLET]);
+  }
+}
+@
+A user defined lenslet mask can be used to extract the slopes:
+\index{shackHartmann!shackHartmann!masked\_slopes}
+<<masked slopes>>=
+  void shackHartmann::masked_slopes(float *d__valid_slopes, mask *lenslet_mask)
+{
+  <<masked slopes common>>
+}
+@ 
+\index{shackHartmann!tt7!masked\_slopes}
+<<masked slopes>>=
+  void tt7::masked_slopes(float *d__valid_slopes, mask *lenslet_mask)
+{
+  <<masked slopes common>>
+    }
+@ 
+\index{shackHartmann!geometricShackHartmann!masked\_slopes}
+<<masked slopes>>=
+  void geometricShackHartmann::masked_slopes(float *d__valid_slopes, mask *lenslet_mask)
+{
+  <<masked slopes common>>
+}
+@ where
+<<masked slopes common>>=
+dim3 blockDim(16,16);
+dim3 gridDim(lenslet_mask->nnz/256+1,1);
+get_valid_slopes_kern LLL gridDim, blockDim RRR (d__valid_slopes, lenslet_mask->idx,
+                                                 lenslet_mask->nnz, data_proc.d__c,
+                                                 N_LENSLET);
+@
+The masked slopes can be averaged on the WFSs:
+\index{shackHartmann!geometricShackHartmann!folded\_slopes}
+<<folded slopes>>=
+void geometricShackHartmann::folded_slopes(float *d__valid_slopes, mask *lenslet_mask)
+{
+  dim3 blockDim(16,16);
+  dim3 gridDim(lenslet_mask->nnz/256+1,1);
+  folded_slopes_kern LLL gridDim, blockDim RRR (d__valid_slopes, lenslet_mask->idx,
+                                                lenslet_mask->nnz, data_proc.d__c,
+                                                N_LENSLET,N_WFS);
+}
+@ with
+<<folded slopes kernel>>=
+__global__ void folded_slopes_kern(float *d__valid_slopes,  int *idx,
+                                   const int NNZ, float *d__c,
+                                   const int N_LENSLET, const int N_WFS)
+{
+  int i, j, k, iSource, _idx_;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  k = j * gridDim.x * blockDim.x + i;
+  if (k<NNZ) {
+    _idx_ = idx[k];
+    d__valid_slopes[k]     = 0;
+    d__valid_slopes[k+NNZ] = 0;
+    for (iSource=0; iSource<N_WFS; iSource++) {
+      //      iSource = _idx_/N_LENSLET;
+      _idx_ = idx[k] + iSource*N_LENSLET*2;
+      d__valid_slopes[k]     += d__c[ _idx_ ];
+      d__valid_slopes[k+NNZ] += d__c[ _idx_ + N_LENSLET];
+    }
+    d__valid_slopes[k]     /= N_WFS;
+    d__valid_slopes[k+NNZ] /= N_WFS;
   }
 }
 @
