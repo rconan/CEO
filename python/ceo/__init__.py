@@ -7,11 +7,11 @@ from .imaging import Imaging, JImaging
 from .centroiding import Centroiding
 from .shackHartmann import ShackHartmann, TT7, GeometricShackHartmann, JShackHartmann
 from .segmentPistonSensor import SegmentPistonSensor
-from .aaStats import AaStats, AaStatsMatrix, PaStats
+from .aaStats import AaStats, AaStatsMatrix, PaStats, APaStats
 from .BTBT import Btbt
 from .GBTBT import Gbtbt
 from .iterativeSolvers import Minres
-from .LMMSE import Lmmse, LmmseSH, BilinearInterpolation
+from .LMMSE import Lmmse, ALmmse, LmmseSH, BilinearInterpolation
 from .atmosphere import AtmosphereAbstract, Atmosphere, GmtAtmosphere, Layer, JGmtAtmosphere
 from .gmtMirrors import BendingModes, KarhunenLoeve, GmtMirrors, GMT_M1, GMT_M2, StereoscopicEdgeSensors, LateralEdgeSensors, DistanceEdgeSensors, Modes
 from .GMTLIB import CalibrationVault, GMT_MX, JGMT_MX, GeometricTT7, SegmentTipTiltSensor, EdgeSensors, Trace, PSSn as GMT_PSSn

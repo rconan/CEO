@@ -111,6 +111,7 @@ struct atmosphere {
 		 int _N_DURATION,
 		 int _RAND_SEED_);
   void gmt_set_id(int _ID_);
+  void gmt_set_eph(float _EPH_);
 
   void cleanup(void);
 
@@ -210,6 +211,7 @@ struct atmosphere {
 <<profile cleanup>>
 
 <<atmosphere setup (GMT, set ID)>>
+<<atmosphere setup (GMT, set EPH)>>
 <<atmosphere setup>>
 <<atmosphere setup (ray tracing)>>
 <<atmosphere setup (ray tracing, precomputed phase screens)>>
@@ -293,6 +295,9 @@ int LOCAL_RAND_SEED;
 @ \item the identity number of the GMT atmosphere model
 <<atmosphere parameters>>=
 int ID;
+@ \item the height of the atmosphere entrance pupil
+<<atmosphere parameters>>=
+float EPH;
 @ \end{itemize}
 
 The atmospheric layer parameters are:
@@ -578,6 +583,12 @@ void atmosphere::gmt_setup() {
   d__phase_screen_LAYER = NULL;
 }
 @ 
+The height of the atmosphere entrance pupil needs to be set before setting--up the atmosphere:
+<<atmosphere setup (GMT, set EPH)>>=
+void atmosphere::gmt_set_eph(float _EPH_) {
+  EPH = _EPH_;
+}
+@ 
 The GMT atmosphere ID needs to be set before setting--up the atmosphere:
 <<atmosphere setup (GMT, set ID)>>=
 void atmosphere::gmt_set_id(int _ID_) {
@@ -654,6 +665,9 @@ switch(ID) {
     memcpy(wind_direction, wind_direction_1, n_bytes);
   }
 }
+for (int k=0;k<N_LAYER;k++) {
+  altitude[k] -= EPH;
+ }
 turbulence.setup(altitude, xi0,
                  wind_speed, wind_direction, N_LAYER);
 @

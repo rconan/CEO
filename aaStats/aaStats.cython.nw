@@ -22,6 +22,8 @@ cdef extern from "aaStats.h":
         float *d__cov
         void setup(int, int, int , atmosphere *, float,
                    source *, int, source *, int) 
+        void setup(int, int, int , atmosphere *, float,
+                   source *, int, float) 
         void cleanup()
 <<class definitions>>
 @
@@ -37,6 +39,9 @@ cdef class AaStats:
     cdef public cuFloatArray cov
     cdef init(AaStats, aaStats *)
 cdef class PaStats:
+    cdef paStats *_c_paStats
+    cdef public cuFloatArray cov
+cdef class APaStats:
     cdef paStats *_c_paStats
     cdef public cuFloatArray cov
 @
@@ -111,11 +116,30 @@ cdef class PaStats:
 
     def __cinit__(self, int M, int N, int osf, 
                   AtmosphereAbstract atm, float lenslet_pitch,
-                  Source phase_src, Source slopes_src):
+                  Source phase_src, Source slopes_src,
+                  float average_z_radius=-1.0):
         self._c_paStats = new paStats()
         self._c_paStats.setup(M, N, osf, atm._c_atmosphere, lenslet_pitch,
                               phase_src._c_source, phase_src._c_source.N_SRC,
                               slopes_src._c_source, slopes_src._c_source.N_SRC )
+        self.cov = cuFloatArray(shape=(self._c_paStats.N_SRC2*2*self._c_paStats.NU2,1))
+        self.cov._c_gpu.dev_data = self._c_paStats.d__cov
+
+    def __dealloc__(self):
+        self._c_paStats.cleanup() 
+cdef class APaStats:
+    """
+    Phase/Slope covariance matrix class
+    """
+
+    def __cinit__(self, int M, int N, int osf, 
+                  AtmosphereAbstract atm, float lenslet_pitch,
+                  Source slopes_src,
+                  float average_z_radius):
+        self._c_paStats = new paStats()
+        self._c_paStats.setup(M, N, osf, atm._c_atmosphere, lenslet_pitch,
+                              slopes_src._c_source, slopes_src._c_source.N_SRC,
+                              average_z_radius)
         self.cov = cuFloatArray(shape=(self._c_paStats.N_SRC2*2*self._c_paStats.NU2,1))
         self.cov._c_gpu.dev_data = self._c_paStats.d__cov
 

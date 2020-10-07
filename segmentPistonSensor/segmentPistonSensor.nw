@@ -31,22 +31,34 @@ struct segmentPistonSensor {
 
   <<parameters>>
   void setup(gmt_m1 *M1, source *src, 
-	     float dispersion,
-	     float field_of_view,
-	     float _nyquist_factor_);
+             float dispersion,
+             float field_of_view,
+             float _nyquist_factor_);
   void setup(gmt_m1 *M1, source *src, 
-	     float dispersion,
-	     float field_of_view,
-	     float _nyquist_factor_,
-	     int _BIN_IMAGE_);
+             float dispersion,
+             float field_of_view,
+             float _nyquist_factor_,
+             int _BIN_IMAGE_);
+  void setup(gmt_m1 *M1, source *src, 
+             float _lenslet_size_,
+             float dispersion,
+             float field_of_view,
+             float _nyquist_factor_);
+  void setup(gmt_m1 *M1, source *src, 
+             float _lenslet_size_,
+             float dispersion,
+             float field_of_view,
+             float _nyquist_factor_,
+             int _BIN_IMAGE_);
   void setup_alt(gmt_m1 *M1, source *src, 
-	     float dispersion,
-	     float field_of_view,
-	     float _nyquist_factor_,
-	     int _BIN_IMAGE_);
+                 float dispersion,
+                 float field_of_view,
+                 float _nyquist_factor_,
+                 int _BIN_IMAGE_);
   void cleanup(void);
   void cleanup_alt(void);
   void propagate(source *src);
+  void propagate(source *src, float middle_mask_width);
   void propagate_alt(source *src);
   void readout(float exposureTime, float readoutNoiseRms, 
 	       float nBackgroundPhoton);
@@ -63,6 +75,7 @@ struct segmentPistonSensor {
 #include "segmentPistonSensor.h"
 
 <<lenslet trimming kernel>>
+<<lenslet trimming kernel (with middle mask)>>
 
 <<setup>>
 <<cleanup>>
@@ -239,29 +252,58 @@ float m2px, R, lambda0, spectral_bandwidth;
 \index{segmentPistonSensor!segmentPistonSensor!setup}
 <<setup>>=
 void segmentPistonSensor::setup(gmt_m1 *M1, source *src, 
-				float _dispersion_,
-				float _field_of_view_,
-				float _nyquist_factor_)
+                                float _dispersion_,
+                                float _field_of_view_,
+                                float _nyquist_factor_)
 {
   int k, N_DFT, DFT_osf;
   BIN_IMAGE=2;
+  lenslet_size   = 1.5;
   <<setup content>>
   <<setup content (camera array)>>
   info();
 }
+void segmentPistonSensor::setup(gmt_m1 *M1, source *src,
+                                float _lenslet_size_,
+                                float _dispersion_,
+                                float _field_of_view_,
+                                float _nyquist_factor_)
+{
+  int k, N_DFT, DFT_osf;
+  BIN_IMAGE=2;
+  lenslet_size   = _lenslet_size_;
+  <<setup content>>
+  <<setup content (camera array)>>
+      info();
+}
 @ 
 <<setup>>=
 void segmentPistonSensor::setup(gmt_m1 *M1, source *src, 
-				float _dispersion_,
-				float _field_of_view_,
-				float _nyquist_factor_,
+                                float _dispersion_,
+                                float _field_of_view_,
+                                float _nyquist_factor_,
                                 int _BIN_IMAGE_)
 {
   int k, N_DFT, DFT_osf;
   BIN_IMAGE=_BIN_IMAGE_;
+  lenslet_size   = 1.5;
   <<setup content>>
   <<setup content (camera array)>>
   info();
+}
+void segmentPistonSensor::setup(gmt_m1 *M1, source *src, 
+                                float _lenslet_size_,
+                                float _dispersion_,
+                                float _field_of_view_,
+                                float _nyquist_factor_,
+                                int _BIN_IMAGE_)
+{
+  int k, N_DFT, DFT_osf;
+  BIN_IMAGE=_BIN_IMAGE_;
+  lenslet_size   = _lenslet_size_;
+  <<setup content>>
+  <<setup content (camera array)>>
+      info();
 }
 @
 The default [[setup]] pre-allocated the Fourier transform plan associated to each wavelength.
@@ -272,13 +314,14 @@ When setting up with [[setup_alt]] then [[propagate_alt]] and [[cleanup_alt]] re
 @ 
 <<setup>>=
 void segmentPistonSensor::setup_alt(gmt_m1 *M1, source *src, 
-				float _dispersion_,
-				float _field_of_view_,
-				float _nyquist_factor_,
-                                int _BIN_IMAGE_)
+                                    float _dispersion_,
+                                    float _field_of_view_,
+                                    float _nyquist_factor_,
+                                    int _BIN_IMAGE_)
 {
   int DFT_osf;
   BIN_IMAGE=_BIN_IMAGE_;
+  lenslet_size   = 1.5;
   <<setup content>>
   <<setup alt content (camera array)>>
   info();
@@ -286,7 +329,6 @@ void segmentPistonSensor::setup_alt(gmt_m1 *M1, source *src,
 @
 The lenslet size, height and location as well as the sensor spectral dispersion, field--of--view and Nyquist factor are set with
 <<setup content>>=
-lenslet_size   = 1.5;
 lenslet_height = 82.5;
 ri             = (M1->D_full+0.357)*0.5 ;
 ro             = M1->L*sqrt(3)*0.5;
@@ -515,20 +557,20 @@ for (k=0;k<N_LAMBDA;k++) {
 
 
 <<lenslet trimming kernel>>=
-__global__ void lenslet_trim(float *piecewise_phase, 
-                             float *piecewise_amplitude, 
-			     char *m,
-                             const int n_px_lenslet, 
-			     float *pupil_phase, 
-			     float *pupil_amplitude, 
-                             const int n_in, 
-			     const float ri, const float ro,
-			     const int N_LENSLET,
-			     const float lenslet_size,
-			     const float lenslet_height,
-			     const float R,
-			     source *src,
-			     const float m2px)
+  __global__ void lenslet_trim(float *piecewise_phase, 
+                               float *piecewise_amplitude, 
+                               char *m,
+                               const int n_px_lenslet, 
+                               float *pupil_phase, 
+                               float *pupil_amplitude, 
+                               const int n_in, 
+                               const float ri, const float ro,
+                               const int N_LENSLET,
+                               const float lenslet_size,
+                               const float lenslet_height,
+                               const float R,
+                               source *src,
+                               const float m2px)
 {
   int i, j, k_out, k_in, iSource, k_LA,
     i_lenslet, j_lenslet, k_lenslet, 
@@ -543,7 +585,7 @@ __global__ void lenslet_trim(float *piecewise_phase,
 
     <<lenslet trimming kernel origin>>
 
-    k_lenslet = 12*iSource;
+      k_lenslet = 12*iSource;
 
     for (k_LA=0;k_LA<6;k_LA++) {
 
@@ -553,7 +595,7 @@ __global__ void lenslet_trim(float *piecewise_phase,
       <<lenslet trimming kernel (outer)>>
       <<lenslet trimming kernel block>>
 
-      ++k_lenslet;
+        ++k_lenslet;
     }
   }
 }
@@ -588,6 +630,11 @@ yc = ro*s + x0;
 The cropping is performed by computing the indices [[k_in]] of the cropped areas and affecting the cropped arrays to the corresponding lenslet wavefront areas with the indices [[k_out]].
 In addition, a pupil the size of the lenslet and properly aligned with the segment gaps is defined and applied to the cropped wavefronts.
 <<lenslet trimming kernel block>>=
+<<lenslet trimming kernel block (i)>>
+<<lenslet pupil mask>>
+<<lenslet trimming kernel block (ii)>>
+@ with
+<<lenslet trimming kernel block (i)>>=
 i_in = (int) floor(yc*m2px);
 j_in = (int) floor(xc*m2px);
 
@@ -601,12 +648,114 @@ x = 2*lenslet_size*(i - (n_px_lenslet-1)*0.5)/(n_px_lenslet-1);
 y = 2*lenslet_size*(j - (n_px_lenslet-1)*0.5)/(n_px_lenslet-1);
 xr = c*x + y*s;
 yr = -s*x + y*c;
-
-pupil = ( ( (xr>=-h) && (xr<=h) ) && ( (yr>=-h) && (yr<=h) ) ) ? 1.0 : 0.0;
-
+@ and
+<<lenslet trimming kernel block (ii)>>=
 piecewise_phase[k_out]     = pupil*pupil_phase[k_in];
 piecewise_amplitude[k_out] = pupil*pupil_amplitude[k_in];
 m[k_out]                   = (piecewise_amplitude[k_out]==1) ? 1 : 0;
+@
+The lenslet pupil mask is given by:
+<<lenslet pupil mask>>=
+pupil = ( ( (xr>=-h) && (xr<=h) ) && ( (yr>=-h) && (yr<=h) ) ) ? 1.0 : 0.0;
+@
+The center of the lenslet pupil mask can be masked along the x axis with a width along the y axis: 2[[w]]$<$[[lenslet_size]]:
+<<lenslet pupil mask (inner,with middle mask)>>=
+  pupil = ( ( (yr>=-h) && (yr<=h) ) &&
+            ( ( (xr>=-h) && (xr< -w) ) ||
+              ( (xr> +w) && (xr<=+h) ) ) ) ? 1.0 : 0.0;
+@
+<<lenslet pupil mask (outer,with middle mask)>>=
+  pupil = ( ( (xr>=-h) && (xr<=h) ) &&
+            ( ( (yr>=-h) && (yr< -w) ) ||
+              ( (yr> +w) && (yr<=+h) ) ) ) ? 1.0 : 0.0;
+@
+and the cropping is performed with:
+<<lenslet trimming kernel block (inner, with middle mask)>>=
+<<lenslet trimming kernel block (i)>>
+  <<lenslet pupil mask (inner,with middle mask)>>
+<<lenslet trimming kernel block (ii)>>
+@
+<<lenslet trimming kernel block (outer, with middle mask)>>=
+<<lenslet trimming kernel block (i)>>
+<<lenslet pupil mask (outer,with middle mask)>>
+<<lenslet trimming kernel block (ii)>>
+@
+
+\subsubsection{Propagation with middle mask}
+\label{sec:propagation_wmm}
+
+A mask can be apply across the lenslet, midway along the y--axis. The length of
+the mask is equal to [[lenslet_size]] and its with is [[middle_mask_width]].
+
+\index{segmentPistonSensor!segmentPistonSensor!propagate}
+<<propagation>>=
+void segmentPistonSensor::propagate(source *gs, float middle_mask_width)
+{
+  int k;
+  float d, wavenumber;
+  dim3 blockDim(16,16);
+  dim3 gridDim(N_PX_LENSLET/16+1,N_PX_LENSLET/16+1,N_GS);
+  lenslet_trim_with_middle_mask LLL gridDim, blockDim RRR (lenslet.phase, 
+                                                      lenslet.amplitude, 
+                                                      lenslet_mask.m,
+                                                      N_PX_LENSLET,
+                                                      gs->wavefront.phase, 
+                                                      gs->wavefront.amplitude, 
+                                                      D_px, ri, ro, N_LENSLET,
+                                                      lenslet_size, 
+                                                      lenslet_height, R,
+                                                      gs->dev_ptr, m2px,
+                                                      0.5*middle_mask_width);
+  lenslet_mask.set_filter_quiet();
+  lenslet_mask.area = N_GS*lenslet_mask.nnz*
+  gs->wavefront.M->area/gs->wavefront.M->nnz/N_LAMBDA;
+  <<propagation to lenslet focal plane>>
+}
+@
+<<lenslet trimming kernel (with middle mask)>>=
+__global__ void lenslet_trim_with_middle_mask(float *piecewise_phase, 
+                             float *piecewise_amplitude, 
+                             char *m,
+                             const int n_px_lenslet, 
+                             float *pupil_phase, 
+                             float *pupil_amplitude, 
+                             const int n_in, 
+                             const float ri, const float ro,
+                             const int N_LENSLET,
+                             const float lenslet_size,
+                             const float lenslet_height,
+                             const float R,
+                             source *src,
+                             const float m2px,
+                             float w)
+{
+  int i, j, k_out, k_in, iSource, k_LA,
+    i_lenslet, j_lenslet, k_lenslet, 
+    i_in, j_in;
+  float theta, xc, yc, x0, y0, O, 
+    s, c, h, x, y, xr, yr, pupil;
+
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  if ( (i<n_px_lenslet) && (j<n_px_lenslet) ) {
+
+    <<lenslet trimming kernel origin>>
+
+      k_lenslet = 12*iSource;
+
+    for (k_LA=0;k_LA<6;k_LA++) {
+
+      <<lenslet trimming kernel (inner)>>
+      <<lenslet trimming kernel block (inner, with middle mask)>>
+
+      <<lenslet trimming kernel (outer)>>
+      <<lenslet trimming kernel block (outer, with middle mask)>>
+
+      ++k_lenslet;
+    }
+  }
+}
 @
 \subsection{Read--out}
 \label{sec:read-out}
