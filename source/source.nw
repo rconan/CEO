@@ -206,6 +206,7 @@ struct complex_amplitude {
   void reset_phase(void);
   void reset_phase(complex_amplitude *wavefront_prime);
   void add_phase(float alpha, float *phase_prime);
+  void add_same_phase(float alpha, float *phase_prime);
   void masked(void);
   void masked(mask *M_in);
   void rms(float *rms);
@@ -2386,7 +2387,18 @@ void complex_amplitude::add_phase(float alpha, float *phase_prime)
   if (M!=NULL)
     masked();
 }
-
+@
+Or the same phase $\varphi^\prime$ can be added to wavefront phase of each source $$\varphi_i = \varphi_i + \alpha \varphi^\prime$$:
+  \index{source!complex\_amplitude!add\_phase}
+<<adding wavefront phase>>=
+    void complex_amplitude::add_same_phase(float alpha, float *phase_prime)
+{
+ int k, n_pixel = N_PX/N;
+ for (k=0;k<N;k++)
+   CUBLAS_ERROR( cublasSaxpy(handle, n_pixel, &alpha, phase_prime, 1, phase+k*n_pixel, 1) );
+ if (M!=NULL)
+   masked();
+}
 @
 \paragraph{Masking wavefront amplitude}
 \label{sec:mask-wavefr-ampl}
