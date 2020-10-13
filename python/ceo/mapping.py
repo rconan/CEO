@@ -105,7 +105,7 @@ class Mapping(object):
     def load(self,filename):
 
         path_to_modes = os.path.join( os.path.abspath(__file__).split('python')[0] , 'gmtMirrors' , filename+'.ceo' )
-        with open(path_to_modes,'r') as f:
+        with open(path_to_modes,'rb') as f:
             self.suit['Ni']     = np.fromfile(f, dtype=np.int32, count=1)[0]
             self.suit['L']      = np.fromfile(f, dtype=np.double, count=1)[0]
             self.suit['N_SET']  = np.fromfile(f, dtype=np.int32, count=1)[0]
@@ -116,6 +116,7 @@ class Mapping(object):
     def __add__(x,y,s2b=[]):
         assert (x.suit['Ni']==y.suit['Ni']),"Both mapping must have the sampling!"
         assert (x.suit['L']==y.suit['L']),"Both mapping must be the same length!"
+        assert (x.suit['N_SET']==y.suit['N_SET']),"Both set must be the same length!"
 
         z = Mapping()
         z.suit['Ni'] = x.suit['Ni']
@@ -150,8 +151,9 @@ class Mapping(object):
     def N_MODE(self,value):
         Ni2  = int(self.suit['Ni']**2)
         M = np.vsplit(self.suit['M'].reshape(-1,Ni2),self.suit['N_SET'])
-        self.suit['N_MODE'] = np.array( value,     dtype=np.int32)
-        Mr = np.vstack([_[:self.suit['N_MODE'],:] for _ in M])
+        self.suit['N_MODE'] = np.array( value,
+                                        dtype=np.int32)
+        Mr = np.vstack([_[:value,:] for _ in M])
         self.suit['M'] = Mr.flatten()
 
 
