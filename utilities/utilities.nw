@@ -1809,7 +1809,10 @@ void freedev( float **dev_data ) {
 struct gpu_float {
   float *dev_data, *host_data, *d_tau;
   <<gpu template common>>
-  void mv(gpu_float *y, gpu_float *x);
+  void dev2dev(gpu_float *other);
+  void axpy(const gpu_float *x, const float alpha);
+  void scale(const float alpha);
+  void mv(gpu_float *y, const gpu_float *x);
   void qr_solve(gpu_float *x, gpu_float *b);
 };
 struct gpu_double {
@@ -1858,6 +1861,10 @@ void gpu_float::dev2host(void) {
   HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
                             N*nb, cudaMemcpyDeviceToHost ) ) ;
 }
+void gpu_float::dev2dev(gpu_float *other) {
+  HANDLE_ERROR( cudaMemcpy( other->dev_data, dev_data, 
+                            N*nb, cudaMemcpyDeviceToDevice ) ) ;
+}
 void gpu_float::host2dev(void) {
   HANDLE_ERROR( cudaMemcpy( dev_data, host_data, 
                             N*nb, cudaMemcpyHostToDevice ) ) ;
@@ -1865,7 +1872,7 @@ void gpu_float::host2dev(void) {
 void gpu_float::reset(void) {
   HANDLE_ERROR( cudaMemset( dev_data, 0, N*nb) );
 }
-void gpu_float::mv(gpu_float *y, gpu_float *x) {
+void gpu_float::mv(gpu_float *y, const gpu_float *x) {
   cublasCreate(&handle);
   float alpha=1, beta=0;
   CUBLAS_ERROR(cublasSgemv(handle,CUBLAS_OP_N,
@@ -1875,6 +1882,21 @@ void gpu_float::mv(gpu_float *y, gpu_float *x) {
                            x->dev_data,1,
                            &beta,
                            y->dev_data,1));
+  cublasDestroy(handle);
+}
+void gpu_float::axpy(const gpu_float *x, const float alpha) {
+  cublasCreate(&handle);
+  cublasSaxpy(handle, N,
+              &alpha,
+              x->dev_data, 1,
+              dev_data, 1);
+  cublasDestroy(handle);
+}
+void gpu_float::scale(const float alpha) {
+  cublasCreate(&handle);
+  cublasSscal(handle, N,
+              &alpha,
+              dev_data, 1);
   cublasDestroy(handle);
 }
 void gpu_float::qr(int m) {
