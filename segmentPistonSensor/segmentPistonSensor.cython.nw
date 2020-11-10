@@ -16,11 +16,12 @@ cdef extern from "segmentPistonSensor.h":
         complex_amplitude lenslet
         imaging camera, FFT
         void setup(gmt_m1 *, source *, float, float, float)
-        void setup(gmt_m1 *, source *, float, float, float, int)
+        void setup(gmt_m1 *, source *, float, float, float, float, int)
         void setup_alt(gmt_m1 *, source *, float, float, float, int)
         void cleanup()
         void cleanup_alt()
         void propagate(source *)
+        void propagate(source *, float)
         void propagate_alt(source *)
         void readout(float, float, float)
         void fft()
@@ -39,6 +40,7 @@ cdef class SegmentPistonSensor:
         readonly Imaging camera
         readonly cuFloatArray fftlet
         bint MALLOC_DFT
+        float middle_mask_width
 @
 \section{PYX file}
 \label{sec:pyx-file}
@@ -55,12 +57,16 @@ cdef class SegmentPistonSensor:
         The GMT M1 model class
     gs : Source
         The guide star(s) of the segment piston sensor
+    lenslet_size: float, optional
+        The size of the lenslet; default: 1.5m
     dispersion : float, optional
         The grism dispersion; default: 5arcsec/micron
     field_of_view : float, optional
         The segment piston sensor field-of-view; default: 3 arcsec
     nyquist_factor : float, optional
         The Nyquist sampling factor; default: 1, meaning Nyquist sampling
+    middle_mask_width: float, optional
+        The width of the band mask in the middle of the lenslet; default: 0
 
     Attributes
     ----------
@@ -80,16 +86,20 @@ cdef class SegmentPistonSensor:
     Imaging : the lenslet and detector class
     """
     def __cinit__(self,GMT_M1 M1, Source gs,
+                  float lenslet_size=1.5,
                   float dispersion=5.0,
                   float field_of_view=3.0,
                   float nyquist_factor=1.0,
                   int BIN_IMAGE=2,
-                  bint MALLOC_DFT=True):
+                  bint MALLOC_DFT=True,
+                  float middle_mask_width=0):
         self._c_segmentPistonSensor = new segmentPistonSensor()
         self.MALLOC_DFT = MALLOC_DFT
+        self.middle_mask_width = middle_mask_width
         if self.MALLOC_DFT:
             self._c_segmentPistonSensor.setup(M1._c_gmt_m12,
                                               gs._c_source,
+                                              lenslet_size,
                                               dispersion*ARCSEC2RAD*1e6,
                                               field_of_view*ARCSEC2RAD,
                                               nyquist_factor,
@@ -132,6 +142,23 @@ cdef class SegmentPistonSensor:
             self._c_segmentPistonSensor.cleanup_alt()
 
     def propagate(self, Source gs):
+        """
+        Propagates the guide star wavefront from the segment piston sensor pupil plane to the detector in the focal plane
+
+        Parameters
+        ----------
+        gs : Source
+            The segment piston sensor guide star(s)
+        """
+        if self.MALLOC_DFT:
+            if self.middle_mask_width>0:
+                self._c_segmentPistonSensor.propagate(gs._c_source, self.middle_mask_width)
+            else:
+                self._c_segmentPistonSensor.propagate(gs._c_source)
+        else:
+            self._c_segmentPistonSensor.propagate_alt(gs._c_source)
+
+    def propagate_with_middle_mask(self, Source gs, float mask_bandwidth):
         """
         Propagates the guide star wavefront from the segment piston sensor pupil plane to the detector in the focal plane
 
