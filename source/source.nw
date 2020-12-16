@@ -332,7 +332,7 @@ struct bundle {
   void get_vignetting(double *d__v);
   void get_n_iteration(int *n_iteration);
   void gmt_truss_onaxis(void);
-  void gmt_m2_baffle(void);
+  void gmt_m2_baffle(const double baffle_radius);
 };
 @
 A bundle allocates an array of [[N_RAY]] rays on the device
@@ -1421,10 +1421,10 @@ __global__ void reset_kernel(ray *d__ray, int N_RAY)
 }
 @
 
-\subsubsection{GMT Truss on--axis projection}
+\subsubsection{GMT on--axis vignetting}
 \label{sec:gmt-truss--oa-proj}
 
-The vignetting of the rays by the on--axis footprint of the truss projected on the GMT M1
+The vignetting of the rays by the on--axis footprint of the mount structures projected on the GMT M1
 center segment is computed with:
 \begin{itemize}
 \item for the truss:
@@ -1482,20 +1482,20 @@ __global__ void gmt_truss_onaxis_kern(ray *d__ray, int NP, double *Vx, double *V
 \item for M2 baffle:
 \index{source!bundle!gmt\_m2\_baffle}
 <<ray bundle functions>>=
-void bundle::gmt_m2_baffle(void)
+void bundle::gmt_m2_baffle(const double baffle_radius)
 {
   dim3 blockDim(256);
   dim3 gridDim(N_RAY_TOTAL/256+1);
-  gmt_m2_baffle_kern LLL gridDim,blockDim RRR (d__ray,N_RAY_TOTAL);
+  gmt_m2_baffle_kern LLL gridDim,blockDim RRR (d__ray,N_RAY_TOTAL,baffle_radius);
 }  
 @
 with the device kernels
 <<GMT M2 baffle kernel>>=
-__global__ void gmt_m2_baffle_kern(ray *d__ray, int NP)
+  __global__ void gmt_m2_baffle_kern(ray *d__ray, int NP,const double R)
 {
   int i;
   double rho2, R2;
-  R2 = 1.65*1.65;
+  R2 = R*R;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i<NP && d__ray[i].v) {
     rho2 = d__ray[i].coordinates.x*d__ray[i].coordinates.x +
