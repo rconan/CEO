@@ -12,3 +12,12 @@ All the code has been written following the literate programming methodology. Th
 CEO can be downloaded from <https://github.com/rconan/CEO>.
 The C++ API is compiled with `make all`, the Python interface with `make cython` and the code documentation with `make doc`.
 
+## Installation
+
+ 1. Install [CUDA](https://developer.nvidia.com/cuda-downloads) and [Python](https://www.anaconda.com/products/individual#Downloads)
+ 2. Install [Noweb](https://www.cs.tufts.edu/~nr/noweb/): `sudo apt install noweb`
+ 3. Install [cupy](https://cupy.dev/): `conda install -c conda-forge cupy`
+ 3. Clone CEO: `git clone https://github.com/rconan/CEO.git`
+ 4. Edit `CUDAPATH` and `PYTHONPATH` variables in `CEO/common.mk`
+ 5. Build CEO: `cd CEO && make all cython`
+ 6. Run the tests: `cd tests && make`
