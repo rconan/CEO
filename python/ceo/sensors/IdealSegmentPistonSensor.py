@@ -97,12 +97,9 @@ class IdealSegmentPistonSensor:
                 _M_.append( np.logical_and( np.abs(xyp[0,:])<self.L/2,  np.abs(xyp[1,:])<self.W/2 ) )
             self.M.append( np.array( _M_ ) )
         #print self.M.shape
+        self._counter = 0   # to keep count of number of integrated "frames"
+        self._p = np.zeros(self.get_measurement_size())  # buffer to perform integration
 
-    def reset(self):
-        pass
-
-    def process(self):
-        pass
 
     def piston(self,src):
         """
@@ -149,12 +146,20 @@ class IdealSegmentPistonSensor:
         """
         self.calibrate(src)
 
+    def reset(self):
+        self._counter = 0
+        self._p *= 0
+
+    def process(self):
+        if self._counter >= 0:
+            self.measurement = self._p / self._counter
+
     def propagate(self,src):
         """
         Computes the segment piston vector.
         """
-        p = self.piston(src)
-        self.measurement = p.ravel()
+        self._p += self.piston(src).ravel()
+        self._counter +=1
         
     def analyze(self, src):
         self.propagate(src)
