@@ -67,8 +67,8 @@ class PyramidWFS(Pyramid):
         label[mqt3] = 3
         label[mqt4] = 4
 
-        centers = center_of_mass(ccd_frame, labels=label, index=[1,2,3,4])
-        #centers = [[117.5,117.5],[117.5,249.5],[249.5,117.5],[249.5,249.5]] # OVERRIDE!!!!!
+        #centers = center_of_mass(ccd_frame, labels=label, index=[1,2,3,4])
+        centers = [[117.5,117.5],[117.5,249.5],[249.5,117.5],[249.5,249.5]] # OVERRIDE!!!!!
         print("Center of subpupil images (pix):")
         print(np.array_str(np.array(centers), precision=1), end='\n')
 
