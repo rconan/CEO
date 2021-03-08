@@ -325,7 +325,7 @@ class GMT_MX(GmtMirrors):
 
     def calibrate(self,wfs,gs,mirror=None,mode=None,stroke=None, first_mode=3, 
                   closed_loop_calib=False, minus_M2_TT=False,
-                  calibrationVaultKwargs=None, stroke_scaling=False):
+                  calibrationVaultKwargs=None, stroke_scaling=False, last_mode=None):
         """
         Calibrate the different degrees of freedom of the  mirrors
 
@@ -498,7 +498,10 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="zernike":
-                n_mode = self.M1.zernike.n_mode
+                if last_mode is None:
+                    n_mode = self.M1.zernike.n_mode
+                else:
+                    n_mode = last_mode
                 D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
                 idx = 0
                 for kSeg in range(7):
@@ -603,7 +606,10 @@ class GMT_MX(GmtMirrors):
                     idx += 1
                 sys.stdout.write("\n")
             if mode=="zernike":
-                n_mode = self.M2.zernike.n_mode
+                if last_mode is None:
+                    n_mode = self.M2.zernike.n_mode
+                else:
+                    n_mode = last_mode 
                 D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
                 idx = 0
                 for kSeg in range(7):
@@ -614,7 +620,10 @@ class GMT_MX(GmtMirrors):
                         idx += 1
                     sys.stdout.write("\n")
             if mode=="Karhunen-Loeve":
-                n_mode = self.M2.modes.n_mode
+                if last_mode is None:
+                    n_mode = self.M2.modes.n_mode
+                else:
+                    n_mode = last_mode
                 D = np.zeros((wfs.get_measurement_size(),(n_mode-first_mode)*7))
                 idx = 0;
                 if stroke_scaling == True:
