@@ -14,7 +14,7 @@ The C++ API is compiled with `make all`, the Python interface with `make cython`
 
 ## Installation
 
- 1. Install [CUDA](https://developer.nvidia.com/cuda-downloads) and [Python](https://www.anaconda.com/products/individual#Downloads)
+ 1. Install [CUDA](https://developer.nvidia.com/cuda-10.2-download-archive) and [Python](https://www.anaconda.com/products/individual#Downloads)
  2. Install [Noweb](https://www.cs.tufts.edu/~nr/noweb/): `sudo apt install noweb`
  3. Install [cupy](https://cupy.dev/): `conda install -c conda-forge cupy`
  3. Clone CEO: `git clone https://github.com/rconan/CEO.git`
