@@ -17,7 +17,9 @@ The C++ API is compiled with `make all`, the Python interface with `make cython`
  1. Install [CUDA](https://developer.nvidia.com/cuda-10.2-download-archive) and [Python](https://www.anaconda.com/products/individual#Downloads)
  2. Install [Noweb](https://www.cs.tufts.edu/~nr/noweb/): `sudo apt install noweb`
  3. Install [cupy](https://cupy.dev/): `conda install -c conda-forge cupy`
- 3. Clone CEO: `git clone https://github.com/rconan/CEO.git`
- 4. Edit `CUDAPATH` and `PYTHONPATH` variables in `CEO/common.mk`
- 5. Build CEO: `cd CEO && make all cython`
- 6. Run the tests: `cd tests && make`
+ 4. Install: `conda install boto3`
+ 5. Install: `sudo apt install libcurl3-dev`
+ 6. Clone CEO: `git clone https://github.com/rconan/CEO.git`
+ 7. Edit `CUDAPATH` and `PYTHONPATH` variables in `CEO/common.mk`
+ 8. Build CEO: `cd CEO && make all cython`
+ 9. Run the tests: `cd tests && make`
