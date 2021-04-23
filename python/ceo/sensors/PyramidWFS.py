@@ -67,8 +67,8 @@ class PyramidWFS(Pyramid):
         label[mqt3] = 3
         label[mqt4] = 4
 
-        centers = center_of_mass(ccd_frame, labels=label, index=[1,2,3,4])
-        #centers = [[117.5,117.5],[117.5,249.5],[249.5,117.5],[249.5,249.5]] # OVERRIDE!!!!!
+        #centers = center_of_mass(ccd_frame, labels=label, index=[1,2,3,4])
+        centers = [[117.5,117.5],[117.5,249.5],[249.5,117.5],[249.5,249.5]] # OVERRIDE!!!!!
         print("Center of subpupil images (pix):")
         print(np.array_str(np.array(centers), precision=1), end='\n')
 
@@ -214,8 +214,8 @@ class PyramidWFS(Pyramid):
         meas = [m - n for (m,n) in zip(self._measurement, self._ref_measurement)]
         if out_format == 'vector':
             return cp.asnumpy(cp.concatenate(meas))
-        else:
-            return cp.asnumpy(meas)
+        elif out_format == 'list':
+            return [cp.asnumpy(x) for x in meas]
 
     def get_ref_measurement(self, out_format='vector'):
         """
@@ -226,8 +226,8 @@ class PyramidWFS(Pyramid):
         assert out_format == 'vector' or out_format == 'list', 'output format supported: "vector", "list [sx,sy]"'
         if out_format == 'vector':
             return cp.asnumpy(cp.concatenate(self._ref_measurement))
-        else:
-            return cp.asnumpy(self._ref_measurement)
+        elif out_format == 'list':
+            return [cp.asnumpy(x) for x in self._ref_measurement]
 
     def get_sx(self):
         """
