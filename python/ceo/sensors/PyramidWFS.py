@@ -75,6 +75,7 @@ class PyramidWFS(Pyramid):
 
         centers = center_of_mass(fr, labels=label, index=[1,2,3,4])
         #centers = [[117.5,117.5],[117.5,249.5],[249.5,117.5],[249.5,249.5]] # OVERRIDE!!!!!
+
         print("Center of subpupil images (pix):")
         print(np.array_str(np.array(centers), precision=1), end='\n')
 
