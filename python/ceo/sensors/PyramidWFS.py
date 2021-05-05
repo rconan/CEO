@@ -11,7 +11,7 @@ class PyramidWFS(Pyramid):
         self._SUBAP_NORM = 'MEAN_FLUX_PER_SUBAP'
         self.camera.photoelectron_gain = throughput
 	
-    def calibrate(self, src, calib_modulation=10.0, calib_modulation_sampling=64, percent_extra_subaps=0.0, thr=0.0):
+    def calibrate(self, src, calib_modulation=10.0, calib_modulation_sampling=64, cen_thr=0.2, percent_extra_subaps=0.0, thr=0.0):
         """
         Perform the following calibration tasks:
         1) Acquire a CCD frame using high modulation (default: 10 lambda/D);
@@ -28,6 +28,8 @@ class PyramidWFS(Pyramid):
         gmt : GMT_MX
              The GMT object
         calib_modulation: modulation radius applied during calibration (default 10 lambda/D).
+        calib_modulation_sampling: number of points sampling the modulation circle (must be multiple of 4).
+        cen_thr: flux threshold value to compute subpupil center coordinates (default: 0.2)
         percent_extra_subaps: percent of extra subapertures across the pupil for initial pupil registration (default: 0).
         thr : Threshold for pupil registration refinement: select only SAs with flux percentage above thr.
         """
@@ -56,10 +58,10 @@ class PyramidWFS(Pyramid):
         y = np.linspace(0, ny-1, ny)
         xx, yy = np.meshgrid(x, y)
 
-        mqt1 = np.logical_and(xx< (nx/2), yy< (ny/2)) # First quadrant (lower left)
-        mqt2 = np.logical_and(xx>=(nx/2), yy< (ny/2)) # Second quadrant (lower right)
-        mqt3 = np.logical_and(xx< (nx/2), yy>=(ny/2)) # Third quadrant (upper left)
-        mqt4 = np.logical_and(xx>=(nx/2), yy>=(ny/2)) # Fourth quadrant (upper right)
+        mqt1 = np.logical_and(xx< (nx//2), yy< (ny//2)) # First quadrant (lower left)
+        mqt2 = np.logical_and(xx>=(nx//2), yy< (ny//2)) # Second quadrant (lower right)
+        mqt3 = np.logical_and(xx< (nx//2), yy>=(ny//2)) # Third quadrant (upper left)
+        mqt4 = np.logical_and(xx>=(nx//2), yy>=(ny//2)) # Fourth quadrant (upper right)
 
         label = np.zeros((nx,ny)) # labels needed for ndimage.center_of_mass
         label[mqt1] = 1
@@ -67,8 +69,12 @@ class PyramidWFS(Pyramid):
         label[mqt3] = 3
         label[mqt4] = 4
 
-        #centers = center_of_mass(ccd_frame, labels=label, index=[1,2,3,4])
-        centers = [[117.5,117.5],[117.5,249.5],[249.5,117.5],[249.5,249.5]] # OVERRIDE!!!!!
+        #-> Preprocess CCD frame before subpupil registration
+        fr = ccd_frame / np.max(ccd_frame)
+        fr = (fr > cen_thr).astype('float')
+
+        centers = center_of_mass(fr, labels=label, index=[1,2,3,4])
+        #centers = [[117.5,117.5],[117.5,249.5],[249.5,117.5],[249.5,249.5]] # OVERRIDE!!!!!
         print("Center of subpupil images (pix):")
         print(np.array_str(np.array(centers), precision=1), end='\n')
 
