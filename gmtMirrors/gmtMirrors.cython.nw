@@ -106,11 +106,13 @@ cdef class GmtMirrors:
                  unicode M1_mirror_modes=None, unicode M2_mirror_modes=None,
                  int M1_N_MODE=0, int M2_N_MODE=0,
                  dict M1_mirror_modes_data=None,
-                 dict M2_mirror_modes_data=None):
+                 dict M2_mirror_modes_data=None,
+                 float M1_clear_aperture_diameter=8.365):
         self.M1 = GMT_M1(radial_order=M1_radial_order,
                          mirror_modes=M1_mirror_modes,
                          N_MODE=M1_N_MODE,
-                         mirror_modes_data=M1_mirror_modes_data)
+                         mirror_modes_data=M1_mirror_modes_data,
+                         clear_aperture_diameter=M1_clear_aperture_diameter)
         self.M2 = GMT_M2(radial_order=M2_radial_order, 
                          mirror_modes=M2_mirror_modes,
                          N_MODE=M2_N_MODE,
@@ -696,6 +698,9 @@ cdef class Modes:
         double *d__BM
         int BM_N_SAMPLE
         void test_ray_tracing()
+        void setup(float)
+        void setup( modes *, float)
+        void setup( zernikeS *, float)
         <<python GMT M12 functions>>
         void preset(bundle *, rtd )
 @  where
@@ -710,9 +715,6 @@ coordinate_system conic_CS
 coordinate_system rigid_body_CS
 coordinate_system motion_CS
 coordinate_system TT_CS
-void setup()
-void setup( modes *)
-void setup( zernikeS *)
 void cleanup()
 void update(vector , vector ,int )
 void reset()
@@ -768,9 +770,10 @@ cdef class GMT_M1:
     <<GMT M12 docstring>>
 
     def __cinit__(self, unicode mirror_modes=u"None", int radial_order=0,
-                  int N_MODE=0, dict mirror_modes_data=None, **kwargs):
+                  int N_MODE=0, dict mirror_modes_data=None,
+                  float clear_aperture_diameter=8.365, **kwargs):
         self._c_gmt_m12 = new gmt_m1()
-        <<GMT M12 constructor>>
+        <<GMT M1 constructor>>
  
     <<GMT M12 methods>>
 
@@ -854,6 +857,41 @@ elif mirror_modes==b"polishing map":
     self._c_gmt_m12.setup( <bending_modes *> self.PM._c_bending_modes)
 else:
     self._c_gmt_m12.setup()
+<<GMT M1 constructor>>=
+self.conic_curv = cuDoubleArray(shape=(1,7),dev_malloc=False)
+self.conic_curv._c_gpu.dev_data = self._c_gmt_m12.d__conic_c
+self.conic_const = cuDoubleArray(shape=(1,7),dev_malloc=False)
+self.conic_const._c_gpu.dev_data = self._c_gmt_m12.d__conic_k
+self.mirror_modes_type = mirror_modes.encode('utf-8')
+if self.mirror_modes_type==b"None":
+    self._c_gmt_m12.setup(clear_aperture_diameter)
+elif self.mirror_modes_type==b"zernike":
+    self.zernike = ZernikeS(radial_order,N_SURF=7)
+    self._c_gmt_m12.setup( <zernikeS *> self.zernike._c_zernikeS, clear_aperture_diameter)
+else:
+    if mirror_modes_data is None:
+        self.B = Modes(self.mirror_modes_type,7,N_MODE)
+    else:
+        self.B = Modes(N=7,n_mode=N_MODE,**mirror_modes_data)
+    self._c_gmt_m12.setup( <modes *> self.B._c_modes, clear_aperture_diameter)
+
+self.segment_reflectivity = cuFloatArray(shape=(7,))
+self.segment_reflectivity._c_gpu.dev_data = self._c_gmt_m12.d__segment_reflectivity
+
+self.aperture_CS   = Coordinate_system(7)
+self.conic_CS      = Coordinate_system(7)
+self.motion_CS     = Coordinate_system(7)
+self.rigid_body_CS = Coordinate_system(7)
+self.TT_CS         = Coordinate_system(1)
+
+self.aperture_CS.init(   &(self._c_gmt_m12.aperture_CS)   )
+self.conic_CS.init(      &(self._c_gmt_m12.conic_CS)      )
+self.motion_CS.init(     &(self._c_gmt_m12.motion_CS)     )
+self.rigid_body_CS.init( &(self._c_gmt_m12.rigid_body_CS) )
+self.TT_CS.init(         &(self._c_gmt_m12.TT_CS)         )
+
+self.D = {}
+@
 <<GMT M12 constructor>>=
 self.conic_curv = cuDoubleArray(shape=(1,7),dev_malloc=False)
 self.conic_curv._c_gpu.dev_data = self._c_gmt_m12.d__conic_c
@@ -1247,6 +1285,9 @@ M2 pointing neutral and coma neutral tip-tilt are realized with
 
 <<gmtMirrors.pxd contents>>=
     cdef cppclass gmt_m2:
+        void setup()
+        void setup( modes *)
+        void setup( zernikeS *)
         <<python GMT M12 functions>>
         void pointing_neutral(float, float)
         void coma_neutral(float, float)
