@@ -51,11 +51,11 @@ struct imaging {
   void propagateTT7(source *src);
   void propagateTT7(source *src, int *d__piston_mask);
   void propagateThroughFieldStop(source *src, float field_stop_diam);
-  void propagateThroughPyramid(source *src, float alpha);
+  void propagateThroughPyramid(source *src, float alpha, float field_stop_diam);
   void propagateThroughModulatedPyramid(source *src,
                                         float modulation,
                                         int modulation_sampling,
-                                        float alpha);
+                                        float alpha, float field_stop_diam);
 
   void readout(float exposureTime, float readOutNoiseRms);
   void noiseless_readout(float exposureTime);
@@ -763,13 +763,13 @@ void imaging::propagateThroughFieldStop(source *src, float field_stop_diam) {
   dim3 blockDim(16,16);
   gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
   complexAmplitude LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
-					      src->wavefront.amplitude,
-					      src->wavefront.phase,
+                                              src->wavefront.amplitude,
+                                              src->wavefront.phase,
                                               src->wavenumber(),
-					      N_PX_PUPIL, N_PX_IMAGE, M,
-					      N_SIDE_LENSLET, src->dev_ptr,
+                                              N_PX_PUPIL, N_PX_IMAGE, M,
+                                              N_SIDE_LENSLET, src->dev_ptr,
                                               pixel_scale, d__theta_x, d__theta_y,
-					      absolute_pointing,0);
+                                              absolute_pointing,0);
   <<imaging CUFFT execution>>
 
 
@@ -833,34 +833,39 @@ For a complex amplitude $\Phi$, the camera image $I$ is given by
   I = \left| \mathcal F \left[ \mathcal F[\Phi] T_{pyr} \right] \right|^2.
 \end{equation}
 
+A field stop can be inserted at tip of the pyramid, the field stop diameter is
+given in units of $\lambda/D$
+
+
 \index{imaging!imaging!propagateThroughPyramid}
 <<propagation through pyramid>>=
-void imaging::propagateThroughPyramid(source *src, float alpha) {
+  void imaging::propagateThroughPyramid(source *src, float alpha, float field_stop_diam) {
   int M = N_PX_IMAGE/N_PX_CAMERA;
   dim3 gridDim;
   dim3 blockDim(16,16);
   gridDim  = dim3(1+N_DFT*N_SIDE_LENSLET/16,1+N_DFT*N_SIDE_LENSLET/16,N_SOURCE);
   complexAmplitude LLL gridDim , blockDim RRR(d__wave_PUPIL, N_DFT,
-					      src->wavefront.amplitude,
-					      src->wavefront.phase,
+                                              src->wavefront.amplitude,
+                                              src->wavefront.phase,
                                               src->wavenumber(),
-					      N_PX_PUPIL, N_PX_IMAGE, M,
-					      N_SIDE_LENSLET, src->dev_ptr,
+                                              N_PX_PUPIL, N_PX_IMAGE, M,
+                                              N_SIDE_LENSLET, src->dev_ptr,
                                               pixel_scale, d__theta_x, d__theta_y,
-					      absolute_pointing,0);
+                                              absolute_pointing,0);
   <<imaging CUFFT execution>>
 
+  field_stop_diam *= N_DFT/N_PX_PUPIL;
   gridDim = dim3(1+N_DFT/16,1+N_DFT/16, N_SOURCE);
-  apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, alpha);
+  apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, alpha, field_stop_diam);
 
   <<propagation (FFT, intensity and binning)>>
 }
 @ with
 <<apply pyramid>>=
-__global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL, float alpha)
+  __global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL, float alpha, float field_stop_diam)
 {
   int i, j, k, w, half, iSource;
-  float xi, yj, c, s, phasor, a, b;
+  float xi, yj, rij, l, c, s, phasor, a, b;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
@@ -874,13 +879,19 @@ __global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL, 
       j -= N_DFT;
     xi = (float) i;
     yj = (float) j;
-    phasor = -2*(i+j)*(N_PX_PUPIL*1.5 + 1 - w*0.5)/N_DFT;
-    phasor -= alpha*(fabs(xi)+fabs(yj));
-    sincospif(phasor,&s,&c);
-    a = d__wave_PUPIL[k].x;
-    b = d__wave_PUPIL[k].y;
-    d__wave_PUPIL[k].x = (a*c - b*s)/N_DFT;
-    d__wave_PUPIL[k].y = (b*c + a*s)/N_DFT;
+    rij = hypot(xi,yj);
+    l = 0.5*field_stop_diam;
+    if (rij>l) {
+      d__wave_PUPIL[k].x = d__wave_PUPIL[k].y = 0.0;
+    } else {
+      phasor = -2*(i+j)*(N_PX_PUPIL*1.5 + 1 - w*0.5)/N_DFT;
+      phasor -= alpha*(fabs(xi)+fabs(yj));
+      sincospif(phasor,&s,&c);
+      a = d__wave_PUPIL[k].x;
+      b = d__wave_PUPIL[k].y;
+      d__wave_PUPIL[k].x = (a*c - b*s)/N_DFT;
+      d__wave_PUPIL[k].y = (b*c + a*s)/N_DFT;
+    }
   }
 }
 @
@@ -890,12 +901,13 @@ In the case of modulation:
 void imaging::propagateThroughModulatedPyramid(source *src,
                                                float modulation,
                                                int modulation_sampling,
-                                               float alpha) {
+                                               float alpha, float field_stop_diam) {
   int M, nTheta, kTheta, N, Nb;
   float theta, intensity_norm;
   nTheta = modulation_sampling;
   //printf("nTheta=%d\n",nTheta);
   M = N_PX_IMAGE/N_PX_CAMERA;
+  field_stop_diam *= N_DFT/N_PX_PUPIL;
   dim3 gridDim;
   dim3 blockDim(16,16);
   for (kTheta = 0;kTheta<nTheta;kTheta++) {
@@ -913,7 +925,7 @@ void imaging::propagateThroughModulatedPyramid(source *src,
     <<imaging CUFFT execution>>
 
     gridDim = dim3(1+N_DFT/16,1+N_DFT/16,N_SOURCE);
-    apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, alpha);
+    apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, alpha, field_stop_diam);
 
     <<imaging CUFFT execution>>
     N_PHOTON_PER_FRAME = N_PHOTON_PER_SECOND_PER_FRAME = src->n_photon()*src->wavefront.M->area;
