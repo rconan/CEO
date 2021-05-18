@@ -51,11 +51,12 @@ struct imaging {
   void propagateTT7(source *src);
   void propagateTT7(source *src, int *d__piston_mask);
   void propagateThroughFieldStop(source *src, float field_stop_diam);
-  void propagateThroughPyramid(source *src, float alpha, float field_stop_diam);
+  void propagateThroughPyramid(source *src, float alpha, float field_stop_diam, float high_pass_diam);
   void propagateThroughModulatedPyramid(source *src,
                                         float modulation,
                                         int modulation_sampling,
-                                        float alpha, float field_stop_diam);
+                                        float alpha, float field_stop_diam,
+                                        float high_pass_diam);
 
   void readout(float exposureTime, float readOutNoiseRms);
   void noiseless_readout(float exposureTime);
@@ -839,7 +840,7 @@ given in units of $\lambda/D$
 
 \index{imaging!imaging!propagateThroughPyramid}
 <<propagation through pyramid>>=
-  void imaging::propagateThroughPyramid(source *src, float alpha, float field_stop_diam) {
+  void imaging::propagateThroughPyramid(source *src, float alpha, float field_stop_diam, float high_pass_diam) {
   int M = N_PX_IMAGE/N_PX_CAMERA;
   dim3 gridDim;
   dim3 blockDim(16,16);
@@ -856,16 +857,16 @@ given in units of $\lambda/D$
 
   field_stop_diam *= N_DFT/N_PX_PUPIL;
   gridDim = dim3(1+N_DFT/16,1+N_DFT/16, N_SOURCE);
-  apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, alpha, field_stop_diam);
+  apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, alpha, field_stop_diam, high_pass_diam);
 
   <<propagation (FFT, intensity and binning)>>
 }
 @ with
 <<apply pyramid>>=
-  __global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL, float alpha, float field_stop_diam)
+  __global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL, float alpha, float field_stop_diam, float high_pass_diam)
 {
   int i, j, k, w, half, iSource;
-  float xi, yj, rij, l, c, s, phasor, a, b;
+  float xi, yj, rij, l, h, c, s, phasor, a, b;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
   iSource = blockIdx.z;
@@ -881,7 +882,8 @@ given in units of $\lambda/D$
     yj = (float) j;
     rij = hypot(xi,yj);
     l = 0.5*field_stop_diam;
-    if (rij>l) {
+    h = 0.5*high_pass_diam;
+      if ((rij<h) || (rij>l))  {
       d__wave_PUPIL[k].x = d__wave_PUPIL[k].y = 0.0;
     } else {
       phasor = -2*(i+j)*(N_PX_PUPIL*1.5 + 1 - w*0.5)/N_DFT;
@@ -901,7 +903,8 @@ In the case of modulation:
 void imaging::propagateThroughModulatedPyramid(source *src,
                                                float modulation,
                                                int modulation_sampling,
-                                               float alpha, float field_stop_diam) {
+                                               float alpha, float field_stop_diam,
+                                               float high_pass_diam) {
   int M, nTheta, kTheta, N, Nb;
   float theta, intensity_norm;
   nTheta = modulation_sampling;
@@ -925,7 +928,7 @@ void imaging::propagateThroughModulatedPyramid(source *src,
     <<imaging CUFFT execution>>
 
     gridDim = dim3(1+N_DFT/16,1+N_DFT/16,N_SOURCE);
-    apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, alpha, field_stop_diam);
+    apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, alpha, field_stop_diam, high_pass_diam);
 
     <<imaging CUFFT execution>>
     N_PHOTON_PER_FRAME = N_PHOTON_PER_SECOND_PER_FRAME = src->n_photon()*src->wavefront.M->area;

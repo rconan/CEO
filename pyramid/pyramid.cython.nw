@@ -29,6 +29,7 @@ cdef class Pyramid:
         pyramid *_c_pyramid
         readonly Imaging camera
         public float field_stop_diam
+        public float high_pass_diam
 @
 \section{PYX file}
 \label{sec:pyx-file}
@@ -53,7 +54,9 @@ cdef class Pyramid:
     N_GS : int, optional
        The number of guide stars, defaults to 1
     field_stop_diam: float, optional
-       The diameter of the field stop expressed in units of lambda/D
+       The diameter of the field stop expressed in units of lambda/D, default to infinity
+    high_pass_diam: float, optional
+       The diameter of the high pass filter in the focal plane expressed in units of lambda/D, default to 0
 
     Attributes
     ----------
@@ -69,6 +72,8 @@ cdef class Pyramid:
        The distance between left/right and up/down pupil images on the detector in telescope diameter D units, defaults to 2
     field_stop_diam: float, optional
        The diameter of the field stop expressed in units of lambda/D
+    high_pass_diam: float, optional
+       The diameter of the high pass filter in the focal plane expressed in units of lambda/D, default to 0
 
     See also
     --------
@@ -96,6 +101,7 @@ cdef class Pyramid:
                   float separation = 2,
                   int N_GS=1,
                   float field_stop_diam = float('inf'),
+                  float high_pass_diam = float(0),
                   **kwargs):
         self._c_pyramid = new pyramid()
         self._c_pyramid.setup(N_SIDE_LENSLET,N_PX_LENSLET,
@@ -107,6 +113,7 @@ cdef class Pyramid:
                               N_SOURCE=N_GS, isPtr=1)
         self.camera.set_ptr( &(self._c_pyramid.camera) )
         self.field_stop_diam = field_stop_diam
+        self.high_pass_diam = high_pass_diam
 
     def __dealloc__(self):
         self._c_pyramid.cleanup()
@@ -126,7 +133,9 @@ cdef class Pyramid:
         """
         self.camera.propagateThroughPyramid(gs,self._c_pyramid.modulation,
                                             self._c_pyramid.modulation_sampling,
-                                            self._c_pyramid.alpha, self.field_stop_diam)
+                                            self._c_pyramid.alpha,
+                                            self.field_stop_diam,
+                                            self.high_pass_diam)
 
     @property
     def modulation(self):
