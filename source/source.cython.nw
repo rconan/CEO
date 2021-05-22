@@ -687,6 +687,18 @@ cdef class Complex_amplitude:
         self._c_complex_amplitude.gradient_average(&sxy[0], &sxy[self._c_complex_amplitude.N],  d)
         return np.asarray(sxy)
 @
+
+\section{Photometry}
+\label{sec:photometry}
+
+\index{source!python!photometry}
+
+<<source.pxd contents>>=
+    ctypedef struct photometry:
+        float wavelength
+        float zero_point
+        float spectral_bandwidth;
+@
 \section{Source}
 \label{sec:source}
 
@@ -700,6 +712,7 @@ cdef class Complex_amplitude:
         int N_SRC
         const char *photometric_band
         float fwhm, magnitude
+        photometry x_band
         float2 *d__otf
         complex_amplitude wavefront
         bundle rays
@@ -746,6 +759,7 @@ cdef class Source:
         public double samplingTime, timeStamp
         public dict parameters
         public bytes band
+        photometry x_band
 @
 \subsection{PYX file}
 \label{sec:pyx-file-2}
@@ -757,8 +771,8 @@ cdef class Source:
 
     Parameters
     ----------
-    photometric_band : char
-        The sources photometric band
+    photometric_band : char or list
+        The sources photometric band or a 3 element list: [wavelength[m], spectral_bandwidth[m], zero_point[ph/m^2/s]],
     zenith : list, tuple or numpy array, optional
         The sources zenith angles [rd], defaults to 0.
     azimuth :  list, tuple or numpy array, optional
@@ -884,7 +898,13 @@ cdef class Source:
             self._magnitude_ = np.array( magnitude, dtype=np.float32, ndmin=1)
         self.height  = float(height);
         self.size = self._zenith_.size
-        self.band = <bytes>photometric_band.encode()
+        if isinstance(photometric_band,list):
+            self.band = b"X"
+            self.x_band.wavelength = <float> photometric_band[0]
+            self.x_band.spectral_bandwidth = <float> photometric_band[1]
+            self.x_band.zero_point = <float> photometric_band[2]
+        else:
+            self.band = <bytes>photometric_band.encode()
         cdef vector _origin_, _chief_origin_
         if N_RAY>0:
             _origin_.x = <float>rays_origin[0]
@@ -935,6 +955,8 @@ cdef class Source:
 
         #if magnitude is not None:
         #    self._c_source.magnitude = magnitude
+        if self.band==b"X":
+            self._c_source.x_band = self.x_band
         if fwhm is not None:
             self._c_source.fwhm = fwhm
         self.wavefront = Complex_amplitude(self)
