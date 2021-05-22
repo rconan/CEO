@@ -856,14 +856,17 @@ given in units of $\lambda/D$
   <<imaging CUFFT execution>>
 
   field_stop_diam *= N_DFT/N_PX_PUPIL;
+  high_pass_diam *= N_DFT/N_PX_PUPIL;
   gridDim = dim3(1+N_DFT/16,1+N_DFT/16, N_SOURCE);
-  apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, alpha, field_stop_diam, high_pass_diam);
+  apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL,
+                                            alpha, field_stop_diam, high_pass_diam);
 
   <<propagation (FFT, intensity and binning)>>
 }
 @ with
 <<apply pyramid>>=
-  __global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL, float alpha, float field_stop_diam, float high_pass_diam)
+  __global__ void apply_pyramid(float2 *d__wave_PUPIL, int N_DFT, int N_PX_PUPIL,
+                                float alpha, float field_stop_diam, float high_pass_diam)
 {
   int i, j, k, w, half, iSource;
   float xi, yj, rij, l, h, c, s, phasor, a, b;
@@ -911,6 +914,7 @@ void imaging::propagateThroughModulatedPyramid(source *src,
   //printf("nTheta=%d\n",nTheta);
   M = N_PX_IMAGE/N_PX_CAMERA;
   field_stop_diam *= N_DFT/N_PX_PUPIL;
+  high_pass_diam *= N_DFT/N_PX_PUPIL;
   dim3 gridDim;
   dim3 blockDim(16,16);
   for (kTheta = 0;kTheta<nTheta;kTheta++) {
@@ -928,7 +932,8 @@ void imaging::propagateThroughModulatedPyramid(source *src,
     <<imaging CUFFT execution>>
 
     gridDim = dim3(1+N_DFT/16,1+N_DFT/16,N_SOURCE);
-    apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, alpha, field_stop_diam, high_pass_diam);
+    apply_pyramid LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL, alpha,
+                                              field_stop_diam, high_pass_diam);
 
     <<imaging CUFFT execution>>
     N_PHOTON_PER_FRAME = N_PHOTON_PER_SECOND_PER_FRAME = src->n_photon()*src->wavefront.M->area;
