@@ -5,6 +5,8 @@ SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaSta
 TUTORIAL	= ngsao lgsao ltao ltaoVsAst geaos
 CYTHON_DIR	= utilities source imaging centroiding shackHartmann atmosphere BTBT GBTBT iterativeSolvers LMMSE aaStats rayTracing gmtMirrors segmentPistonSensor pyramid
 
+PHONY: clean
+
 all: makefile jsmnlib
 ifeq ($(wildcard include/plotly.credentials), )
 	echo "plotly.credentials doesn't exist!"
@@ -75,7 +77,7 @@ cleanpython:
 	rm -f python/ceo/*.pxd
 	rm -f python/ceo/*.pyx*
 
-clean:
+clean: makefile
 	for i in $(SOURCE_DIR); do (make -C $$i clean); done
 	rm -f *.*~
 	rm -f lib/*.o
