@@ -192,7 +192,7 @@ class GMT_MX(GmtMirrors):
                  M1_mirror_modes=u"zernike", M2_mirror_modes=u"zernike",
                  M1_N_MODE=0 ,M2_N_MODE=0,
                  M1_mirror_modes_data=None, M2_mirror_modes_data=None,
-                 M1_clear_aperture_diameter=8.365):
+                 M1_clear_aperture_diameter=8.365, **kwargs):
 
         if type(M2_mirror_modes) is dict:
         
