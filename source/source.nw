@@ -116,6 +116,7 @@ struct source {
 <<wavefront differentiation kernel (segments gradient average)>>
 
 <<GMT truss on-axis projection kernel>>
+<<GMT PMA on-axis projection kernel>>
 <<GMT M2 baffle kernel>>
 
 <<ray bundle functions>>
@@ -339,6 +340,8 @@ struct bundle {
   void get_vignetting(double *d__v);
   void get_n_iteration(int *n_iteration);
   void gmt_truss_onaxis(void);
+  void gmt_pma_onaxis(void);
+  void gmt_pma_plate_onaxis(void);
   void gmt_m2_baffle(const double baffle_radius);
 };
 @
@@ -1508,6 +1511,98 @@ with the device kernels
     rho2 = d__ray[i].coordinates.x*d__ray[i].coordinates.x +
       d__ray[i].coordinates.y*d__ray[i].coordinates.y;
     if (rho2<R2)
+      d__ray[i].v = 0;
+  }
+}
+@
+\item for the prime focus assembly:
+\index{source!bundle!gmt\_pma\_onaxis}
+<<ray bundle functions>>=
+void bundle::gmt_pma_onaxis(void)
+{
+  gmt_pma_plate_onaxis();
+
+  int NV = 8, nbyte, k,l;
+  double length1 = 1.37591; // length
+  double length2 = 0.1; // length
+  double t1 = 0.105; //thickness
+  double t2 = 0.148; //thickness
+  double Vx[] = {0, length1, length1, length1+length2, length1+length2, length1, length1, 0};
+  double Vy[] = {0.5*t1, 0.5*t1, 0.5*t2, 0.5*t2, -0.5*t2, -0.5*t2, -0.5*t1, -0.5*t1};
+  double _Vx_, _Vy_, co, so, o;
+  dim3 blockDim(256);
+  dim3 gridDim(N_RAY_TOTAL/256+1);
+  nbyte = NV*sizeof(double);
+  if (d__Vx==NULL) {
+    HANDLE_ERROR( cudaMalloc((void**)&d__Vx, nbyte ) );
+    HANDLE_ERROR( cudaMalloc((void**)&d__Vy, nbyte ) );    
+  }
+  o = (180. + 24.55)*PI/180.;
+  for (k=0;k<2;k++) {
+    sincos(o,&so,&co);
+    for (l=0;l<NV;l++) {
+      _Vx_ =  Vx[l]*co + Vy[l]*so;
+      _Vy_ = -Vx[l]*so + Vy[l]*co;
+      Vx[l] = _Vx_;
+      Vy[l] = _Vy_;
+    }
+    o = -120.07*PI/180.;
+    HANDLE_ERROR( cudaMemcpy( d__Vx, &Vx, nbyte, cudaMemcpyHostToDevice ) );
+    HANDLE_ERROR( cudaMemcpy( d__Vy, &Vy, nbyte, cudaMemcpyHostToDevice ) );
+    gmt_pma_onaxis_kern LLL gridDim,blockDim RRR (d__ray,N_RAY_TOTAL,d__Vx,d__Vy,NV);
+  }
+}
+void bundle::gmt_pma_plate_onaxis(void)
+{
+  double alpha, g1, g2, h, x1, x2, y1, y2;
+  alpha = PI*130.45/180.;
+  g1 = 24.55*PI/180.;
+  g2 = (PI - (120.07 - 24.55)*PI/180.);
+  h = 0.26931;
+  x1 = -h / sin(alpha-PI*0.5)/(tan(PI-alpha)-tan(g1));
+  y1 = -x1*tan(g1);
+  x2 = -h / sin(alpha-PI*0.5)/(tan(PI-alpha)-tan(g2));
+  y2 = -x2*tan(g2);
+  fprintf(stdout,"x1=%6.3f;y1=%6.3f;x2=%6.3f;y2=%6.3f\n",x1,y1,x2,y2);
+  int NV = 3;
+  int nbyte = NV*sizeof(double);
+  double Tx[] = {0., x1, x2};
+  double Ty[] = {0., y1, y2};
+  double*d__Tx, *d__Ty;
+  HANDLE_ERROR( cudaMalloc((void**)&d__Tx, nbyte ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__Ty, nbyte ) );    
+  HANDLE_ERROR( cudaMemcpy( d__Tx, &Tx, nbyte, cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMemcpy( d__Ty, &Ty, nbyte, cudaMemcpyHostToDevice ) );
+  dim3 blockDim(256);
+  dim3 gridDim(N_RAY_TOTAL/256+1);
+  gmt_pma_plate_onaxis_kern LLL gridDim,blockDim RRR (d__ray,N_RAY_TOTAL,d__Tx,d__Ty,NV);
+  HANDLE_ERROR( cudaFree(d__Tx) );
+  HANDLE_ERROR( cudaFree(d__Ty) );    
+}
+@
+with the device kernels
+<<GMT PMA on-axis projection kernel>>=
+__global__ void gmt_pma_onaxis_kern(ray *d__ray, int NP, double *Vx, double *Vy, int NV)
+{
+  int i,w;
+  double rho2, R2;
+  R2 = 0.23*0.23;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i<NP && d__ray[i].v) {
+    w = polywind(d__ray[i].coordinates.x,d__ray[i].coordinates.y,Vx,Vy,NV);
+    rho2 = d__ray[i].coordinates.x*d__ray[i].coordinates.x +
+      d__ray[i].coordinates.y*d__ray[i].coordinates.y;
+    if (w!=0 || rho2<R2)
+      d__ray[i].v = 0;
+  }
+}
+__global__ void gmt_pma_plate_onaxis_kern(ray *d__ray, int NP, double *Vx, double *Vy, int NV)
+{
+  int i,w;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i<NP && d__ray[i].v) {
+    w = polywind(d__ray[i].coordinates.x,d__ray[i].coordinates.y,Vx,Vy,NV);
+    if (w!=0)
       d__ray[i].v = 0;
   }
 }
