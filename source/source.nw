@@ -105,6 +105,7 @@ struct source {
 <<to sphere kernel>>
 <<reference sphere origin from chief ray>>
 <<bundle free coordinates kernel>>
+<<bundle fan coordinates kernel>>
 <<ray bundle kernels>>
 <<bundle reset kernel>>
 <<wavefront padding kernel>>
@@ -319,6 +320,7 @@ struct bundle {
   void setup(rtd L, int N_L, vector origin, int N_SRC);
   void setup(rtd L, int N_L, vector origin, vector chief_origin, int N_SRC);
   void setup_free(int _N_RAY_, double *x, double *y, vector origin);
+  void setup_fan(int _N_RAY_, double *x, double *y, vector origin, double dz);
   void setup_free(double zenith, double azimuth,
                   int _N_RAY_, double *x, double *y, vector origin);
   void cleanup(void);
@@ -538,6 +540,71 @@ void bundle::setup(rtd _L_, int _N_L_, vector origin, vector chief_origin, int N
 }
 @
 The ray bundle can be set to arbitrary coordinates in the entrance puil
+\index{source!bundle!setup\_fan)}
+<<ray bundle functions>>=
+void bundle::setup_fan(int _N_RAY_, double *x, double *y, vector origin, double dz)
+{
+  strcpy(geom,"fan");
+  <<free bundle memory allocation>>
+  double zenith = 0.0;
+  double azimuth = 0.0;
+  double *d__x, *d__y;
+  int n_byte = sizeof(double)*N_RAY_TOTAL;
+  HANDLE_ERROR( cudaMalloc((void**)&d__x, n_byte ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__y, n_byte ) );
+  HANDLE_ERROR( cudaMemcpy( d__x, x, n_byte, cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMemcpy( d__y, y, n_byte, cudaMemcpyHostToDevice ) );
+
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY_TOTAL/N_THREAD2+1,1, N_BUNDLE);
+  ray_fan_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, d__x, d__y, d__origin,
+  zenith, azimuth, dz);
+
+  HANDLE_ERROR( cudaMemset(d__x, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(d__y, 0, n_byte ) );
+  blockDim = dim3(1,1);
+  gridDim  = dim3(1,1, N_BUNDLE);
+  ray_fan_coordinates LLL gridDim , blockDim RRR (d__chief_ray, 1, d__x, d__y, d__origin,
+  zenith, azimuth, dz);
+
+  HANDLE_ERROR( cudaFree( d__x ) );
+  HANDLE_ERROR( cudaFree( d__y ) );
+}
+@ with
+<<bundle fan coordinates kernel>>=
+__global__ void ray_fan_coordinates(ray *d__ray, int N_RAY, double *d__x, double *d__y, vector *origin,
+double zenith, double azimuth, double dz)
+{
+  int i, j, k;
+  rtd s, dx, dy, n;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  //  iSource = blockIdx.z;
+  k = j * gridDim.x * blockDim.x + i;
+  if (i<N_RAY)
+  {
+    d__ray[k].coordinates.x = origin->x;
+    d__ray[k].coordinates.y = origin->y;
+    d__ray[k].coordinates.z = origin->z;
+    dx = d__x[k] - origin->x;
+    dy = d__y[k] - origin->y;
+    s = sqrt(dx*dx + dy*dy + dz*dz);
+    d__ray[k].directions.x  = dx/s;
+    d__ray[k].directions.y  = dy/s;
+    d__ray[k].directions.z  = -dz/s;
+    n = sqrt(d__ray[k].directions.x*d__ray[k].directions.x +
+             d__ray[k].directions.y*d__ray[k].directions.y +
+             d__ray[k].directions.z*d__ray[k].directions.z);
+    d__ray[k].coordinates.x /= n;
+    d__ray[k].coordinates.y /= n;
+    d__ray[k].coordinates.z /= n;
+    d__ray[k].optical_path_length = 0.0;
+    d__ray[k].optical_path_difference = 0.0;
+    d__ray[k].v = 1;
+  }
+}
+@
+The ray bundle can be set to arbitrary coordinates in the entrance puil
 \index{source!bundle!setup\_free)}
 <<ray bundle functions>>=
 void bundle::setup_free(int _N_RAY_, double *x, double *y, vector origin)
@@ -550,11 +617,11 @@ void bundle::setup_free(int _N_RAY_, double *x, double *y, vector origin)
 void bundle::setup_free(double zenith, double azimuth,
                         int _N_RAY_, double *x, double *y, vector origin)
 {
+  strcpy(geom,"free");
   <<free bundle memory allocation>>
   <<free bundle initialization>>
  }
 <<free bundle memory allocation>>=
-strcpy(geom,"free");
 N_BUNDLE = 1;
 N_RAY = _N_RAY_;
 N_RAY_TOTAL = N_RAY*N_BUNDLE;
