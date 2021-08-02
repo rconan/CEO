@@ -105,6 +105,7 @@ struct source {
 <<to sphere kernel>>
 <<reference sphere origin from chief ray>>
 <<bundle free coordinates kernel>>
+<<bundle fan coordinates kernel>>
 <<ray bundle kernels>>
 <<bundle reset kernel>>
 <<wavefront padding kernel>>
@@ -116,6 +117,7 @@ struct source {
 <<wavefront differentiation kernel (segments gradient average)>>
 
 <<GMT truss on-axis projection kernel>>
+<<GMT PMA on-axis projection kernel>>
 <<GMT M2 baffle kernel>>
 
 <<ray bundle functions>>
@@ -318,6 +320,7 @@ struct bundle {
   void setup(rtd L, int N_L, vector origin, int N_SRC);
   void setup(rtd L, int N_L, vector origin, vector chief_origin, int N_SRC);
   void setup_free(int _N_RAY_, double *x, double *y, vector origin);
+  void setup_fan(int _N_RAY_, double *x, double *y, vector origin, double dz);
   void setup_free(double zenith, double azimuth,
                   int _N_RAY_, double *x, double *y, vector origin);
   void cleanup(void);
@@ -339,6 +342,8 @@ struct bundle {
   void get_vignetting(double *d__v);
   void get_n_iteration(int *n_iteration);
   void gmt_truss_onaxis(void);
+  void gmt_pma_onaxis(void);
+  void gmt_pma_plate_onaxis(void);
   void gmt_m2_baffle(const double baffle_radius);
 };
 @
@@ -535,6 +540,72 @@ void bundle::setup(rtd _L_, int _N_L_, vector origin, vector chief_origin, int N
 }
 @
 The ray bundle can be set to arbitrary coordinates in the entrance puil
+\index{source!bundle!setup\_fan)}
+<<ray bundle functions>>=
+void bundle::setup_fan(int _N_RAY_, double *x, double *y, vector origin, double dz)
+{
+  strcpy(geom,"fan");
+  <<free bundle memory allocation>>
+  fprintf(stdout,"N_RAY: %d , N_RAY_TOTAL: %d",N_RAY,N_RAY_TOTAL);
+  double zenith = 0.0;
+  double azimuth = 0.0;
+  double *d__x, *d__y;
+  int n_byte = sizeof(double)*N_RAY_TOTAL;
+  HANDLE_ERROR( cudaMalloc((void**)&d__x, n_byte ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__y, n_byte ) );
+  HANDLE_ERROR( cudaMemcpy( d__x, x, n_byte, cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMemcpy( d__y, y, n_byte, cudaMemcpyHostToDevice ) );
+
+  dim3 blockDim(N_THREAD,N_THREAD);
+  dim3 gridDim(N_RAY_TOTAL/N_THREAD2+1,1, N_BUNDLE);
+  ray_fan_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, d__x, d__y, d__origin,
+  zenith, azimuth, dz);
+
+  HANDLE_ERROR( cudaMemset(d__x, 0, n_byte ) );
+  HANDLE_ERROR( cudaMemset(d__y, 0, n_byte ) );
+  blockDim = dim3(1,1);
+  gridDim  = dim3(1,1, N_BUNDLE);
+  ray_fan_coordinates LLL gridDim , blockDim RRR (d__chief_ray, 1, d__x, d__y, d__origin,
+  zenith, azimuth, dz);
+
+  HANDLE_ERROR( cudaFree( d__x ) );
+  HANDLE_ERROR( cudaFree( d__y ) );
+}
+@ with
+<<bundle fan coordinates kernel>>=
+__global__ void ray_fan_coordinates(ray *d__ray, int N_RAY, double *d__x, double *d__y, vector *origin,
+double zenith, double azimuth, double dz)
+{
+  int i, j, k;
+  rtd s, dx, dy, n;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  //  iSource = blockIdx.z;
+  k = j * gridDim.x * blockDim.x + i;
+  if (k<N_RAY)
+  {
+    d__ray[k].coordinates.x = origin->x;
+    d__ray[k].coordinates.y = origin->y;
+    d__ray[k].coordinates.z = origin->z;
+    dx = d__x[k] - origin->x;
+    dy = d__y[k] - origin->y;
+    s = sqrt(dx*dx + dy*dy + dz*dz);
+    d__ray[k].directions.x  = dx/s;
+    d__ray[k].directions.y  = dy/s;
+    d__ray[k].directions.z  = -dz/s;
+    n = sqrt(d__ray[k].directions.x*d__ray[k].directions.x +
+             d__ray[k].directions.y*d__ray[k].directions.y +
+             d__ray[k].directions.z*d__ray[k].directions.z);
+    d__ray[k].coordinates.x /= n;
+    d__ray[k].coordinates.y /= n;
+    d__ray[k].coordinates.z /= n;
+    d__ray[k].optical_path_length = 0.0;
+    d__ray[k].optical_path_difference = 0.0;
+    d__ray[k].v = 1;
+  }
+}
+@
+The ray bundle can be set to arbitrary coordinates in the entrance puil
 \index{source!bundle!setup\_free)}
 <<ray bundle functions>>=
 void bundle::setup_free(int _N_RAY_, double *x, double *y, vector origin)
@@ -547,11 +618,11 @@ void bundle::setup_free(int _N_RAY_, double *x, double *y, vector origin)
 void bundle::setup_free(double zenith, double azimuth,
                         int _N_RAY_, double *x, double *y, vector origin)
 {
+  strcpy(geom,"free");
   <<free bundle memory allocation>>
   <<free bundle initialization>>
  }
 <<free bundle memory allocation>>=
-strcpy(geom,"free");
 N_BUNDLE = 1;
 N_RAY = _N_RAY_;
 N_RAY_TOTAL = N_RAY*N_BUNDLE;
@@ -1508,6 +1579,98 @@ with the device kernels
     rho2 = d__ray[i].coordinates.x*d__ray[i].coordinates.x +
       d__ray[i].coordinates.y*d__ray[i].coordinates.y;
     if (rho2<R2)
+      d__ray[i].v = 0;
+  }
+}
+@
+\item for the prime focus assembly:
+\index{source!bundle!gmt\_pma\_onaxis}
+<<ray bundle functions>>=
+void bundle::gmt_pma_onaxis(void)
+{
+  gmt_pma_plate_onaxis();
+
+  int NV = 8, nbyte, k,l;
+  double length1 = 1.37591; // length
+  double length2 = 0.1; // length
+  double t1 = 0.105; //thickness
+  double t2 = 0.148; //thickness
+  double Vx[] = {0, length1, length1, length1+length2, length1+length2, length1, length1, 0};
+  double Vy[] = {0.5*t1, 0.5*t1, 0.5*t2, 0.5*t2, -0.5*t2, -0.5*t2, -0.5*t1, -0.5*t1};
+  double _Vx_, _Vy_, co, so, o;
+  dim3 blockDim(256);
+  dim3 gridDim(N_RAY_TOTAL/256+1);
+  nbyte = NV*sizeof(double);
+  if (d__Vx==NULL) {
+    HANDLE_ERROR( cudaMalloc((void**)&d__Vx, nbyte ) );
+    HANDLE_ERROR( cudaMalloc((void**)&d__Vy, nbyte ) );    
+  }
+  o = (180. + 24.55)*PI/180.;
+  for (k=0;k<2;k++) {
+    sincos(o,&so,&co);
+    for (l=0;l<NV;l++) {
+      _Vx_ =  Vx[l]*co + Vy[l]*so;
+      _Vy_ = -Vx[l]*so + Vy[l]*co;
+      Vx[l] = _Vx_;
+      Vy[l] = _Vy_;
+    }
+    o = -120.07*PI/180.;
+    HANDLE_ERROR( cudaMemcpy( d__Vx, &Vx, nbyte, cudaMemcpyHostToDevice ) );
+    HANDLE_ERROR( cudaMemcpy( d__Vy, &Vy, nbyte, cudaMemcpyHostToDevice ) );
+    gmt_pma_onaxis_kern LLL gridDim,blockDim RRR (d__ray,N_RAY_TOTAL,d__Vx,d__Vy,NV);
+  }
+}
+void bundle::gmt_pma_plate_onaxis(void)
+{
+  double alpha, g1, g2, h, x1, x2, y1, y2;
+  alpha = PI*130.45/180.;
+  g1 = 24.55*PI/180.;
+  g2 = (PI - (120.07 - 24.55)*PI/180.);
+  h = 0.26931;
+  x1 = -h / sin(alpha-PI*0.5)/(tan(PI-alpha)-tan(g1));
+  y1 = -x1*tan(g1);
+  x2 = -h / sin(alpha-PI*0.5)/(tan(PI-alpha)-tan(g2));
+  y2 = -x2*tan(g2);
+  fprintf(stdout,"x1=%6.3f;y1=%6.3f;x2=%6.3f;y2=%6.3f\n",x1,y1,x2,y2);
+  int NV = 3;
+  int nbyte = NV*sizeof(double);
+  double Tx[] = {0., x1, x2};
+  double Ty[] = {0., y1, y2};
+  double*d__Tx, *d__Ty;
+  HANDLE_ERROR( cudaMalloc((void**)&d__Tx, nbyte ) );
+  HANDLE_ERROR( cudaMalloc((void**)&d__Ty, nbyte ) );    
+  HANDLE_ERROR( cudaMemcpy( d__Tx, &Tx, nbyte, cudaMemcpyHostToDevice ) );
+  HANDLE_ERROR( cudaMemcpy( d__Ty, &Ty, nbyte, cudaMemcpyHostToDevice ) );
+  dim3 blockDim(256);
+  dim3 gridDim(N_RAY_TOTAL/256+1);
+  gmt_pma_plate_onaxis_kern LLL gridDim,blockDim RRR (d__ray,N_RAY_TOTAL,d__Tx,d__Ty,NV);
+  HANDLE_ERROR( cudaFree(d__Tx) );
+  HANDLE_ERROR( cudaFree(d__Ty) );    
+}
+@
+with the device kernels
+<<GMT PMA on-axis projection kernel>>=
+__global__ void gmt_pma_onaxis_kern(ray *d__ray, int NP, double *Vx, double *Vy, int NV)
+{
+  int i,w;
+  double rho2, R2;
+  R2 = 0.23*0.23;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i<NP && d__ray[i].v) {
+    w = polywind(d__ray[i].coordinates.x,d__ray[i].coordinates.y,Vx,Vy,NV);
+    rho2 = d__ray[i].coordinates.x*d__ray[i].coordinates.x +
+      d__ray[i].coordinates.y*d__ray[i].coordinates.y;
+    if (w!=0 || rho2<R2)
+      d__ray[i].v = 0;
+  }
+}
+__global__ void gmt_pma_plate_onaxis_kern(ray *d__ray, int NP, double *Vx, double *Vy, int NV)
+{
+  int i,w;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i<NP && d__ray[i].v) {
+    w = polywind(d__ray[i].coordinates.x,d__ray[i].coordinates.y,Vx,Vy,NV);
+    if (w!=0)
       d__ray[i].v = 0;
   }
 }

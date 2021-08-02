@@ -416,6 +416,7 @@ cdef class Conic:
         conic *_c_conic
         readonly Coordinate_system ref_frame
         readonly Coordinates origin
+        public list conic_origin
         public bint coord_break
         public dict material
 @
@@ -468,10 +469,10 @@ cdef class Conic:
                   list origin       = [0.0,0.0,0.0], 
                   list euler_angles = [0.0,0.0,0.0],
                   list conic_origin = [0.0,0.0,0.0],
-                  str material = '',
+                  unicode material = u'',
                   rtd refractive_index = 0.0,
                   bint coord_break = False,
-		  rtd[:] asphere_a = np.empty(0)):
+		          rtd[:] asphere_a = np.empty(0),**kwargs):
         self._c_conic = new conic()
         cdef vector __origin
         __origin.x = <rtd>origin[0]
@@ -494,6 +495,7 @@ cdef class Conic:
         self.origin = Coordinates((1,3))
         self.origin.v = &(self._c_conic.origin)
         self.origin.init(self._c_conic.d__origin)
+        self.conic_origin = conic_origin
         self.coord_break = coord_break
         self.material = {'name': material, 'formula': 15, 'c': []}
 
@@ -525,15 +527,25 @@ cdef class Conic:
         """
         self._c_conic.trace(rays._c_bundle)
 
-    def refractive_index(self, float wavelength=-1.0):
-        if self.material['name'] == '':
-            return self._c_conic.refractive_index
-        else:
-            if wavelength>0:
-                return glass_index(self.material['formula'],
-                                   wavelength*1e6,
-                                   None,None,
-                                   self.material['c'])
+    def refractive_index(self, wavelength):
+        return glass_index(self.material['formula'],
+                               round(wavelength*1e6, 2),
+                               self.material['temp'],self.material['pres'],
+                               self.material['c'],
+                               self.material['D0'],
+                               self.material['D1'],
+                               self.material['D2'],
+                               self.material['E0'],
+                               self.material['E1'],
+                               self.material['Ltk'])
+    property curvature:
+        def __get__(self):
+            return self._c_conic.c
+    property conic_cst:
+        def __get__(self):
+            return self._c_conic.k
+
+
 @
 \section{Aperture}
 \label{sec:aperture-1}

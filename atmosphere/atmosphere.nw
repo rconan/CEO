@@ -2300,7 +2300,7 @@ y += src[k_SOURCE].theta_y*layers[k_LAYER].altitude;
 They are written $$[[theta_x_SOURCE]]=\tan(\zeta)\cos(\alpha)$$ and $$[[theta_y_SOURCE]]=\tan(\zeta)\sin(\alpha)$$ with $\zeta$ and $\alpha$ the zenith and azimuth coordinates of the source.
 \item rotation according to the wind direction [[theta_wind]]; the phase screens being aligned with the wind vector, the pupil plane coordinates are rotated to be correctly aligned with the wind vector in the phase screens frame of reference
 <<coordinate transformation>>=
-sincosf(layers[k_LAYER].wind_direction, &s, &c);
+sincosf(layers[k_LAYER].wind_direction + rot_angle, &s, &c);
 xi = x*c + y*s;
 yi = y*c - x*s;
 @ \item translation according to the wind speed [[mag_wind]] and time step [[tau]]; the phase screens are carried by the wind which is blowing along the x--axis in the phase screen frame of reference, the pupil plane coordinates in this frame are then translated along the phase screens x--axis
@@ -2381,13 +2381,14 @@ int NXY_PUPIL = N_X*N_Y;
 @ The kernel itself is written has follows for coordinates [[x_PUPIL]] and [[y_PUPIL]]:
 <<ray tracing kernel>>=
 __global__ void rayTracingKern(
-const float* x_PUPIL,const float* y_PUPIL,
-float* phase_screen_PUPIL,const int NXY_PUPIL,
-const source* src, const int N_SOURCE,
-const float r0,
-const layer* layers,
-float* d__phase_screen_LAYER,
-const int N_LAYER, const float tau)
+                               const float* x_PUPIL,const float* y_PUPIL,
+                               float* phase_screen_PUPIL,const int NXY_PUPIL,
+                               const source* src, const int N_SOURCE,
+                               const float r0,
+                               const layer* layers,
+                               float* d__phase_screen_LAYER,
+                               const int N_LAYER, const float tau,
+                               const float rot_angle)
 {
 
   <<ray tracing variables>>
@@ -2410,14 +2411,15 @@ const int N_LAYER, const float tau)
 @ or for a regular grid with spacing [[delta_x]] and [[delta_y]] and size [[N_X]] and [[N_Y]].
 <<ray tracing kernel (regular)>>=
 __global__ void rayTracingKernReg(
-const float delta_x, const int N_X,
-const float delta_y, const int N_Y,
-float* phase_screen_PUPIL,
-const source* src, const int N_SOURCE,
-const float r0,
-const layer* layers,
-float* d__phase_screen_LAYER,
-const int N_LAYER, const float tau)
+                                  const float delta_x, const int N_X,
+                                  const float delta_y, const int N_Y,
+                                  float* phase_screen_PUPIL,
+                                  const source* src, const int N_SOURCE,
+                                  const float r0,
+                                  const layer* layers,
+                                  float* d__phase_screen_LAYER,
+                                  const int N_LAYER, const float tau,
+                                  const float rot_angle)
 {
 
   <<ray tracing variables>>
@@ -2438,14 +2440,15 @@ const int N_LAYER, const float tau)
   }
 }
 __global__ void rayTracingKernReg_masked(
-const float delta_x, const int N_X,
-const float delta_y, const int N_Y,
-float* phase_screen_PUPIL, char *mask,
-const source* src, const int N_SOURCE,
-const float r0,
-const layer* layers,
-float* d__phase_screen_LAYER,
-const int N_LAYER, const float tau)
+                                         const float delta_x, const int N_X,
+                                         const float delta_y, const int N_Y,
+                                         float* phase_screen_PUPIL, char *mask,
+                                         const source* src, const int N_SOURCE,
+                                         const float r0,
+                                         const layer* layers,
+                                         float* d__phase_screen_LAYER,
+                                         const int N_LAYER, const float tau,
+                                         const float rot_angle)
 {
 
   <<ray tracing variables>>
@@ -2470,9 +2473,9 @@ The kernel is called with
 \index{atmosphere!atmosphere!rayTracing}
 <<ray tracing>>=
 void atmosphere::rayTracing(
-const float* x_PUPIL,const float* y_PUPIL,
-float* phase_screen_PUPIL, const int NXY_PUPIL,
-const source *src, const float tau)
+                            const float* x_PUPIL,const float* y_PUPIL,
+                            float* phase_screen_PUPIL, const int NXY_PUPIL,
+                            const source *src, const float tau)
 {
   int k_DURATION;
   float new_tau = tau - layers_tau0;
@@ -2502,13 +2505,14 @@ const source *src, const float tau)
   dim3 blockDim(16,16);
   dim3 gridDim( ceilf(sqrtf(NXY_PUPIL)/16) , ceilf(sqrtf(NXY_PUPIL)/16), src->N_SRC);
   rayTracingKern LLL gridDim, blockDim RRR(
-  x_PUPIL, y_PUPIL,
-  phase_screen_PUPIL, NXY_PUPIL,
-  src->dev_ptr, src->N_SRC,
-  powf(r0,-5.0/6.0),
-  d__layers,
-  d__phase_screen_LAYER,
-  N_LAYER, tau-layers_tau0);
+                                           x_PUPIL, y_PUPIL,
+                                           phase_screen_PUPIL, NXY_PUPIL,
+                                           src->dev_ptr, src->N_SRC,
+                                           powf(r0,-5.0/6.0),
+                                           d__layers,
+                                           d__phase_screen_LAYER,
+                                           N_LAYER, tau-layers_tau0,
+                                           src->rays.rot_angle);
 }
 @ with
 <<ray tracing (common)>>=
@@ -2521,9 +2525,9 @@ if (tau>(layers_tau0+layers_duration)) {
 Instead the phase screens can be computed on regular grid with spacing [[delta_x]] and [[delta_y]] and size [[N_X]] and [[N_Y]].
 <<ray tracing (regular)>>=
 void atmosphere::rayTracing(source *src,
-			    const float delta_x, const int N_X,
-			    const float delta_y, const int N_Y,
-			    const float tau)
+                            const float delta_x, const int N_X,
+                            const float delta_y, const int N_Y,
+                            const float tau)
 {
   int k_DURATION;
   float new_tau = tau - layers_tau0;
@@ -2555,23 +2559,25 @@ void atmosphere::rayTracing(source *src,
   dim3 gridDim( 1+N_X/16 , 1+N_Y/16, src->N_SRC);
   if (src->wavefront.M==NULL) {
     rayTracingKernReg LLL gridDim, blockDim RRR(delta_x, N_X,
-						delta_y, N_Y,
-						src->wavefront.phase,
-						src->dev_ptr, src->N_SRC,
-						powf(r0,-5.0/6.0),
-						d__layers,
-						d__phase_screen_LAYER,
-						N_LAYER, new_tau);
+                                                delta_y, N_Y,
+                                                src->wavefront.phase,
+                                                src->dev_ptr, src->N_SRC,
+                                                powf(r0,-5.0/6.0),
+                                                d__layers,
+                                                d__phase_screen_LAYER,
+                                                N_LAYER, new_tau,
+                                                src->rays.rot_angle);
   } else {
     rayTracingKernReg_masked LLL gridDim, blockDim RRR(delta_x, N_X,
-						       delta_y, N_Y,
-						       src->wavefront.phase,
-						       src->wavefront.M->m,
-						       src->dev_ptr, src->N_SRC,
-						       powf(r0,-5.0/6.0),
-						       d__layers,
-						       d__phase_screen_LAYER,
-						       N_LAYER, new_tau);
+                                                       delta_y, N_Y,
+                                                       src->wavefront.phase,
+                                                       src->wavefront.M->m,
+                                                       src->dev_ptr, src->N_SRC,
+                                                       powf(r0,-5.0/6.0),
+                                                       d__layers,
+                                                       d__phase_screen_LAYER,
+                                                       N_LAYER, new_tau,
+                                                       src->rays.rot_angle);
   }
 }
 @
