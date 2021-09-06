@@ -5,7 +5,7 @@
 
 <<gmtMirrors.pxd>>=
 from numpy cimport ndarray
-from utilities cimport rtd, vector, cuIntArray, cuFloatArray, cuDoubleArray
+from utilities cimport rtd, vector, cuIntArray, cuFloatArray, cuDoubleArray, Mask
 from rayTracing cimport coordinate_system, zernikeS, ZernikeS, Coordinate_system, Coordinates
 from source cimport Source, bundle, Bundle
 cdef extern from "gmtMirrors.h":
@@ -32,6 +32,7 @@ cdef class GmtMirrors:
         public GMT_M2 M2
         public float pointing_error_zenith, pointing_error_azimuth
         public bint project_truss_onaxis
+        public bint project_pma_onaxis
         public double M2_baffle
 @
 \subsection{PYX file}
@@ -124,6 +125,7 @@ cdef class GmtMirrors:
         self.pointing_error_zenith  = 0.0
         self.pointing_error_azimuth = 0.0
         self.project_truss_onaxis = True
+        self.project_pma_onaxis = False
         self.M2_baffle = 3.3
 
     def __getitem__(self,key):
@@ -168,16 +170,18 @@ cdef class GmtMirrors:
         src.updateDirections(offset_zenith, offset_azimuth)
         src._c_source.reset_rays()
 
-        #src.reset()
-        if M2_is_a_stop:
-            self.M2.blocking(src.rays)
-        self.M1.trace(src.rays)
-        if self.project_truss_onaxis:
-            src.rays.gmt_truss_onaxis()
-        if ~np.isinf(self.M2_baffle):
-            src.rays.gmt_m2_baffle(self.M2_baffle)
-        
-        self.M2.trace(src.rays)
+        if self.project_pma_onaxis:
+            self.__pma(src)
+        else:
+            #src.reset()
+            if M2_is_a_stop:
+                self.M2.blocking(src.rays)
+            self.M1.trace(src.rays)
+            if self.project_truss_onaxis:
+                src.rays.gmt_truss_onaxis()
+            if ~np.isinf(self.M2_baffle):
+                src.rays.gmt_m2_baffle(self.M2_baffle)
+            self.M2.trace(src.rays)
 #        src.sphere_distance
 #        src.rays.to_sphere(self.sphere_radius,sphere_distance = src.sphere_distance)
         if where_to=="exit pupil":
@@ -188,6 +192,20 @@ cdef class GmtMirrors:
         if where_to=="focal plane":
             src.rays.to_focal_plane(self.focal_plane_distance,
                                     self.focal_plane_radius)
+
+    def __pma(self,Source src):
+        gmt = GmtMirrors(M1_mirror_modes=u"zernike", M2_mirror_modes=u"zernike")
+        gmt.M1.trace(src.rays)
+        gmt.M2.trace(src.rays)
+        h = 21.4145-3.9
+        src.rays.to_z_plane(h)
+        src.rays.gmt_pma_onaxis()
+        tel = Mask(src.rays.N_L**2)
+        tel.alter(cuFloatArray(host_data=src.rays.vignetting.host()))
+        src._c_source.reset_rays()
+        src.masked(tel)
+        self.M1.trace(src.rays)
+        self.M2.trace(src.rays)
 
     def reset(self, dict state=None):
         """
@@ -1316,6 +1334,142 @@ cdef class GMT_M2:
                   int N_MODE=0, dict mirror_modes_data=None, **kwargs):
         self._c_gmt_m12 = new gmt_m2()
         <<GMT M12 constructor>>
+
+    <<GMT M12 methods>>
+
+    def pointing_neutral(self, float tip, float tilt):
+        """
+        Applies a pointing neutral global tip--tilt to M2
+
+        Parameters
+        ----------
+        tip : float
+            The x axis angle
+        tilt : float
+            The y axis angle
+        """
+        self._c_gmt_m12.pointing_neutral(tip, tilt);
+
+    def coma_neutral(self, float tip, float tilt):
+        """
+        Applies a coma neutral global tip--tilt to M2
+
+        Parameters
+        ----------
+        tip : float
+            The x axis angle
+        tilt : float
+            The y axis angle
+        """
+        self._c_gmt_m12.coma_neutral(tip, tilt);
+
+    def clocking(self,seg_id,theta):
+        """
+        Decomposes mirror clocking into segment Txyx and Rxyz
+
+        Parameters
+        ----------
+        seg_id : any
+            The segment number ID (1 base)
+        theta : any
+            The mirror clocking angle in radian
+
+        Returns
+        -------
+        (ndarray,ndarray)
+            (Txyz,Rxyz)
+        """
+        <<backward and forward transform>>
+        cdef double[:,:] rigid_body_CS_origin
+        rigid_body_CS_origin = self.rigid_body_CS.origin[:]
+        a = 0
+        b = 0
+        c = theta
+        <<transform part 1>>
+        idx = seg_id-1
+        o = np.pi*(3-2*idx)/6 + np.pi
+        xt = self.L*np.cos(o+c)
+        yt = self.L*np.sin(o+c)
+        zt = self.rigid_body_CS.origin[idx,2]
+        ut = np.array([xt,yt,zt])[:,None]
+        <<transform part 2>>
+        return (origin,euler_angles)
+@
+
+\section{WFPT}
+\label{sec:wfpt-1}
+
+\index{gmtMirrors!python!WFPT}
+
+\subsection{PXD file}
+\label{sec:pxd-file-3}
+
+<<gmtMirrors.pxd contents>>=
+    cdef cppclass wfpt:
+        void setup(float , float ,
+                   int , int ,
+                   zernikeS *)
+        <<python GMT M12 functions>>
+        void pointing_neutral(float, float)
+        void coma_neutral(float, float)
+@
+\subsubsection{Class definition}
+\label{sec:class-definition-5}
+
+<<class definitions>>=
+cdef class WFPT_MX:
+    cdef:
+        wfpt *_c_gmt_m12
+    <<GMT M12 class properties>>
+@
+
+\subsection{PYX file}
+\label{sec:pyx-file-2}
+
+<<gmtMirrors.pyx>>=
+# WFPT M1
+cdef class WFPT_MX:
+    <<GMT M12 docstring>>
+
+    def __cinit__(self, float segment_diameter,
+                  float segment_distance = 0.0,
+                  int n_segment = 7,
+                  int segment_id = 0,
+                  unicode mirror_modes=u"zernike", int radial_order=0,
+                  int N_MODE=0, dict mirror_modes_data=None, **kwargs):
+        self._c_gmt_m12 = new wfpt()
+        self.conic_curv = cuDoubleArray(shape=(1,7),dev_malloc=False)
+        self.conic_curv._c_gpu.dev_data = self._c_gmt_m12.d__conic_c
+        self.conic_const = cuDoubleArray(shape=(1,7),dev_malloc=False)
+        self.conic_const._c_gpu.dev_data = self._c_gmt_m12.d__conic_k
+        self.mirror_modes_type = mirror_modes.encode('utf-8')
+        self.zernike = ZernikeS(radial_order,N_SURF=7)
+        self._c_gmt_m12.setup(segment_diameter,
+                              segment_distance,
+                              n_segment,
+                              0,
+                              <zernikeS *> self.zernike._c_zernikeS)
+        cdef int[:] sid
+        if segment_id > 0:
+            sid = np.array([segment_id],dtype=np.int32,ndmin=1)
+            self._c_gmt_m12.keep(&sid[0],sid.size)
+        self.segment_reflectivity = cuFloatArray(shape=(7,))
+        self.segment_reflectivity._c_gpu.dev_data = self._c_gmt_m12.d__segment_reflectivity
+
+        self.aperture_CS   = Coordinate_system(7)
+        self.conic_CS      = Coordinate_system(7)
+        self.motion_CS     = Coordinate_system(7)
+        self.rigid_body_CS = Coordinate_system(7)
+        self.TT_CS         = Coordinate_system(1)
+
+        self.aperture_CS.init(   &(self._c_gmt_m12.aperture_CS)   )
+        self.conic_CS.init(      &(self._c_gmt_m12.conic_CS)      )
+        self.motion_CS.init(     &(self._c_gmt_m12.motion_CS)     )
+        self.rigid_body_CS.init( &(self._c_gmt_m12.rigid_body_CS) )
+        self.TT_CS.init(         &(self._c_gmt_m12.TT_CS)         )
+
+        self.D = {}
+
 
     <<GMT M12 methods>>
 

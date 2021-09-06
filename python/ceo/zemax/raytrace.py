@@ -15,6 +15,7 @@ def raytrace(rays,wavelength,S,idx,xyz, klm,sid):
 
     if not _S_.coord_break:
         ceo.Intersect(rays,_S_)
+        #print("OPL:",rays.chief_optical_path_length.host())
         n_S = _S_.refractive_index(wavelength)
         #print ("S#{}: Material refractive index: {}".format(idx-1,n_S))
         if n_S==-1:
@@ -31,8 +32,8 @@ def raytrace(rays,wavelength,S,idx,xyz, klm,sid):
         klm.append(rays.directions.host())
         sid.append(idx-1)
 
-        c = rays.chief_coordinates.host()[0]
-        d = rays.chief_directions.host()[0]
+        #c = rays.chief_coordinates.host()[0]
+        #d = rays.chief_directions.host()[0]
         #print ("x: {:<20} y: {:<20} z: {:<20}".format(c[0], c[1], c[2]))
         #print ("k: {:<20} l: {:<20} m: {:<20}".format(d[0], d[1], d[2]))
         #print ("")

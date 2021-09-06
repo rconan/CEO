@@ -865,18 +865,22 @@ Ray tracing, to and through the surface, is computed with
 void conic::trace(bundle *rays)
 {
   transform_to_S_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
-                                       ref_frame.d__R, ref_frame.d__origin);
+                                       ref_frame.d__R,
+                                       ref_frame.d__origin);
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
   transform_to_S_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
-					            ref_frame.d__R, ref_frame.d__origin);
+                                                    ref_frame.d__R,
+                                                    ref_frame.d__origin);
   intersect_chief_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
+                                        rays->refractive_index,
                                         k, c, d__origin,
-					even_asphere_N, d__even_asphere_a);
+                                        even_asphere_N, d__even_asphere_a);
   intersect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
-					       k, c, d__origin,
-					       rays->d__chief_ray,
-					       even_asphere_N, d__even_asphere_a);
+                                               rays->refractive_index,
+                                               k, c, d__origin,
+                                               rays->d__chief_ray,
+                                               even_asphere_N, d__even_asphere_a);
   if (rays->refractive_index==refractive_index) 
      reflect(rays);
    else { 
@@ -2131,21 +2135,24 @@ __host__ __device__  void backward_transform_centered(vector *v_out, vector *v_i
 void intersect(bundle *rays, conic *F)
 {
   intersect_chief_kernel LLL 1 , 1 RRR (rays->d__chief_ray, 1,
-					F->k, F->c, F->d__origin,
-					F->even_asphere_N, F->d__even_asphere_a);
+                                        rays->refractive_index,
+                                        F->k, F->c, F->d__origin,
+                                        F->even_asphere_N, F->d__even_asphere_a);
   dim3 blockDim(N_THREAD,N_THREAD);
   dim3 gridDim(rays->N_RAY/N_THREAD2+1,1);
-  intersect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,
-					       F->k, F->c, F->d__origin,
-					       rays->d__chief_ray,
-					       F->even_asphere_N, F->d__even_asphere_a);
+  intersect_kernel LLL gridDim , blockDim RRR (rays->d__ray, rays->N_RAY,	
+                                               rays->refractive_index,
+                                               F->k, F->c, F->d__origin,
+                                               rays->d__chief_ray,
+                                               F->even_asphere_N, F->d__even_asphere_a);
 }
 
 <<intersection with surface kernel>>=
 __global__ void intersect_chief_kernel(ray *d__ray, const int N_RAY,
-				       const rtd Fk, const rtd Fc,
-				       vector *d__origin,
-				       const int N, rtd *a)
+                                       rtd const refractive_index,
+                                       const rtd Fk, const rtd Fc,
+                                       vector *d__origin,
+                                       const int N, rtd *a)
 {
   int j, ij;
   rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
@@ -2153,7 +2160,7 @@ __global__ void intersect_chief_kernel(ray *d__ray, const int N_RAY,
   ij = 0;
 
   <<intersection with z=0 plane>>
-  d__ray[ij].optical_path_length = s0;
+  d__ray[ij].optical_path_length = s0*refractive_index;
   s0 = s1 = 0;
   for (j=0; j<SNELL_N_ITERATION; j++)
     {
@@ -2162,10 +2169,11 @@ __global__ void intersect_chief_kernel(ray *d__ray, const int N_RAY,
     }
 }
 __global__ void intersect_kernel(ray *d__ray, int N_RAY,
-				 rtd Fk, const rtd Fc,
-				 vector *d__origin,
+                                 rtd const refractive_index,
+                                 rtd Fk, const rtd Fc,
+                                 vector *d__origin,
                                  ray *d__chief_ray,
-				 int N, rtd *a)
+                                 int N, rtd *a)
 {
   int i, j, ij;
   rtd s0, s1, x1, y1, k, l, m, S, K, L ,M, dSds;
@@ -2176,7 +2184,7 @@ __global__ void intersect_kernel(ray *d__ray, int N_RAY,
   if ( (ij<N_RAY) && (d__ray[ij].v) )
   {
     <<intersection with z=0 plane>>
-    d__ray[ij].optical_path_length = s0;
+    d__ray[ij].optical_path_length = s0*refractive_index;
     s0 = s1 = 0;
     for (j=0; j<SNELL_N_ITERATION; j++)
     {
@@ -2262,7 +2270,7 @@ if (abs(s1-s0)<TOL)
   d__ray[ij].surface_normal.y    =
     partial_y_conic_surface(&(d__ray[ij].coordinates), d__origin, Fk, Fc, N, a);
   d__ray[ij].surface_normal.z    = partial_z_conic_surface();
-  d__ray[ij].optical_path_length += s1;
+  d__ray[ij].optical_path_length += s1*refractive_index;
   d__ray[ij].n_iteration = j;
   break;
 }

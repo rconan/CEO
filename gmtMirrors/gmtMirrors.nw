@@ -29,6 +29,7 @@
 <<modes structure>>
 <<GMT M1 structure>>
 <<GMT M2 structure>>
+<<WFPT structure>>
 <<stereoscopic edge sensors structure>>
 <<lateral edge sensors structure>>
 
@@ -64,6 +65,7 @@
 <<modes functions>>
 <<GMT M1 functions>>
 <<GMT M2 functions>>
+<<WFPT functions>>
 
 <<stereoscopic edge sensors functions>>
 <<lateral edge sensors functions>>
@@ -2214,6 +2216,301 @@ The segment reflectivity is set with:
 \index{gmtMirrors!gmt\_m2!set\_reflectivity}
 <<GMT M2 functions>>=
 void gmt_m2::set_reflectivity(float *reflectivity)
+{
+  <<GMT set reflectivity common>>
+}
+@
+
+\section{WFPT}
+\label{sec:wfpt}
+
+\index{gmtMirrors!wfpt}
+A new structure to hold GMT M1 parameters and functions is defined.
+<<WFPT structure>>=
+struct wfpt {
+  <<GMT M12 parameters>>
+  void setup(float segment_diameter,
+             float segment_distance,
+             int n_segment,
+             int segment_idx_offset,
+             zernikeS *ZS);
+  void cleanup(void);
+  void update(vector _origin_, vector _euler_angles_,int idx);
+  void reset(void);
+  void trace(bundle *rays);
+  void traceall(bundle *rays);
+  void blocking(bundle *rays);
+  void global_tiptilt(float tip, float tilt);
+  void test_ray_tracing(void);
+  void track(float *x, float *y, float *z, int N, int idx);
+  void locate(float *x, float *y, float *z, int N, int idx);
+  void remove(int *seg_ID, int N_ID);
+  void keep(int *seg_ID, int N_ID);
+  void update_conic_c(rtd *_conic_c_);
+  void update_conic_k(rtd *_conic_k_);
+  void set_reflectivity(float *reflectivity);
+  void pointing_neutral(float tip, float tilt);
+  void coma_neutral(float tip, float tilt);
+};
+@
+\subsection{Setup \& Cleanup}
+\label{sec:setup--cleanup-2}
+
+\index{gmtMirrors!wfpt!setup}
+<<WFPT functions (out)>>=
+void wfpt::setup(void)
+{
+  BS = NULL;
+  ZS = NULL;
+  <<WFPT parameters>>
+  <<GMT setup common>>
+}
+@ 
+<<WFPT functions (out)>>=
+void wfpt::setup(modes *_BS_)
+{
+  BS = _BS_;
+  ZS = NULL;
+  <<WFPT parameters>>
+  <<GMT setup common>>
+}
+@ with
+<<WFPT parameters>>=
+ M_ID    = 1;
+D_assembly = 0.;
+ D_full  = segment_diameter;
+ D_clear = segment_diameter;
+ ri      = 0.0;
+ beta    = 0.;
+ L       = segment_distance;
+N       = n_segment;
+ conic_c = 0.;
+ conic_k = 1.;
+ height  = 0.;
+idx_offset = segment_idx_offset;
+@
+\index{gmtMirrors!wfpt!setup}
+<<WFPT functions>>=
+void wfpt::setup(float segment_diameter,
+                 float segment_distance,
+                 int n_segment,
+                 int segment_idx_offset,
+                 zernikeS *_ZS_)
+{
+  ZS = _ZS_;
+  BS = NULL;
+  M_ID    = 2;
+  <<WFPT parameters>>
+  <<GMT setup common>>
+}
+@
+Memory is freed with
+\index{gmtMirrors!wfpt!cleanup}
+<<WFPT functions>>=
+void wfpt::cleanup(void)
+{
+  fprintf(stdout,"@(CEO)>gmt_m2: freeing memory!\n");
+  <<GMT cleanup common>>
+}
+@
+<<WFPT functions>>=
+void wfpt::update_conic_c(rtd *_conic_c_)
+{
+  HANDLE_ERROR( cudaMemcpy( d__conic_c, _conic_c_,
+              sizeof(rtd)*7, cudaMemcpyHostToDevice ) );
+}
+@
+<<WFPT functions>>=
+  void wfpt::update_conic_k(rtd *_conic_k_)
+{
+  HANDLE_ERROR( cudaMemcpy( d__conic_k, _conic_k_,
+                            sizeof(rtd)*7, cudaMemcpyHostToDevice ) );
+}
+@
+\subsection{Blocking}
+\label{sec:blocking-2}
+
+The rays blocking with M2 is computed with
+\index{gmtMirrors!wfpt!blocking}
+<<WFPT functions>>=
+void wfpt::blocking(bundle *rays)
+{
+  <<GMT blocking common>>
+}
+@
+\subsection{Ray tracing}
+\label{sec:ray-tracing-2}
+
+The rays propagation through M1 is computed with
+\index{gmtMirrors!wfpt!trace}
+<<WFPT functions>>=
+void wfpt::trace(bundle *rays)
+{
+  dim3 blockDim, gridDim;
+  rtd R2, Rri2;
+  R2 = D_clear*D_clear*0.25;
+  Rri2 = R2*ri*ri;
+  <<GMT trace common>>
+  }
+void wfpt::traceall(bundle *rays)
+{
+  rays->V.area = area0*rays->N_BUNDLE*area_fraction;
+  dim3 blockDim, gridDim;
+  rtd R2, Rri2;
+  R2 = D_clear*D_clear*0.25;
+  Rri2 = R2*ri*ri*0;
+  <<GMT trace all common>>
+      }
+@
+The rigid body motion parameters are updated with:
+\index{gmtMirrors!wfpt!update}
+<<WFPT functions>>=
+void wfpt::update(vector _origin_, vector _euler_angles_,int idx)
+{
+    <<GMT M12 update>>
+}
+@
+The rigid body motion are reset to 0 with:
+\index{gmtMirrors!wfpt!reset}
+<<WFPT functions>>=
+void wfpt::reset(void)
+{
+    <<GMT M12 reset>>
+}
+@
+\subsection{Segment selection}
+\label{sec:segment-selection}
+
+Segments can be removed from the M1 or M2 models with the routine:
+\index{gmtMirrors!wfpt!remove}
+<<WFPT functions>>=
+void wfpt::remove(int *seg_ID, int N_ID)
+{
+  <<GMT remove segments>>
+}
+@
+One can also specifies the segments to keep
+\index{gmtMirrors!wfpt!keep}
+<<WFPT functions>>=
+void wfpt::keep(int *seg_ID, int N_ID)
+{
+  <<GMT keep segments>>
+}
+@
+\subsection{Mirror location tracker}
+\label{sec:mirr-locat-track}
+
+The [[track]] function transforms the coordinates $(x,y,z)$ in the motion CS of segment [[idx]] to the GCS.
+
+\index{gmtMirrors!wfpt!track}
+<<WFPT functions>>=
+void wfpt::track(float *d__x, float *d__y, float *d__z, int N, int idx)
+{
+  <<GMT track common>>
+}
+@
+
+The [[locate]] function transforms the coordinates $(x,y,z)$ in the GCS to the
+motion CS of segment [[idx]]
+
+\index{gmtMirrors!wfpt:locate}
+<<WFPT functions>>=
+void wfpt::locate(float *d__x, float *d__y, float *d__z, int N, int idx)
+{
+  <<GMT locate common>>
+}
+@
+
+\subsection{Global tip--tilt}
+\label{sec:global-tip-tilt-1}
+
+\index{gmtMirrors!wfpt!global\_tiptilt}
+<<WFPT functions>>=
+void wfpt::global_tiptilt(float tip, float tilt)
+{
+  <<GMT global tip-tilt common>>
+}
+@
+
+\subsubsection{Tip--tilt neutral}
+\label{sec:tip-tilt-neutral}
+
+\index{gmtMirrors!wfpt!pointing\_neutral}
+<<WFPT functions>>=
+void wfpt::pointing_neutral(float tip, float tilt)
+{
+  double alpha, beta, *d__C;
+  vector origin, euler_angles;
+  cublasHandle_t handle;
+  coordinate_system TT_CS;
+
+  origin.x = origin.y = 0.0;
+  origin.z = height - 4390.312E-03;
+  euler_angles.x = tip;
+  euler_angles.y = tilt;
+  euler_angles.z = 0.0;
+
+  TT_CS.setup(origin, euler_angles);
+  cublasCreate(&handle);
+
+  alpha = 1;
+  beta  = 0;
+  HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
+  int k, k9;
+  for (k=0;k<N;k++)
+    {
+      k9 = k*9;
+      <<global tip-tilt transformation>>
+    }
+
+  cublasDestroy(handle);
+  TT_CS.cleanup();
+  HANDLE_ERROR( cudaFree( d__C ) );
+}
+@
+\subsubsection{Coma neutral}
+\label{sec:coma-neutral}
+
+\index{gmtMirrors!wfpt!coma\_neutral}
+<<WFPT functions>>=
+void wfpt::coma_neutral(float tip, float tilt)
+{
+  double alpha, beta, *d__C;
+  vector origin, euler_angles;
+  cublasHandle_t handle;
+  coordinate_system TT_CS;
+
+  origin.x = origin.y = 0.0;
+  origin.z = height - 2246.410E-03;
+  euler_angles.x = tip;
+  euler_angles.y = tilt;
+  euler_angles.z = 0.0;
+
+  TT_CS.setup(origin, euler_angles);
+  cublasCreate(&handle);
+
+  alpha = 1;
+  beta  = 0;
+  HANDLE_ERROR( cudaMalloc((void**)&d__C, sizeof(double)*9 ) );
+  int k, k9;
+  for (k=0;k<N;k++)
+    {
+      k9 = k*9;
+      <<global tip-tilt transformation>>
+    }
+
+  cublasDestroy(handle);
+  TT_CS.cleanup();
+  HANDLE_ERROR( cudaFree( d__C ) );
+}
+@
+\subsection{Segment reflectivity}
+\label{sec:seg-reflect}
+
+The segment reflectivity is set with:
+\index{gmtMirrors!wfpt!set\_reflectivity}
+<<WFPT functions>>=
+void wfpt::set_reflectivity(float *reflectivity)
 {
   <<GMT set reflectivity common>>
 }
