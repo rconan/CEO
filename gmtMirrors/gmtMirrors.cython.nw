@@ -1409,6 +1409,9 @@ cdef class GMT_M2:
         void setup(float , float ,
                    int , int ,
                    zernikeS *)
+        void setup(float , float ,
+                   int , int ,
+                   modes *)
         <<python GMT M12 functions>>
         void pointing_neutral(float, float)
         void coma_neutral(float, float)
@@ -1444,11 +1447,19 @@ cdef class WFPT_MX:
         self.conic_const._c_gpu.dev_data = self._c_gmt_m12.d__conic_k
         self.mirror_modes_type = mirror_modes.encode('utf-8')
         self.zernike = ZernikeS(radial_order,N_SURF=7)
-        self._c_gmt_m12.setup(segment_diameter,
-                              segment_distance,
-                              n_segment,
-                              0,
-                              <zernikeS *> self.zernike._c_zernikeS)
+        if self.mirror_modes_type==b"zernike":
+            self._c_gmt_m12.setup(segment_diameter,
+                                  segment_distance,
+                                  n_segment,
+                                  0,
+                                  <zernikeS *> self.zernike._c_zernikeS)
+        else:
+            self.B = Modes(self.mirror_modes_type,7,N_MODE)
+            self._c_gmt_m12.setup(segment_diameter,
+                                  segment_distance,
+                                  n_segment,
+                                  0,
+                                  <modes *> self.B._c_modes)
         cdef int[:] sid
         if segment_id > 0:
             sid = np.array([segment_id],dtype=np.int32,ndmin=1)
