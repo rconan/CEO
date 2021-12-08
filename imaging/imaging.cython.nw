@@ -18,7 +18,7 @@ cdef extern from "imaging.h":
         float *d__frame
         float2 *d__wave_PUPIL
         char absolute_pointing
-        void setup(int , int , int , int , int, int)
+        void setup(int, int, float, int, int, int)
         void cleanup()
         void set_pointing_direction(float *, float *)
         void propagate(source *)
@@ -40,7 +40,8 @@ cdef extern from "imaging.h":
 cdef class Imaging(Sensor):
     cdef:
         imaging *_c_imaging
-        readonly int N_SIDE_LENSLET, N_PX_PUPIL, DFT_osf, \
+        readonly float DFT_osf
+        readonly int N_SIDE_LENSLET, N_PX_PUPIL, \
                      N_PX_IMAGE, BIN_IMAGE, N_SOURCE, \
                      N_PX_FRAME, ghost_N_FRAME
         readonly cuFloatArray frame
@@ -68,7 +69,7 @@ cdef class Imaging(Sensor):
        The sampling in pixel of one lenslet.
     N_SIDE_LENSLET : int
        The linear size of the lenslet array (>=1).
-    DFT_osf : int
+    DFT_osf : float
        The oversampling factor for the Discrete Fourier Transform (>=1).
     N_PX_IMAGE : int
        The sampling in pixel of the imagelet (>=1).
@@ -93,7 +94,7 @@ cdef class Imaging(Sensor):
        The linear size of the lenslet array (>=1).
     N_PX_PUPIL : int
        The sampling in pixel of one lenslet.
-    DFT_osf : int
+    DFT_osf : float
        The oversampling factor for the Discrete Fourier Transform
     N_PX_IMAGE : int
        The sampling in pixel of the imagelet
@@ -112,7 +113,7 @@ cdef class Imaging(Sensor):
     readOutNoiseRms : float
        The detector read-out noise rms; default: 0
     nBackgroundPhoton : float
-       The number of background photon; default: 0
+       The number of mean background photon per detector pixel; default: 0
     noiseFactor : float
        The excess noise factor; default: 1
 
@@ -126,7 +127,7 @@ cdef class Imaging(Sensor):
         self._c_imaging = new imaging()
 
     def __init__(self, int N_SIDE_LENSLET=1, int N_PX_PUPIL=128,
-		 int DFT_osf=2, int N_PX_IMAGE=0, 
+		 float DFT_osf=2, int N_PX_IMAGE=0, 
                  int BIN_IMAGE=1, int N_SOURCE=1,
                  float exposureTime=1.0, float readOutNoiseRms=0.0, 
                  float nBackgroundPhoton=0.0, float noiseFactor=1.0,
@@ -162,8 +163,9 @@ cdef class Imaging(Sensor):
         self.isPtr = isPtr
         self.frame = cuFloatArray(shape=(self.N_SOURCE*self.N_PX_FRAME,
 				         self.N_PX_FRAME))
-        self.cpx = cuFloatComplexArray(shape=(self.DFT_osf*(self.N_PX_PUPIL+1),
-				                              self.DFT_osf*(self.N_PX_PUPIL+1)))
+        dims = np.around(self.DFT_osf*(self.N_PX_PUPIL+1)).astype(int)
+        self.cpx = cuFloatComplexArray(shape=(dims,dims))
+
         if not self.isPtr:
             if N_PX_IMAGE is None:
                 N_PX_IMAGE = N_PX_PUPIL
@@ -287,7 +289,7 @@ cdef class Imaging(Sensor):
         readOutNoiseRms : float
             The read-out moise rms of the camera
         nBackgroundPhoton : float (optional)
-            The number of background photon per second; default: 0
+            The number of background photon per detector pixel; default: 0
         noiseFactor : float (optional)
             The excess noise factor for EMCCD ($\sqrt{2}$); default: 1
         """
@@ -323,9 +325,12 @@ cdef class Imaging(Sensor):
         """
         Returns the pixel scale in radian
         """
-        self._c_imaging.pixel_scale = (src.wavelength/src.rays.L)*self.N_SIDE_LENSLET*self.BIN_IMAGE/self.DFT_osf
-        return self._c_imaging.pixel_scale
 
+        # this is the true value of the DFT_osf
+        DFT_osf = 2*np.around(self.DFT_osf*self.N_PX_PUPIL/2.)/self.N_PX_PUPIL
+        self._c_imaging.pixel_scale = (src.wavelength/src.rays.L)*self.N_SIDE_LENSLET*self.BIN_IMAGE/DFT_osf
+        return self._c_imaging.pixel_scale
+    
     def pixelScaleArcsec(self,Source src):
         """
         Returns the pixel scale in arcsecond

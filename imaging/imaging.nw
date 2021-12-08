@@ -24,13 +24,13 @@ struct imaging {
   <<parameters>>
 
   void setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
-	     int DFT_osf, float IMAGE_osf, float CAMERA_osf);
+	     float DFT_osf, float IMAGE_osf, float CAMERA_osf);
   void setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
-	     int DFT_osf, float IMAGE_osf, float CAMERA_osf, int __N_SOURCE);
+	     float DFT_osf, float IMAGE_osf, float CAMERA_osf, int __N_SOURCE);
   void setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
-	     int DFT_osf, int N_PX_IMAGE_, float CAMERA_osf, int __N_SOURCE);
+	     float DFT_osf, int N_PX_IMAGE_, float CAMERA_osf, int __N_SOURCE);
   void setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
-	     int DFT_osf, int N_PX_IMAGE_, int BIN_IMAGE, int __N_SOURCE);
+	     float DFT_osf, int N_PX_IMAGE_, int BIN_IMAGE, int __N_SOURCE);
   void setupSegmentPistonSensor(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
 				int _N_DFT_, int N_PX_IMAGE_, int _BIN_IMAGE_,
 				int __N_SOURCE);
@@ -168,14 +168,14 @@ In this section, we are dealing with the process of computing images from wavefr
 A [[setup]] routine is defined to initialize any required variables:
 <<setup I>>=
 void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
-		    int DFT_osf, float IMAGE_osf, float CAMERA_osf) {
+		    float DFT_osf, float IMAGE_osf, float CAMERA_osf) {
   N_SOURCE    = 1;
   <<setup common I and II>>
   <<setup common>>
 }
 <<setup II>>=
 void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
-		    int DFT_osf, float IMAGE_osf, float CAMERA_osf,
+		    float DFT_osf, float IMAGE_osf, float CAMERA_osf,
 		    int __N_SOURCE) {
   N_SOURCE    = __N_SOURCE;
   <<setup common I and II>>
@@ -184,7 +184,7 @@ void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
 <<setup common I and II>>=
 BIN_IMAGE   = 1;
 N_PX_PUPIL  = __N_PX_PUPIL;
-N_DFT       = DFT_osf*N_PX_PUPIL;//*round_up_to_nhp2(N_PX_PUPIL);
+N_DFT       = 2*round(DFT_osf*N_PX_PUPIL/2.);
 N_PX_IMAGE  = IMAGE_osf*N_PX_PUPIL;
 N_PX_CAMERA = CAMERA_osf*N_PX_IMAGE;
 N_SIDE_LENSLET = __N_SIDE_LENSLET;
@@ -193,7 +193,7 @@ N_FRAME     = 0;
 @
 <<setup III>>=
 void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
-		    int DFT_osf, int N_PX_IMAGE_, float CAMERA_osf,
+		    float DFT_osf, int N_PX_IMAGE_, float CAMERA_osf,
 		    int __N_SOURCE) {
   N_SOURCE    = __N_SOURCE;
   <<setup common III>>
@@ -202,7 +202,7 @@ void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
 <<setup common III>>=
 BIN_IMAGE   = 1;
 N_PX_PUPIL  = __N_PX_PUPIL;
-N_DFT       = DFT_osf*N_PX_PUPIL;//round_up_to_nhp2(N_PX_PUPIL);
+N_DFT       = 2*round(DFT_osf*N_PX_PUPIL/2.);
 N_PX_IMAGE  = N_PX_IMAGE_;
 N_PX_CAMERA = CAMERA_osf*N_PX_IMAGE;
 N_SIDE_LENSLET = __N_SIDE_LENSLET;
@@ -211,12 +211,12 @@ N_FRAME     = 0;
 @
 <<setup IV>>=
 void imaging::setup(int __N_PX_PUPIL, int __N_SIDE_LENSLET,
-		    int DFT_osf, int N_PX_IMAGE_, int _BIN_IMAGE_,
+		    float DFT_osf, int N_PX_IMAGE_, int _BIN_IMAGE_,
 		    int __N_SOURCE) {
   N_SOURCE    = __N_SOURCE;
   BIN_IMAGE   = _BIN_IMAGE_;
   N_PX_PUPIL  = __N_PX_PUPIL+1;
-  N_DFT       = DFT_osf*N_PX_PUPIL;//round_up_to_nhp2(N_PX_PUPIL);
+  N_DFT       = 2*round(DFT_osf*N_PX_PUPIL/2.);
   N_PX_IMAGE  = N_PX_IMAGE_;
   N_PX_CAMERA = N_PX_IMAGE/BIN_IMAGE;
   N_SIDE_LENSLET = __N_SIDE_LENSLET;
@@ -1368,9 +1368,9 @@ void imaging::readout(float exposureTime, float readOutNoiseRms,
 		      float nBackgroundPhoton,  float noiseFactor) {
 <<read-out content>>
 float nbgp, nf2;
-int n;
 nbgp = (N_FRAME>0) ? nBackgroundPhoton*N_FRAME : nBackgroundPhoton;
 /*
+int n;
 n = N_SIDE_LENSLET*N_PX_CAMERA;
 n *= n;
 nbgp /= n;

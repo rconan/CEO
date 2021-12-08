@@ -163,17 +163,13 @@ class GMT_MX(GmtMirrors):
     --------
     >>> import ceo
 
-    The mandatory parameters are the size of the pupil plane in meter or in pixel
+    A GMT object is created simply with
 
-    >>> gmt = ceo.GMT_MX(25.5,256)
-
-    If more that one source (lets say 3) is going to be propagated through the telescope:
-
-    >>> gmt = ceo.GMT_MX(25.5,256, N_SRC=3)
+    >>> gmt = ceo.GMT_MX()
 
     A combination of Zernike polynomials can be applied to M1 and M2 segments by specifying the largest radial order on each mirror
 
-    >>> gmt = ceo.GMT_MX(25.5,256, M1_radial_order=8, M2_radial_order=14)
+    >>> gmt = ceo.GMT_MX(M1_radial_order=8, M2_radial_order=14)
 
     A source is propagated (geometrically) through the telescope with the following procedure:
 

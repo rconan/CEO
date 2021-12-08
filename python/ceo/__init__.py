@@ -13,7 +13,7 @@ from .GBTBT import Gbtbt
 from .iterativeSolvers import Minres
 from .LMMSE import Lmmse, ALmmse, LmmseSH, BilinearInterpolation
 from .atmosphere import AtmosphereAbstract, Atmosphere, GmtAtmosphere, Layer, JGmtAtmosphere
-from .gmtMirrors import BendingModes, KarhunenLoeve, GmtMirrors, GMT_M1, GMT_M2, StereoscopicEdgeSensors, LateralEdgeSensors, DistanceEdgeSensors, Modes
+from .gmtMirrors import BendingModes, KarhunenLoeve, GmtMirrors, GMT_M1, GMT_M2, StereoscopicEdgeSensors, LateralEdgeSensors, DistanceEdgeSensors, Modes, WFPT_MX
 from .GMTLIB import CalibrationVault, GMT_MX, JGMT_MX, GeometricTT7, SegmentTipTiltSensor, EdgeSensors, Trace, PSSn as GMT_PSSn
 from .mapping import Mapping
 from . import phaseStats
