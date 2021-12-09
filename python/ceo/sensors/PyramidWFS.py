@@ -2,19 +2,18 @@ from ceo.tools import ascupy
 from ceo.pyramid import Pyramid
 import numpy as np
 import cupy as cp
-from cupy.random import default_rng
+from cupy.random import default_rng, XORWOW
 from scipy.ndimage import center_of_mass
 
 class PyramidWFS(Pyramid):
     def __init__(self, N_SIDE_LENSLET, N_PX_LENSLET, modulation=0.0, modulation_sampling=None, N_GS=1, 
-                 throughput=1.0, separation=2, field_stop_diam=float('inf'), high_pass_diam=0, binning=1):
+                 throughput=1.0, separation=2, field_stop_diam=float('inf'), high_pass_diam=0, binning=1, noise_seed=12345):
         Pyramid.__init__(self)
         self._ccd_frame = ascupy(self.camera.frame)
         self._SUBAP_NORM = 'MEAN_FLUX_PER_SUBAP'
         self.camera.photoelectron_gain = throughput
 
-        noise_seed = 12345
-        self.rng = default_rng(seed=noise_seed)
+        self.rng = default_rng(XORWOW(seed=noise_seed, size=self.camera.N_PX_FRAME**2))
 
     def calibrate(self, src, calib_modulation=10.0, calib_modulation_sampling=64, cen_thr=0.2, percent_extra_subaps=0.0, thr=0.0):
         """
