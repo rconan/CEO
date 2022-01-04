@@ -341,10 +341,10 @@ struct bundle {
 				   float const delta_y, int N_y);
   void get_vignetting(double *d__v);
   void get_n_iteration(int *n_iteration);
-  void gmt_truss_onaxis(void);
+  void gmt_truss_onaxis(const double scale);
   void gmt_pma_onaxis(void);
   void gmt_pma_plate_onaxis(void);
-  void gmt_m2_baffle(const double baffle_radius);
+  void gmt_m2_baffle(const double baffle_radius, const double scale);
 };
 @
 A bundle allocates an array of [[N_RAY]] rays on the device
@@ -1508,7 +1508,7 @@ center segment is computed with:
 \item for the truss:
 \index{source!bundle!gmt\_truss\_onaxis}
 <<ray bundle functions>>=
-void bundle::gmt_truss_onaxis(void)
+void bundle::gmt_truss_onaxis(const double scale)
 {
   int NV = 15, nbyte, k,l;
   double Vx[] = {-3.011774, -2.446105, -3.011774, -2.799304, -2.33903,  -1.566412, -1.640648,
@@ -1536,22 +1536,25 @@ void bundle::gmt_truss_onaxis(void)
     }
     HANDLE_ERROR( cudaMemcpy( d__Vx, &Vx, nbyte, cudaMemcpyHostToDevice ) );
     HANDLE_ERROR( cudaMemcpy( d__Vy, &Vy, nbyte, cudaMemcpyHostToDevice ) );
-    gmt_truss_onaxis_kern LLL gridDim,blockDim RRR (d__ray,N_RAY_TOTAL,d__Vx,d__Vy,NV);
+    gmt_truss_onaxis_kern LLL gridDim,blockDim RRR (d__ray, N_RAY_TOTAL, d__Vx, d__Vy, NV, scale);
   }
 }
 @
 with the device kernels
 <<GMT truss on-axis projection kernel>>=
-__global__ void gmt_truss_onaxis_kern(ray *d__ray, int NP, double *Vx, double *Vy, int NV)
+__global__ void gmt_truss_onaxis_kern(ray *d__ray, int NP,
+                                      double *Vx, double *Vy, int NV,
+                                      const double scale)
 {
   int i,w;
-  double rho2, R2;
+  double rho2, R2, x, y;
   R2 = 1.65*1.65;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i<NP && d__ray[i].v) {
-    w = polywind(d__ray[i].coordinates.x,d__ray[i].coordinates.y,Vx,Vy,NV);
-    rho2 = d__ray[i].coordinates.x*d__ray[i].coordinates.x +
-      d__ray[i].coordinates.y*d__ray[i].coordinates.y;
+    x = d__ray[i].coordinates.x*scale;
+    y = d__ray[i].coordinates.y*scale;
+      w = polywind(x,y,Vx,Vy,NV);
+    rho2 = x*x + y*y;
     if (w!=0 || rho2<R2)
       d__ray[i].v = 0;
   }
@@ -1560,24 +1563,27 @@ __global__ void gmt_truss_onaxis_kern(ray *d__ray, int NP, double *Vx, double *V
 \item for M2 baffle:
 \index{source!bundle!gmt\_m2\_baffle}
 <<ray bundle functions>>=
-void bundle::gmt_m2_baffle(const double baffle_radius)
+  void bundle::gmt_m2_baffle(const double baffle_radius, const double scale)
 {
   dim3 blockDim(256);
   dim3 gridDim(N_RAY_TOTAL/256+1);
-  gmt_m2_baffle_kern LLL gridDim,blockDim RRR (d__ray,N_RAY_TOTAL,baffle_radius);
+  gmt_m2_baffle_kern LLL gridDim,blockDim RRR (d__ray, N_RAY_TOTAL, baffle_radius, scale);
 }  
 @
 with the device kernels
 <<GMT M2 baffle kernel>>=
-  __global__ void gmt_m2_baffle_kern(ray *d__ray, int NP,const double R)
+  __global__ void gmt_m2_baffle_kern(ray *d__ray, int NP,
+                                     const double R,
+                                     const double scale)
 {
   int i;
-  double rho2, R2;
+  double rho2, R2, x, y;
   R2 = R*R;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i<NP && d__ray[i].v) {
-    rho2 = d__ray[i].coordinates.x*d__ray[i].coordinates.x +
-      d__ray[i].coordinates.y*d__ray[i].coordinates.y;
+    x = d__ray[i].coordinates.x*scale;
+    y = d__ray[i].coordinates.y*scale;
+    rho2 = x*x + y*y;
     if (rho2<R2)
       d__ray[i].v = 0;
   }
