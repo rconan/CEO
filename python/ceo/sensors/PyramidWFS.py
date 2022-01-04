@@ -2,15 +2,19 @@ from ceo.tools import ascupy
 from ceo.pyramid import Pyramid
 import numpy as np
 import cupy as cp
+from cupy.random import default_rng, XORWOW
 from scipy.ndimage import center_of_mass
 
 class PyramidWFS(Pyramid):
-    def __init__(self, N_SIDE_LENSLET, N_PX_LENSLET, modulation=0.0, N_GS=1, throughput=1.0, separation=None):
+    def __init__(self, N_SIDE_LENSLET, N_PX_LENSLET, modulation=0.0, modulation_sampling=None, N_GS=1, 
+                 throughput=1.0, separation=2, field_stop_diam=float('inf'), high_pass_diam=0, binning=1, noise_seed=12345):
         Pyramid.__init__(self)
         self._ccd_frame = ascupy(self.camera.frame)
         self._SUBAP_NORM = 'MEAN_FLUX_PER_SUBAP'
         self.camera.photoelectron_gain = throughput
-	
+
+        self.rng = default_rng(XORWOW(seed=noise_seed, size=self.camera.N_PX_FRAME**2))
+
     def calibrate(self, src, calib_modulation=10.0, calib_modulation_sampling=64, cen_thr=0.2, percent_extra_subaps=0.0, thr=0.0):
         """
         Perform the following calibration tasks:
@@ -303,5 +307,21 @@ class PyramidWFS(Pyramid):
         """
         self.propagate(src)
         self.process()
+
+    def readOut(self, exposureTime, RON=0.5, emccd_gain=600, ADU_gain=1/30, emccd_nbits=14):
+        """
+        Reads out the CCD frame, applying all sources of noise.
+        """
+        self.camera.noiselessReadOut(exposureTime)
+        fr = self.rng.poisson(self._ccd_frame)
+        fr = emccd_gain * self.rng.standard_gamma(fr)
+        fr += self.rng.standard_normal(size=fr.shape) * (RON * emccd_gain)
+        fr *= ADU_gain   # in detected photo-electrons
+        fr = cp.floor(fr) # quantization
+        ADU_min = 0
+        ADU_max = 2**emccd_nbits - 1
+        fr = cp.clip(fr, ADU_min, ADU_max) # dynamic range
+        self._ccd_frame[:] = fr.astype(cp.float32)   
+        
 
 

@@ -18,7 +18,7 @@ from .GMTLIB import CalibrationVault, GMT_MX, JGMT_MX, GeometricTT7, SegmentTipT
 from .mapping import Mapping
 from . import phaseStats
 from .sensors import PyramidWFS as Pyramid
-from .sensors import DispersedFringeSensor, IdealSegmentPistonSensor, PhaseProjectionSensor
+from .sensors import DispersedFringeSensor, IdealSegmentPistonSensor, PhaseProjectionSensor, HolographicDFS
 from .zemax import ZMX, raytrace
 from IPython.display import Markdown, display
 def sweetcheat():
