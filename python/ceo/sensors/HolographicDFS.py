@@ -61,7 +61,7 @@ class HolographicDFS:
     
     def __init__(self, hdfs_design='v1', cwvl=800e-9, wvl_band=[700e-9,900e-9], wvl_res=10e-9, D=25.5, 
                  nyquist_factor=1.5, fov_mas=1400, fs_shape="square", fs_dim_mas=100, spectral_type="tophat",
-                 apodization_window_type='Tukey', processing_method='DFS', throughput=1.0):
+                 apodization_window_type='Tukey', processing_method='DFS', throughput=1.0, noise_seed=12345):
 
         #------------- Load parameters specific to the selected HDFS mask design version ---------------------
         path = os.path.dirname(__file__)
@@ -193,7 +193,6 @@ class HolographicDFS:
         self.processing_method = processing_method
         
         self._throughput = throughput
-        noise_seed = 12345
         self._rng = default_rng(XORWOW(seed=noise_seed, size=self._im_sz**2))
         self.simul_DAR = False
         
@@ -432,11 +431,13 @@ class HolographicDFS:
         if self.processing_method == 'DFS':
             fringes = self.extract_fringes(apodize=True, normalize=False, derotate=True)
             self.measurement = np.zeros(self._N_FRINGES)
+            self._visibility = np.zeros(self._N_FRINGES)
             if self.simul_DAR: self.dar_measurement = np.zeros(self._N_FRINGES)
                 
             for sidx in range(self._N_FRINGES):
                 fringe = fringes[:,:,sidx]
                 absfft = cp.fft.fftshift(cp.abs(cp.fft.fft2(fringe)))
+                centralpeak = np.max(absfft)
                 if self._adjacentsegments[sidx]:
                     sidelobe = absfft[:,34].copy()
                 else:
@@ -444,6 +445,7 @@ class HolographicDFS:
 
                 (cent,maxval) = self.subpixel_interp1d(sidelobe)
                 self.measurement[sidx] = cent
+                self._visibility[sidx] = maxval / centralpeak
 
                 if self.simul_DAR:
                     sidelobe = absfft[:,43].copy()
@@ -517,7 +519,9 @@ class HolographicDFS:
     
     def get_ref_measurement(self):
         return self._ref_measurement
-    
+
+    def get_visibility(self):
+        return self._visibility
     
     def get_data_cube(self, data_type='camera'):
         if data_type == 'camera':

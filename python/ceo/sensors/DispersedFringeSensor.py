@@ -282,6 +282,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
         """
         dataCube = self.get_data_cube(data_type='fftlet')
         self.measurement = np.zeros(self._N_SRC*12)
+        self._visibility = np.zeros(self._N_SRC*12)
 
         if self.INIT_ALL_ATTRIBUTES == True:
             self.fftlet_fit_params = np.zeros((6,self._N_SRC*12))
@@ -311,6 +312,7 @@ class DispersedFringeSensor(SegmentPistonSensor):
             y1 = y
             x1 = x
             self.measurement[k] = y1
+            self._visibility[k] = height / centralpeak
 
             if self.INIT_ALL_ATTRIBUTES == True:
                 self.measurement_ortho[k] = x1
@@ -368,3 +370,6 @@ class DispersedFringeSensor(SegmentPistonSensor):
 
     def get_ref_measurement(self):
         return self._ref_measurement
+
+    def get_visibility(self):
+        return self._visibility
