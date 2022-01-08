@@ -71,13 +71,10 @@ class HolographicDFS:
             HDFSmask = (HDFS_file[0].data).astype('float')
             HDFS_file.close()
             
-            #-- Angle at which fringes are located [in radians]
-            fringe_loc_angle_all = np.array([6, 53, 67, 90, 120, 151, 174, 186, 233, 247, 270, 300, 331, 354 ]) * (np.pi/180)
-            
             #-- Rotation angle of the fringe [in degrees]
-            # TODO: make rotation angle consistent with fringe_loc_angle_all
-            self._rotation_angle = cp.array([-84.387,-35.862,-24.32,0.0,30.02,60.058,84.16,95.65,144.14,155.665,179.982,-149.99,-119.95,-95.85])
-            
+            self._rotation_angle = np.array([-84.,-36.,-24.,0.,30.,60.,84.,96.,144.,156.,180.,210.,240.,264.])
+            self._N_FRINGES = len(self._rotation_angle)
+
             #-- whether the fringe corresponds to adjacent segments or not (needed for processing)
             self._adjacentsegments = [True,False,True,False,False,False,False,True,False,True,False,False,False,False]
             
@@ -90,8 +87,7 @@ class HolographicDFS:
             raise ValueError('The selected HDFS design version does not exist.')
         
         nPx = HDFSmask.shape[0]
-        self._HDFSmask = cp.array(HDFSmask)   
-        self._N_FRINGES = len(fringe_loc_angle_all)
+        self._HDFSmask = cp.array(HDFSmask)
 
 
         #--------------- Polychromatic imaging simulation initialization -------------------
@@ -115,6 +111,9 @@ class HolographicDFS:
         #-- 3) update WVL values
         ndall = nPxall / nPx
         wvl = ndall * cwvl / nd
+        if np.min(ndall) < 2.:
+            import warnings
+            warnings.warn("Nyquist factor should be set to be >= 2 at the shortest wavelength")
 
         #-- 4) Select FoV size (to crop images and co-add in focal plane)
         fovall_mas = wvl/(ndall*D)*constants.RAD2MAS*nPxall   #FoV at different wavelengths (mas)
@@ -157,11 +156,11 @@ class HolographicDFS:
         fringe_loc_radius_pix = fringe_loc_radius_mas / self._fp_pxscl_mas  # in pixels
 
         #-- 3) Pixel coordinates of center of each fringe pattern
-        self._fringe_loc_x_pix = np.round(fringe_loc_radius_pix * np.sin(fringe_loc_angle_all)).astype('int') + fringe_xc_pix
-        self._fringe_loc_y_pix = np.round(fringe_loc_radius_pix * np.cos(fringe_loc_angle_all)).astype('int') + fringe_yc_pix
+        self._fringe_loc_x_pix = np.round(-fringe_loc_radius_pix * np.cos(np.radians(self._rotation_angle))).astype('int') + fringe_xc_pix
+        self._fringe_loc_y_pix = np.round(fringe_loc_radius_pix * np.sin(np.radians(self._rotation_angle))).astype('int') + fringe_yc_pix
 
-        #-- 4) Size of sub-frame [in pixels] that will enclose each fringe pattern
-        self._fringe_subframe_pix = int(fringe_subframe_sz_mas/self._fp_pxscl_mas)
+        #-- 4) Size of sub-frame [in pixels] that will enclose each fringe pattern (ensure it's even)
+        self._fringe_subframe_pix = int(fringe_subframe_sz_mas/self._fp_pxscl_mas)//2*2
 
         #-- 5) Apodizing window to be applied to each sub-frame
         self.set_apodization_window(apodization_window_type)
