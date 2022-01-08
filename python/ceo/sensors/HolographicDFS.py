@@ -63,6 +63,12 @@ class HolographicDFS:
                  nyquist_factor=1.5, fov_mas=1400, fs_shape="square", fs_dim_mas=100, spectral_type="tophat",
                  apodization_window_type='Tukey', processing_method='DFS', throughput=1.0, noise_seed=12345):
 
+        #------------ Define location of the GMT segments to calculate the baselines
+        outersegrad = 8.710 # this is the physical distance of the segments used to define the baselines
+        segloc = np.zeros([7,2]) # 6 is the central segment
+        segloc[0:6,0] = outersegrad*np.sin(np.radians(np.array([0,60,120,180,240,300])))
+        segloc[0:6,1] = outersegrad*np.cos(np.radians(np.array([0,60,120,180,240,300])))
+
         #------------- Load parameters specific to the selected HDFS mask design version ---------------------
         path = os.path.dirname(__file__)
         if hdfs_design == 'v1':
@@ -75,8 +81,14 @@ class HolographicDFS:
             self._rotation_angle = np.array([-84.,-36.,-24.,0.,30.,60.,84.,96.,144.,156.,180.,210.,240.,264.])
             self._N_FRINGES = len(self._rotation_angle)
 
-            #-- whether the fringe corresponds to adjacent segments or not (needed for processing)
-            self._adjacentsegments = [True,False,True,False,False,False,False,True,False,True,False,False,False,False]
+            #-- Calulate the baselines
+            segcomp = np.array([[6,0],[2,5],[6,5],[2,4],[1,4],[1,3],[0,3],
+                                [0,6],[5,2],[5,6],[4,2],[4,1],[3,1],[3,0]])
+
+            baseline = np.zeros(self._N_FRINGES)
+            for idx in range(self._N_FRINGES):
+                [seg0,seg1] = segcomp[idx,:]
+                baseline[idx] = np.sqrt(np.sum((segloc[seg0,:] - segloc[seg1,:])**2))
             
             #-- The petals have a dispersion such that the central wavelength (800 nm) is placed at 80 lambda/D.
             fringe_loc_radius_mas = 80*cwvl/D * constants.RAD2MAS  # in mas
@@ -186,11 +198,17 @@ class HolographicDFS:
             self.fs_shape = "none"
         
 
-        #-------------------- Other miscellaneous initializations --------------------
+        #-------------------- Processing method initializations --------------------
         if processing_method not in ['DFS', 'TemplateMatching']:
             raise ValueError("Processing method must be either ['DFS,','TemplateMatching']")
         self.processing_method = processing_method
         
+        if self.processing_method == 'DFS':
+            #-- Compute the location of the sidelobes
+            sidelobedist = np.round(baseline*nPx/D*self._fringe_subframe_pix/np.mean(nPxall)).astype(int)
+            self._sidelobeloc = self._fringe_subframe_pix//2 - sidelobedist
+
+        #--------------------- Other -------------------------------------------
         self._throughput = throughput
         self._rng = default_rng(XORWOW(seed=noise_seed, size=self._im_sz**2))
         self.simul_DAR = False
@@ -437,17 +455,13 @@ class HolographicDFS:
                 fringe = fringes[:,:,sidx]
                 absfft = cp.fft.fftshift(cp.abs(cp.fft.fft2(fringe)))
                 centralpeak = np.max(absfft)
-                if self._adjacentsegments[sidx]:
-                    sidelobe = absfft[:,34].copy()
-                else:
-                    sidelobe = absfft[:,24].copy()
-
+                sidelobe = absfft[:,self._sidelobeloc[sidx]].copy()
                 (cent,maxval) = self.subpixel_interp1d(sidelobe)
                 self.measurement[sidx] = cent
                 self._visibility[sidx] = maxval / centralpeak
 
                 if self.simul_DAR:
-                    sidelobe = absfft[:,43].copy()
+                    sidelobe = absfft[:,self._fringe_subframe_pix-1].copy()
                     (cent,maxval) = self.subpixel_interp1d(sidelobe)
                     self.dar_measurement[sidx] = cent
 
