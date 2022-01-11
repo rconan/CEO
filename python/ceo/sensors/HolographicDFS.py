@@ -307,6 +307,8 @@ class HolographicDFS:
         #--- Set photometry
         PupilArea = np.sum(src.amplitude.host())*(src.rays.L/src.rays.N_L)**2
         self._nph_per_sec = float(src.nPhoton[0] * PupilArea * self._throughput)  #photons/s
+        #- proportionality factor so total intensity adds to 1:
+        self._flux_norm_factor = 1./(self._nwvl*cp.sum(self._amplitude)*cp.array(self._nPxall)**2)
 
         #--- Compute reference measurement vector
         self.set_reference_measurement(src)
@@ -321,7 +323,7 @@ class HolographicDFS:
         self._ref_measurement = self.measurement.copy()       
 
     
-    def propagate(self,src):
+    def propagate(self,src, apply_mask=True):
         """
         Broadband propagation of the WF through the holographic mask
 
@@ -329,7 +331,7 @@ class HolographicDFS:
         # 1. Create the complex amplitude at the pupil plane
         # 2. Zero pad as necessary
         # 3. Optionally propagate to the focal plane, apply field stop, propagate back
-        # 4. Apply the HDFS mask
+        # 4. Apply the HDFS mask (if apply_mask=True)
         # 5. Propagate to the focal plane
 
         NOTE: src is not used explicity. The phase and amplitude data is extracted from from self._phase and self._amplitude, thereby avoiding transfer to CPU memory
@@ -341,7 +343,7 @@ class HolographicDFS:
 
         for idx,wavelength in enumerate(self._wvlall):
             nPx1 = self._nPxall[idx]
-            cplxamp = cp.zeros((nPx1,nPx1),dtype='complex')
+            cplxamp = cp.zeros((nPx1,nPx1),dtype='complex64')
             if self.simul_DAR:
                 cplxamp[0:nPx,0:nPx] = amp2d*cp.exp(1j*2*cp.pi/wavelength*(phase2d+self._dar_mas[idx]*self._tilt_mas))
             else:
@@ -373,10 +375,11 @@ class HolographicDFS:
                 foccplxamp[-n2:,-n2:] *= mask[1:,1:][::-1,::-1]
                 cplxamp = cp.fft.ifft2(foccplxamp)
 
-            cplxamp[0:nPx,0:nPx] *= cp.exp(1j*self._HDFSmask)
+            if apply_mask:
+                cplxamp[0:nPx,0:nPx] *= cp.exp(1j*self._HDFSmask)
 
             [x1,x2] = self._im_range_pix[idx,:]
-            self._image += self._spectral_flux[idx]*(cp.fft.fftshift(cp.abs(cp.fft.fft2(cplxamp)))**2)[x1:x2,x1:x2]
+            self._image += self._flux_norm_factor[idx]*self._spectral_flux[idx]*(cp.fft.fftshift(cp.abs(cp.fft.fft2(cplxamp)))**2)[x1:x2,x1:x2]
 
     
     def extract_fringes(self, apodize=False, normalize=False, derotate=False):
@@ -486,7 +489,7 @@ class HolographicDFS:
         """
         Reads out the CCD frame, applying all sources of noise.
         """
-        flux_norm = exposureTime * self._nph_per_sec / cp.sum(self._image)
+        flux_norm = exposureTime * self._nph_per_sec
         fr = self._image * flux_norm
         fr = self._rng.poisson(fr)
         fr = emccd_gain * self._rng.standard_gamma(fr)
