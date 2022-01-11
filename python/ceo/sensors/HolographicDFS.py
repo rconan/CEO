@@ -218,6 +218,7 @@ class HolographicDFS:
             self._sidelobeloc = self._fringe_subframe_pix//2 - sidelobedist
 
         #--------------------- Other -------------------------------------------
+        self.__n_integframes = 0 # to keep track of number of calls to propagate() without resetting the camera
         self._throughput = throughput
         self._rng = default_rng(XORWOW(seed=noise_seed, size=self._im_sz**2))
         self.simul_DAR = False
@@ -406,6 +407,8 @@ class HolographicDFS:
             [x1,x2] = self._im_range_pix[idx,:]
             self._image += self._flux_norm_factor[idx]*self._quantum_efficiency[idx]*self._spectral_flux[idx]*(cp.fft.fftshift(cp.abs(cp.fft.fft2(cplxamp)))**2)[x1:x2,x1:x2]
 
+        self.__n_integframes += 1
+
     
     def extract_fringes(self, apodize=False, normalize=False, derotate=False):
         """
@@ -514,7 +517,7 @@ class HolographicDFS:
         """
         Reads out the CCD frame, applying all sources of noise.
         """
-        flux_norm = exposureTime * self._nph_per_sec
+        flux_norm = (exposureTime * self._nph_per_sec) / self.__n_integframes
         fr = self._image * flux_norm
         fr = self._rng.poisson(fr)
         fr = emccd_gain * self._rng.standard_gamma(fr)
@@ -528,7 +531,7 @@ class HolographicDFS:
         
 
     def noiselessReadOut(self, exposureTime):
-        flux_norm = exposureTime * self._nph_per_sec / cp.sum(self._image)
+        flux_norm = (exposureTime * self._nph_per_sec) / self.__n_integframes
         self._image *= flux_norm
 
         
@@ -537,6 +540,7 @@ class HolographicDFS:
         Reset camera
         """
         self._image *= 0
+        self.__n_integframes *=0
 
         
     @property
