@@ -57,11 +57,18 @@ class HolographicDFS:
     
     throughput : float
         Overall throughput on the HDFS (from M1 to HDFS detector). Default: 1.0
+
+    noise_seed : integer
+        Seed to initialize random number generator for noise simulation
+
+    qe_model : string
+        Detector's quantum efficiency model: 'ideal', 'EMCCD1'. Default: 'ideal'
     """
     
     def __init__(self, hdfs_design='v1', cwvl=800e-9, wvl_band=[700e-9,900e-9], wvl_res=10e-9, D=25.5, 
                  nyquist_factor=1.5, fov_mas=1400, fs_shape="square", fs_dim_mas=100, spectral_type="tophat",
-                 apodization_window_type='Tukey', processing_method='DFS', throughput=1.0, noise_seed=12345):
+                 apodization_window_type='Tukey', processing_method='DFS', throughput=1.0, noise_seed=12345,
+                 qe_model='ideal'):
 
         #------------ Define location of the GMT segments to calculate the baselines
         outersegrad = 8.710 # this is the physical distance of the segments used to define the baselines
@@ -154,6 +161,8 @@ class HolographicDFS:
         #-- 6) Compute the relative flux as a function of wavelength
         self.set_spectral_type(spectral_type)
         
+        #-- 7) Compute QE curve
+        self.set_quantum_efficiency(qe_model)
         
         #---------- Fringe sub-frames extraction parameters -----------------
         
@@ -273,7 +282,23 @@ class HolographicDFS:
             spectral_flux = cp.interp(cp.array(self._wvlall), wv, flux)
             self._spectral_flux = spectral_flux/cp.mean(spectral_flux) # normalized to be an average of 1
 
-    
+
+    def set_quantum_efficiency(self,qe_model):
+        """
+        Set the detector QE curve
+        """
+        if qe_model not in ['ideal','EMCCD1']:
+            raise ValueError("Detector model must be one of ['ideal','EMCCD1']")
+
+        self._qe_model = qe_model
+
+        if qe_model == 'ideal':
+            self._quantum_efficiency = cp.ones(self._nwvl)
+        if qe_model == 'EMCCD1': #OCAM2k
+            ccd_qe = [[400e-9,450e-9,500e-9,550e-9,600e-9,650e-9,700e-9,750e-9,800e-9,850e-9,900e-9,950e-9,1000e-9],[0.39,0.55,0.74,0.84,0.90,0.94,0.96,0.95,0.92,0.84,0.70,0.44,0.22]]
+            self._quantum_efficiency = cp.interp(cp.array(self._wvlall), cp.array(ccd_qe[0]),cp.array(ccd_qe[1]))
+
+
     def set_apodization_window(self, apodization_window_type):
         """
         Set apodization window for fringes sub-frames
@@ -379,7 +404,7 @@ class HolographicDFS:
                 cplxamp[0:nPx,0:nPx] *= cp.exp(1j*self._HDFSmask)
 
             [x1,x2] = self._im_range_pix[idx,:]
-            self._image += self._flux_norm_factor[idx]*self._spectral_flux[idx]*(cp.fft.fftshift(cp.abs(cp.fft.fft2(cplxamp)))**2)[x1:x2,x1:x2]
+            self._image += self._flux_norm_factor[idx]*self._quantum_efficiency[idx]*self._spectral_flux[idx]*(cp.fft.fftshift(cp.abs(cp.fft.fft2(cplxamp)))**2)[x1:x2,x1:x2]
 
     
     def extract_fringes(self, apodize=False, normalize=False, derotate=False):
