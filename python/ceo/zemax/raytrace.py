@@ -9,7 +9,7 @@ def p_ray(rays, ray_idx):
     print ('XYZ: '+np.array_str(rays.coordinates.host()[ray_idx]))
     print ('KLM: '+np.array_str(rays.directions.host()[ray_idx]))
 
-def raytrace(rays,wavelength,S,idx,xyz, klm,sid):
+def raytrace(rays,wavelength,S,idx,xyz=None,klm=None,sid=None):
     _S_ = S[idx-1]
     ceo.Transform_to_S(rays,_S_)
 
@@ -28,9 +28,11 @@ def raytrace(rays,wavelength,S,idx,xyz, klm,sid):
 
         for k in range(idx-1,-1,-1):
             ceo.Transform_to_R(rays,S[k])
-        xyz.append(rays.coordinates.host())
-        klm.append(rays.directions.host())
-        sid.append(idx-1)
+
+        if xyz is not None:
+            xyz.append(rays.coordinates.host())
+            klm.append(rays.directions.host())
+            sid.append(idx-1)
 
         #c = rays.chief_coordinates.host()[0]
         #d = rays.chief_directions.host()[0]
@@ -45,7 +47,19 @@ def raytrace(rays,wavelength,S,idx,xyz, klm,sid):
                 ceo.Transform_to_S(rays,S[k])
 
     # chief(rays)
- 
+
+def bounceoff(rays,S,idx,xyz=None,klm=None,sid=None):
+    for k in range(idx-1,-1,-1):
+        ceo.Transform_to_R(rays,S[k])
+    
+    if xyz is not None:
+        xyz.append(rays.coordinates.host())
+        klm.append(rays.directions.host())
+        sid.append(idx-1)
+    
+    for k in range(idx):
+        ceo.Transform_to_S(rays,S[k])
+
 def coords(xyz, ray_idx, xyz_idx):
     return [w[ray_idx][xyz_idx] for w in xyz]
 
