@@ -57,11 +57,24 @@ class HolographicDFS:
     
     throughput : float
         Overall throughput on the HDFS (from M1 to HDFS detector). Default: 1.0
+
+    noise_seed : integer
+        Seed to initialize random number generator for noise simulation
+
+    qe_model : string
+        Detector's quantum efficiency model: 'ideal', 'EMCCD1'. Default: 'ideal'
     """
     
     def __init__(self, hdfs_design='v1', cwvl=800e-9, wvl_band=[700e-9,900e-9], wvl_res=10e-9, D=25.5, 
                  nyquist_factor=1.5, fov_mas=1400, fs_shape="square", fs_dim_mas=100, spectral_type="tophat",
-                 apodization_window_type='Tukey', processing_method='DFS', throughput=1.0):
+                 apodization_window_type='Tukey', processing_method='DFS', throughput=1.0, noise_seed=12345,
+                 qe_model='ideal'):
+
+        #------------ Define location of the GMT segments to calculate the baselines
+        outersegrad = 8.710 # this is the physical distance of the segments used to define the baselines
+        segloc = np.zeros([7,2]) # 6 is the central segment
+        segloc[0:6,0] = outersegrad*np.sin(np.radians(np.array([0,60,120,180,240,300])))
+        segloc[0:6,1] = outersegrad*np.cos(np.radians(np.array([0,60,120,180,240,300])))
 
         #------------- Load parameters specific to the selected HDFS mask design version ---------------------
         path = os.path.dirname(__file__)
@@ -71,15 +84,18 @@ class HolographicDFS:
             HDFSmask = (HDFS_file[0].data).astype('float')
             HDFS_file.close()
             
-            #-- Angle at which fringes are located [in radians]
-            fringe_loc_angle_all = np.array([6, 53, 67, 90, 120, 151, 174, 186, 233, 247, 270, 300, 331, 354 ]) * (np.pi/180)
-            
             #-- Rotation angle of the fringe [in degrees]
-            # TODO: make rotation angle consistent with fringe_loc_angle_all
-            self._rotation_angle = cp.array([-84.387,-35.862,-24.32,0.0,30.02,60.058,84.16,95.65,144.14,155.665,179.982,-149.99,-119.95,-95.85])
-            
-            #-- whether the fringe corresponds to adjacent segments or not (needed for processing)
-            self._adjacentsegments = [True,False,True,False,False,False,False,True,False,True,False,False,False,False]
+            self._rotation_angle = np.array([-84.,-36.,-24.,0.,30.,60.,84.,96.,144.,156.,180.,210.,240.,264.])
+            self._N_FRINGES = len(self._rotation_angle)
+
+            #-- Calulate the baselines
+            segcomp = np.array([[6,0],[2,5],[6,5],[2,4],[1,4],[1,3],[0,3],
+                                [0,6],[5,2],[5,6],[4,2],[4,1],[3,1],[3,0]])
+
+            baseline = np.zeros(self._N_FRINGES)
+            for idx in range(self._N_FRINGES):
+                [seg0,seg1] = segcomp[idx,:]
+                baseline[idx] = np.sqrt(np.sum((segloc[seg0,:] - segloc[seg1,:])**2))
             
             #-- The petals have a dispersion such that the central wavelength (800 nm) is placed at 80 lambda/D.
             fringe_loc_radius_mas = 80*cwvl/D * constants.RAD2MAS  # in mas
@@ -90,8 +106,7 @@ class HolographicDFS:
             raise ValueError('The selected HDFS design version does not exist.')
         
         nPx = HDFSmask.shape[0]
-        self._HDFSmask = cp.array(HDFSmask)   
-        self._N_FRINGES = len(fringe_loc_angle_all)
+        self._HDFSmask = cp.array(HDFSmask)
 
 
         #--------------- Polychromatic imaging simulation initialization -------------------
@@ -115,6 +130,9 @@ class HolographicDFS:
         #-- 3) update WVL values
         ndall = nPxall / nPx
         wvl = ndall * cwvl / nd
+        if np.min(ndall) < 2.:
+            import warnings
+            warnings.warn("Nyquist factor should be set to be >= 2 at the shortest wavelength")
 
         #-- 4) Select FoV size (to crop images and co-add in focal plane)
         fovall_mas = wvl/(ndall*D)*constants.RAD2MAS*nPxall   #FoV at different wavelengths (mas)
@@ -143,6 +161,8 @@ class HolographicDFS:
         #-- 6) Compute the relative flux as a function of wavelength
         self.set_spectral_type(spectral_type)
         
+        #-- 7) Compute QE curve
+        self.set_quantum_efficiency(qe_model)
         
         #---------- Fringe sub-frames extraction parameters -----------------
         
@@ -157,11 +177,11 @@ class HolographicDFS:
         fringe_loc_radius_pix = fringe_loc_radius_mas / self._fp_pxscl_mas  # in pixels
 
         #-- 3) Pixel coordinates of center of each fringe pattern
-        self._fringe_loc_x_pix = np.round(fringe_loc_radius_pix * np.sin(fringe_loc_angle_all)).astype('int') + fringe_xc_pix
-        self._fringe_loc_y_pix = np.round(fringe_loc_radius_pix * np.cos(fringe_loc_angle_all)).astype('int') + fringe_yc_pix
+        self._fringe_loc_x_pix = np.round(-fringe_loc_radius_pix * np.cos(np.radians(self._rotation_angle))).astype('int') + fringe_xc_pix
+        self._fringe_loc_y_pix = np.round(fringe_loc_radius_pix * np.sin(np.radians(self._rotation_angle))).astype('int') + fringe_yc_pix
 
-        #-- 4) Size of sub-frame [in pixels] that will enclose each fringe pattern
-        self._fringe_subframe_pix = int(fringe_subframe_sz_mas/self._fp_pxscl_mas)
+        #-- 4) Size of sub-frame [in pixels] that will enclose each fringe pattern (ensure it's even)
+        self._fringe_subframe_pix = int(fringe_subframe_sz_mas/self._fp_pxscl_mas)//2*2
 
         #-- 5) Apodizing window to be applied to each sub-frame
         self.set_apodization_window(apodization_window_type)
@@ -187,13 +207,19 @@ class HolographicDFS:
             self.fs_shape = "none"
         
 
-        #-------------------- Other miscellaneous initializations --------------------
+        #-------------------- Processing method initializations --------------------
         if processing_method not in ['DFS', 'TemplateMatching']:
             raise ValueError("Processing method must be either ['DFS,','TemplateMatching']")
         self.processing_method = processing_method
         
+        if self.processing_method == 'DFS':
+            #-- Compute the location of the sidelobes
+            sidelobedist = np.round(baseline*nPx/D*self._fringe_subframe_pix/np.mean(nPxall)).astype(int)
+            self._sidelobeloc = self._fringe_subframe_pix//2 - sidelobedist
+
+        #--------------------- Other -------------------------------------------
+        self.__n_integframes = 0 # to keep track of number of calls to propagate() without resetting the camera
         self._throughput = throughput
-        noise_seed = 12345
         self._rng = default_rng(XORWOW(seed=noise_seed, size=self._im_sz**2))
         self.simul_DAR = False
         
@@ -257,7 +283,23 @@ class HolographicDFS:
             spectral_flux = cp.interp(cp.array(self._wvlall), wv, flux)
             self._spectral_flux = spectral_flux/cp.mean(spectral_flux) # normalized to be an average of 1
 
-    
+
+    def set_quantum_efficiency(self,qe_model):
+        """
+        Set the detector QE curve
+        """
+        if qe_model not in ['ideal','EMCCD1']:
+            raise ValueError("Detector model must be one of ['ideal','EMCCD1']")
+
+        self._qe_model = qe_model
+
+        if qe_model == 'ideal':
+            self._quantum_efficiency = cp.ones(self._nwvl)
+        if qe_model == 'EMCCD1': #OCAM2k
+            ccd_qe = [[400e-9,450e-9,500e-9,550e-9,600e-9,650e-9,700e-9,750e-9,800e-9,850e-9,900e-9,950e-9,1000e-9],[0.39,0.55,0.74,0.84,0.90,0.94,0.96,0.95,0.92,0.84,0.70,0.44,0.22]]
+            self._quantum_efficiency = cp.interp(cp.array(self._wvlall), cp.array(ccd_qe[0]),cp.array(ccd_qe[1]))
+
+
     def set_apodization_window(self, apodization_window_type):
         """
         Set apodization window for fringes sub-frames
@@ -291,6 +333,8 @@ class HolographicDFS:
         #--- Set photometry
         PupilArea = np.sum(src.amplitude.host())*(src.rays.L/src.rays.N_L)**2
         self._nph_per_sec = float(src.nPhoton[0] * PupilArea * self._throughput)  #photons/s
+        #- proportionality factor so total intensity adds to 1:
+        self._flux_norm_factor = 1./(self._nwvl*cp.sum(self._amplitude)*cp.array(self._nPxall)**2)
 
         #--- Compute reference measurement vector
         self.set_reference_measurement(src)
@@ -305,7 +349,7 @@ class HolographicDFS:
         self._ref_measurement = self.measurement.copy()       
 
     
-    def propagate(self,src):
+    def propagate(self,src, apply_mask=True):
         """
         Broadband propagation of the WF through the holographic mask
 
@@ -313,7 +357,7 @@ class HolographicDFS:
         # 1. Create the complex amplitude at the pupil plane
         # 2. Zero pad as necessary
         # 3. Optionally propagate to the focal plane, apply field stop, propagate back
-        # 4. Apply the HDFS mask
+        # 4. Apply the HDFS mask (if apply_mask=True)
         # 5. Propagate to the focal plane
 
         NOTE: src is not used explicity. The phase and amplitude data is extracted from from self._phase and self._amplitude, thereby avoiding transfer to CPU memory
@@ -325,7 +369,7 @@ class HolographicDFS:
 
         for idx,wavelength in enumerate(self._wvlall):
             nPx1 = self._nPxall[idx]
-            cplxamp = cp.zeros((nPx1,nPx1),dtype='complex')
+            cplxamp = cp.zeros((nPx1,nPx1),dtype='complex64')
             if self.simul_DAR:
                 cplxamp[0:nPx,0:nPx] = amp2d*cp.exp(1j*2*cp.pi/wavelength*(phase2d+self._dar_mas[idx]*self._tilt_mas))
             else:
@@ -357,10 +401,13 @@ class HolographicDFS:
                 foccplxamp[-n2:,-n2:] *= mask[1:,1:][::-1,::-1]
                 cplxamp = cp.fft.ifft2(foccplxamp)
 
-            cplxamp[0:nPx,0:nPx] *= cp.exp(1j*self._HDFSmask)
+            if apply_mask:
+                cplxamp[0:nPx,0:nPx] *= cp.exp(1j*self._HDFSmask)
 
             [x1,x2] = self._im_range_pix[idx,:]
-            self._image += self._spectral_flux[idx]*(cp.fft.fftshift(cp.abs(cp.fft.fft2(cplxamp)))**2)[x1:x2,x1:x2]
+            self._image += self._flux_norm_factor[idx]*self._quantum_efficiency[idx]*self._spectral_flux[idx]*(cp.fft.fftshift(cp.abs(cp.fft.fft2(cplxamp)))**2)[x1:x2,x1:x2]
+
+        self.__n_integframes += 1
 
     
     def extract_fringes(self, apodize=False, normalize=False, derotate=False):
@@ -432,21 +479,20 @@ class HolographicDFS:
         if self.processing_method == 'DFS':
             fringes = self.extract_fringes(apodize=True, normalize=False, derotate=True)
             self.measurement = np.zeros(self._N_FRINGES)
+            self._visibility = np.zeros(self._N_FRINGES)
             if self.simul_DAR: self.dar_measurement = np.zeros(self._N_FRINGES)
                 
             for sidx in range(self._N_FRINGES):
                 fringe = fringes[:,:,sidx]
                 absfft = cp.fft.fftshift(cp.abs(cp.fft.fft2(fringe)))
-                if self._adjacentsegments[sidx]:
-                    sidelobe = absfft[:,34].copy()
-                else:
-                    sidelobe = absfft[:,24].copy()
-
+                centralpeak = np.max(absfft)
+                sidelobe = absfft[:,self._sidelobeloc[sidx]].copy()
                 (cent,maxval) = self.subpixel_interp1d(sidelobe)
                 self.measurement[sidx] = cent
+                self._visibility[sidx] = maxval / centralpeak
 
                 if self.simul_DAR:
-                    sidelobe = absfft[:,43].copy()
+                    sidelobe = absfft[:,self._fringe_subframe_pix-1].copy()
                     (cent,maxval) = self.subpixel_interp1d(sidelobe)
                     self.dar_measurement[sidx] = cent
 
@@ -471,7 +517,7 @@ class HolographicDFS:
         """
         Reads out the CCD frame, applying all sources of noise.
         """
-        flux_norm = exposureTime * self._nph_per_sec / cp.sum(self._image)
+        flux_norm = (exposureTime * self._nph_per_sec) / self.__n_integframes
         fr = self._image * flux_norm
         fr = self._rng.poisson(fr)
         fr = emccd_gain * self._rng.standard_gamma(fr)
@@ -485,7 +531,7 @@ class HolographicDFS:
         
 
     def noiselessReadOut(self, exposureTime):
-        flux_norm = exposureTime * self._nph_per_sec / cp.sum(self._image)
+        flux_norm = (exposureTime * self._nph_per_sec) / self.__n_integframes
         self._image *= flux_norm
 
         
@@ -494,6 +540,7 @@ class HolographicDFS:
         Reset camera
         """
         self._image *= 0
+        self.__n_integframes *=0
 
         
     @property
@@ -517,7 +564,9 @@ class HolographicDFS:
     
     def get_ref_measurement(self):
         return self._ref_measurement
-    
+
+    def get_visibility(self):
+        return self._visibility
     
     def get_data_cube(self, data_type='camera'):
         if data_type == 'camera':
