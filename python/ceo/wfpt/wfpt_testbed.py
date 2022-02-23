@@ -39,12 +39,31 @@ class wfpt_testbed:
         #----------------------------------------------
         # Initialize Active Elements (PTT and ALPA DMs)
         
-        #-- PTT arrays:
+        #---- PTT arrays:
         m12_ptt = {"segment_diameter": 16e-3, "segment_distance":17.125e-3}
         self.M1_PTT = WFPT_MX(**m12_ptt)
         self.M2_PTT = WFPT_MX(**m12_ptt)
         
-        #-- ALPAO DMs:
+        #---- ALPAO DMs:
+        
+        #- Create soft links in CEO/gmtMirrors/ directory to ALPAO influence function files.
+        gmtMirrors_path = here
+        tail = ''
+        while tail != 'python':
+            gmtMirrors_path, tail = os.path.split(gmtMirrors_path)
+        gmtMirrors_path = os.path.join(gmtMirrors_path, 'gmtMirrors')
+        assert os.path.isdir(gmtMirrors_path), 'Unable to locate the CEO/gmtMirrors folder...'
+        
+        ALPAO_IFs_path = os.path.join(here, 'WFPT_model_data', 'alpao_dm_ifs')
+        
+        if not os.path.islink(os.path.join(gmtMirrors_path, 'ALPAO_BAX450.ceo')):
+            os.symlink(os.path.join(ALPAO_IFs_path,'ALPAO_BAX450.ceo'), 
+                            os.path.join(gmtMirrors_path, 'ALPAO_BAX450.ceo'))
+            
+        if not os.path.islink(os.path.join(gmtMirrors_path, 'ALPAO_BAX449.ceo')):
+            os.symlink(os.path.join(ALPAO_IFs_path,'ALPAO_BAX449.ceo'), 
+                            os.path.join(gmtMirrors_path, 'ALPAO_BAX449.ceo'))    
+        
         m1_dm = {"segment_diameter": 26.5e-3, "segment_id":7, "mirror_modes":"ALPAO_BAX450", "N_MODE":292}
         self.M1_DM = WFPT_MX(**m1_dm)
         m2_dm = {"segment_diameter": 26.5e-3, "segment_id":7, "mirror_modes":"ALPAO_BAX449", "N_MODE":292}        
