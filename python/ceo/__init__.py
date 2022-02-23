@@ -20,6 +20,7 @@ from . import phaseStats
 from .sensors import PyramidWFS as Pyramid
 from .sensors import DispersedFringeSensor, IdealSegmentPistonSensor, PhaseProjectionSensor, HolographicDFS
 from .zemax import ZMX, raytrace
+from .wfpt import wfpt_testbed, wfpt_source, wfpt_sh48
 from IPython.display import Markdown, display
 def sweetcheat():
     def printmd(string):
