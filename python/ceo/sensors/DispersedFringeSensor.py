@@ -60,8 +60,10 @@ class DispersedFringeSensor(SegmentPistonSensor):
                  dispersion=5.0, field_of_view=3.0,
                  nyquist_factor=1.0,BIN_IMAGE=2,
                  MALLOC_DFT=True,
-                 middle_mask_width=0.0):
-        SegmentPistonSensor.__init__(self)
+                 middle_mask_width=0.0, **kwargs):
+        SegmentPistonSensor.__init__(self, M1, src, lenslet_size=lenslet_size, dispersion=dispersion,
+                field_of_view=field_of_view, nyquist_factor=nyquist_factor, BIN_IMAGE=BIN_IMAGE,
+                 MALLOC_DFT=MALLOC_DFT, middle_mask_width=middle_mask_width)
         self._N_SRC = src.N_SRC
         self.INIT_ALL_ATTRIBUTES = False
         self.lobe_detection = 'gaussfit'
