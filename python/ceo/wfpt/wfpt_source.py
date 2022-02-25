@@ -10,6 +10,10 @@ class wfpt_source:
     ----------
     photometric_band : string
         The source photometric band (e.g. R+I, R, J, ...)
+    rays_box_sampling : integer
+        The linear sampling of the ray bundle.
+    rays_box_size : float
+        The size of the ray bundle [m].
     mag : float, optional
         equivalent R-magnitude of source. Default: 0.0
     zenith : float, optional
@@ -17,19 +21,15 @@ class wfpt_source:
         field angle of source (zen,azi) in radians. Default: (0,0).
     fwhm : float, optional
         The fwhm of the source intensity distribution in detector pixel unit (before binning), defaults to None.
-    pupil sampling : integer
-        The linear sampling of the ray bundle. Default: 769
     """
-    def __init__(self, photometric_band, mag=0.0, zenith=0.0, azimuth=0.0, fwhm=None,
-                 pupil_sampling=769):
+    def __init__(self, photometric_band, rays_box_sampling, rays_box_size, mag=0.0, zenith=0.0, azimuth=0.0, fwhm=None):
         
         #-- WFPT / GMT optical parameters
         wfpt_entrance_pupil_diam=8.5e-3
-        gmt_pupil_diam = 25.5 # slightly larger than actual GMT aperture.
         
         #-- Parameters for rays that will propagate through WFPT Zemax model
         self._D = np.double(wfpt_entrance_pupil_diam)
-        self._nPx = pupil_sampling
+        self._nPx = rays_box_sampling
         
         u = np.linspace(-1,1,self._nPx)*self._D/2
         x,y = np.meshgrid(u,u)
@@ -40,7 +40,7 @@ class wfpt_source:
         self._rays_prms = {"x":xp,"y":yp,"origin":[0.0,0.0,0.0],"z_position":64.912333333329997e-3}
         
         self._gs = Source(photometric_band, mag=mag, zenith=zenith, azimuth=azimuth,
-            rays_box_sampling=self._nPx, rays_box_size=gmt_pupil_diam, rays_origin=[0,0,25], fwhm=fwhm)
+            rays_box_sampling=self._nPx, rays_box_size=rays_box_size, rays_origin=[0,0,25], fwhm=fwhm)
 
         self.__WFphase = ascupy(self._gs.wavefront.phase)
         #self.__WFamplitude = ascupy(self._gs.wavefront.amplitude)
