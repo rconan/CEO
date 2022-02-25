@@ -15,13 +15,21 @@ class wfpt_testbed:
         Physical diameter of the M2 baffle [m]. Default: 3.6
     project_truss_onaxis: bool, optional
         Simulate truss shadows as when the GMT mask is installed on the WFPT. Default: True
+    path_to_sensor: string, optional. Either: "SH" or "DFS"
+        Ray trace over path to selected sensor. Default: "SH"
     """
-    def __init__(self, M2_baffle_diam=3.6, project_truss_onaxis=True):
+    def __init__(self, M2_baffle_diam=3.6, project_truss_onaxis=True, path_to_sensor='SH'):
                 
         # ---------------------------------------------
         # Load WFPT Zemax Model (SH48 path)
         here = os.path.abspath(os.path.dirname(__file__))
-        zemax_file = "wfpt-nolexitek-noadc-sh48collimator-2021-08-23.zmx"
+        if path_to_sensor == 'SH':
+            zemax_file = "wfpt-nolexitek-noadc-sh48collimator-2021-08-23.zmx"
+        elif path_to_sensor == 'DFS':
+            zemax_file = "wfpt-nolexitek-noadc-dfscollimator-2021-08-23.zmx"
+        else:
+            raise ValueError("'path_to_sensor' should be either 'SH' or 'DFS'.")
+
         zemax_path = os.path.join(here, 'WFPT_model_data', 'zemax_models', zemax_file)
         ZmxModel = ZMX.ZemaxModel(zemax_path)
             
@@ -273,7 +281,19 @@ class wfpt_testbed:
                     D[:,idx] = pushpull( Ry )
                     idx += 1
                 sys.stdout.write("\n")                
-                
+
+            if mode=="segment piston":
+                n_mode = 7
+                D = np.zeros((wfs.get_measurement_size(),n_mode))
+                idx = 0
+                Tz = lambda x : self.M1_PTT.update(origin=[0,0,x],euler_angles=[0,0,0],idx=kSeg)
+                sys.stdout.write("Segment #:")
+                for kSeg in range(1,8):
+                    sys.stdout.write("%d "%kSeg)
+                    D[:,idx] = pushpull( Tz )
+                    idx += 1
+                sys.stdout.write("\n")
+
         if mirror=="M2":
             if mode=="actuators":
                 n_mode = self.M2_DM.modes.n_mode
@@ -297,8 +317,19 @@ class wfpt_testbed:
                     idx += 1
                     D[:,idx] = pushpull( Ry )
                     idx += 1
-                sys.stdout.write("\n")                
+                sys.stdout.write("\n")
 
+            if mode=="segment piston":
+                n_mode = 7
+                D = np.zeros((wfs.get_measurement_size(),n_mode))
+                idx = 0
+                Tz = lambda x : self.M2_PTT.update(origin=[0,0,x],euler_angles=[0,0,0],idx=kSeg)
+                sys.stdout.write("Segment #:")
+                for kSeg in range(1,8):
+                    sys.stdout.write("%d "%kSeg)
+                    D[:,idx] = pushpull( Tz )
+                    idx += 1
+                sys.stdout.write("\n")
         sys.stdout.write("------------\n")
         return D
 
