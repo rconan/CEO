@@ -3,13 +3,15 @@ from ceo.tools import ascupy
 import numpy as np
 import cupy as cp
 from cupyx.scipy.ndimage import rotate as cp_rotate
-from cupy.random import default_rng, XORWOW
 import astropy.io.fits as fits
-import sys
-import arte.photometry
 import scipy.signal
 import os
-
+try:
+	from cupy.random import default_rng, XORWOW
+except:
+	print('If default_rng fails to load, conda should be installed as follows:')
+	print('> conda uninstall cupy')
+	print('conda install -c conda-forge cupy')
 
 class HolographicDFS:
     """
@@ -66,7 +68,7 @@ class HolographicDFS:
     """
     
     def __init__(self, hdfs_design='v1', cwvl=800e-9, wvl_band=[700e-9,900e-9], wvl_res=10e-9, D=25.5, 
-                 nyquist_factor=1.5, fov_mas=1400, fs_shape="square", fs_dim_mas=100, spectral_type="tophat",
+                 nyquist_factor=1.5, fov_mas=1400, fs_shape='square', fs_dim_mas=100, spectral_type='tophat',
                  apodization_window_type='Tukey', processing_method='DFS', throughput=1.0, noise_seed=12345,
                  qe_model='ideal'):
 
@@ -237,7 +239,7 @@ class HolographicDFS:
                                temperature_K = 273.15+15.2,
                                pressure_mb = 764.3,
                                relative_humidity = 0.15,
-                               zenithangle_rad = np.radians(zenithangle_rad),
+                               zenithangle_rad = zenithangle_rad,
                                latitude_rad = np.radians(-29.),
                                temperature_lapse_rate = 0.0065,
                                eps = 1e-9,
@@ -277,6 +279,7 @@ class HolographicDFS:
         if spectral_type == "tophat":
             self._spectral_flux = cp.repeat(cp.array([1.]),self._nwvl) # make it all ones, but could normalize it differently
         else:
+            import arte.photometry
             sp = arte.photometry.get_normalized_star_spectrum(spectral_type, 0, arte.photometry.filters.Filters.JOHNSON_R)
             wv = cp.array(sp.waveset/1e10) # wavelength in meters
             flux = cp.array(sp(sp.waveset))
@@ -373,7 +376,7 @@ class HolographicDFS:
             if self.simul_DAR:
                 cplxamp[0:nPx,0:nPx] = amp2d*cp.exp(1j*2*cp.pi/wavelength*(phase2d+self._dar_mas[idx]*self._tilt_mas))
             else:
-                cplxamp[0:nPx,0:nPx] = amp2d*cp.exp(1j*2*cp.pi/wavelength*phase2d)    
+                cplxamp[0:nPx,0:nPx] = amp2d*cp.exp(1j*2*cp.pi/wavelength*phase2d)
 
             # apply the field stop
             # TODO: check that the photometry is correct!
