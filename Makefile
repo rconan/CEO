@@ -1,23 +1,21 @@
 include common.mk
 
 #ls -d */ | sed -e 's,//$,,' -e 's,doc,,' -e 's,lib,,'  -e 's,include,,' | xargs
-SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE plotly rayTracing gmtMirrors segmentPistonSensor pyramid
+SOURCE_DIR	= utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE rayTracing gmtMirrors segmentPistonSensor pyramid
 TUTORIAL	= ngsao lgsao ltao ltaoVsAst geaos
 CYTHON_DIR	= utilities source imaging centroiding shackHartmann atmosphere BTBT GBTBT iterativeSolvers LMMSE aaStats rayTracing gmtMirrors segmentPistonSensor pyramid
 
 PHONY: clean
 
 all: makefile jsmnlib
-ifeq ($(wildcard include/plotly.credentials), )
-	echo "plotly.credentials doesn't exist!"
-	cp include/plotly.credentials.sample include/plotly.credentials
-else
-	echo "plotly.credentials does exist!"
-endif
 	mkdir -p include lib
 	for i in $(SOURCE_DIR); do (make -C $$i src);echo -e "\n"; done
 	for i in $(SOURCE_DIR); do (make -C $$i lib);echo -e "\n"; done
 	make -C lib all
+
+install:
+	$(INSTALL) lib/libceo.a lib/libjsmn.a /usr/local/lib/
+	mkdir -p /usr/local/include/ceo/ && $(INSTALL) include/*.h /usr/local/include/ceo/ 
 
 tex: makefile $(texsrc)
 	for i in $(SOURCE_DIR); do (make -C $$i tex); done

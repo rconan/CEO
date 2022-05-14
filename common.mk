@@ -17,6 +17,7 @@ NVCCFLAGS	= -DCEOPATH='"$(CEOPATH)"' -lineinfo -Xcompiler '-ansi,-D_GNU_SOURCE,-
 LIBS 		= -L$(CEOPATH)/lib $(CUDALIBPATH:%=-L%) -lceo -lcurl -ljsmn $(CUDALIBS:%=-l%)
 INCS		= -I. -I$(CEOPATH)/include $(CUDAINCPATH:%=-I%) -I$(PYTHONPATH)/include #$(MATLABINCS)
 SHELL		= /bin/bash
+INSTALL		= /usr/bin/install
 
 -include $(CEOPATH)/user.mk
 
