@@ -277,14 +277,14 @@ class HolographicDFS:
         self.spectral_type = spectral_type
 
         if spectral_type == "tophat":
-            self._spectral_flux = cp.repeat(cp.array([1.]),self._nwvl) # make it all ones, but could normalize it differently
+            self._spectral_flux = cp.ones(self._nwvl)/self._nwvl # integral of spectral flux equal to one
         else:
             import arte.photometry
             sp = arte.photometry.get_normalized_star_spectrum(spectral_type, 0, arte.photometry.filters.Filters.JOHNSON_R)
             wv = cp.array(sp.waveset/1e10) # wavelength in meters
             flux = cp.array(sp(sp.waveset))
             spectral_flux = cp.interp(cp.array(self._wvlall), wv, flux)
-            self._spectral_flux = spectral_flux/cp.mean(spectral_flux) # normalized to be an average of 1
+            self._spectral_flux = spectral_flux / cp.sum(spectral_flux) # integral of spectral flux equal to one
 
 
     def set_quantum_efficiency(self,qe_model):
@@ -336,8 +336,8 @@ class HolographicDFS:
         #--- Set photometry
         PupilArea = np.sum(src.amplitude.host())*(src.rays.L/src.rays.N_L)**2
         self._nph_per_sec = float(src.nPhoton[0] * PupilArea * self._throughput)  #photons/s
-        #- proportionality factor so total intensity adds to 1:
-        self._flux_norm_factor = 1./(self._nwvl*cp.sum(self._amplitude)*cp.array(self._nPxall)**2)
+        #- proportionality factor so total intensity adds to 1 (at each wavelength):
+        self._flux_norm_factor = 1./(cp.sum(self._amplitude)*cp.array(self._nPxall)**2)
 
         #--- Compute reference measurement vector
         self.set_reference_measurement(src)
