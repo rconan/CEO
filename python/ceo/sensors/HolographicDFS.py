@@ -65,12 +65,15 @@ class HolographicDFS:
 
     qe_model : string
         Detector's quantum efficiency model: 'ideal', 'EMCCD1'. Default: 'ideal'
+
+    sky_bkgd_model : string
+        Sky background model: 'none', equivalent_sky_magnitude', 'ESOmodel'. Default: 'none'
     """
     
     def __init__(self, hdfs_design='v1', cwvl=800e-9, wvl_band=[700e-9,900e-9], wvl_res=10e-9, D=25.5, 
                  nyquist_factor=1.5, fov_mas=1400, fs_shape='square', fs_dim_mas=100, spectral_type='tophat',
                  apodization_window_type='Tukey', processing_method='DFS', throughput=1.0, noise_seed=12345,
-                 qe_model='ideal'):
+                 qe_model='ideal', sky_bkgd_model='none'):
 
         #------------ Define location of the GMT segments to calculate the baselines
         outersegrad = 8.710 # this is the physical distance of the segments used to define the baselines
@@ -155,6 +158,7 @@ class HolographicDFS:
         self._nPx = nPx
         self._nwvl = nwvl
         self._fp_pxscl_mas = fp_pxscl_mas
+        self._wvl_res = wvl_res
         self._wvlall = wvl.tolist()
         self._nPxall = nPxall.tolist()
         self._im_range_pix = im_range_pix
@@ -166,8 +170,12 @@ class HolographicDFS:
         #-- 7) Compute QE curve
         self.set_quantum_efficiency(qe_model)
         
+        #-- 9) Initialize background
+        self.set_sky_background_model(sky_bkgd_model)
+
+
         #---------- Fringe sub-frames extraction parameters -----------------
-        
+
         #-- 0) Buffer to accumulate image with all fringes
         self._image = cp.zeros((self._im_sz,self._im_sz))
 
@@ -221,7 +229,7 @@ class HolographicDFS:
 
         #--------------------- Other -------------------------------------------
         self.__n_integframes = 0 # to keep track of number of calls to propagate() without resetting the camera
-        self._throughput = throughput
+        self.throughput = throughput
         self._rng = default_rng(XORWOW(seed=noise_seed, size=self._im_sz**2))
         self.simul_DAR = False
         
@@ -298,11 +306,83 @@ class HolographicDFS:
 
         if qe_model == 'ideal':
             self._quantum_efficiency = cp.ones(self._nwvl)
-        if qe_model == 'EMCCD1': #OCAM2k
+        elif qe_model == 'EMCCD1': #OCAM2k
             ccd_qe = [[400e-9,450e-9,500e-9,550e-9,600e-9,650e-9,700e-9,750e-9,800e-9,850e-9,900e-9,950e-9,1000e-9],[0.39,0.55,0.74,0.84,0.90,0.94,0.96,0.95,0.92,0.84,0.70,0.44,0.22]]
             self._quantum_efficiency = cp.interp(cp.array(self._wvlall), cp.array(ccd_qe[0]),cp.array(ccd_qe[1]))
 
 
+    def set_sky_background_model(self, sky_bkgd_model):
+        """
+        Set the sky background model.
+            'none': Do not simulate sky background noise.
+            'equivalent_sky_magnitude': Use the specified sky magnitude in "sky_mag" and assume a constant background with wavelength.
+            'ESOmodel': use the ESO model for the sky background which incorporates the wavelength dependency.
+        """
+        if sky_bkgd_model not in ['none','equivalent_sky_magnitude','ESOmodel']:
+            raise ValueError("Sky background model must be one of ['none',equivalent_sky_magnitude','ESOmodel']")
+        
+        self._sky_bkgd_model = sky_bkgd_model
+        
+        if sky_bkgd_model == 'ESOmodel':
+            from ceo import SkyBackground
+            self.skybackground = SkyBackground()
+        
+        elif sky_bkgd_model == 'equivalent_sky_magnitude':
+            self.sky_mag = 18.8
+        
+        self._skyflux = 0. # sky flux initialized to zero
+
+
+    def set_sky_background(self, gsps, tel, niter=100):
+        """
+        Simulate the sky background propagation onto detector. 
+        Assume that there is a random phase at the pupil and propagate to the image plane.
+        Set the flux appropriately normalized to electrons per second at the detector.
+        """
+        from ceo import cuFloatArray
+        
+        if self._sky_bkgd_model == 'none':
+            return
+        
+        #--- Save state of spectral_flux and flux_norm_factor
+        saved_spectral_flux = self._spectral_flux.copy()
+        saved_flux_norm_factor = self._flux_norm_factor.copy()
+        saved_simul_DAR = self.simul_DAR
+        
+        #--- Set normalization factor so total intensity per arcsec^2 adds to 1
+        self._flux_norm_factor = cp.repeat((self._fp_pxscl_mas/1000.)**2/cp.sum(self._amplitude), self._nwvl)
+        self.simul_DAR = False
+        
+        #--- Retrieve sky spectral flux for chosen model
+        if self._sky_bkgd_model == 'ESOmodel':
+            print("Calculating sky background using ESO sky model")
+            sky = self.skybackground.skyCalc()
+            wv   = cp.array(sky.lam,dtype='float64')*1e-9
+            flux = cp.array(sky.flux,dtype='float64')  # flux is radiance in # ph / s / m^2 / um / arcsec^2
+            self._spectral_flux = cp.interp(cp.array(self._wvlall),wv,flux) * self._PupilArea * self._wvl_res*1e6 * self.throughput
+        elif self._sky_bkgd_model == 'equivalent_sky_magnitude':
+            print("Calculating sky background assuming a sky magnitude of "+str(self.sky_mag))
+            sky_phot = self._zeropoint * 10**(-0.4*self.sky_mag) * self._PupilArea * self.throughput # ph / s / m^2 / arcsec^2
+            self._spectral_flux = cp.repeat(sky_phot,self._nwvl) / self._nwvl
+        self._sky_spectral_flux = self._spectral_flux.copy() # for the record
+        
+        #---- Compute sky background using propagation of random phase
+        self.reset()
+        tel.reset()
+        for nit in range(niter):
+            gsps.reset()
+            tel.propagate(gsps)
+            randomphases = np.random.random((self._nPx,self._nPx))
+            gsps.wavefront.axpy(1,cuFloatArray(host_data=randomphases))
+            self.propagate(gsps)
+        self._skyflux = self._image/float(niter)
+        
+        #---- Restore previous state of spectral_flux and flux_norm_factor
+        self._spectral_flux = saved_spectral_flux
+        self._flux_norm_factor = saved_flux_norm_factor
+        self.simul_DAR = saved_simul_DAR
+
+    
     def set_apodization_window(self, apodization_window_type):
         """
         Set apodization window for fringes sub-frames
@@ -334,8 +414,10 @@ class HolographicDFS:
         self._amplitude = ascupy(src.wavefront.amplitude)
 
         #--- Set photometry
-        PupilArea = np.sum(src.amplitude.host())*(src.rays.L/src.rays.N_L)**2
-        self._nph_per_sec = float(src.nPhoton[0] * PupilArea * self._throughput)  #photons/s
+        self._PupilArea = np.sum(src.amplitude.host())*(src.rays.L/src.rays.N_L)**2
+        self._nph_per_sec = float(src.nPhoton[0] * self._PupilArea * self.throughput)  #photons/s
+        self._zeropoint = float(src.nPhoton[0] * 10**(0.4*src.magnitude)) #photons/m^2/s in the sensor band
+        
         #- proportionality factor so total intensity adds to 1 (at each wavelength):
         self._flux_norm_factor = 1./(cp.sum(self._amplitude)*cp.array(self._nPxall)**2)
 
@@ -522,8 +604,10 @@ class HolographicDFS:
         """
         flux_norm = (exposureTime * self._nph_per_sec) / self.__n_integframes
         fr = self._image * flux_norm
+        fr += self._skyflux * exposureTime # add background
         fr = self._rng.poisson(fr)
         fr = emccd_gain * self._rng.standard_gamma(fr)
+        fr -= emccd_gain * self._skyflux * exposureTime
         fr += self._rng.standard_normal(size=fr.shape) * (RON * emccd_gain)
         fr *= ADU_gain   # in detected photo-electrons
         fr = cp.floor(fr) # quantization
