@@ -17,11 +17,8 @@ class HolographicDFS:
     hdfs_design : string
         HDFS mask design version to be loaded. Default: 'v1'
     
-    cwvl : float
-        Central wavelength [m]. Default: 800e-9
-    
     wvl_band : [float, float]
-        Wavelength band pass [lowest, highest] in [m]. Default: [700e-9, 900e-9]
+        Wavelength band pass [lowest, highest] in [m]. Default: [700e-9, 920e-9]
         
     wvl_res : float
         Wavelength band pass sampling [m]. Default: 10e-9
@@ -29,18 +26,17 @@ class HolographicDFS:
     D : float
         Diameter of pupil array [m]. Default: 25.5
     
-    nyquist_factor : float
-        Sampling factor of PSF at central wavelength. Make sure that nyquist_factor>1 so that shorter wavelengths are not undersampled.
-        Default: 1.5
+    fp_pxscl_mas: float
+        Pixel scale of the focal plane [mas]. Default: None -> which is then converted to 0.9xNyquist sampling at the shortest wavelength
     
     fov_mas : float
         Field of view of the HDFS [in mas]. Default: 1400
     
     fs_shape : string
-        Type of field stop: "square", "round", "none". Default: "square"
+        Type of field stop: "square", "round", "none". Default: "round"
     
     fs_dim_mas : float
-        size/diameter of field stop [in mas]. Default: 100
+        size/diameter of field stop [in mas]. Default: 40
     
     spectral_type : string
         Guide star spectral type: 'tophat','A0V','G2V','K5V','M2V'. Default: 'tophat'
@@ -62,10 +58,14 @@ class HolographicDFS:
         Sky background model: 'none', equivalent_sky_magnitude', 'ESOmodel'. Default: 'none'
     """
     
-    def __init__(self, hdfs_design='v1', cwvl=800e-9, wvl_band=[700e-9,900e-9], wvl_res=10e-9, D=25.5, 
-                 nyquist_factor=1.5, fov_mas=1400, fs_shape='square', fs_dim_mas=100, spectral_type='tophat',
+    def __init__(self, hdfs_design='v1', wvl_band=[700e-9,920e-9], wvl_res=10e-9, D=25.5, fp_pxscl_mas=None,
+                 fov_mas=1400, fs_shape='round', fs_dim_mas=40, spectral_type='tophat',
                  apodization_window_type='Tukey', processing_method='DFS', throughput=1.0,
                  qe_model='ideal', sky_bkgd_model='none'):
+
+        if fp_pxscl_mas is None:
+            # if the pixel scale is undefined, define it as being 0.9xNyquist sampling at the shortest wavelength
+            fp_pxscl_mas = 0.9*wvl_band[0]/(2*D)*constants.RAD2MAS
 
         #------------ Define location of the GMT segments to calculate the baselines
         outersegrad = 8.710 # this is the physical distance of the segments used to define the baselines
@@ -95,7 +95,7 @@ class HolographicDFS:
                 baseline[idx] = np.sqrt(np.sum((segloc[seg0,:] - segloc[seg1,:])**2))
             
             #-- The petals have a dispersion such that the central wavelength (800 nm) is placed at 80 lambda/D.
-            fringe_loc_radius_mas = 80*cwvl/D * constants.RAD2MAS  # in mas
+            fringe_loc_radius_mas = 80 * (800e-9/D) * constants.RAD2MAS  # in mas
             
             #-- Size of sub-frame that will enclose each fringe image (minimizing cross-talk from adjacent fringes)
             fringe_subframe_sz_mas = 190  # in mas
@@ -108,16 +108,14 @@ class HolographicDFS:
 
         #--------------- Polychromatic imaging simulation initialization -------------------
 
-        #-- 1) Pixel scale at central wavelength
+        #-- 1) Wavelength sampling in selected band
         wvl = np.arange(wvl_band[0], wvl_band[1]+wvl_res, wvl_res)
         nwvl = len(wvl)
-        nd = nyquist_factor*2  # zero padding at central wavelength
-        fp_pxscl_mas = cwvl/(nd*D)*constants.RAD2MAS # mas/pixel in focal plane
 
         #-- 2) Determine the zero-padding required at each wavelength to simulate
         #      the same pixel scale in the focal lane.
-        ndall = wvl * nd / cwvl
-        nPxall = np.round(nPx * ndall).astype('int')
+        nPxall = nPx * wvl / (fp_pxscl_mas*constants.MAS2RAD*D)
+        nPxall = np.round(nPxall).astype('int')
         nPxall = nPxall //2 *2  #ensure it is an even number
 
         delta_pix = np.round(np.median(nPxall-np.roll(nPxall,1))).astype('int')
@@ -125,14 +123,14 @@ class HolographicDFS:
             raise ValueError('Wavelength resolution is too fine: please increase wvl_res')
 
         #-- 3) update WVL values
-        ndall = nPxall / nPx
-        wvl = ndall * cwvl / nd
-        if np.min(ndall) < 2.:
+        wvl = nPxall / nPx * fp_pxscl_mas * constants.MAS2RAD * D
+
+        if np.min(nPxall) < (2.*nPx):
             import warnings
-            warnings.warn("Nyquist factor should be set to be >= 2 at the shortest wavelength")
+            warnings.warn("It is recommended but not required to set the pixel scale to be smaller or equal to the Nyquist sampling.")
 
         #-- 4) Select FoV size (to crop images and co-add in focal plane)
-        fovall_mas = wvl/(ndall*D)*constants.RAD2MAS*nPxall   #FoV at different wavelengths (mas)
+        fovall_mas = fp_pxscl_mas*nPxall
         if fov_mas > np.min(fovall_mas):
             raise ValueError('Selected FoV is too large. Reduce the value of fov_mas')
         im_range_mas = np.array([-fov_mas/2., fov_mas/2.])
@@ -455,7 +453,6 @@ class HolographicDFS:
                 cplxamp[0:nPx,0:nPx] = amp2d*cp.exp(1j*2*cp.pi/wavelength*phase2d)
 
             # apply the field stop
-            # TODO: check that the photometry is correct!
             if self.fs_shape == "square":
                 foccplxamp = cp.fft.fft2(cplxamp)
                 npix = self.fs_dim_mas / self._fp_pxscl_mas
@@ -551,9 +548,8 @@ class HolographicDFS:
         """
         Process fringes and extracts segment piston measurement.
         """
-        # TODO: remove hard coding of values
-        # TODO: the baselines may not be the same for all non-adjacent segments. Check to see if this can be improved.
         # Note: zeropadding the fringes before Fourier transforming appears to make things worse. Need to look into this again.
+        # Note: the ability to integrate the absfft over multiple frames is missing.
 
         if self.processing_method == 'DFS':
             fringes = self.extract_fringes(apodize=True, normalize=False, derotate=True)
