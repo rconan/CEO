@@ -601,6 +601,7 @@ class HolographicDFS:
         noise : bool
             If True, apply noise to the image.
         """
+        self._image /= self.__n_integframes
         self.camera.readOut(exposureTime, self._nph_per_sec, noise=noise)
     
         
