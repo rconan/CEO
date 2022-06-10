@@ -6,12 +6,7 @@ from cupyx.scipy.ndimage import rotate as cp_rotate
 import astropy.io.fits as fits
 import scipy.signal
 import os
-try:
-	from cupy.random import default_rng, XORWOW
-except:
-	print('If default_rng fails to load, conda should be installed as follows:')
-	print('> conda uninstall cupy')
-	print('conda install -c conda-forge cupy')
+from ceo.sensors import CameraReadOut
 
 class HolographicDFS:
     """
@@ -59,10 +54,7 @@ class HolographicDFS:
     
     throughput : float
         Overall throughput on the HDFS (from M1 to HDFS detector). Default: 1.0
-
-    noise_seed : integer
-        Seed to initialize random number generator for noise simulation
-
+    
     qe_model : string
         Detector's quantum efficiency model: 'ideal', 'EMCCD1'. Default: 'ideal'
 
@@ -72,7 +64,7 @@ class HolographicDFS:
     
     def __init__(self, hdfs_design='v1', cwvl=800e-9, wvl_band=[700e-9,900e-9], wvl_res=10e-9, D=25.5, 
                  nyquist_factor=1.5, fov_mas=1400, fs_shape='square', fs_dim_mas=100, spectral_type='tophat',
-                 apodization_window_type='Tukey', processing_method='DFS', throughput=1.0, noise_seed=12345,
+                 apodization_window_type='Tukey', processing_method='DFS', throughput=1.0,
                  qe_model='ideal', sky_bkgd_model='none'):
 
         #------------ Define location of the GMT segments to calculate the baselines
@@ -227,13 +219,15 @@ class HolographicDFS:
             sidelobedist = np.round(baseline*nPx/D*self._fringe_subframe_pix/np.mean(nPxall)).astype(int)
             self._sidelobeloc = self._fringe_subframe_pix//2 - sidelobedist
 
+        #--------------------- Camera readout setup ----------------------------
+        self.camera = CameraReadOut()
+        self.camera.setup(self._image)
+        
         #--------------------- Other -------------------------------------------
         self.__n_integframes = 0 # to keep track of number of calls to propagate() without resetting the camera
         self.throughput = throughput
-        self._rng = default_rng(XORWOW(seed=noise_seed, size=self._im_sz**2))
         self.simul_DAR = False
         
-
 
     def set_dar(self,zenithangle_rad,uncorrected_fraction):
         """
@@ -328,9 +322,7 @@ class HolographicDFS:
             self.skybackground = SkyBackground()
         
         elif sky_bkgd_model == 'equivalent_sky_magnitude':
-            self.sky_mag = 18.8
-        
-        self._skyflux = 0. # sky flux initialized to zero
+            self.sky_mag = 20.4 # R-band sky mag
 
 
     def set_sky_background(self, gsps, tel, niter=100):
@@ -364,7 +356,7 @@ class HolographicDFS:
             print("Calculating sky background assuming a sky magnitude of "+str(self.sky_mag))
             sky_phot = self._zeropoint * 10**(-0.4*self.sky_mag) * self._PupilArea * self.throughput # ph / s / m^2 / arcsec^2
             self._spectral_flux = cp.repeat(sky_phot,self._nwvl) / self._nwvl
-        self._sky_spectral_flux = self._spectral_flux.copy() # for the record
+        self._sky_spectral_flux = cp.asnumpy(self._spectral_flux) # for the record
         
         #---- Compute sky background using propagation of random phase
         self.reset()
@@ -375,7 +367,9 @@ class HolographicDFS:
             randomphases = np.random.random((self._nPx,self._nPx))
             gsps.wavefront.axpy(1,cuFloatArray(host_data=randomphases))
             self.propagate(gsps)
-        self._skyflux = self._image/float(niter)
+            
+        #---- Update sky background map on CameraReadOut object
+        self.camera.skyFlux = self._image/float(niter)
         
         #---- Restore previous state of spectral_flux and flux_norm_factor
         self._spectral_flux = saved_spectral_flux
@@ -598,25 +592,22 @@ class HolographicDFS:
         self.process()
         
 
-    def readOut(self, exposureTime, RON=0.5, emccd_gain=600, ADU_gain=1/30, emccd_nbits=14):
+    def readOut(self, exposureTime, noise=True):
         """
-        Reads out the CCD frame, applying all sources of noise.
-        """
-        flux_norm = (exposureTime * self._nph_per_sec) / self.__n_integframes
-        fr = self._image * flux_norm
-        fr += self._skyflux * exposureTime # add background
-        fr = self._rng.poisson(fr)
-        fr = emccd_gain * self._rng.standard_gamma(fr)
-        fr -= emccd_gain * self._skyflux * exposureTime
-        fr += self._rng.standard_normal(size=fr.shape) * (RON * emccd_gain)
-        fr *= ADU_gain   # in detected photo-electrons
-        fr = cp.floor(fr) # quantization
-        ADU_min = 0
-        ADU_max = 2**emccd_nbits - 1
-        fr = cp.clip(fr, ADU_min, ADU_max) # dynamic range
-        self._image[:] = fr.astype(cp.float64)
-        
+        Wrapper function for readOut method of CameraReadOut object.
 
+        Parameters
+        ----------
+        exposureTime : float
+            The exposure time in seconds of the image for noise purposes 
+            (the image could be a multiple number of shorter integrations)
+
+        noise : bool
+            If True, apply noise to the image.
+        """
+        self.camera.readOut(exposureTime, self._nph_per_sec, noise=noise)
+    
+        
     def noiselessReadOut(self, exposureTime):
         flux_norm = (exposureTime * self._nph_per_sec) / self.__n_integframes
         self._image *= flux_norm
