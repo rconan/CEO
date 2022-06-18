@@ -5,3 +5,4 @@ from .IdealSegmentPistonSensor import IdealSegmentPistonSensor
 from .PhaseProjectionSensor import PhaseProjectionSensor
 from .HolographicDFS import HolographicDFS
 from .SkyBackground import SkyBackground
+from .BBPSF import BBPSF
