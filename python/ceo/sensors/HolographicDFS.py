@@ -56,12 +56,15 @@ class HolographicDFS:
 
     sky_bkgd_model : string
         Sky background model: 'none', equivalent_sky_magnitude', 'ESOmodel'. Default: 'none'
+    
+    achromatic_mask : bool
+        If True, simulate an achromatic mask (i.e. liquid crystal based). Otherwise, simulate a chromatic (etched) mask, assuming the phase mask is defined for the central wavelength of the sensing band. Default: False
     """
     
     def __init__(self, hdfs_design='v1', wvl_band=[700e-9,920e-9], wvl_res=10e-9, D=25.5, fp_pxscl_mas=None,
                  fov_mas=1400, fs_shape='round', fs_dim_mas=40, spectral_type='tophat',
                  apodization_window_type='Tukey', processing_method='DFS', throughput=1.0,
-                 qe_model='ideal', sky_bkgd_model='none'):
+                 qe_model='ideal', sky_bkgd_model='none', achromatic_mask=False):
 
         if fp_pxscl_mas is None:
             # if the pixel scale is undefined, define it as being 0.9xNyquist sampling at the shortest wavelength
@@ -104,6 +107,7 @@ class HolographicDFS:
         
         nPx = HDFSmask.shape[0]
         self._HDFSmask = cp.array(HDFSmask)
+        self.achromatic_mask = achromatic_mask
 
 
         #--------------- Polychromatic imaging simulation initialization -------------------
@@ -111,6 +115,7 @@ class HolographicDFS:
         #-- 1) Wavelength sampling in selected band
         wvl = np.arange(wvl_band[0], wvl_band[1]+wvl_res, wvl_res)
         nwvl = len(wvl)
+        cwvl = (wvl_band[0]+wvl_band[1])/2 # central wavelength
 
         #-- 2) Determine the zero-padding required at each wavelength to simulate
         #      the same pixel scale in the focal lane.
@@ -148,6 +153,7 @@ class HolographicDFS:
         self._nPx = nPx
         self._nwvl = nwvl
         self._fp_pxscl_mas = fp_pxscl_mas
+        self._cwvl = cwvl
         self._wvl_res = wvl_res
         self._wvlall = wvl.tolist()
         self._nPxall = nPxall.tolist()
@@ -482,7 +488,11 @@ class HolographicDFS:
                 cplxamp = cp.fft.ifft2(foccplxamp)
 
             if apply_mask:
-                cplxamp[0:nPx,0:nPx] *= cp.exp(1j*self._HDFSmask)
+                if self.achromatic_mask == True:
+                    cplxamp[0:nPx,0:nPx] *= cp.exp(1j*self._HDFSmask)
+                else:
+                    # chromatic mask: assume that the phase is defined for the central wavelength
+                    cplxamp[0:nPx,0:nPx] *= cp.exp(1j*self._HDFSmask*self._cwvl/wavelength)
 
             [x1,x2] = self._im_range_pix[idx,:]
             self._image += self._flux_norm_factor[idx]*self._quantum_efficiency[idx]*self._spectral_flux[idx]*(cp.fft.fftshift(cp.abs(cp.fft.fft2(cplxamp)))**2)[x1:x2,x1:x2]
