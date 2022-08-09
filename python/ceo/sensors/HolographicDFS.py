@@ -96,6 +96,7 @@ class HolographicDFS:
             for idx in range(self._N_FRINGES):
                 [seg0,seg1] = segcomp[idx,:]
                 baseline[idx] = np.sqrt(np.sum((segloc[seg0,:] - segloc[seg1,:])**2))
+            self.baseline = baseline
             
             #-- The petals have a dispersion such that the central wavelength (800 nm) is placed at 80 lambda/D.
             fringe_loc_radius_mas = 80 * (800e-9/D) * constants.RAD2MAS  # in mas
@@ -194,24 +195,7 @@ class HolographicDFS:
         
 
         #----------- Field stop initialization (if any) -----------------------------
-        if fs_shape not in ['round','square','none']:
-            raise ValueError("Field stop shape must be either ['round','square','none']")
-            
-        self.fs_dim_mas = fs_dim_mas
-        if fs_shape == "round":
-            self.fs_shape = "round"
-            npix = self.fs_dim_mas / self._fp_pxscl_mas
-            n1 = np.ceil(npix/2).astype(int)
-            [xloc,yloc] = cp.meshgrid(cp.arange(n1),cp.arange(n1))
-            rloc = cp.hypot(xloc,yloc)
-            self._fs_mask = cp.zeros((n1,n1))
-            self._fs_mask[cp.where(rloc < npix/2)] = 1
-        elif fs_shape == "square":
-            self.fs_shape = "square"
-        else:
-            print('No field stop applied')
-            self.fs_shape = "none"
-        
+        self.set_spatial_filter(fs_shape, fs_dim_mas)
 
         #-------------------- Processing method initializations --------------------
         if processing_method not in ['DFS', 'TemplateMatching']:
@@ -292,7 +276,28 @@ class HolographicDFS:
             spectral_flux = cp.interp(cp.array(self._wvlall), wv, flux)
             self._spectral_flux = spectral_flux / cp.sum(spectral_flux) # integral of spectral flux equal to one
 
-
+    def set_spatial_filter(self, fs_shape, fs_dim_mas=0.0):
+        """
+        Set the spatial filter parameters
+        """
+        if fs_shape not in ['round','square','none']:
+            raise ValueError("Field stop shape must be either ['round','square','none']")
+            
+        self.fs_dim_mas = fs_dim_mas
+        if fs_shape == "round":
+            self.fs_shape = "round"
+            npix = self.fs_dim_mas / self._fp_pxscl_mas
+            n1 = np.ceil(npix/2).astype(int)
+            [xloc,yloc] = cp.meshgrid(cp.arange(n1),cp.arange(n1))
+            rloc = cp.hypot(xloc,yloc)
+            self._fs_mask = cp.zeros((n1,n1))
+            self._fs_mask[cp.where(rloc < npix/2)] = 1
+        elif fs_shape == "square":
+            self.fs_shape = "square"
+        else:
+            print('No field stop applied')
+            self.fs_shape = "none"
+            
     def set_quantum_efficiency(self,qe_model):
         """
         Set the detector QE curve
