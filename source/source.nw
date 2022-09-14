@@ -142,7 +142,6 @@ struct source {
 
 <<bundle coordinates kernel>>
 <<bundle coordinates kernel (box)>>
-  <<bundle coordinates kernel (box, finite)>>
 <<gathering wavefront kernel>>
 
 <<setup>>
@@ -319,7 +318,6 @@ struct bundle {
   <<ray bundle parameters>>
   void setup(rtd RADIUS, int N_RADIUS, int N_THETA, vector origin, int N_SRC);
   void setup(rtd L, int N_L, vector origin, int N_SRC);
-  void setup_box_finite(rtd L, int N_L, vector origin, int N_SRC);
   void setup(rtd L, int N_L, vector origin, vector chief_origin, int N_SRC);
   void setup_free(int _N_RAY_, double *x, double *y, vector origin);
   void setup_fan(int _N_RAY_, double *x, double *y, vector origin, double dz);
@@ -516,29 +514,6 @@ The cartesian coordinates are defined with the sampling of the square box length
   <<truss parameters initialization>>
   <<chief ray allocation>>
 }
-@
-For a source at a given height:
-The cartesian coordinates are defined with the sampling of the square box length [[N_L]] from $-[[L]]$ to [[L]].
-\index{source!bundle!setup}
-<<ray bundle functions>>=
-  void bundle::setup_box_finite(rtd _L_, int _N_L_, vector origin, int N_SRC)
-{
-  strcpy(geom,"boxf");
-  N_L = _N_L_;
-  L = _L_;
-  N_BUNDLE = N_SRC;
-  N_RAY = N_L*N_L;
-  N_RAY_TOTAL = N_RAY*N_BUNDLE;
-  rot_angle = 0.0;
-  V.setup(N_RAY_TOTAL);
-  HANDLE_ERROR( cudaMalloc((void**)&d__ray, sizeof(ray)*N_RAY_TOTAL ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__origin, sizeof(vector) ) );
-  HANDLE_ERROR( cudaMemcpy( d__origin, &origin,
-                            sizeof(vector), cudaMemcpyHostToDevice ) );
-  HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY_TOTAL ) );
-  <<truss parameters initialization>>
-  <<chief ray allocation>>
-      }
 @
 The origin of the chief ray is specified with [[chief_origin]]
 <<ray bundle functions>>=
@@ -1982,11 +1957,7 @@ void source::setup(const char *_photometric_band, float *_magnitude,
   wavefront.setup(N_L*N_L,N_SRC);
   fprintf(stdout," wavefront pixel sampling: %d\n",wavefront.N_PX);
   rays_exist = 1;
-  if (isinf(_height)>0) {
-    rays.setup(L, N_L, origin, N_SRC);
-  } else {
-    rays.setup_box_finite(L, N_L, origin, N_SRC);
-  }
+  rays.setup(L, N_L, origin, N_SRC);
   reset_rays();
   fprintf(stdout,"----------------------------------------------------\x1B[0m\n");
 }
@@ -2038,20 +2009,11 @@ if (rays.N_RAY>1)
   {
     blockDim = dim3(16,16);
     gridDim  = dim3(rays.N_L/16+1,rays.N_L/16+1, rays.N_BUNDLE);
-    if (strcmp(rays.geom, "box") == 0) {
-          ray_coordinates_box LLL gridDim , blockDim RRR (rays.d__ray, rays.N_RAY,
-                                                          dev_ptr,
-                                                          rays.L, rays.N_L,
-                                                          rays.d__origin,
-                                                          rays.rot_angle);
-      }
-    if (strcmp(rays.geom, "boxf") == 0) {
-      ray_coordinates_box_finite LLL gridDim , blockDim RRR (rays.d__ray, rays.N_RAY,
-                                                      dev_ptr,
-                                                      rays.L, rays.N_L,
-                                                      rays.d__origin,
-                                                      rays.rot_angle);
-    }
+    ray_coordinates_box LLL gridDim , blockDim RRR (rays.d__ray, rays.N_RAY,
+						    dev_ptr,
+						    rays.L, rays.N_L,
+                rays.d__origin,
+                rays.rot_angle);
   }
  else
    ray_coordinates LLL gridDim , blockDim RRR (rays.d__ray, 1,
@@ -2086,7 +2048,6 @@ __global__ void ray_coordinates(ray *d__ray, int N_RAY, source *src,
     <<bundle coordinates kernel (common)>>
   }
 }
-@ %def ray_coordinates
 @ where
 <<bundle coordinates kernel (common)>>=
 d__ray[k].coordinates.z = origin->z;
@@ -2133,7 +2094,6 @@ __global__ void ray_coordinates_box(ray *d__ray, int N_RAY, source *src,
 
   }
 }
-@ %def ray_coordinates_box
 @ with
 <<rays box coordinates definition>>=
   rtd so, co, _x_, _y_;
@@ -2144,49 +2104,6 @@ _x_ += origin->x;
 _y_ += origin->y;
 x = _x_*co - _y_*so;
 y = _x_*so + _y_*co;
-@
-<<bundle coordinates kernel (box, finite)>>=
-__global__ void ray_coordinates_box_finite(ray *d__ray, int N_RAY, source *src,
-                                    rtd L, int N_L, vector *origin,
-                                    rtd rot_angle)
-{
-  int i, j, k, iSource;
-  rtd x, y, z, s, x_src, y_src, z_src, r_src;
-  i = blockIdx.x * blockDim.x + threadIdx.x;
-  j = blockIdx.y * blockDim.y + threadIdx.y;
-  iSource = blockIdx.z;
-  r_src = src[iSource].height*tan(src[iSource]._zenith_64_);
-  x_src = r_src*cos(src[iSource]._azimuth_64_);
-  y_src = r_src*sin(src[iSource]._azimuth_64_);
-  z_src = src[iSource].height;
-  if ( (i<N_L) && (j<N_L) )
-  {
-    k = i + j*N_L + iSource*N_RAY;
-    d__ray[k].optical_path_length = 0.0;
-    d__ray[k].v = 1;
-    d__ray[k].throughput = 1.0;
-
-    <<rays box coordinates definition>>
-    d__ray[k].optical_path_difference = 
-        x*src[iSource].theta_x +
-        y*src[iSource].theta_y;
-
-    x -= x_src;
-    y -= y_src;
-    z = -z_src;
-    s = sqrt( x*x + y*y + z*z );
-
-    d__ray[k].directions.x  = x/s;
-    d__ray[k].directions.y  = y/s;
-    d__ray[k].directions.z  = z/s;
-
-    d__ray[k].coordinates.x = x_src;
-    d__ray[k].coordinates.y = y_src;
-    d__ray[k].coordinates.z = z_src;
-  }
-}
-@ %def ray_coordinates_box
-
 @  \item for multiple sources with wavefront resolution and with ray bundle coordinates (different magnitudes), zenith and azimuth are in double precision for ray tracing:
 <<setup for multiple sources with wavefront resolution and ray bundle>>=
 void source::setup(const char *_photometric_band, float *_magnitude,
@@ -2230,7 +2147,7 @@ void source::reset_rays(int RESET_RAYS_MASK)
     rays.V.set_filter_quiet();
   }
 }
-@ %def reset_rays
+@
 
 The zenith and azimuth angle are updated with:
 \index{source!source!update\_directions}
