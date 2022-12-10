@@ -664,6 +664,6 @@ class HolographicDFS:
     
     def get_data_cube(self, data_type='camera'):
         if data_type == 'camera':
-            return self.extract_fringes(apodize=True, derotate=True)
+            return self.extract_fringes(apodize=True, derotate=True).get()
         else:
             print('to be added soon....')
