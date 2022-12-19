@@ -15,7 +15,7 @@ class HolographicDFS:
     Parameters
     ----------
     hdfs_design : string
-        HDFS mask design version to be loaded. Default: 'v1'
+        HDFS mask design version to be loaded. Default: 'v2a'
     
     wvl_band : [float, float]
         Wavelength band pass [lowest, highest] in [m]. Default: [700e-9, 920e-9]
@@ -41,6 +41,9 @@ class HolographicDFS:
     spectral_type : string
         Guide star spectral type: 'tophat','A0V','G2V','K5V','M2V'. Default: 'tophat'
     
+    fringe_window_size_mas : float
+        Size of window enclosing each fringe image. Default: "140"
+
     apodization_window_type : string
         Apodized function to be applied to fringes. So far, there is only one option: Default: "Tukey"
     
@@ -56,56 +59,57 @@ class HolographicDFS:
 
     sky_bkgd_model : string
         Sky background model: 'none', equivalent_sky_magnitude', 'ESOmodel'. Default: 'none'
-    
+
     achromatic_mask : bool
-        If True, simulate an achromatic mask (i.e. liquid crystal based). Otherwise, simulate a chromatic (etched) mask, assuming the phase mask is defined for the central wavelength of the sensing band. Default: False
+        If True, simulate an achromatic mask (i.e. liquid crystal based). Otherwise, simulate a chromatic (etched) mask. Default: False
+
+    mask_cwvl : float
+        If achromatic_mask is False, this parameter defines the wavelength for which this mask was designed.
+        Default: wavelength corresponding to the mean spatial frequency in band [m].
     """
     
-    def __init__(self, hdfs_design='v1', wvl_band=[700e-9,920e-9], wvl_res=10e-9, D=25.5, fp_pxscl_mas=None,
-                 fov_mas=1400, fs_shape='round', fs_dim_mas=40, spectral_type='tophat',
+    def __init__(self, hdfs_design='v2a', wvl_band=[700e-9,920e-9], wvl_res=10e-9, D=25.5, fp_pxscl_mas=None,
+                 fov_mas=1400, fs_shape='round', fs_dim_mas=40, spectral_type='tophat', fringe_window_size_mas = 140,
                  apodization_window_type='Tukey', processing_method='DFS', throughput=1.0,
-                 qe_model='ideal', sky_bkgd_model='none', achromatic_mask=False):
+                 qe_model='ideal', sky_bkgd_model='none', achromatic_mask=False, mask_cwvl=None):
 
         if fp_pxscl_mas is None:
             # if the pixel scale is undefined, define it as being 0.9xNyquist sampling at the shortest wavelength
             fp_pxscl_mas = 0.9*wvl_band[0]/(2*D)*constants.RAD2MAS
 
-        #------------ Define location of the GMT segments to calculate the baselines
-        outersegrad = 8.710 # this is the physical distance of the segments used to define the baselines
-        segloc = np.zeros([7,2]) # 6 is the central segment
-        segloc[0:6,0] = outersegrad*np.sin(np.radians(np.array([0,60,120,180,240,300])))
-        segloc[0:6,1] = outersegrad*np.cos(np.radians(np.array([0,60,120,180,240,300])))
+        #-- 1) Wavelength sampling in selected band
+        wvl = np.arange(wvl_band[0], wvl_band[1]+wvl_res, wvl_res)
+        nwvl = len(wvl)
+        cwvl = (wvl_band[0]+wvl_band[1])/2 # central wavelength
 
-        #------------- Load parameters specific to the selected HDFS mask design version ---------------------
-        path = os.path.dirname(__file__)
-        if hdfs_design == 'v1':
-            HDFS_file = fits.open(os.path.join(path,'ngws_hdfs_phase_design_v1.fits'))
-            HDFS_file.info()
-            HDFSmask = (HDFS_file[0].data).astype('float')
-            HDFS_file.close()
-            
-            #-- Rotation angle of the fringe [in degrees]
-            self._rotation_angle = np.array([-84.,-36.,-24.,0.,30.,60.,84.,96.,144.,156.,180.,210.,240.,264.])
-            self._N_FRINGES = len(self._rotation_angle)
-
-            #-- Calulate the baselines
-            segcomp = np.array([[6,0],[2,5],[6,5],[2,4],[1,4],[1,3],[0,3],
-                                [0,6],[5,2],[5,6],[4,2],[4,1],[3,1],[3,0]])
-
-            baseline = np.zeros(self._N_FRINGES)
-            for idx in range(self._N_FRINGES):
-                [seg0,seg1] = segcomp[idx,:]
-                baseline[idx] = np.sqrt(np.sum((segloc[seg0,:] - segloc[seg1,:])**2))
-            self.baseline = baseline
-            
-            #-- The petals have a dispersion such that the central wavelength (800 nm) is placed at 80 lambda/D.
-            fringe_loc_radius_mas = 80 * (800e-9/D) * constants.RAD2MAS  # in mas
-            
-            #-- Size of sub-frame that will enclose each fringe image (minimizing cross-talk from adjacent fringes)
-            fringe_subframe_sz_mas = 190  # in mas
+        #---- Designed mask central wavelength for chromatic HDFS mask
+        if achromatic_mask == False:
+            if mask_cwvl is None:
+                self._mask_cwvl = 1 / ( (1/wvl_band[0] + 1/wvl_band[1]) / 2)
+            else:
+                self._mask_cwvl = mask_cwvl
         else:
-            raise ValueError('The selected HDFS design version does not exist.')
-        
+            self._mask_cwvl = None
+
+        #------------- Read parameters specific to the selected HDFS mask design version ---------------------
+        path = os.path.dirname(__file__)
+        with fits.open(os.path.join(path,'ngws_hdfs_phase_design_'+hdfs_design+'.fits')) as HDFS_file:
+            HDFS_file.info()
+            HDFSmask     = (HDFS_file['MASK'].data).astype('float')
+            self.pairs    = HDFS_file['PAIRS'].data
+            nominal_angle = HDFS_file['ANGLE'].data
+            offset        = HDFS_file['OFFSET'].data
+            baseline      = HDFS_file['BASELINE'].data
+            fx            = HDFS_file['MASK'].header['fx'] #cycles per pupil
+            
+        rotation_angle = nominal_angle + offset
+        self._rotation_angle = np.concatenate((rotation_angle, rotation_angle+180), axis=0)
+        self._N_FRINGES = len(self._rotation_angle)
+        self.baseline = np.concatenate((baseline, baseline), axis=0)
+
+        #--- Distance from center of fringes in the focal plane
+        fringe_loc_radius_mas = fx * (cwvl/D) * constants.RAD2MAS  # in mas
+
         nPx = HDFSmask.shape[0]
         self._HDFSmask = cp.array(HDFSmask)
         self.achromatic_mask = achromatic_mask
@@ -113,13 +117,9 @@ class HolographicDFS:
 
         #--------------- Polychromatic imaging simulation initialization -------------------
 
-        #-- 1) Wavelength sampling in selected band
-        wvl = np.arange(wvl_band[0], wvl_band[1]+wvl_res, wvl_res)
-        nwvl = len(wvl)
-        cwvl = (wvl_band[0]+wvl_band[1])/2 # central wavelength
 
         #-- 2) Determine the zero-padding required at each wavelength to simulate
-        #      the same pixel scale in the focal lane.
+        #      the same pixel scale in the focal plane.
         nPxall = nPx * wvl / (fp_pxscl_mas*constants.MAS2RAD*D)
         nPxall = np.round(nPxall).astype('int')
         nPxall = nPxall //2 *2  #ensure it is an even number
@@ -188,7 +188,7 @@ class HolographicDFS:
         self._fringe_loc_y_pix = np.round(fringe_loc_radius_pix * np.sin(np.radians(self._rotation_angle))).astype('int') + fringe_yc_pix
 
         #-- 4) Size of sub-frame [in pixels] that will enclose each fringe pattern (ensure it's even)
-        self._fringe_subframe_pix = int(fringe_subframe_sz_mas/self._fp_pxscl_mas)//2*2
+        self._fringe_subframe_pix = int(fringe_window_size_mas/self._fp_pxscl_mas)//2*2
 
         #-- 5) Apodizing window to be applied to each sub-frame
         self.set_apodization_window(apodization_window_type)
@@ -204,7 +204,7 @@ class HolographicDFS:
         
         if self.processing_method == 'DFS':
             #-- Compute the location of the sidelobes
-            sidelobedist = np.round(baseline*nPx/D*self._fringe_subframe_pix/np.mean(nPxall)).astype(int)
+            sidelobedist = np.round(self.baseline*nPx/D*self._fringe_subframe_pix/np.mean(nPxall)).astype(int)
             self._sidelobeloc = self._fringe_subframe_pix//2 - sidelobedist
 
         #--------------------- Camera readout setup ----------------------------
@@ -496,8 +496,8 @@ class HolographicDFS:
                 if self.achromatic_mask == True:
                     cplxamp[0:nPx,0:nPx] *= cp.exp(1j*self._HDFSmask)
                 else:
-                    # chromatic mask: assume that the phase is defined for the central wavelength
-                    cplxamp[0:nPx,0:nPx] *= cp.exp(1j*self._HDFSmask*self._cwvl/wavelength)
+                    # chromatic mask: recall that the phase is defined for the central wavenumber (if not specified by user).
+                    cplxamp[0:nPx,0:nPx] *= cp.exp(1j*self._HDFSmask*self._mask_cwvl/wavelength)
 
             [x1,x2] = self._im_range_pix[idx,:]
             self._image += self._flux_norm_factor[idx]*self._quantum_efficiency[idx]*self._spectral_flux[idx]*(cp.fft.fftshift(cp.abs(cp.fft.fft2(cplxamp)))**2)[x1:x2,x1:x2]
