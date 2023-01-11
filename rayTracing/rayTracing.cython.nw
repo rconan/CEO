@@ -913,64 +913,6 @@ cdef class ZernikeS:
         self._a_ = <double[:self.N_SURF,:self.n_mode]>self._c_zernikeS.a
         self.a   = np.asarray(self._a_)
 
-    def fitting_init(self, Source gs, int alphaId=0):
-        P = np.rollaxis( np.array(gs.rays.piston_mask ),0,3)
-
-        ## Find center coordinates (in pixels) of each segment mask
-        u = np.arange(gs.n)
-        v = np.arange(gs.m)
-        x,y = np.meshgrid(u,v)
-        x = x.reshape(1,-1,1)
-        y = y.reshape(1,-1,1)
-        xc = np.sum(x*P,axis=1)/P.sum(axis=1)
-        yc = np.sum(y*P,axis=1)/P.sum(axis=1)
-
-        ## Preliminary estimation of radius (in pixels) of each segment mask (assuming that there is no central obscuration)
-        Rs = np.sqrt(P.sum(axis=1)/np.pi)
-
-        ## Polar coordinates
-        rho   = np.hypot(   x - xc[:,np.newaxis,:], y - yc[:,np.newaxis,:])   #temporal rho vector
-        theta = np.arctan2( y - yc[:,np.newaxis,:], x - xc[:,np.newaxis,:]) * P
-
-        ## Estimate central obscuration area of each segment mask
-        ObsArea = np.sum(rho < 0.9*Rs[:,np.newaxis,:] * ~P.astype('bool'), axis=1)
-
-        ## Improve estimation of radius of each segment mask
-        Rs = np.sqrt( (P.sum(axis=1)+ObsArea) / np.pi)
-
-        ## Normalize rho vector (unitary radius)
-        rho = rho / Rs[:,np.newaxis,:] * P #final rho vector
-
-        # Build a Zernike Influence-function Matrix for all segments
-        #alphaId = 0   # only on-axis direction supported...
-
-        self.Zmat = np.zeros((gs.n*gs.m,self.n_mode,7))
-        for segId in range(1,8):
-            self.reset()
-            cutheta = cuDoubleArray(host_data=theta[segId-1,:,alphaId].reshape(gs.m,gs.n))
-            curho   = cuDoubleArray(host_data=  rho[segId-1,:,alphaId].reshape(gs.m,gs.n))
-            for k in range(self.n_mode):
-                self.a[0,k] = 1
-                self.update()
-                S = self.surface(curho,cutheta).host(shape=(gs.m*gs.n,1))*P[segId-1,:,alphaId].reshape(-1,1)
-                self.Zmat[:,k,segId-1] = S.flatten()
-                self.a[0,k] = 0
-
-        print 'Zernike Inflence Function Matrix:'
-        print np.shape(self.Zmat)
-
-        #Pseudo-inverse of Zmat
-        self.invZmat = np.zeros((self.n_mode,gs.m*gs.n,7))
-        for segId in range(1,8):
-            self.invZmat[:,:,segId-1] = np.linalg.pinv(self.Zmat[:,:,segId-1])
-        #print 'inverse of Zernike Influence Function Matrix:'
-        #print self.invZmat.shape
-
-        #Projection matrix
-        self.projZmat = np.zeros((self.n_mode,gs.m*gs.n,7))
-        for segId in range(1,8):
-            self.projZmat[:,:,segId-1] = self.Zmat[:,:,segId-1].T / np.sum(P[segId-1,:,alphaId])
-
     def projectionS(self, phase):
         cdef:
             int segId
@@ -978,15 +920,6 @@ cdef class ZernikeS:
         for segId in range(1,8):
             a[:,segId-1] = np.dot(self.projZmat[:,:,segId-1], phase.reshape(-1))
         return a
-
-    def fitting(self, phase):
-        #Project final residual WF onto segment Zernike modes
-        cdef:
-            int segId
-        arec = np.zeros((self.n_mode, 7))
-        for segId in range(1,8):
-            arec[:,segId-1] = np.dot(self.invZmat[:,:,segId-1], phase.reshape(-1))
-        return arec
 
     <<log properties (ZernikeS)>>
 
