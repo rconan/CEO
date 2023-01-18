@@ -211,11 +211,14 @@ class DispersedFringeSensor(SegmentPistonSensor):
             self.pp_m = np.zeros((src.N_SRC*12))
             self.pp_b = np.zeros((src.N_SRC*12))
 
+        self.valid_subaps = np.zeros(src.N_SRC*12, dtype='bool')
         for k in range(src.N_SRC*12):
             ### Find center coordinates of three lobes (i.e. central and two lateral ones) on each imagelet.
             blob_data = blob_log(dataCube[:,:,k], min_sigma=5, max_sigma=10, overlap=1,
                                  threshold=0.005*np.max(dataCube[:,:,k]))
-            assert blob_data.shape == (3,3), "lobe detection failed"
+            if blob_data.shape != (3,3):
+                continue
+            self.valid_subaps[k] = True
             blob_data = blob_data[np.argsort(blob_data[:,0])]  #order data in asceding y-coord
 
             ### The code below does the following:
@@ -293,6 +296,8 @@ class DispersedFringeSensor(SegmentPistonSensor):
                 self.fftlet_fit_images = np.zeros((self.camera.N_PX_IMAGE,self.camera.N_PX_IMAGE,self._N_SRC*12))
 
         for k in range(self._N_SRC*12):
+            if self.valid_subaps[k] == False:
+                continue
             mylobe = dataCube[:,:,k] * self.spsmask[:,:,k]
             centralpeak = np.max(dataCube[:,:,k])
             if self.lobe_detection == 'gaussfit':
