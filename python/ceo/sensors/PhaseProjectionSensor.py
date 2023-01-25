@@ -23,7 +23,7 @@ class PhaseProjectionSensor:
         self.n_mode = (radord+1)*(radord+2)//2
         self.ZernS = ZernikeS(radord)
 
-    def calibrate(self,src):
+    def calibrate(self,src, CS_rotation=True):
         """
         Calibrates the Zernike Projection Matrices and Reference OPD
         """
@@ -38,21 +38,22 @@ class PhaseProjectionSensor:
         xc = np.sum(x*P,axis=1)/P.sum(axis=1)
         yc = np.sum(y*P,axis=1)/P.sum(axis=1)
 
-        ## Preliminary estimation of radius (in pixels) of each segment mask (assuming that there is no central obscuration)
-        Rs = np.sqrt(P.sum(axis=1)/np.pi)
-
         ## Polar coordinates
-        rho   = np.hypot(   x - xc[:,np.newaxis,:], y - yc[:,np.newaxis,:])   #temporal rho vector
+        rho   = np.hypot(   x - xc[:,np.newaxis,:], y - yc[:,np.newaxis,:]) * P
         theta = np.arctan2( y - yc[:,np.newaxis,:], x - xc[:,np.newaxis,:]) * P
 
-        ## Estimate central obscuration area of each segment mask
-        ObsArea = np.sum(rho < 0.9*Rs[:,np.newaxis,:] * ~P.astype('bool'), axis=1)
-
-        ## Improve estimation of radius of each segment mask
-        Rs = np.sqrt( (P.sum(axis=1)+ObsArea) / np.pi)
+        ## Rotation of segment coordinate system (to mimic M1 LCS)
+        if CS_rotation==True:
+            lcs_theta = np.array([0,-60,-120,-180,-240,-300, 0])*(np.pi/180)
+            theta = theta - lcs_theta[:,np.newaxis,np.newaxis]
+            theta = np.where(theta < -np.pi, theta + 2*np.pi, theta)
+            theta = np.where(theta >  np.pi, theta - 2*np.pi, theta)
+            
+        ## Estimate semi-major axis length
+        Rs = np.max(rho, axis=1)
 
         ## Normalize rho vector (unitary radius)
-        rho = rho / Rs[:,np.newaxis,:] * P #final rho vector
+        rho = rho / Rs[:,np.newaxis,:]  #final rho vector
 
         # Build a Zernike Influence-function Matrix for all segments
         alphaId = 0   # only on-axis direction supported...
