@@ -554,14 +554,14 @@ HANDLE_ERROR( cudaMalloc((void**)&d__piston_mask, sizeof(int)*N_RAY_TOTAL ) );
 @
 <<free bundle initialization>>=
 double *d__x, *d__y;
-int n_byte = sizeof(double)*N_RAY_TOTAL;
+int n_byte = sizeof(double)*N_RAY;
 HANDLE_ERROR( cudaMalloc((void**)&d__x, n_byte ) );
 HANDLE_ERROR( cudaMalloc((void**)&d__y, n_byte ) );
 HANDLE_ERROR( cudaMemcpy( d__x, x, n_byte, cudaMemcpyHostToDevice ) );
 HANDLE_ERROR( cudaMemcpy( d__y, y, n_byte, cudaMemcpyHostToDevice ) );
 
 dim3 blockDim(N_THREAD,N_THREAD);
-dim3 gridDim(N_RAY_TOTAL/N_THREAD2+1,1, N_BUNDLE);
+dim3 gridDim(N_RAY/N_THREAD2+1,1, N_BUNDLE);
 ray_free_coordinates LLL gridDim , blockDim RRR (d__ray, N_RAY, d__x, d__y, d__origin,
                                                  zenith, azimuth);
 
@@ -579,27 +579,30 @@ HANDLE_ERROR( cudaFree( d__y ) );
   __global__ void ray_free_coordinates(ray *d__ray, int N_RAY, double *d__x, double *d__y, vector *origin,
                                        double zenith, double azimuth)
 {
-  int i, j, k;
-  rtd s;
+  int i, j, k, iSource;
+  rtd s, theta_x,theta_y;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
-//  iSource = blockIdx.z;
-  k = j * gridDim.x * blockDim.x + i;
-  if (i<N_RAY)
+  iSource = blockIdx.z;
+  k = j * gridDim.x* blockDim.x + i;
+  if (k<N_RAY)
   {
+    theta_x = tan(zenith)*cos(azimuth);
+    theta_y = tan(zenith)*sin(azimuth);
+    k  += iSource * N_RAY;
     d__ray[k].coordinates.x = d__x[k] + origin->x;
     d__ray[k].coordinates.y = d__y[k] + origin->y;
     d__ray[k].coordinates.z = origin->z;
     d__ray[k].directions.x  = sin(zenith)*cos(azimuth);
     d__ray[k].directions.y  = sin(zenith)*sin(azimuth);
     d__ray[k].directions.z  = -cos(zenith);
+    d__ray[k].optical_path_length = 0.0;
+    d__ray[k].optical_path_difference =  theta_x * d__x[k] +
+                                         theta_y * d__y[k];
+    d__ray[k].v = 1;
     s = -origin->z/d__ray[k].directions.z;
     d__ray[k].coordinates.x -= s*d__ray[k].directions.x;
-    d__ray[k].coordinates.y -= s*d__ray[k].directions.y;
-    d__ray[k].optical_path_length = 0.0;
-    d__ray[k].optical_path_difference = 0.0;
-    d__ray[k].v = 1;
-  }
+    d__ray[k].coordinates.y -= s*d__ray[k].directions.y;  }
 }
 @
 The direction cosines $(k,l,m)$ of the rays are defined from the source zenith $\zeta$ and azimuth $\xi$ angles as
