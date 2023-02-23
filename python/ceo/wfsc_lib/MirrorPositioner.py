@@ -14,16 +14,19 @@ class MirrorPositioner:
             M1 or M2 mirror of the GMT class
         
         temporal_response : string
-            Type of temporal response of the M2 Positioner: "ideal", "lpf". Default: "ideal"
+            Type of temporal response of the M2 Positioner: "ideal", "lpf butter", "lpf bessel". Default: "ideal"
+        
+        filter_order : integer
+            Filter order when selecting a LPF as temporal response. Default: 1
         
         cutoff_freq : float
-            Cut-off frequency in Hz of low-pass filter When selecting "lpf" as temporal_response.
+            Cut-off frequency in Hz of low-pass filter When selecting a LPF as temporal_response.
         
         Ts : float
             Sampling time (needed for realizing the digital temporal response filter).
     """
     
-    def __init__(self, mirror, temporal_response='ideal', cutoff_freq=None, Ts=None):
+    def __init__(self, mirror, temporal_response='ideal', filter_order=1, cutoff_freq=None, Ts=None):
         
         if not 'gmtMirrors' in str(type(mirror)):
             raise TypeError('"mirror" must be of ceo.gmtMirrors derived class.')
@@ -42,18 +45,32 @@ class MirrorPositioner:
         self.disturb_state = self.__newStateVector()
         
         #-- setup the temporal response model for the positioner.
-        self.set_temporal_response(temporal_response, cutoff_freq=cutoff_freq, Ts=Ts)
+        self.set_temporal_response(temporal_response, filter_order=filter_order, cutoff_freq=cutoff_freq, Ts=Ts)
     
     
-    def set_temporal_response(self, temporal_response, cutoff_freq=None, Ts=None):
+    def set_temporal_response(self, temporal_response, filter_order=1, cutoff_freq=None, Ts=None):
         """
         Sets the temporal response model of the positioner.
+        
+        Parameters:
+        -----------
+            temporal_response : string
+                Type of temporal response of the M2 Positioner: "ideal", "lpf butter", "lpf bessel". Default: "ideal"
+
+            filter_order : integer
+                Filter order when selecting a LPF as temporal response. Default: 1
+
+            cutoff_freq : float
+                Cut-off frequency in Hz of low-pass filter When selecting a LPF as temporal_response.
+
+            Ts : float
+                Sampling time (needed for realizing the digital temporal response filter).
         """
-        if temporal_response not in ['ideal', 'lpf']:
-            raise ValueError("'temporal_response' must be either ['ideal','lpf'].")
+        if temporal_response not in ['ideal', 'lpf butter', 'lpf bessel']:
+            raise ValueError("'temporal_response' must be either ['ideal','lpf butter', 'lpf bessel'].")
         self.temporal_response = temporal_response
         
-        if temporal_response == 'lpf':
+        if temporal_response != 'ideal':
             from scipy import signal
             from ceo import IIRfilter
             
@@ -61,8 +78,11 @@ class MirrorPositioner:
                 raise ValueError("'cutoff_freq [Hz]' and Ts [s] need to be specified.")
             
             lpf_w = cutoff_freq / (1/(2*Ts)) # Normalize the frequency
-            lpf_ord = 1
-            lpf_b, lpf_a = signal.butter(lpf_ord, lpf_w, 'low', analog=False)
+            
+            if temporal_response == 'lpf butter':
+                lpf_b, lpf_a = signal.butter(filter_order, lpf_w, 'low', analog=False)
+            elif temporal_response == 'lpf bessel':
+                lpf_b, lpf_a = signal.bessel(filter_order, lpf_w, 'low', analog=False)
 
             self._filter = IIRfilter(lpf_b, lpf_a)
             self._filter.initState(input_size=(6*7,)) 
@@ -72,7 +92,7 @@ class MirrorPositioner:
         """
         Update state according to the temporal response for the stored command.
         """
-        if self.temporal_response == 'lpf':
+        if self.temporal_response != 'ideal':
             Txyz = self.comm_state['Txyz']
             Rxyz = self.comm_state['Rxyz']
             _cin_ = np.concatenate((Txyz, Rxyz), axis=1).flatten()
@@ -132,11 +152,15 @@ class MirrorPositioner:
             if not np.array_equal( Txyz.shape, (7,3)):
                 raise ValueError("Txyz must be a (7,3) array.")
             self.disturb_state['Txyz'] = Txyz
+        else:
+            self.disturb_state['Txyz'] *= 0  # disturbance buffer shall not have memory
 
         if Rxyz is not None:
             if not np.array_equal( Rxyz.shape, (7,3)):
                 raise ValueError("Rxyz must be a (7,3) array.")            
             self.disturb_state['Rxyz'] = Rxyz
+        else:
+            self.disturb_state['Rxyz'] *= 0  # disturbance buffer shall not have memory
         
         #--- Update temporal response of positioner to stored command
         self.update_temporal_response()
