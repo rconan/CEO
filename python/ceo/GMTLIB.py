@@ -1071,17 +1071,25 @@ class GMT_MX(GmtMirrors):
         print("Calibrating on-axis "+AOtype+" AO system for closed-loop IntMat calibration")
         print("--------------------------------------------------------------------------")
         print("\n--> on-axis SH:")
+
+        #-- M2 modes are either Zernike or Karhunen-Loeve:
+        if self.M2.mirror_modes_type == 'zernike':
+            M2_modes_type = 'zernike'
+        else:
+            M2_modes_type = 'Karhunen-Loeve'
+        Roc = self.M2_baffle / 8.365 
+
         # 1. SH - M2 segment Zernikes IM
-        fname = 'IM_SHgeom'+\
-        '_'+self.M2.mirror_modes_type.decode()+'_ortho'+str(self.M2.modes.n_mode)+'_S7OC0.344'+\
-        '_SHthr%1.1f.npz'%sh_thr
+        fname = 'IM_SHgeom_%s'%M2_modes_type+'_N%03d'%(self.M2.modes.n_mode)+'_S7OC%0.4f'%Roc+\
+            '_SHthr%1.1f.npz'%sh_thr
+        print(fname)
         fnameFull = os.path.normpath(os.path.join(RECdir,fname))
 
         Zstroke = 20e-9 #m rms
         z_first_mode = 1  # to skip piston
 
         if os.path.isfile(fnameFull) == False:
-            D_M2_Z = self.calibrate(self.cl_wfs, self.cl_gs, mirror="M2", mode=self.M2.mirror_modes_type.decode(), stroke=Zstroke,
+            D_M2_Z = self.calibrate(self.cl_wfs, self.cl_gs, mirror="M2", mode=M2_modes_type, stroke=Zstroke,
                            first_mode=z_first_mode)
             np.savez(fnameFull, D_M2=D_M2_Z, first_mode=z_first_mode, Stroke=Zstroke)
         else:
