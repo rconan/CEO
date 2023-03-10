@@ -87,7 +87,7 @@ struct imaging {
 <<apply field stop>>
 <<apply pyramid>>
 <<apply irradiance>>
-
+<<assign wave_PUPIL to source wavefront>>
 <<binning>>
 <<read-out>>
 <<read-out with background>>
@@ -771,14 +771,17 @@ void imaging::propagateThroughFieldStop(source *src, float field_stop_diam) {
                                               N_SIDE_LENSLET, src->dev_ptr,
                                               pixel_scale, d__theta_x, d__theta_y,
                                               absolute_pointing,0);
+  
   <<imaging CUFFT execution>>
 
-
   field_stop_diam *= N_DFT/N_PX_PUPIL;
-  gridDim = dim3(1+N_DFT/16,1+N_DFT/16);
+  //gridDim = dim3(1+N_DFT/16,1+N_DFT/16);
   apply_field_stop LLL gridDim , blockDim RRR( d__wave_PUPIL, N_DFT, N_PX_PUPIL,
 					       field_stop_diam);
-  <<propagation (FFT, intensity and binning)>>
+
+  <<imaging CUFFT execution>>
+  assign_to_wavefront LLL gridDim , blockDim RRR(src->wavefront.amplitude, src->wavefront.phase, N_PX_PUPIL, 
+                                                 src->wavenumber(), d__wave_PUPIL, N_DFT);
 }
 @
 <<apply field stop>>=
@@ -786,9 +789,10 @@ __global__ void apply_field_stop(float2 *d__wave_PUPIL, int N_DFT,
 				 int N_PX_PUPIL, float field_stop_diam)
 {
   int i, j, k, w, half;
-  float xi, yj, rij, l, c, s, phasor, a, b;
+  float xi, yj, rij, l, c, s, phasor, a, b, iSource;
   i = blockIdx.x * blockDim.x + threadIdx.x;
   j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
   if ( (i<N_DFT) && (j<N_DFT) ) {
     w = N_DFT & 1;
     half = (N_DFT-2+w)/2;
@@ -803,6 +807,7 @@ __global__ void apply_field_stop(float2 *d__wave_PUPIL, int N_DFT,
     rij = hypot(xi,yj);
     l = 0.5*field_stop_diam;
     k = i*N_DFT + j;
+    k += iSource*N_DFT*N_DFT;
     if (rij>l) {
       d__wave_PUPIL[k].x = d__wave_PUPIL[k].y = 0.0;
     } else {
@@ -816,7 +821,28 @@ __global__ void apply_field_stop(float2 *d__wave_PUPIL, int N_DFT,
   }
 }
 @
-
+<<assign wave_PUPIL to source wavefront>>=
+__global__ void assign_to_wavefront(float* amplitude, float* phase, const int N_PX, 
+                                    float wavenumber, float2 *d__wave_PUPIL, const int N_DFT) {
+  int i, j, k, l, iSource;
+  float x, y, a , p;
+  i = blockIdx.x * blockDim.x + threadIdx.x;
+  j = blockIdx.y * blockDim.y + threadIdx.y;
+  iSource = blockIdx.z;
+  if ( (i<N_PX) && (j<N_PX) ) {
+    l = i*N_PX + j;
+    l += iSource*N_PX*N_PX;
+    k = i*N_DFT + j;
+    k += iSource*N_DFT*N_DFT;
+    x = d__wave_PUPIL[k].x;
+    y = d__wave_PUPIL[k].y;
+    a = hypot(x, y);
+    p = atan2(y,x);
+    amplitude[l] = a;
+    phase[l] = p/wavenumber;
+  }
+}
+@
 \subsubsection{Propagation through pyramid}
 \label{sec:prop-thro-pym}
 
