@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.10)
 project(CEO LANGUAGES CXX CUDA)
 
 add_library(ceo STATIC)
@@ -11,6 +11,8 @@ set_target_properties( ceo
                        PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
 
 target_include_directories(ceo PUBLIC ${CMAKE_SOURCE_DIR}/include)
+
+target_compile_options(ceo PRIVATE $<$<COMPILE_LANGUAGE:CUDA>: -DSILENT>)
 
 foreach(SRC utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers rayTracing gmtMirrors segmentPistonSensor pyramid )
     
