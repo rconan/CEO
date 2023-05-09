@@ -42,10 +42,6 @@ endforeach()
 
 target_link_libraries(ceo curand cusparse cufft cublas cudart cusolver)
 
-set_target_properties(ceo
-    PROPERTIES
-    PUBLIC_HEADER "utilities.h"
-)
 install(TARGETS ceo 
        ARCHIVE DESTINATION lib)
 install(DIRECTORY build/
