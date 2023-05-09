@@ -12,7 +12,7 @@ set_target_properties( ceo
 
 target_compile_options(ceo PRIVATE $<$<COMPILE_LANGUAGE:CUDA>: -DSILENT>)
 
-foreach(SRC utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers rayTracing gmtMirrors segmentPistonSensor pyramid )
+foreach(SRC utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE rayTracing gmtMirrors segmentPistonSensor pyramid )
     
     add_custom_command(
         OUTPUT ${SRC}.cu
@@ -42,7 +42,13 @@ endforeach()
 
 target_link_libraries(ceo curand cusparse cufft cublas cudart cusolver)
 
+set_target_properties(ceo
+    PROPERTIES
+    PUBLIC_HEADER "utilities.h"
+)
 install(TARGETS ceo 
-       ARCHIVE
-         DESTINATION lib)
-
+       ARCHIVE DESTINATION lib)
+install(DIRECTORY build/
+       DESTINATION include
+       FILES_MATCHING
+       PATTERN "*.h")
