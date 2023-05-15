@@ -3,6 +3,8 @@ project(CEO LANGUAGES CXX CUDA)
 
 add_library(ceo STATIC)
 
+message("Build folder path: ${CMAKE_BINARY_DIR}")
+
 target_compile_features(ceo PUBLIC cxx_std_11)
 
 set_target_properties( ceo
@@ -44,7 +46,21 @@ target_link_libraries(ceo curand cusparse cufft cublas cudart cusolver)
 
 install(TARGETS ceo 
        ARCHIVE DESTINATION lib)
-install(DIRECTORY build/
-       DESTINATION include
-       FILES_MATCHING
-       PATTERN "*.h")
+install(FILES
+    ${CMAKE_BINARY_DIR}/aaStats.h
+    ${CMAKE_BINARY_DIR}/atmosphere.h
+    ${CMAKE_BINARY_DIR}/BTBT.h
+    ${CMAKE_BINARY_DIR}/centroiding.h
+    ${CMAKE_BINARY_DIR}/GBTBT.h
+    ${CMAKE_BINARY_DIR}/gmtMirrors.h
+    ${CMAKE_BINARY_DIR}/imaging.h
+    ${CMAKE_BINARY_DIR}/iterativeSolvers.h
+    ${CMAKE_BINARY_DIR}/LMMSE.h
+    ${CMAKE_BINARY_DIR}/pyramid.h
+    ${CMAKE_BINARY_DIR}/rayTracing.h
+    ${CMAKE_BINARY_DIR}/segmentPistonSensor.h
+    ${CMAKE_BINARY_DIR}/shackHartmann.h
+    ${CMAKE_BINARY_DIR}/source.h
+    ${CMAKE_BINARY_DIR}/utilities.h
+    DESTINATION include
+       )
