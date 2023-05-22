@@ -16,6 +16,9 @@ class BBPSF:
         The filter type. Default: None
         See https://arte.readthedocs.io/en/latest/photometry.html#module-arte.photometry.filters for a list of available filter in the arte library.
     
+    qe_model : string
+        Detector's quantum efficiency model: 'ideal', 'OCAM2K', ProEM'. Default: 'ideal'
+    
     wvl_band : [float, float]
         Wavelength band pass [lowest, highest] in [m]. Default: None. See Usage section below.
         
@@ -40,7 +43,7 @@ class BBPSF:
     Option 3. If both filter type and wavelength band pass are specified, the transmission curve will be loaded for the filter type selected, but only the band pass specified will be used. An error will be raised if the bandpass selected is outside of the filter type.
     """
     
-    def __init__(self, maskPup, filter_type=None, wvl_band=None, wvl_res=10e-9, D=25.5, 
+    def __init__(self, maskPup, filter_type=None, qe_model='ideal', wvl_band=None, wvl_res=10e-9, D=25.5, 
                  fp_pxscl_mas=None, fov_mas=4000):
         
         #---------- Parameters check ---------------------------
@@ -125,6 +128,9 @@ class BBPSF:
             spectral_flux = np.interp(np.array(self._wvlall), wvl_hires, trans_hires)
             self._spectral_flux = cp.array( spectral_flux / np.sum(spectral_flux) ) # integral of spectral flux equal to one
         
+        #-- 7) Compute QE curve
+        self.set_quantum_efficiency(qe_model)
+        
         #- proportionality factor so total intensity adds to 1 (at each wavelength):
         self._flux_norm_factor = 1./(cp.sum(maskPup)*cp.array(self._nPxall)**2)
         
@@ -149,7 +155,7 @@ class BBPSF:
             cplxamp[0:nPx,0:nPx] = amp2d*cp.exp(1j*2*cp.pi/wavelength*phase2d)
             
             [x1,x2] = self._im_range_pix[idx,:]
-            psf += self._flux_norm_factor[idx] * self._spectral_flux[idx] *(cp.fft.fftshift(cp.abs(cp.fft.fft2(cplxamp)))**2)[x1:x2,x1:x2]    
+            psf += self._flux_norm_factor[idx] * self._quantum_efficiency[idx] * self._spectral_flux[idx] *(cp.fft.fftshift(cp.abs(cp.fft.fft2(cplxamp)))**2)[x1:x2,x1:x2]    
         return psf
     
     
@@ -187,3 +193,23 @@ class BBPSF:
         
         else:
             raise ValueError('Filter %s not implemented so far....'%filter_type)
+
+
+    def set_quantum_efficiency(self,qe_model):
+        """
+        Set the detector QE curve
+        """
+        if qe_model not in ['ideal','OCAM2K', 'ProEM']:
+            raise ValueError("Detector model must be one of ['ideal','OCAM2K', 'ProEM']")
+
+        self._qe_model = qe_model
+
+        if qe_model == 'ideal':
+            self._quantum_efficiency = cp.ones(self._nwvl)
+        elif qe_model == 'OCAM2K':
+            ccd_qe = [[400e-9,450e-9,500e-9,550e-9,600e-9,650e-9,700e-9,750e-9,800e-9,850e-9,900e-9,950e-9,1000e-9],[0.39,0.55,0.74,0.84,0.90,0.94,0.96,0.95,0.92,0.84,0.70,0.44,0.22]]
+            self._quantum_efficiency = cp.interp(cp.array(self._wvlall), cp.array(ccd_qe[0]),cp.array(ccd_qe[1]))
+        elif qe_model == 'ProEM':
+            #-- ProEM-HS_1024BX3_datasheet.pdf; excelon3 curve
+            ccd_qe = [[300e-9,350e-9,380e-9,400e-9,450e-9,500e-9,550e-9,600e-9,650e-9,700e-9,750e-9,800e-9,850e-9,900e-9,950e-9,1000e-9],[0.03,0.60,0.70,0.75,0.84,0.87,0.91,0.94,0.95,0.93,0.90,0.80,0.65,0.48,0.30,0.10]]
+            self._quantum_efficiency = cp.interp(cp.array(self._wvlall), cp.array(ccd_qe[0]),cp.array(ccd_qe[1]))

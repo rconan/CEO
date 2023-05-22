@@ -23,12 +23,28 @@ class PhaseProjectionSensor:
         self.n_mode = (radord+1)*(radord+2)//2
         self.ZernS = ZernikeS(radord)
 
-    def calibrate(self,src):
+    def calibrate(self,src, piston_mask=None, CS_rotation=True, rot_angle=None):
         """
-        Calibrates the Zernike Projection Matrices and Reference OPD
+        Calibrates the Zernike Projection Matrices and Reference OPD.
+        
+        Parameters:
+        -----------
+        piston_mask : list
+            If Source.rays does not have a valid piston mask, you can introduce it here.
+        
+        CS_rotation : bool
+            If True, define Zernike modes in the GMT segment coordinate system.
+        
+        rot_angle : float
+            if Source.rays.rot_angle does not have a valid rotation angle, you can introduce it here. [radians]
         """
-        P = np.rollaxis( np.array(src.rays.piston_mask ),0,3)
-
+        if piston_mask is None:
+            my_piston_mask = src.rays.piston_mask
+        else:
+            my_piston_mask = piston_mask
+        
+        P = np.rollaxis( np.array(my_piston_mask),0,3)
+        
         ## Find center coordinates (in pixels) of each segment mask
         u = np.arange(src.n)
         v = np.arange(src.m)
@@ -38,21 +54,27 @@ class PhaseProjectionSensor:
         xc = np.sum(x*P,axis=1)/P.sum(axis=1)
         yc = np.sum(y*P,axis=1)/P.sum(axis=1)
 
-        ## Preliminary estimation of radius (in pixels) of each segment mask (assuming that there is no central obscuration)
-        Rs = np.sqrt(P.sum(axis=1)/np.pi)
-
         ## Polar coordinates
-        rho   = np.hypot(   x - xc[:,np.newaxis,:], y - yc[:,np.newaxis,:])   #temporal rho vector
+        rho   = np.hypot(   x - xc[:,np.newaxis,:], y - yc[:,np.newaxis,:]) * P
         theta = np.arctan2( y - yc[:,np.newaxis,:], x - xc[:,np.newaxis,:]) * P
 
-        ## Estimate central obscuration area of each segment mask
-        ObsArea = np.sum(rho < 0.9*Rs[:,np.newaxis,:] * ~P.astype('bool'), axis=1)
+        ## Rotation of segment coordinate system (to mimic M1 LCS)
+        if CS_rotation==True:
+            lcs_theta = np.array([0,-60,-120,-180,-240,-300, 0])*(np.pi/180)
+            theta = theta - lcs_theta[:,np.newaxis,np.newaxis]
+            theta = np.where(theta < -np.pi, theta + 2*np.pi, theta)
+            theta = np.where(theta >  np.pi, theta - 2*np.pi, theta)
 
-        ## Improve estimation of radius of each segment mask
-        Rs = np.sqrt( (P.sum(axis=1)+ObsArea) / np.pi)
+        if rot_angle is None:
+            theta += src.rays.rot_angle
+        else:
+            theta += rot_angle
+
+        ## Estimate semi-major axis length
+        Rs = np.max(rho, axis=1)
 
         ## Normalize rho vector (unitary radius)
-        rho = rho / Rs[:,np.newaxis,:] * P #final rho vector
+        rho = rho / Rs[:,np.newaxis,:]  #final rho vector
 
         # Build a Zernike Influence-function Matrix for all segments
         alphaId = 0   # only on-axis direction supported...
