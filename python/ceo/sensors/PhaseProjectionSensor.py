@@ -23,12 +23,28 @@ class PhaseProjectionSensor:
         self.n_mode = (radord+1)*(radord+2)//2
         self.ZernS = ZernikeS(radord)
 
-    def calibrate(self,src, CS_rotation=True):
+    def calibrate(self,src, piston_mask=None, CS_rotation=True, rot_angle=None):
         """
-        Calibrates the Zernike Projection Matrices and Reference OPD
+        Calibrates the Zernike Projection Matrices and Reference OPD.
+        
+        Parameters:
+        -----------
+        piston_mask : list
+            If Source.rays does not have a valid piston mask, you can introduce it here.
+        
+        CS_rotation : bool
+            If True, define Zernike modes in the GMT segment coordinate system.
+        
+        rot_angle : float
+            if Source.rays.rot_angle does not have a valid rotation angle, you can introduce it here. [radians]
         """
-        P = np.rollaxis( np.array(src.rays.piston_mask ),0,3)
-
+        if piston_mask is None:
+            my_piston_mask = src.rays.piston_mask
+        else:
+            my_piston_mask = piston_mask
+        
+        P = np.rollaxis( np.array(my_piston_mask),0,3)
+        
         ## Find center coordinates (in pixels) of each segment mask
         u = np.arange(src.n)
         v = np.arange(src.m)
@@ -48,7 +64,12 @@ class PhaseProjectionSensor:
             theta = theta - lcs_theta[:,np.newaxis,np.newaxis]
             theta = np.where(theta < -np.pi, theta + 2*np.pi, theta)
             theta = np.where(theta >  np.pi, theta - 2*np.pi, theta)
-            
+
+        if rot_angle is None:
+            theta += src.rays.rot_angle
+        else:
+            theta += rot_angle
+
         ## Estimate semi-major axis length
         Rs = np.max(rho, axis=1)
 
