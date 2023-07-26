@@ -47,6 +47,7 @@ cdef extern from "source.h":
         void setup_free(int, double *, double *, vector)
         void setup_free(double, double, int, double *, double *, vector)
         void setup_fan( int, double *, double *, vector, double)
+        void setup_fan_telecentric( int, double *, double *, vector, double)
         void cleanup()
         void to_z_plane(rtd)
         void to_sphere(vector)
@@ -248,6 +249,8 @@ cdef class FanBundle(Bundle):
         the y coordinates of the rays in the entrance pupil
     origin : list
         the point of origin of the chief ray
+    telecentric: bool, optional
+        flag that will set the chief ray parallel to the optical axis in the object plane, default: False
 
     See also
     --------
@@ -255,12 +258,17 @@ cdef class FanBundle(Bundle):
 
     """
     def __init__(self, ndarray x, ndarray y, list origin, double z_position,
-                 double zenith=0.0, double azimuth=0.0):
+                 double zenith=0.0, double azimuth=0.0, telecentric=False):
         cdef vector __origin
         __origin.x = <rtd>origin[0]
         __origin.y = <rtd>origin[1]
         __origin.z = <rtd>origin[2]
-        self._c_bundle.setup_fan(x.size, <double *>x.data, <double *>y.data, __origin, z_position)
+        if telecentric:
+            x = x + <rtd>origin[0]
+            y = y + <rtd>origin[1]
+            self._c_bundle.setup_fan_telecentric(x.size, <double *>x.data, <double *>y.data, __origin, z_position)
+        else:
+            self._c_bundle.setup_fan(x.size, <double *>x.data, <double *>y.data, __origin, z_position)
         super(FanBundle,self).__init__()
     def __dealloc__(self):
         self._c_bundle.cleanup()
