@@ -1,6 +1,6 @@
 from .tools import ascupy
 from . import constants
-from .utilities import cuFloatArray, cuDoubleArray, cuIntArray, cuFloatComplexArray, MaskAbstract, Mask, Telescope, GMT, StopWatch, SparseMatrix, SparseGradient, wavefrontFiniteDifference, setDevice, Knu, polyWind, polyWinds
+from .utilities import cuFloatArray, cuDoubleArray, cuIntArray, cuFloatComplexArray, MaskAbstract, Mask, Telescope, GMT, StopWatch, wavefrontFiniteDifference, setDevice, Knu, polyWind, polyWinds
 from .source import FreeBundle, FanBundle, Complex_amplitude, Source, PSSn, JSource
 from .rayTracing import ZernikeS, Coordinates, Coordinate_system, Quaternion, Aperture, Conic, Transform_to_S, Transform_to_R, Intersect, Reflect, Refract
 from .imaging import Imaging, JImaging
