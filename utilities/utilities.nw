@@ -296,6 +296,7 @@ int get_device_count() {
 
 <<GPU float methods>>
 <<GPU double methods>>
+<<GPU int methods>>
 <<QR factorization>>
 <<compute Q^T*B>>
 
@@ -1830,6 +1831,10 @@ struct gpu_double {
   <<gpu template common>>
   void mv(gpu_float *y, const gpu_float *x);
 };
+struct gpu_int{
+  int *dev_data, *host_data;
+  <<gpu template common>>
+};
 @
 with
 <<gpu template common>>=
@@ -2058,6 +2063,32 @@ void gpu_double::host2dev(void) {
                             N*nb, cudaMemcpyHostToDevice ) ) ;
 }
 void gpu_double::reset(void) {
+  HANDLE_ERROR( cudaMemset( dev_data, 0, N*nb) );
+}
+@
+<<GPU int methods>>=
+void gpu_int::setup(void) {
+  nb = sizeof(int);
+}
+void gpu_int::setup(int N_T) {
+  nb = sizeof(int);
+  N = N_T;
+}
+void gpu_int::dev_malloc(void) {
+  HANDLE_ERROR( cudaMalloc( (void**)&dev_data, N*nb) );
+}
+void gpu_int::free_dev(void) {
+  HANDLE_ERROR( cudaFree( dev_data ) );
+}
+void gpu_int::dev2host(void) {
+  HANDLE_ERROR( cudaMemcpy( host_data, dev_data, 
+                            N*nb, cudaMemcpyDeviceToHost ) ) ;
+}
+void gpu_int::host2dev(void) {
+  HANDLE_ERROR( cudaMemcpy( dev_data, host_data, 
+                            N*nb, cudaMemcpyHostToDevice ) ) ;
+}
+void gpu_int::reset(void) {
   HANDLE_ERROR( cudaMemset( dev_data, 0, N*nb) );
 }
 @
