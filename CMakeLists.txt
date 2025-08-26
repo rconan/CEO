@@ -11,7 +11,7 @@ set_target_properties( ceo
                        PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
 set_target_properties( ceo
                        PROPERTIES CUDA_RESOLVE_DEVICE_SYMBOLS ON)
-
+target_compile_options(ceo PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fPIC>)
 target_compile_options(ceo PRIVATE $<$<COMPILE_LANGUAGE:CUDA>: -DSILENT>)
 
 foreach(SRC utilities source atmosphere imaging centroiding shackHartmann aaStats BTBT GBTBT iterativeSolvers LMMSE rayTracing gmtMirrors segmentPistonSensor pyramid )
