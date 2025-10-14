@@ -159,6 +159,7 @@ foreach(MODULE ${CYTHON_DIR})
         OUTPUT ${CMAKE_SOURCE_DIR}/python/ceo/${MODULE}.pyx.o
         COMMAND ${CMAKE_CUDA_COMPILER} -w
                 -I${CMAKE_SOURCE_DIR}/include
+                -I${CMAKE_BINARY_DIR}
                 -I${Python3_INCLUDE_DIRS}
                 -I${Python3_NumPy_INCLUDE_DIRS}
                 -lineinfo -Xcompiler '-fPIC,-pthread,-O3'
