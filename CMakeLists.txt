@@ -52,7 +52,17 @@ foreach(SRC utilities source atmosphere imaging centroiding shackHartmann aaStat
 
 endforeach()
 
-target_link_libraries(ceo curand cusparse cufft cublas cudart cusolver)
+# Find CUDA libraries for C++ library linking
+find_package(CUDAToolkit REQUIRED)
+
+target_link_libraries(ceo
+    CUDA::curand
+    CUDA::cusparse
+    CUDA::cufft
+    CUDA::cublas
+    CUDA::cudart
+    CUDA::cusolver
+)
 
 install(TARGETS ceo 
        ARCHIVE DESTINATION lib)
@@ -165,7 +175,8 @@ foreach(MODULE ${CYTHON_DIR})
         COMMAND ${CMAKE_CUDA_COMPILER} -shared
                 ${CMAKE_SOURCE_DIR}/python/ceo/${MODULE}.pyx.o
                 -L${CMAKE_BINARY_DIR} -lceo
-                -L${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES}/../lib64
+                -L${CUDAToolkit_LIBRARY_DIR}
+                -Xlinker -rpath -Xlinker ${CUDAToolkit_LIBRARY_DIR}
                 -lcurand -lcusparse -lcufft -lcublas -lcudart -lcusolver
                 -o ${CMAKE_SOURCE_DIR}/python/ceo/${MODULE}.so
         DEPENDS ${CMAKE_SOURCE_DIR}/python/ceo/${MODULE}.pyx.o ceo
