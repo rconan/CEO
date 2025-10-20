@@ -11,6 +11,17 @@ All the code has been written following the literate programming methodology. Th
 
 CEO can be downloaded from <https://github.com/rconan/CEO>.
 
+## Python dependencies
+
+ - cython
+ - cupy
+ - boto3
+ - scipy
+ - scikit-image
+ - astropy
+ - arte
+ - ipython
+   
 ## Compilation
 
 CEO can be compiled using either the traditional Makefile system or the modern CMake build system.
