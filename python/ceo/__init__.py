@@ -19,7 +19,7 @@ from .mapping import Mapping
 from . import phaseStats
 from .sensors import CameraReadOut, SkyBackground
 from .sensors import PyramidWFS as Pyramid
-from .sensors import DispersedFringeSensor, IdealSegmentPistonSensor, PhaseProjectionSensor, HolographicDFS, BBPSF
+from .sensors import DispersedFringeSensor, IdealSegmentPistonSensor, PhaseProjectionSensor, HolographicDFS, BBPSF, BBPyramidWFS
 from .zemax import ZMX, raytrace
 from IPython.display import Markdown, display
 def sweetcheat():

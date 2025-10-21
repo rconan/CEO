@@ -345,6 +345,22 @@ class GMT_MX(GmtMirrors):
         stroke : float
             The amplitude of the motion
         """
+        def close_NGAO_loop():
+            niter = 15
+            #wfe = np.zeros(niter)
+            for ii in range(niter):
+                self.cl_gs.reset()
+                self.propagate(self.cl_gs)
+                #wfe[ii] = self.cl_gs.phaseRms(units_exponent=-9)
+                self.cl_wfs.reset()
+                self.cl_wfs.analyze(self.cl_gs)
+                slopevec = self.cl_wfs.get_measurement()
+                myAOest1 = 0.6 * self.R_AO @ slopevec
+                self.M2.modes.a[:,0:self.cl_n_modes] -= myAOest1.reshape((7,-1))
+                self.M2.modes.update()
+            wfe = float(self.cl_gs.phaseRms(units_exponent=-9))
+            if wfe > 1.0:
+                print("\nCL CALIB ERROR! WFE = %0.1f"%wfe)
 
         def close_NGAOish_loop():
             niter = 10
@@ -382,6 +398,8 @@ class GMT_MX(GmtMirrors):
                 close_NGAOish_loop()
             elif self.AOtype=='LTAOish':
                 close_LTAOish_loop()
+            elif self.AOtype=='NGAO':
+                close_NGAO_loop()
 
         def pushpull(action):
             def get_slopes(stroke_sign):
@@ -1038,7 +1056,17 @@ class GMT_MX(GmtMirrors):
 
         return D_M2_MODES
 
-
+    def cloop_calib_init(self, cl_gs, cl_wfs, R_AO):
+        """
+        Pass on the GS, WFS, and M2 KL reconstructor to close the loop during IM calibration.
+        """
+        self.cl_gs = cl_gs
+        self.cl_wfs = cl_wfs
+        self.R_AO = R_AO
+        self.cl_n_modes = R_AO.shape[0] // 7
+        self.AOtype = 'NGAO'
+    
+    """
     def cloop_calib_init(self, Diam, nPx, onaxis_wfs_nLenslet=60, sh_thr=0.2, AOtype=None, svd_thr=1e-9, RECdir='./'):
         assert AOtype == 'NGAOish' or AOtype == 'LTAOish', "AOtype should be either 'NGAOish', or 'LTAOish'"
         self.AOtype = AOtype
@@ -1144,6 +1172,7 @@ class GMT_MX(GmtMirrors):
         print('\nOn-axis AO merged IM condition number: %f'%np.linalg.cond(D_AO))
         self.R_AO = np.linalg.pinv(D_AO, rcond=svd_thr)
         #return [D_M2_Z,D_M2_PS_sh, D_M2_Z_PSideal, D_M2_PSideal]
+        """
 
 ### PSSN
 class PSSn(object):

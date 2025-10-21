@@ -101,8 +101,12 @@ class HolographicDFS:
             offset        = HDFS_file['OFFSET'].data
             baseline      = HDFS_file['BASELINE'].data
             fx            = HDFS_file['MASK'].header['fx'] #cycles per pupil
+            try:
+                mask_rotation = HDFS_file['MASK'].header['rotation']
+            except:
+                mask_rotation = 0.0
             
-        rotation_angle = nominal_angle + offset
+        rotation_angle = nominal_angle + offset - mask_rotation
         self._rotation_angle = np.concatenate((rotation_angle, rotation_angle+180), axis=0)
         self._N_FRINGES = len(self._rotation_angle)
         self.baseline = np.concatenate((baseline, baseline), axis=0)
@@ -204,8 +208,8 @@ class HolographicDFS:
         
         if self.processing_method == 'DFS':
             #-- Compute the location of the sidelobes
-            sidelobedist = np.round(self.baseline*nPx/D*self._fringe_subframe_pix/np.mean(nPxall)).astype(int)
-            self._sidelobeloc = self._fringe_subframe_pix//2 - sidelobedist
+            sidelobedist = np.round(self.baseline / self._mask_cwvl * fringe_window_size_mas * constants.MAS2RAD).astype(int)
+            self._sidelobeloc = self._fringe_subframe_pix//2 + sidelobedist
 
         #--------------------- Camera readout setup ----------------------------
         self.camera = CameraReadOut()

@@ -136,7 +136,7 @@ class HDFSmaskGenerator:
         return func
 
 
-    def make_mask_phase(self, offset, fx, npix=512, Dtel=25.5, use_blazed=False, make_binary=True):
+    def make_mask_phase(self, offset, fx, npix=512, Dtel=25.5, use_blazed=False, make_binary=True, mask_rotation_angle=0.0):
         """
         Holographic Dispersed Fringe Sensor (HDFS) phase mask generation routine.
 
@@ -159,6 +159,9 @@ class HDFSmaskGenerator:
 
             make_binary : bool
                 If True, the mask will be binary (with +/- pi/2 values)
+            
+            mask_rotation_angle : float
+                Rotate the HDFS by this angle [in degrees]. Default: 0.0
         """
 
         if len(offset) != self._nseg:
@@ -171,6 +174,7 @@ class HDFSmaskGenerator:
         self.Dtel = Dtel
         self.use_blazed = use_blazed
         self.binary = make_binary
+        self.mask_rotation_angle = mask_rotation_angle
         
         #--- Define the input grid size and sampling
         Dgrid = 26.0
@@ -181,8 +185,12 @@ class HDFSmaskGenerator:
         aperture_function, segment_functions = make_gmt_aperture(return_segments=True, normalized=True)
         segment_functions = [segment_functions[i] for i in [1,6,5,4,3,2,0]] # reorder the segments to match the GMT numbering convention
 
-        aperture = Field(evaluate_supersampled(aperture_function, grid.scaled(1/Dtel), 4), grid)
-        segment_masks = Field([evaluate_supersampled(seg, grid.scaled(1/Dtel), 4) for seg in segment_functions], grid)
+        mask_rot_angle_rad = np.deg2rad(-mask_rotation_angle)
+        rotated_aperture_function = make_rotated_aperture(aperture_function, mask_rot_angle_rad)
+        rotated_segment_functions = [make_rotated_aperture(seg_func, mask_rot_angle_rad) for seg_func in segment_functions]
+
+        aperture = Field(evaluate_supersampled(rotated_aperture_function, grid.scaled(1/Dtel), 4), grid)
+        segment_masks = Field([evaluate_supersampled(seg, grid.scaled(1/Dtel), 4) for seg in rotated_segment_functions], grid)
 
         #--- Find the center of each segment
         xs = []
@@ -233,6 +241,7 @@ class HDFSmaskGenerator:
         primary_hdr['D'] = (self.Dtel, 'size of array containing the GMT pupil [m]')
         primary_hdr['blazed'] = (self.use_blazed, 'is mask blazified?')
         primary_hdr['binary'] = (self.binary, 'is mask binary?')
+        primary_hdr['rotation'] = (self.mask_rotation_angle, 'HDFS mask rotation [deg]')
 
         #---- Create multi-extension FITS
         primary_hdu = fits.PrimaryHDU(self.HDFSmask, header=primary_hdr)
