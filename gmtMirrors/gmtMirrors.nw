@@ -101,6 +101,7 @@ void setup(void);
 //void setup(modes *_BS_);
 void setup(char *_filename_, int _N_, int _n_mode_);
 void setup(zernikeS *ZS);
+void setup( int max_n, rtd*a);
 void cleanup(void);
 void update(vector _origin_, vector _euler_angles_,int idx);
 void reset(void);
@@ -205,7 +206,8 @@ int idx_offset;
 @
 \item a Zernike surface [[ZS]]:
 <<GMT M12 parameters>>=
-zernikeS *ZS;
+zernikeS ZS;
+bool zs = false;
 @
 \item the segment piston mask
 <<GMT M12 parameters>>=
@@ -256,7 +258,7 @@ The peripheral segments also tilted inwards by 13.522 degrees.
 void gmt_m1::setup(void)
 {
   //  BS = NULL;
-  ZS = NULL;
+  // ZS = NULL;
   <<M1 parameters>>
   <<GMT setup common>>
 }
@@ -265,7 +267,7 @@ void gmt_m1::setup(void)
 void gmt_m1::setup(modes *_BS_)
 {
   BS = _BS_;
-  ZS = NULL;
+  // ZS = NULL;
   <<M1 parameters>>
   <<GMT setup common>>
 }
@@ -274,16 +276,34 @@ void gmt_m1::setup(modes *_BS_)
 void gmt_m1::setup(char *_filename_, int _N_, int _n_mode_)
 {
   BS.setup(_filename_, _N_, _n_mode_);
-  ZS = NULL;
+  // ZS = NULL;
   <<M1 parameters>>
   <<GMT setup common>>
 }
 @ or
 \index{gmtMirrors!gmt\_m1!setup}
-<<GMT M1 functions>>=
+<<GMT M1 functions (out)>>=
 void gmt_m1::setup( zernikeS *_ZS_)
 {
   ZS = _ZS_;
+  //BS = NULL;
+  <<M1 parameters>>
+  <<GMT setup common>>
+}
+@
+<<GMT M1 functions>>=
+void gmt_m1::setup( int max_n, rtd *a)
+{
+  vector __origin(0.0,0.0,0.0);
+  vector __euler_angles(0.0,0.0,0.0);
+  ZS.setup(
+      max_n,
+      a,
+      __origin,
+      __euler_angles,
+      7
+  );
+  zs = true;
   //BS = NULL;
   <<M1 parameters>>
   <<GMT setup common>>
@@ -749,7 +769,7 @@ void gmt_m1::trace(bundle *rays)
  HANDLE_ERROR( cudaMemset(V->m, 0, sizeof(char)*rays->N_RAY*rays->N_BUNDLE ) );
  HANDLE_ERROR( cudaMemset(rays->d__piston_mask, 0,
 			  sizeof(int)*rays->N_RAY*rays->N_BUNDLE ) );
-/*if (ZS!=NULL)
+if (zs)
   m1_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY,
                                               Rri2, R2,
                                               aperture_CS.d__R,
@@ -762,15 +782,15 @@ void gmt_m1::trace(bundle *rays)
                                               rigid_body_CS.d__origin,
                                               motion_CS.d__R,
                                               motion_CS.d__origin,
-                                              ZS->max_n, ZS->n_mode,
-                                              ZS->d__a, ZS->d__cx, ZS->d__cy,
+                                              ZS.max_n, ZS.n_mode,
+                                              ZS.d__a, ZS.d__cx, ZS.d__cy,
                                               0.5*D_full,
                                               rays->d__chief_ray,
                                               rays->d__piston_mask,
                                               d__valid_segments,
                                               d__segment_reflectivity);
-
-					      if (BS!=NULL)*/
+else
+// if (BS!=NULL)
   m1_bm_trace_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY,
                                                  Rri2, R2,
                                                  aperture_CS.d__R,
@@ -1506,7 +1526,7 @@ void gmt_m1::traceall(bundle *rays)
  HANDLE_ERROR( cudaMemset(rays->d__piston_mask, 0,
 			  sizeof(int)*rays->N_RAY*rays->N_BUNDLE ) );
 */
-if (ZS!=NULL)
+if (zs)
   m1_trace_all_kernel LLL gridDim , blockDim RRR (V->m, rays->d__ray, rays->N_RAY,
                                               Rri2, R2,
                                               aperture_CS.d__R,
@@ -1519,8 +1539,8 @@ if (ZS!=NULL)
                                               rigid_body_CS.d__origin,
                                               motion_CS.d__R,
                                               motion_CS.d__origin,
-                                              ZS->max_n, ZS->n_mode,
-                                              ZS->d__a, ZS->d__cx, ZS->d__cy,
+                                              ZS.max_n, ZS.n_mode,
+                                              ZS.d__a, ZS.d__cx, ZS.d__cy,
                                               0.5*D_full,
                                               rays->d__chief_ray,
                                               rays->d__piston_mask,
@@ -1961,7 +1981,7 @@ struct gmt_m2 {
 void gmt_m2::setup(void)
 {
   //  BS = NULL;
-  ZS = NULL;
+  // ZS = NULL;
   <<M2 parameters>>
   <<GMT setup common>>
 }
@@ -1970,7 +1990,7 @@ void gmt_m2::setup(void)
 void gmt_m2::setup(modes *_BS_)
 {
   BS = _BS_;
-  ZS = NULL;
+  // ZS = NULL;
   <<M2 parameters>>
   <<GMT setup common>>
 }
@@ -1979,7 +1999,7 @@ void gmt_m2::setup(modes *_BS_)
 void gmt_m2::setup(char *_filename_, int _N_, int _n_mode_)
 {
   BS.setup(_filename_, _N_, _n_mode_);
-  ZS = NULL;
+  // ZS = NULL;
   <<M2 parameters>>
   <<GMT setup common>>
 }
@@ -1999,12 +2019,30 @@ void gmt_m2::setup(char *_filename_, int _N_, int _n_mode_)
  idx_offset = 3;
 @
 \index{gmtMirrors!gmt\_m2!setup}
-<<GMT M2 functions>>=
+<<GMT M2 functions (out) (out)>>=
 void gmt_m2::setup(zernikeS *_ZS_)
 {
   ZS = _ZS_;
   //BS = NULL;
   M_ID    = 2;
+  <<M2 parameters>>
+  <<GMT setup common>>
+}
+@
+<<GMT M2 functions>>=
+void gmt_m2::setup( int max_n, rtd *a)
+{
+  vector __origin(0.0,0.0,0.0);
+  vector __euler_angles(0.0,0.0,0.0);
+  ZS.setup(
+      max_n,
+      a,
+      __origin,
+      __euler_angles,
+      7
+  );
+  zs = true;
+  //BS = NULL;
   <<M2 parameters>>
   <<GMT setup common>>
 }
