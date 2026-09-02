@@ -69,16 +69,15 @@ class PyramidWFS(Pyramid):
 
         label = np.zeros((nx,ny)) # labels needed for ndimage.center_of_mass
         label[mqt1] = 1
-        label[mqt2] = 2
-        label[mqt3] = 3
-        label[mqt4] = 4
+        label[mqt2] = 4
+        label[mqt3] = 2
+        label[mqt4] = 3
 
         #-> Preprocess CCD frame before subpupil registration
         fr = ccd_frame / np.max(ccd_frame)
         fr = (fr > cen_thr).astype('float')
 
         centers = center_of_mass(fr, labels=label, index=[1,2,3,4])
-        #centers = [[117.5,117.5],[117.5,249.5],[249.5,117.5],[249.5,249.5]] # OVERRIDE!!!!!
 
         print("Center of subpupil images (pix):")
         print(np.array_str(np.array(centers), precision=1), end='\n')
@@ -93,8 +92,8 @@ class PyramidWFS(Pyramid):
         xra = []
         yra = []
         for this_pup in range(4):
-            xxn = xx-centers[this_pup][0]
-            yyn = yy-centers[this_pup][1]
+            xxn = xx-centers[this_pup][1]
+            yyn = yy-centers[this_pup][0]
             xr.append( np.arange(np.min(xxn),np.max(xxn)+1) )
             yr.append( np.arange(np.min(yyn),np.max(yyn)+1) )
             xra.append((np.squeeze(np.where(np.abs(xr[this_pup])<= n_sub/2))[0] ,
@@ -198,11 +197,11 @@ class PyramidWFS(Pyramid):
                 norm_fact = tot_flux / self.n_sspp # mean flux per SA
     
             # Compute the signals
-            sx = (self._ccd_frame[self._indpup[3]]+self._ccd_frame[self._indpup[2]]-
-                  self._ccd_frame[self._indpup[1]]-self._ccd_frame[self._indpup[0]]) / norm_fact  
+            sx = (self._ccd_frame[self._indpup[0]]+self._ccd_frame[self._indpup[1]]-
+                  self._ccd_frame[self._indpup[2]]-self._ccd_frame[self._indpup[3]]) / norm_fact  
 
-            sy = (self._ccd_frame[self._indpup[1]]+self._ccd_frame[self._indpup[3]]-
-                  self._ccd_frame[self._indpup[0]]-self._ccd_frame[self._indpup[2]]) / norm_fact 
+            sy = (self._ccd_frame[self._indpup[0]]+self._ccd_frame[self._indpup[3]]-
+                  self._ccd_frame[self._indpup[1]]-self._ccd_frame[self._indpup[2]]) / norm_fact 
 
         else:
             # If the frame has no photons, provide a zero slope vector!
